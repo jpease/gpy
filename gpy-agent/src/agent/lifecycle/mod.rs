@@ -7,15 +7,17 @@ pub use start::start_background_agent;
 
 #[cfg(unix)]
 use crate::Error;
+#[cfg(unix)]
+use crate::deadline::Deadline;
 use crate::{Result, VERSION};
 #[cfg(unix)]
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::time::Duration;
 
 #[cfg(unix)]
 use crate::ipc::socket_identity::SocketIdentity;
-#[cfg(unix)]
-use std::os::unix::net::UnixListener;
 
 /// Create the default runtime directory when the socket lives there (no
 /// `--socket`/`GPY_AGENT_SOCKET_PATH` override). Only the start path calls this.
@@ -23,9 +25,7 @@ use std::os::unix::net::UnixListener;
 /// # Errors
 /// Returns an error naming the runtime directory if it cannot be created.
 pub fn ensure_runtime_dir() -> Result<()> {
-    if crate::paths::SOCKET_OVERRIDE.get().is_some()
-        || crate::paths::socket_path_override().is_some()
-    {
+    if crate::paths::socket_is_overridden() {
         return Ok(());
     }
     let path = crate::paths::runtime_dir();
@@ -41,9 +41,7 @@ pub fn ensure_runtime_dir() -> Result<()> {
 #[cfg(unix)]
 #[must_use]
 pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
-    if crate::paths::SOCKET_OVERRIDE.get().is_some()
-        || crate::paths::socket_path_override().is_some()
-    {
+    if crate::paths::socket_is_overridden() {
         crate::ipc::server::DirRepair::Refuse
     } else {
         crate::ipc::server::DirRepair::Tighten
@@ -52,12 +50,9 @@ pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
 
 /// Version marker path: `<runtime>/agent.version` for the default socket,
 /// `<socket>.version` for an overridden one so agents never share a marker.
+#[must_use]
 pub fn get_version_file_path() -> PathBuf {
-    let socket_override = crate::paths::SOCKET_OVERRIDE
-        .get()
-        .cloned()
-        .or_else(crate::paths::socket_path_override);
-    socket_override.map_or_else(
+    crate::paths::socket_override().map_or_else(
         || version_file_for(None, &crate::paths::runtime_dir()),
         |socket| version_file_for(Some(&socket), Path::new("")),
     )
@@ -142,107 +137,24 @@ pub fn write_agent_version() -> Result<()> {
     Ok(())
 }
 
-/// Check the socket path is bindable, then release it.
-///
-/// # Errors
-/// Returns an error if socket binding fails.
+/// How long a ping waits for the agent to accept the connection.
 #[cfg(unix)]
-pub fn test_socket_bind(socket_path: &PathBuf) -> std::io::Result<()> {
-    // Bind is atomic, so success proves exclusive access.
-    let listener = UnixListener::bind(socket_path)?;
-    drop(listener);
-    let _ = std::fs::remove_file(socket_path);
-    Ok(())
-}
+const PING_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Test-only counters of which step decided a ping. Relaxed atomics and no
-/// I/O, since stderr writes perturb the timing being measured. Process-global,
-/// so reported but never asserted on.
-#[cfg(all(test, unix))]
-pub(crate) mod ping_probe {
-    use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
-
-    pub static ANSWERED: AtomicU32 = AtomicU32::new(0);
-    pub static CONNECT_ERROR: AtomicU32 = AtomicU32::new(0);
-    pub static CONNECT_TIMEOUT: AtomicU32 = AtomicU32::new(0);
-    pub static WRITE_ERROR: AtomicU32 = AtomicU32::new(0);
-    pub static READ_TIMEOUT: AtomicU32 = AtomicU32::new(0);
-    pub static READ_CLOSED: AtomicU32 = AtomicU32::new(0);
-    pub static UNRECOGNIZED: AtomicU32 = AtomicU32::new(0);
-    /// `raw_os_error` of the most recent failed connect, or 0 if there was none.
-    pub static LAST_CONNECT_ERRNO: AtomicI32 = AtomicI32::new(0);
-
-    pub fn bump(counter: &AtomicU32) {
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn record_connect_errno(errno: i32) {
-        LAST_CONNECT_ERRNO.store(errno, Ordering::Relaxed);
-    }
-
-    /// A one-line reading of every counter, for a failure message.
-    pub fn summary() -> String {
-        let read = |c: &AtomicU32| c.load(Ordering::Relaxed);
-        format!(
-            "answered={} connect_error={} (last errno {}) connect_timeout={} \
-             write_error={} read_timeout={} read_closed={} unrecognized={}",
-            read(&ANSWERED),
-            read(&CONNECT_ERROR),
-            LAST_CONNECT_ERRNO.load(Ordering::Relaxed),
-            read(&CONNECT_TIMEOUT),
-            read(&WRITE_ERROR),
-            read(&READ_TIMEOUT),
-            read(&READ_CLOSED),
-            read(&UNRECOGNIZED),
-        )
-    }
-}
-
-/// Record a ping outcome when the probe is compiled in; a no-op otherwise.
+/// How long a ping waits for the reply once the connection is accepted.
 #[cfg(unix)]
-macro_rules! ping_outcome {
-    ($counter:ident) => {{
-        #[cfg(test)]
-        crate::agent::lifecycle::ping_probe::bump(&crate::agent::lifecycle::ping_probe::$counter);
-    }};
-}
+const PING_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Record which way a connect failed, when the probe is compiled in.
+/// Connect within the ping's connect budget; `None` when nothing accepted.
 #[cfg(unix)]
-#[allow(
-    clippy::missing_const_for_fn,
-    reason = "const only in non-test builds; the test build records the errno through non-const probe calls"
-)]
-fn record_connect_failure(e: &std::io::Error) {
-    #[cfg(test)]
-    {
-        ping_probe::record_connect_errno(e.raw_os_error().unwrap_or(-1_i32));
-        ping_probe::bump(&ping_probe::CONNECT_ERROR);
-    }
-    #[cfg(not(test))]
-    let _ = e;
-}
-
-/// Connect within the ping's connect budget; refusal and timeout are recorded
-/// separately for the probe.
-#[cfg(unix)]
-async fn ping_connect(socket_path: &PathBuf) -> Option<tokio::net::UnixStream> {
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(500),
+async fn ping_connect(socket_path: &Path) -> Option<tokio::net::UnixStream> {
+    tokio::time::timeout(
+        PING_CONNECT_TIMEOUT,
         tokio::net::UnixStream::connect(socket_path),
     )
     .await
-    {
-        Ok(Ok(stream)) => Some(stream),
-        Ok(Err(e)) => {
-            record_connect_failure(&e);
-            None
-        }
-        Err(_) => {
-            ping_outcome!(CONNECT_TIMEOUT);
-            None
-        }
-    }
+    .ok()?
+    .ok()
 }
 
 /// Outcome of one ping attempt. `NotListening` is weak evidence (a busy
@@ -264,65 +176,29 @@ enum PingOutcome {
 /// Returns an error if runtime creation fails or the write to an accepted
 /// connection fails (a local failure, not evidence about the agent).
 #[cfg(unix)]
-fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
-    use std::time::Duration;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
+fn ping_agent_outcome(socket_path: &Path) -> Result<PingOutcome> {
     // Current-thread: a pool per ping churns threads enough to make pings fail
     // locally, which callers would mistake for agent death.
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|e| Error::process("ping_runtime".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("ping_runtime", e.to_string()))?;
 
     rt.block_on(async {
         let Some(stream) = ping_connect(socket_path).await else {
             return Ok(PingOutcome::NotListening);
         };
-
-        let (mut reader, mut writer) = stream.into_split();
-
-        // Single write: a server that answers and closes can EPIPE a second write.
-        let ping_msg = b"{\"op\":\"ping\"}\n";
-
-        if let Err(e) = writer.write_all(ping_msg).await {
-            ping_outcome!(WRITE_ERROR);
+        // The reply is a `Response` decoded as such: a substring check would
+        // match any error message containing "ok". The daemon renders `Ack`
+        // through the JSON formatter (`ipc::ACK_WIRE_JSON`), which the decoder
+        // accepts alongside serde's own encoding.
+        match tokio::time::timeout(PING_REPLY_TIMEOUT, exchange(stream, r#"{"op":"ping"}"#)).await {
+            Ok(Ok(reply)) if is_ack(&reply) => Ok(PingOutcome::Answered),
             // Something is listening; report as indeterminate, not stopped.
-            return Err(Error::ipc(format!("ping write failed: {e}")));
-        }
-
-        let mut buffer = [0; 1024];
-        match tokio::time::timeout(Duration::from_millis(500), reader.read(&mut buffer)).await {
-            Ok(Ok(n)) if n > 0 => {
-                let Some(chunk) = buffer.get(..n) else {
-                    ping_outcome!(UNRECOGNIZED);
-                    return Ok(PingOutcome::AcceptedNoReply);
-                };
-                let response = String::from_utf8_lossy(chunk);
-                // A real reply is a `Response`, so decide on the decoded
-                // value rather than on substrings of the raw bytes:
-                // `contains("ok")` would match any error message with "ok"
-                // in it. The daemon renders `Ack` through the JSON formatter
-                // as `{"status":"ok"}` (`ipc::ACK_WIRE_JSON`), not as serde's
-                // `"Ack"`, so the decoder has to accept the formatter shape
-                // or a live agent is never seen answering.
-                if crate::ipc::decode_wire_reply(&response).is_ok_and(|reply| is_ack(&reply)) {
-                    ping_outcome!(ANSWERED);
-                    Ok(PingOutcome::Answered)
-                } else {
-                    ping_outcome!(UNRECOGNIZED);
-                    Ok(PingOutcome::AcceptedNoReply)
-                }
-            }
-            Err(_) => {
-                ping_outcome!(READ_TIMEOUT);
-                Ok(PingOutcome::AcceptedNoReply)
-            }
-            // Clean close or read error: accepted but unanswered.
-            Ok(_) => {
-                ping_outcome!(READ_CLOSED);
-                Ok(PingOutcome::AcceptedNoReply)
-            }
+            Ok(Err(ExchangeError::Send(e))) => Err(Error::ipc(format!("ping write failed: {e}"))),
+            // Timeout, clean close, read error, or a reply that is not an ack:
+            // accepted but unanswered.
+            Ok(Ok(_) | Err(_)) | Err(_) => Ok(PingOutcome::AcceptedNoReply),
         }
     })
 }
@@ -332,7 +208,7 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
 /// # Errors
 /// Returns an error if runtime creation or ping operations fail.
 #[cfg(unix)]
-pub fn ping_agent_blocking(socket_path: &PathBuf) -> Result<bool> {
+pub fn ping_agent_blocking(socket_path: &Path) -> Result<bool> {
     Ok(matches!(
         ping_agent_outcome(socket_path)?,
         PingOutcome::Answered
@@ -344,7 +220,7 @@ pub fn ping_agent_blocking(socket_path: &PathBuf) -> Result<bool> {
 /// # Errors
 /// Never returns an error on this platform.
 #[cfg(not(unix))]
-pub fn ping_agent_blocking(_socket_path: &PathBuf) -> Result<bool> {
+pub fn ping_agent_blocking(_socket_path: &Path) -> Result<bool> {
     Ok(false)
 }
 
@@ -356,9 +232,67 @@ const fn is_ack(response: &crate::ipc::Response) -> bool {
     matches!(response, crate::ipc::Response::Ack)
 }
 
-/// Send `message` (JSON op, no trailing newline) to the agent and decode its
-/// one-line reply. The whole exchange is bounded by `budget`; message and
-/// newline go in one write to avoid EPIPE from a server that answers and closes.
+/// Why an exchange on an open connection failed.
+#[cfg(unix)]
+enum ExchangeError {
+    /// The message could not be written.
+    Send(std::io::Error),
+    /// The reply line could not be read.
+    Read(std::io::Error),
+    /// The agent closed the connection without replying.
+    Closed,
+    /// The reply did not decode.
+    Reply(Error),
+}
+
+#[cfg(unix)]
+impl From<ExchangeError> for Error {
+    fn from(failure: ExchangeError) -> Self {
+        match failure {
+            ExchangeError::Send(e) => Self::ipc(format!("Failed to send command: {e}")),
+            ExchangeError::Read(e) => Self::ipc(format!("Failed to read response: {e}")),
+            ExchangeError::Closed => {
+                Self::ipc("Agent closed the connection without replying".to_owned())
+            }
+            ExchangeError::Reply(e) => e,
+        }
+    }
+}
+
+/// Send `message` (JSON op, no trailing newline) over `stream` and decode the
+/// one-line reply. Message and newline go in one write to avoid EPIPE from a
+/// server that answers and closes. Unbounded in time: callers wrap it in a
+/// timeout.
+#[cfg(unix)]
+async fn exchange(
+    mut stream: tokio::net::UnixStream,
+    message: &str,
+) -> std::result::Result<crate::ipc::Response, ExchangeError> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+
+    let mut payload = Vec::with_capacity(message.len().saturating_add(1));
+    payload.extend_from_slice(message.as_bytes());
+    payload.push(b'\n');
+    stream
+        .write_all(&payload)
+        .await
+        .map_err(ExchangeError::Send)?;
+
+    // A whole line: an error reply quoting a config line can be long.
+    let limit = u64::try_from(crate::security::MAX_MESSAGE_SIZE).unwrap_or(u64::MAX);
+    let mut reply = Vec::new();
+    tokio::io::BufReader::new(stream.take(limit))
+        .read_until(b'\n', &mut reply)
+        .await
+        .map_err(ExchangeError::Read)?;
+    if reply.is_empty() {
+        return Err(ExchangeError::Closed);
+    }
+    crate::ipc::decode_wire_reply(&String::from_utf8_lossy(&reply)).map_err(ExchangeError::Reply)
+}
+
+/// Connect to the agent, send `message` and decode its one-line reply, all
+/// within `budget`.
 ///
 /// # Errors
 /// Returns an error if the exchange fails, the budget elapses, the agent
@@ -369,39 +303,15 @@ const fn is_ack(response: &crate::ipc::Response) -> bool {
     reason = "the budget's Elapsed carries no detail and attaching it would append to the CLI error text"
 )]
 async fn request(
-    socket_path: &std::path::Path,
+    socket_path: &Path,
     message: &str,
-    budget: std::time::Duration,
+    budget: Duration,
 ) -> Result<crate::ipc::Response> {
-    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixStream;
-
     tokio::time::timeout(budget, async {
-        let mut stream = UnixStream::connect(socket_path)
+        let stream = tokio::net::UnixStream::connect(socket_path)
             .await
             .map_err(|e| Error::ipc(format!("Failed to connect to agent: {e}")))?;
-
-        let mut payload = Vec::with_capacity(message.len().saturating_add(1));
-        payload.extend_from_slice(message.as_bytes());
-        payload.push(b'\n');
-        stream
-            .write_all(&payload)
-            .await
-            .map_err(|e| Error::ipc(format!("Failed to send command: {e}")))?;
-
-        // A whole line: an error reply quoting a config line can be long.
-        let limit = u64::try_from(crate::security::MAX_MESSAGE_SIZE).unwrap_or(u64::MAX);
-        let mut reply = Vec::new();
-        tokio::io::BufReader::new(stream.take(limit))
-            .read_until(b'\n', &mut reply)
-            .await
-            .map_err(|e| Error::ipc(format!("Failed to read response: {e}")))?;
-        if reply.is_empty() {
-            return Err(Error::ipc(
-                "Agent closed the connection without replying".to_owned(),
-            ));
-        }
-        crate::ipc::decode_wire_reply(&String::from_utf8_lossy(&reply))
+        Ok(exchange(stream, message).await?)
     })
     .await
     .map_err(|_| Error::ipc("Timed out communicating with agent".to_owned()))?
@@ -415,12 +325,7 @@ async fn request(
 pub async fn send_shutdown_command() -> Result<()> {
     // Bounded so a wedged agent cannot hang `gpy-agent stop`.
     let socket_path = crate::paths::get_socket_path()?;
-    let response = request(
-        &socket_path,
-        r#"{"op":"shutdown"}"#,
-        std::time::Duration::from_secs(2),
-    )
-    .await?;
+    let response = request(&socket_path, r#"{"op":"shutdown"}"#, REQUEST_BUDGET).await?;
 
     if is_ack(&response) {
         Ok(())
@@ -468,7 +373,7 @@ pub async fn send_config_reload_command() -> Result<ConfigReload> {
     match request(
         &socket_path,
         crate::ipc::protocol::CONFIG_RELOAD_JSON,
-        std::time::Duration::from_secs(2),
+        REQUEST_BUDGET,
     )
     .await
     {
@@ -533,45 +438,17 @@ pub struct AgentStatusInfo {
 /// Query the running agent for its status via IPC.
 ///
 /// # Errors
-/// Returns an error if the socket connection fails or the response cannot be parsed.
+/// Returns an error if the socket connection fails or the response is not an
+/// agent status.
 #[cfg(unix)]
-#[allow(
-    clippy::map_err_ignore,
-    reason = "the timeouts' Elapsed carries no detail and attaching it would append to the CLI error text"
-)]
 pub async fn query_agent_status() -> Result<AgentStatusInfo> {
-    use std::time::Duration;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixStream;
+    query_status_at(&crate::paths::get_socket_path()?).await
+}
 
-    let socket_path = crate::paths::get_socket_path()?;
-    let stream = tokio::time::timeout(Duration::from_secs(2), UnixStream::connect(socket_path))
-        .await
-        .map_err(|_| Error::ipc("Timeout connecting to agent".to_owned()))?
-        .map_err(|e| Error::ipc(format!("Failed to connect to agent: {e}")))?;
-
-    let (mut reader, mut writer) = stream.into_split();
-
-    let status_msg = r#"{"op":"status"}"#;
-    writer.write_all(status_msg.as_bytes()).await?;
-    writer.write_all(b"\n").await?;
-
-    let mut buffer = vec![0u8; 4096];
-    let n = tokio::time::timeout(Duration::from_secs(2), reader.read(&mut buffer))
-        .await
-        .map_err(|_| Error::ipc("Timeout reading agent response".to_owned()))?
-        .map_err(|e| Error::ipc(format!("Failed to read response: {e}")))?;
-
-    if n == 0 {
-        return Err(Error::ipc("Empty response from agent".to_owned()));
-    }
-
-    let chunk = buffer
-        .get(..n)
-        .ok_or_else(|| Error::ipc("Invalid buffer slice".to_owned()))?;
-    let response = String::from_utf8_lossy(chunk);
-
-    parse_agent_status_response(&response)
+/// [`query_agent_status`] against an explicit socket.
+#[cfg(unix)]
+async fn query_status_at(socket_path: &Path) -> Result<AgentStatusInfo> {
+    agent_status_from(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET).await?)
 }
 
 /// Query agent status (native Windows stub).
@@ -583,30 +460,29 @@ pub async fn query_agent_status() -> Result<AgentStatusInfo> {
     Err(crate::ipc::native_windows_unsupported())
 }
 
-/// Parse the agent status JSON response.
+/// The status carried by an agent's reply.
 ///
 /// # Errors
-/// Returns an error if the JSON cannot be parsed or is not an `AgentStatus`.
+/// Returns an error if `response` is anything but an `AgentStatus`.
 #[cfg(unix)]
-fn parse_agent_status_response(json: &str) -> Result<AgentStatusInfo> {
-    match serde_json::from_str::<crate::ipc::Response>(json) {
-        Ok(crate::ipc::Response::AgentStatus {
+fn agent_status_from(response: crate::ipc::Response) -> Result<AgentStatusInfo> {
+    match response {
+        crate::ipc::Response::AgentStatus {
             version,
             protocol_version,
             watched_repos,
             registered_clients,
             cache_entries,
-        }) => Ok(AgentStatusInfo {
+        } => Ok(AgentStatusInfo {
             version,
             protocol_version,
             watched_repos,
             registered_clients,
             cache_entries,
         }),
-        Ok(other) => Err(Error::ipc(format!(
+        other => Err(Error::ipc(format!(
             "Expected an AgentStatus response, got: {other:?}"
         ))),
-        Err(e) => Err(Error::ipc(format!("Failed to parse JSON response: {e}"))),
     }
 }
 
@@ -631,25 +507,30 @@ pub fn check_protocol_version_compatibility(agent_protocol_version: u8) {
     }
 }
 
+/// Budget for one request/reply exchange with the agent (shutdown, status,
+/// config reload): the agent answers in microseconds unless wedged.
+#[cfg(unix)]
+const REQUEST_BUDGET: Duration = Duration::from_secs(2);
+
 /// Ping attempts before an existing socket is declared stale. A busy live agent
-/// can miss one 500ms ping; unlinking its socket would orphan it. Refused
+/// can miss one ping; unlinking its socket would orphan it. Refused
 /// connects fail in microseconds, so retries are cheap for leftover sockets.
 #[cfg(unix)]
 const PING_STALE_ATTEMPTS: u32 = 3;
 
 /// Backoff slept between failed ping attempts.
 #[cfg(unix)]
-const PING_STALE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
+const PING_STALE_BACKOFF: Duration = Duration::from_millis(200);
 
 /// Max wait for a shutdown-signalled agent to stop responding before unlinking
 /// its socket. Ownership-verified cleanup in the server protects the new socket
 /// if the old agent exits late.
 #[cfg(unix)]
-const SHUTDOWN_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(3);
+const SHUTDOWN_WAIT_MAX: Duration = Duration::from_secs(3);
 
 /// Poll interval while waiting for the old agent to stop responding.
 #[cfg(unix)]
-const SHUTDOWN_WAIT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+const SHUTDOWN_WAIT_POLL: Duration = Duration::from_millis(100);
 
 /// What a round of pings established. Reading "never managed to ask" as death
 /// would unlink a live agent's socket and fork a duplicate.
@@ -669,7 +550,7 @@ enum AgentLiveness {
 
 /// Ping the agent, retrying before concluding anything.
 #[cfg(unix)]
-fn ping_agent_liveness(socket_path: &PathBuf) -> AgentLiveness {
+fn ping_agent_liveness(socket_path: &Path) -> AgentLiveness {
     ping_agent_liveness_with(|| ping_agent_outcome(socket_path), PING_STALE_BACKOFF)
 }
 
@@ -714,15 +595,13 @@ where
 /// Returns `false` if still answering (or only indeterminate) when the budget ends.
 #[cfg(unix)]
 #[must_use]
-pub fn wait_for_agent_shutdown(socket_path: &PathBuf) -> bool {
-    let deadline = std::time::Instant::now()
-        .checked_add(SHUTDOWN_WAIT_MAX)
-        .unwrap_or_else(std::time::Instant::now);
+pub fn wait_for_agent_shutdown(socket_path: &Path) -> bool {
+    let deadline = Deadline::after(SHUTDOWN_WAIT_MAX);
     loop {
         if ping_agent_liveness(socket_path) == AgentLiveness::NotResponding {
             return true; // Reached the socket every time, never answered: confirmed stopped.
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return false; // Bounded fallback: still responding or unverifiable.
         }
         std::thread::sleep(SHUTDOWN_WAIT_POLL);
@@ -732,7 +611,7 @@ pub fn wait_for_agent_shutdown(socket_path: &PathBuf) -> bool {
 /// Native Windows stub: always "not confirmed stopped".
 #[cfg(not(unix))]
 #[must_use]
-pub fn wait_for_agent_shutdown(_socket_path: &PathBuf) -> bool {
+pub fn wait_for_agent_shutdown(_socket_path: &Path) -> bool {
     false
 }
 
@@ -763,12 +642,10 @@ fn socket_released(socket_path: &Path, identity: SocketIdentity) -> bool {
 /// path, bounded by `SHUTDOWN_WAIT_MAX`. A replacement's answers end the wait.
 #[cfg(unix)]
 pub(crate) fn wait_for_socket_release(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     identity: SocketIdentity,
 ) -> ShutdownWait {
-    let deadline = std::time::Instant::now()
-        .checked_add(SHUTDOWN_WAIT_MAX)
-        .unwrap_or_else(std::time::Instant::now);
+    let deadline = Deadline::after(SHUTDOWN_WAIT_MAX);
     loop {
         if socket_released(socket_path, identity) {
             return ShutdownWait::Released;
@@ -781,7 +658,7 @@ pub(crate) fn wait_for_socket_release(
                 ShutdownWait::Stopped
             };
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return ShutdownWait::TimedOut;
         }
         std::thread::sleep(SHUTDOWN_WAIT_POLL);
@@ -803,7 +680,7 @@ fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
 /// then unlink only the captured socket. Returns `true` when a responsive
 /// replacement already holds the path, so the caller must not fork another.
 #[cfg(unix)]
-fn evict_wedged_agent(socket_path: &PathBuf, identity: SocketIdentity) -> bool {
+fn evict_wedged_agent(socket_path: &Path, identity: SocketIdentity) -> bool {
     // Best-effort graceful shutdown.
     if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -832,7 +709,7 @@ fn evict_wedged_agent(socket_path: &PathBuf, identity: SocketIdentity) -> bool {
 /// compatible agent is running.
 #[cfg(unix)]
 #[must_use]
-pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
+pub fn check_and_cleanup_socket(socket_path: &Path) -> bool {
     // Every later wait and unlink concerns this socket, never a replacement.
     let Ok(identity) = SocketIdentity::at(socket_path) else {
         return false;
@@ -931,11 +808,12 @@ mod version_order_tests {
 
 #[cfg(all(test, unix))]
 mod stale_socket_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     // `check_and_cleanup_socket` retries are tested in `tests/stale_socket_tests.rs`,
     // which needs `unsafe` env mutation the lib denies.
@@ -1023,10 +901,7 @@ mod stale_socket_tests {
     /// # Errors
     /// Always.
     fn local_failure() -> crate::Result<PingOutcome> {
-        Err(Error::process(
-            "ping_runtime".to_owned(),
-            "simulated".to_owned(),
-        ))
+        Err(Error::process("ping_runtime", "simulated".to_owned()))
     }
 
     #[test]
@@ -1254,8 +1129,7 @@ mod stale_socket_tests {
 
         assert!(
             matches!(alive, Ok(true)),
-            "an agent that replied and closed is alive; got {alive:?} (pings: {})",
-            super::ping_probe::summary()
+            "an agent that replied and closed is alive; got {alive:?}"
         );
     }
 
@@ -1285,9 +1159,7 @@ mod stale_socket_tests {
 
         assert!(
             !stopped,
-            "must report the agent as still responding, not confirmed stopped \
-             ({report}; pings: {})",
-            super::ping_probe::summary()
+            "must report the agent as still responding, not confirmed stopped ({report})"
         );
         assert!(
             elapsed >= SHUTDOWN_WAIT_MAX,
@@ -1416,19 +1288,51 @@ mod stale_socket_tests {
         );
     }
 
+    /// Run `query_status_at` against a fake agent that sends `reply`.
+    ///
+    /// # Errors
+    /// Whatever the query reported.
+    fn query_status_against(reply: Vec<u8>) -> crate::Result<super::AgentStatusInfo> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let socket_path = tmp.path().join("status.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(&reply);
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let outcome = runtime.block_on(super::query_status_at(&socket_path));
+        server.join().expect("join fake server thread");
+
+        outcome
+    }
+
+    /// A status line is parsed whole, however many reads it arrives in.
     #[test]
-    fn agent_status_is_deserialized_from_the_response_enum() {
-        let json = serde_json::to_string(&Response::AgentStatus {
-            version: "9.9.9".to_owned(),
+    fn a_status_reply_larger_than_one_read_buffer_parses() {
+        let status = Response::AgentStatus {
+            version: "9".repeat(16 * 1024),
             protocol_version: 3_u8,
             watched_repos: 5_usize,
             registered_clients: 2_usize,
             cache_entries: 12_usize,
-        })
-        .expect("AgentStatus serializes");
+        };
+        let mut reply = serde_json::to_vec(&status).expect("AgentStatus serializes");
+        reply.push(b'\n');
+        assert!(reply.len() > 4096, "premise: the reply exceeds 4 KiB");
 
-        let info = super::parse_agent_status_response(&json).expect("round-trips");
-        assert_eq!(info.version, "9.9.9");
+        let info = query_status_against(reply).expect("a long status line parses");
+        assert_eq!(info.version.len(), 16 * 1024);
         assert_eq!(info.protocol_version, 3_u8);
         assert_eq!(info.watched_repos, 5_usize);
         assert_eq!(info.registered_clients, 2_usize);
@@ -1438,15 +1342,14 @@ mod stale_socket_tests {
     /// A partial status payload is an error, not a defaulted status.
     #[test]
     fn a_malformed_agent_status_is_an_error_not_a_zeroed_status() {
-        let partial = r#"{"AgentStatus":{"version":"9.9.9"}}"#;
         assert!(
-            super::parse_agent_status_response(partial).is_err(),
+            query_status_against(b"{\"AgentStatus\":{\"version\":\"9.9.9\"}}\n".to_vec()).is_err(),
             "a status payload missing required fields must not be reported as a status"
         );
         assert!(
-            super::parse_agent_status_response("\"Ack\"").is_err(),
+            query_status_against(b"\"Ack\"\n".to_vec()).is_err(),
             "a non-status Response must not be reported as a status"
         );
-        assert!(super::parse_agent_status_response("not json").is_err());
+        assert!(query_status_against(b"not json\n".to_vec()).is_err());
     }
 }

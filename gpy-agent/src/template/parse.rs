@@ -252,10 +252,6 @@ fn parse_variable(chars: &[char], pos: &mut usize) -> Result<Node> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::parse;
     use crate::template::TemplateError;

@@ -17,9 +17,12 @@
 # single-quoted so the path expands as one word and is never re-parsed as code.)
 
 # Assertions. `fail` prints and counts into $failures; `pass` only prints.
-# `test_finish SUMMARY` ends the test: exit 1 with the failure count when any
-# assertion failed, otherwise print `PASS: SUMMARY`. printf, not echo: zsh's
-# echo would interpret backslashes in the message.
+# `check LABEL EXPECTED ACTUAL` passes when the two strings are equal;
+# `expect_eq LABEL ACTUAL EXPECTED` is the same check with the operands in the
+# order a measured value is usually at hand. `test_finish SUMMARY` ends the
+# test: exit 1 with the failure count when any assertion failed, otherwise
+# print `PASS: SUMMARY`. printf, not echo: zsh's echo would interpret
+# backslashes in the message.
 failures=0
 fail() {
     printf 'FAIL: %s\n' "$*"
@@ -27,6 +30,16 @@ fail() {
 }
 pass() {
     printf 'PASS: %s\n' "$*"
+}
+check() {
+    if [ "$3" = "$2" ]; then
+        pass "$1"
+    else
+        fail "$1 (expected [$2], got [$3])"
+    fi
+}
+expect_eq() {
+    check "$1" "$3" "$2"
 }
 test_finish() {
     if [ "$failures" -gt 0 ]; then
@@ -42,12 +55,19 @@ test_finish() {
 # call exits 1, so the gate can never go green on a test that did not
 # actually execute. Never `exit 0` on a missing prerequisite directly.
 test_skip() {
+    test_skip_part "$@"
+    exit 0
+}
+
+# `test_skip_part "reason"` -- the same contract for one section of a test:
+# prints `SKIP: reason` and returns so the caller can carry on with the rest;
+# exits 1 under `CI`.
+test_skip_part() {
     printf 'SKIP: %s\n' "$*"
     if [ -n "${CI:-}" ]; then
         printf 'FAIL: a skipped test is a failure under CI\n'
         exit 1
     fi
-    exit 0
 }
 
 # `test_require_command NAME [reason]` -- skip unless NAME is on PATH.
@@ -112,6 +132,11 @@ test_require_command() {
 #                           (scaled) seconds pass
 # shell_e2e_backdate S FILE...
 #                           set each FILE's mtime S seconds into the past
+# shell_e2e_count_lines FILE
+#                           FILE's line count; 0 when FILE does not exist
+# shell_e2e_has_lines FILE N
+#                           true when FILE has exactly N lines (a
+#                           shell_e2e_poll predicate)
 #
 # All waits are bounded polls; nothing sleeps for synchronisation. Every
 # wait's budget is scaled by shell_e2e_timeout_scale (shell_e2e_poll and
@@ -130,6 +155,35 @@ test_require_command() {
 #
 # shell_e2e_track_pid PID   register a helper process (listener, stub, client)
 #                           for shell_e2e_cleanup to kill
+# shell_e2e_kill_tracked    stop every registered PID now; the EXIT trap of a
+#                           test that runs no shell_e2e_init
+# shell_e2e_stop_pids PIDS  TERM each PID in the space-separated list, wait
+#                           (bounded) for them to exit, then KILL the rest
+
+# ---------------------------------------------------------------------------
+# Stub agent
+# ---------------------------------------------------------------------------
+# shell_e2e_stub_listener SOCKET MODE [OPTION...]
+#                           run tests/lib/stub_listener.py on SOCKET (its
+#                           docstring lists the modes and options). Returns
+#                           once SOCKET accepts connections, with the serving
+#                           process's PID in SHELL_E2E_STUB_PID, registered
+#                           with shell_e2e_track_pid. Stop it with
+#                           shell_e2e_stop_pids: it logs what is still queued,
+#                           then exits. MODE bind-only leaves a socket file
+#                           nothing listens on and SHELL_E2E_STUB_PID empty.
+#                           A stub that cannot start fails the test. Reads
+#                           the script from $ROOT, the checkout every test
+#                           sets before sourcing this file.
+SHELL_E2E_STUB_PID=""
+
+shell_e2e_stub_listener() {
+    if ! SHELL_E2E_STUB_PID="$(python3 "$ROOT/tests/lib/stub_listener.py" "$@")"; then
+        printf 'FAIL: could not start a stub listener on %s\n' "$1"
+        exit 1
+    fi
+    [ -z "$SHELL_E2E_STUB_PID" ] || shell_e2e_track_pid "$SHELL_E2E_STUB_PID"
+}
 
 # ---------------------------------------------------------------------------
 # Release asset fixtures
@@ -158,6 +212,11 @@ shell_e2e_build_shell_archive() {
     rm -rf "$_sba_tmp"
     return "$_sba_rc"
 }
+
+# Seconds a test waits to show that something did NOT happen; absence cannot be
+# polled for, so every such wait uses this one value (scaled by the caller if needed).
+# shellcheck disable=SC2034 # read by the sourcing tests
+SHELL_E2E_ABSENCE_WINDOW=0.5
 
 SHELL_E2E_PTY="${SHELL_E2E_PTY:-}"   # set by shell_e2e_init
 SHELL_E2E_ROOT=""
@@ -290,6 +349,18 @@ shell_e2e_backdate() {
 t = time.time() - float(sys.argv[1])
 for path in sys.argv[2:]:
     os.utime(path, (t, t))' "$_secs" "$@"
+}
+
+shell_e2e_count_lines() {
+    if [ -f "$1" ]; then
+        wc -l <"$1" | tr -d ' '
+    else
+        printf '0\n'
+    fi
+}
+
+shell_e2e_has_lines() {
+    [ "$(shell_e2e_count_lines "$1")" -eq "$2" ]
 }
 
 # A PATH with no gpy-agent on it (system directories only); the previous PATH
@@ -506,19 +577,22 @@ shell_e2e_pids_gone() {
     return 0
 }
 
-# TERM every tracked PID, wait (bounded), then KILL the stragglers.
+shell_e2e_stop_pids() {
+    for _p in $1; do
+        kill "$_p" 2>/dev/null || true
+    done
+    shell_e2e_poll 2 shell_e2e_pids_gone "$1" && return 0
+    for _p in $1; do
+        kill -9 "$_p" 2>/dev/null || true
+    done
+    return 0
+}
+
 shell_e2e_kill_tracked() {
     [ -n "$SHELL_E2E_TRACKED_PIDS" ] || return 0
     _pids="$SHELL_E2E_TRACKED_PIDS"
     SHELL_E2E_TRACKED_PIDS=""
-    for _p in $_pids; do
-        kill "$_p" 2>/dev/null || true
-    done
-    shell_e2e_poll 2 shell_e2e_pids_gone "$_pids" && return 0
-    for _p in $_pids; do
-        kill -9 "$_p" 2>/dev/null || true
-    done
-    return 0
+    shell_e2e_stop_pids "$_pids"
 }
 
 # Stop every process holding a unix socket anywhere under $SHELL_E2E_ROOT.

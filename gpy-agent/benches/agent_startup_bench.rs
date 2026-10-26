@@ -84,11 +84,10 @@ fn bench_config_load(c: &mut Criterion) {
     let dir = TempDir::new().expect("create temp dir");
     let config_path = dir.path().join("config.toml");
     fs::write(&config_path, CONFIG_FIXTURE_TOML).expect("write fixture config");
-    let path_str = config_path.to_str().expect("path is valid utf8");
 
     // Confirm the fixture parses to its values, not defaults, so this isn't a
     // no-op parse.
-    let parsed = load_config_from_file(path_str).expect("parse fixture config");
+    let parsed = load_config_from_file(&config_path).expect("parse fixture config");
     assert_eq!(
         parsed.git.timeout_seconds.get(),
         45,
@@ -97,7 +96,7 @@ fn bench_config_load(c: &mut Criterion) {
 
     c.bench_function("config_load_from_file", |b| {
         b.iter(|| {
-            let config = load_config_from_file(black_box(path_str)).expect("parse config");
+            let config = load_config_from_file(black_box(&config_path)).expect("parse config");
             black_box(config);
         });
     });

@@ -3,6 +3,7 @@
 use crate::debug_log;
 use crate::{Error, Result};
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::signal;
@@ -12,9 +13,9 @@ pub(super) type ShutdownSignal = Pin<Box<dyn Future<Output = Result<()>> + Send>
 
 /// Logs startup diagnostics. The real bind (and its errors) happens in
 /// [`crate::ipc::server::EndpointHandle::start`]; a pre-check would race.
-pub(super) fn startup_checks(socket_path: &str) {
+pub(super) fn startup_checks(socket_path: &Path) {
     debug_log!("agent", "GPY Agent starting...");
-    debug_log!("agent", "Socket path: {}", socket_path);
+    debug_log!("agent", "Socket path: {}", socket_path.display());
     debug_log!("agent", "Starting IPC server...");
 }
 
@@ -42,7 +43,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
         let mut sigterm =
             signal::unix::signal(signal::unix::SignalKind::terminate()).map_err(|e| {
                 Error::process(
-                    "shutdown signal".to_owned(),
+                    "shutdown signal",
                     format!("Failed to setup SIGTERM handler: {e}"),
                 )
             })?;
@@ -50,8 +51,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
         tokio::select! {
             result = signal::ctrl_c() => {
                 result.map_err(|e| {
-                    Error::process(
-                        "shutdown signal".to_owned(),
+                    Error::process("shutdown signal",
                         format!("Failed to setup signal handler: {e}"),
                     )
                 })?;
@@ -70,7 +70,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
     Box::pin(async {
         signal::ctrl_c().await.map_err(|e| {
             Error::process(
-                "shutdown signal".to_owned(),
+                "shutdown signal",
                 format!("Failed to setup signal handler: {e}"),
             )
         })?;
@@ -105,9 +105,11 @@ pub const fn clock_signal_decision(
 
 #[cfg(all(test, unix))]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::*;
     use nix::sys::signal::{Signal, raise};
@@ -124,21 +126,26 @@ mod tests {
         );
     }
 
+    /// Poll `signal` once, which installs its handlers, and confirm it pends.
+    async fn arm(signal: &mut ShutdownSignal) {
+        assert!(
+            tokio::time::timeout(Duration::ZERO, signal).await.is_err(),
+            "no shutdown signal has been raised yet"
+        );
+    }
+
     /// Safe to self-raise: `create_shutdown_signal` installs its own handler first.
     #[tokio::test]
     #[serial(sigterm_self_signal)]
     async fn create_shutdown_signal_resolves_on_sigterm() {
-        let handle = tokio::spawn(create_shutdown_signal());
-
-        // Let the task install the SIGTERM handler before raising.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut signal = create_shutdown_signal();
+        arm(&mut signal).await;
 
         raise(Signal::SIGTERM).expect("raise SIGTERM");
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+        let result = tokio::time::timeout(Duration::from_secs(2), signal)
             .await
-            .expect("shutdown signal task should complete after SIGTERM")
-            .expect("shutdown signal task should not panic");
+            .expect("shutdown signal should resolve after SIGTERM");
         assert!(
             result.is_ok(),
             "shutdown signal future should resolve Ok on SIGTERM"
@@ -149,16 +156,14 @@ mod tests {
     #[tokio::test]
     #[serial(sigterm_self_signal)]
     async fn create_shutdown_signal_resolves_on_sigint() {
-        let handle = tokio::spawn(create_shutdown_signal());
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut signal = create_shutdown_signal();
+        arm(&mut signal).await;
 
         raise(Signal::SIGINT).expect("raise SIGINT");
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+        let result = tokio::time::timeout(Duration::from_secs(2), signal)
             .await
-            .expect("shutdown signal task should complete after SIGINT")
-            .expect("shutdown signal task should not panic");
+            .expect("shutdown signal should resolve after SIGINT");
         assert!(
             result.is_ok(),
             "shutdown signal future should resolve Ok on SIGINT"

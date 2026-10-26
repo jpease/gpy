@@ -47,16 +47,12 @@ fn validate_plugin_segment_themes(
 ///
 /// # Errors
 /// Returns the first invalid or colliding section name, in sorted order.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "ValidationError has no source field; InvalidSegmentName already carries the rejected key"
-)]
 fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> Result<()> {
     let mut sorted: Vec<&String> = keys.collect();
     sorted.sort_unstable();
     let mut names: Vec<SegmentName> = Vec::with_capacity(sorted.len());
     for key in sorted {
-        let name = SegmentName::new(key).map_err(|_| ValidationError {
+        let name = SegmentName::new(key).ok().ok_or_else(|| ValidationError {
             field_path: format!("segments.{key}"),
             kind: ValidationErrorKind::InvalidSegmentName { value: key.clone() },
         })?;
@@ -83,8 +79,6 @@ fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::validate_theme_config;
     use crate::theme::ThemeConfig;

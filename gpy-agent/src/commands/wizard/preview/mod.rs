@@ -14,9 +14,9 @@ use crate::formatter::directory_resolver::DirectoryResolver;
 use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::hostname_resolver::HostnameResolver;
-use crate::formatter::language_resolver::LanguageResolver;
+use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::separator::Glyphs;
-use crate::formatter::status_resolver::StatusResolver;
+use crate::formatter::status_resolver::{StatusResolver, status_symbol};
 use crate::formatter::username_resolver::UsernameResolver;
 use crate::plugin::BuiltinSegment;
 use crate::template::{
@@ -237,9 +237,12 @@ fn render_chain(
     let mut lines = vec![Line::from(main_spans)];
 
     if let Some(format) = theme.segments.character.format.as_deref() {
-        let resolver =
-            CharacterResolver::new(facts.sample_character_success, theme, SegmentPosition::LAST)
-                .with_glyphs(Glyphs::from(&config.ui));
+        let resolver = CharacterResolver::new(
+            facts.sample_character_success,
+            config,
+            theme,
+            SegmentPosition::LAST,
+        );
         let ctx = FormatterRenderContext::new(config, theme, SegmentPosition::LAST)
             .with_palette(palette.clone())
             .with_prev_colors(prev_foreground, prev_background);
@@ -262,7 +265,7 @@ fn render_git_span(
     let status = facts.repository_status.as_ref()?;
     let format = theme.segments.git.format.as_deref()?;
     let state = GitState::from_status(status);
-    let resolver = GitResolver::new(status, config, theme, state, ctx.position);
+    let resolver = GitResolver::new(status, state, config, theme, ctx.position);
     crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
 }
 
@@ -272,7 +275,14 @@ fn render_directory_span(
     ctx: &FormatterRenderContext<'_>,
 ) -> Option<Vec<TemplateSpan>> {
     let format = theme.segments.directory.format.as_deref()?;
-    let resolver = DirectoryResolver::new(SAMPLE_CWD, false, config, theme, ctx.position);
+    let resolver = DirectoryResolver::new(
+        SAMPLE_CWD,
+        false,
+        ctx.directory,
+        config,
+        theme,
+        ctx.position,
+    );
     crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
 }
 
@@ -293,18 +303,17 @@ fn render_segment(
         BuiltinSegment::Git => render_git_span(config, theme, facts, ctx),
         BuiltinSegment::Language => {
             let format = theme.segments.language.format.as_deref()?;
-            // Real prompt renders up to three; preview shows the first selected
-            // one, via `select_languages` so `show_versions` behaves the same.
-            let lang =
-                *crate::formatter::select_languages(config, theme, &facts.languages).first()?;
+            // Real prompt renders up to `MAX_LANGUAGE_PILLS`; preview shows the first
+            // selected one, via `select_languages` so `show_versions` behaves the same.
+            let lang = *select_languages(config, theme, &facts.languages).first()?;
             let resolver = LanguageResolver::new(lang, config, theme, ctx.position);
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Directory => render_directory_span(config, theme, ctx),
         BuiltinSegment::Duration => {
             let format = theme.segments.duration.format.as_deref()?;
-            let resolver = DurationResolver::new(facts.sample_duration_ms, theme, ctx.position)
-                .with_glyphs(Glyphs::from(&config.ui));
+            let resolver =
+                DurationResolver::new(facts.sample_duration_ms, config, theme, ctx.position);
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Status => theme.segments.status.format.as_deref().map_or_else(
@@ -317,9 +326,12 @@ fn render_segment(
                 ))
             },
             |format| {
-                let resolver =
-                    StatusResolver::new(facts.sample_character_success, theme, ctx.position)
-                        .with_glyphs(Glyphs::from(&config.ui));
+                let resolver = StatusResolver::new(
+                    facts.sample_character_success,
+                    config,
+                    theme,
+                    ctx.position,
+                );
                 crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
             },
         ),
@@ -334,10 +346,10 @@ fn render_segment(
             let resolver = HostnameResolver::new(
                 facts.hostname.clone(),
                 facts.sample_is_ssh,
+                config,
                 theme,
                 ctx.position,
-            )
-            .with_glyphs(Glyphs::from(&config.ui));
+            );
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Username => {
@@ -345,10 +357,10 @@ fn render_segment(
             let resolver = UsernameResolver::new(
                 facts.username.clone(),
                 facts.sample_is_root,
+                config,
                 theme,
                 ctx.position,
-            )
-            .with_glyphs(Glyphs::from(&config.ui));
+            );
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
     }
@@ -358,9 +370,9 @@ fn render_segment(
 /// global `ui.*` delimiters (`segments.clock.open`/`.close` are unused config).
 fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> Vec<TemplateSpan> {
     let clock = &theme.segments.clock;
-    let is_24h = clock.time_format.as_deref() == Some("24");
-    let leading_zero = clock.show_leading_zero.unwrap_or(false);
-    let show_seconds = clock.show_seconds.unwrap_or(false);
+    let is_24h = clock.time_format() == "24";
+    let leading_zero = clock.show_leading_zero();
+    let show_seconds = clock.show_seconds();
 
     let mut text = String::from(if leading_zero { " 09:41" } else { " 9:41" });
     if show_seconds {
@@ -388,33 +400,16 @@ fn status_pill_spans(
     glyphs: Glyphs,
 ) -> Vec<TemplateSpan> {
     let status = &theme.segments.status;
-    let (icon, nerd_fallback, plain_fallback, bg, fg) = if success {
-        (
-            status.ok_icon.as_ref(),
-            "✔",
-            "ok",
-            status.ok_bg_color.as_str(),
-            status.ok_text_color.as_str(),
-        )
+    let (bg, fg) = if success {
+        (status.ok_bg_color.as_str(), status.ok_text_color.as_str())
     } else {
         (
-            status.fail_icon.as_ref(),
-            "✖",
-            "err",
             status.fail_bg_color.as_str(),
             status.fail_text_color.as_str(),
         )
     };
-    let fallback = match glyphs {
-        Glyphs::Nerd => nerd_fallback,
-        Glyphs::Plain => plain_fallback,
-    };
     // The leading space matches the format-rendered pill and the shell fallback.
-    let text = format!(
-        " {}",
-        icon.and_then(|configured| glyphs.icon(configured.as_str()))
-            .unwrap_or(fallback)
-    );
+    let text = format!(" {}", status_symbol(theme, success, glyphs));
     standalone_pill_spans(text, bg, fg, theme, position)
 }
 
@@ -426,20 +421,17 @@ fn standalone_pill_spans(
     theme: &ThemeConfig,
     position: SegmentPosition,
 ) -> Vec<TemplateSpan> {
-    let (is_first, is_last) = (position.is_first, position.is_last);
     let ui = &theme.ui;
+    let (open_icon, open_config) = match position.is_first {
+        IsFirst::Yes => (ui.get_prompt_open_delimiter(), ui.prompt_open.as_ref()),
+        IsFirst::No => (ui.get_segment_open_delimiter(), ui.segment_open.as_ref()),
+    };
+    let (close_icon, close_config) = match position.is_last {
+        IsLast::Yes => (ui.get_prompt_close_delimiter(), ui.prompt_close.as_ref()),
+        IsLast::No => (ui.get_segment_close_delimiter(), ui.segment_close.as_ref()),
+    };
 
     let mut spans = Vec::new();
-    let open_icon = if is_first.as_bool() {
-        ui.get_prompt_open_delimiter()
-    } else {
-        ui.get_segment_open_delimiter()
-    };
-    let open_config = if is_first.as_bool() {
-        ui.prompt_open.as_ref()
-    } else {
-        ui.segment_open.as_ref()
-    };
     spans.extend(clock_cap_span(open_icon, open_config, bg, fg));
 
     spans.push(TemplateSpan {
@@ -453,7 +445,7 @@ fn standalone_pill_spans(
     });
 
     // Backdrop continues to a non-last closing cap, as in `gpy_section_standalone`.
-    if !is_last.as_bool() {
+    if position.is_last == IsLast::No {
         spans.push(TemplateSpan {
             text: " ".to_owned(),
             style: TemplateStyle {
@@ -465,16 +457,6 @@ fn standalone_pill_spans(
         });
     }
 
-    let close_icon = if is_last.as_bool() {
-        ui.get_prompt_close_delimiter()
-    } else {
-        ui.get_segment_close_delimiter()
-    };
-    let close_config = if is_last.as_bool() {
-        ui.prompt_close.as_ref()
-    } else {
-        ui.segment_close.as_ref()
-    };
     spans.extend(clock_cap_span(close_icon, close_config, bg, fg));
 
     spans
@@ -516,7 +498,7 @@ fn clock_cap_span(
     })
 }
 
-/// Mirrors `fish_ansi`'s `render_via_template` context plumbing.
+/// Mirrors `prompt`'s `render_via_template` context plumbing.
 fn template_ctx<'a>(
     resolver: &'a dyn VariableResolver,
     ctx: &FormatterRenderContext<'a>,

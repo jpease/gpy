@@ -32,11 +32,6 @@ forks="$SANDBOX/forks"
 : >"$calls"
 __gpy_trigger_data_refresh() { printf '%s\n' "$1 $2" >>"$calls"; }
 __gpy_register_with_agent() { :; }
-count() { wc -l <"$1" | tr -d ' '; }
-count_is() { [ "$(count "$calls")" -eq "$1" ]; }
-# expect_eq LABEL GOT WANT
-expect_eq() { if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1: got $2, want $3"; fi; }
-
 repo="$SANDBOX/my_repo dir:x"
 # The first call passes the throttle and dispatches; ten more inside the
 # 500 ms window are throttled and are the ones measured.
@@ -52,20 +47,20 @@ trap - DEBUG
 set +T
 eval "$saved_debug_trap"
 
-shell_e2e_poll 2 count_is 1 || true
-sleep 0.3 # window in which a throttle-violating dispatch would land
-expect_eq "one dispatch for eleven calls inside the window" "$(count "$calls")" "1"
+shell_e2e_poll 2 shell_e2e_has_lines "$calls" 1 || true
+sleep "$SHELL_E2E_ABSENCE_WINDOW" # window in which a throttle-violating dispatch would land
+expect_eq "one dispatch for eleven calls inside the window" "$(shell_e2e_count_lines "$calls")" "1"
 
 if [[ -n "${EPOCHREALTIME:-}" || "${__gpy_have_printf_epoch:-0}" == "1" ]]; then
     expect_eq "bash $BASH_VERSION: throttled calls run nothing in a subshell" \
-        "$(count "$forks")" "0"
+        "$(shell_e2e_count_lines "$forks")" "0"
 fi
 
 # Past the window the same bucket dispatches again; a whole second, as
 # bash 3.2 reads the clock in seconds.
 sleep 1
 __gpy_maybe_refresh git "$repo" git_last true black ""
-shell_e2e_poll 2 count_is 2 || true
-expect_eq "a call after the window dispatches" "$(count "$calls")" "2"
+shell_e2e_poll 2 shell_e2e_has_lines "$calls" 2 || true
+expect_eq "a call after the window dispatches" "$(shell_e2e_count_lines "$calls")" "2"
 
 test_finish "throttled __gpy_maybe_refresh forks nothing"

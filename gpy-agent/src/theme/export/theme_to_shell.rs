@@ -132,23 +132,18 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
     push_line(output, format_args!("            fi"));
     push_line(output, format_args!("            ;;"));
     push_line(output, format_args!("        status)"));
-    let (status_var, ok_var, fail_var) = (
-        "__gpy_last_status",
-        "__color_status_ok_bg",
-        "__color_status_fail_bg",
+    push_line(
+        output,
+        format_args!("            if [[ \"${{__gpy_last_status:-0}}\" -eq 0 ]]; then"),
     );
     push_line(
         output,
-        format_args!("            if [[ \"${{{status_var}:-0}}\" -eq 0 ]]; then"),
-    );
-    push_line(
-        output,
-        format_args!("                __gpy_sbg=\"${{{ok_var}:-green}}\""),
+        format_args!("                __gpy_sbg=\"${{__color_status_ok_bg:-green}}\""),
     );
     push_line(output, format_args!("            else"));
     push_line(
         output,
-        format_args!("                __gpy_sbg=\"${{{fail_var}:-red}}\""),
+        format_args!("                __gpy_sbg=\"${{__color_status_fail_bg:-red}}\""),
     );
     push_line(output, format_args!("            fi"));
     push_line(output, format_args!("            ;;"));

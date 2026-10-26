@@ -8,22 +8,11 @@
 # 'transparent'` to stderr on every prompt render. The rendered bg must resolve
 # to the terminal default (SGR 49) with no stderr noise.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/renderer.fish"
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
 
 # Minimal delimiter/theme vars so the renderer runs in isolation.
 set -g __segment_delim_first ""
@@ -44,9 +33,9 @@ set -l out (gpy_section_standalone transparent white "12:00" "" 2>$err_file)
 set -l err (cat $err_file)
 
 if not string match -q '*Unknown color*' -- "$err"
-    check "standalone: transparent bg emits no set_color error" pass
+    check "standalone: transparent bg emits no set_color error" pass pass
 else
-    check "standalone: transparent bg emits no set_color error (stderr: $err)" fail
+    check "standalone: transparent bg emits no set_color error (stderr: $err)" pass fail
 end
 
 # Content bg must resolve to the terminal default, not a literal color. fish 4
@@ -55,9 +44,9 @@ end
 # SGR immediately before the text carries no *real* (non-default) bg color
 # (40-47 / 100-107 / 48;5; / 48;2;) rather than matching a version-specific code.
 if string match -qr '(4[0-7]|10[0-7]|48;[25];)[0-9;]*m12:00' -- "$out"
-    check "standalone: transparent bg renders as default background (got: $out)" fail
+    check "standalone: transparent bg renders as default background (got: $out)" pass fail
 else
-    check "standalone: transparent bg renders as default background" pass
+    check "standalone: transparent bg renders as default background" pass pass
 end
 
 # --- gpy_section_append (used by multi-part shell-side segments) ---
@@ -66,9 +55,9 @@ gpy_section_append transparent white x 2>$err_file2 >/dev/null
 set -l err2 (cat $err_file2)
 
 if not string match -q '*Unknown color*' -- "$err2"
-    check "append: transparent bg emits no set_color error" pass
+    check "append: transparent bg emits no set_color error" pass pass
 else
-    check "append: transparent bg emits no set_color error (stderr: $err2)" fail
+    check "append: transparent bg emits no set_color error (stderr: $err2)" pass fail
 end
 
 # --- gpy_section_standalone, delimiters that borrow a transparent bg ---
@@ -88,17 +77,13 @@ for position in first middle
         set -l err3 (cat $err_file3)
         rm -f $err_file3
         if not string match -q '*Unknown color*' -- "$err3"
-            check "standalone ($position, last='$last'): match_bg/match_text over a transparent segment emits no set_color error" pass
+            check "standalone ($position, last='$last'): match_bg/match_text over a transparent segment emits no set_color error" pass pass
         else
-            check "standalone ($position, last='$last'): match_bg/match_text over a transparent segment emits no set_color error (stderr: $err3)" fail
+            check "standalone ($position, last='$last'): match_bg/match_text over a transparent segment emits no set_color error (stderr: $err3)" pass fail
         end
     end
 end
 
 rm -f $err_file $err_file2
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count renderer transparent-bg tests passed"
+test_finish "renderer transparent-bg tests"

@@ -219,11 +219,11 @@ gpy theme list
 Available Themes:
 =================
 
-  default *
-  text
+   default * [builtin]
+   text [builtin]
 ```
 
-The `*` marker indicates the currently active theme.
+The `*` marker indicates the currently active theme. `[builtin]`/`[user]`/`[plugin:<id>]` shows the theme's source.
 
 ---
 
@@ -437,14 +437,14 @@ gpy palette list
 Available Palettes:
 ===================
 
-  catppuccin-frappe [builtin]
-  catppuccin-latte [builtin]
-  catppuccin-macchiato * [builtin]
-  catppuccin-mocha [builtin]
-  default [builtin]
-  gruvbox-dark-medium [builtin]
-  nord [builtin]
-  starship [builtin]
+   catppuccin-frappe [builtin]
+   catppuccin-latte [builtin]
+   catppuccin-macchiato * [builtin]
+   catppuccin-mocha [builtin]
+   default [builtin]
+   gruvbox-dark-medium [builtin]
+   nord [builtin]
+   starship [builtin]
 ```
 
 The `*` marker indicates the currently active palette. `[builtin]`/`[user]`/`[plugin:<id>]` shows the palette's source.
@@ -733,14 +733,15 @@ gpy config list git.icons
 **Output:**
 ```text
 Available configuration keys:
+=============================
 
-  git.icons.ahead [read-write]
-    Ahead indicator
+   git.icons.ahead [read-write]
+      Ahead indicator
 
-  git.icons.behind [read-write]
-    Behind indicator
+   git.icons.behind [read-write]
+      Behind indicator
 
-  ...
+   ...
 
 Total: 9 keys
 ```
@@ -852,7 +853,35 @@ Opened config: /home/user/.config/gpy/config.toml
 
 Launch an interactive TUI for picking a theme, palette, and enabled segments, with a live preview of the resulting prompt rendered as you navigate.
 
-Keys: `Tab` moves to the next section, `Space`/`Enter` toggles or selects the highlighted item, `s` saves and exits, `q` quits (prompting to discard changes if any are pending).
+Keys (inside the wizard, `?` lists the ones that apply to the current view):
+
+| Key | When | Action |
+|---|---|---|
+| `Tab` | browsing, filtering | next section |
+| `Shift+Tab` | browsing, filtering | previous section |
+| `Up` / `Left` | browsing, filtering | previous item |
+| `Down` / `Right` | browsing, filtering | next item |
+| `Space` / `Enter` | browsing, filtering | select/toggle |
+| `/` | browsing | filter all sections |
+| `?` | browsing | help |
+| `s` | browsing | save and exit |
+| `q` / `Esc` | browsing | quit |
+| `[` | browsing, `directory` highlighted | previous display style |
+| `]` | browsing, `directory` highlighted | next display style |
+| `[` / `]` | browsing, `language` highlighted | switch icon/text display |
+| `v` | browsing, `language` highlighted | show/hide versions |
+| `[` / `]` | browsing, `clock` highlighted | switch 12h/24h time |
+| `:` | browsing, `clock` highlighted | show/hide seconds |
+| `m` | browsing, `duration` highlighted | show/hide milliseconds |
+| `b` | browsing, `git` highlighted | show/hide branch |
+| `a` | browsing, `git` highlighted | show/hide ahead/behind |
+| `t` | browsing, `git` highlighted | show/hide stash |
+| `Esc` | filtering | clear and leave filter |
+| `Backspace` | filtering | delete last filter character |
+| `?` / `Esc` | help open | close help |
+| `y` / `Y` | discard prompt | discard changes and quit |
+
+`Space`/`Enter` selects the highlighted theme or palette, or toggles the highlighted segment. The filter narrows all three sections at once; while filtering, any other character is added to the filter. Quitting with unsaved changes asks `Discard changes and quit? [y/N]`; any key other than `y`/`Y` returns to the wizard. The `language` and `directory` options are saved to `config.toml`; the `clock`, `duration` and `git` options are saved to a user copy of the active theme.
 
 Changes are only written to the config file on save; quitting without saving leaves the existing configuration untouched.
 
@@ -876,7 +905,7 @@ gpy config wizard
 ├ Preview ───────────────────────────────────────────┤
 │ ~/code/gpy (main) rust:1.80.0                        │
 └──────────────────────────────────────────────────────┘
-[tab] next section  [space/enter] toggle/select  [s] save & exit  [q] quit
+[?] help  [s] save and exit  [q/Esc] quit
 ```
 
 ---
@@ -902,13 +931,14 @@ gpy doctor
 **Output:**
 ```
 GPY Doctor - System Health Report
+=================================
 
 [Agent]
-  Checking process... ✓ Running
+   Checking process... ✓ Running
 
 [Configuration]
-  Checking config file... ✓ Valid
-  ...
+   Checking config file... ✓ Valid
+   ...
 
 Summary:
 ✓ All checks passed.
@@ -969,7 +999,7 @@ shell or through separate requests and are not included. Exits `1` with an
 
 ### Plugin Commands
 
-Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) are declared for every shell; see [Plugin Framework](../dev/plugins.md).
+Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) have a defined, validated contract, but no shell executes them yet; see [Plugin Framework](../dev/plugins.md#script-segments).
 
 #### `gpy plugin list`
 

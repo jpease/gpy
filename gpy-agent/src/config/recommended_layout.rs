@@ -77,7 +77,7 @@ pub(crate) struct UserSetLayoutFields {
 /// Probe the raw `config.toml` for which layout keys the user explicitly set.
 ///
 /// Missing or unparseable file yields all-`false`, so `--force` fills everything.
-pub(crate) fn user_set_layout_fields(path: &str) -> UserSetLayoutFields {
+pub(crate) fn user_set_layout_fields(path: &std::path::Path) -> UserSetLayoutFields {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return UserSetLayoutFields::default();
     };
@@ -335,11 +335,6 @@ pub(crate) fn pending_layout(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{UserSetLayoutFields, pending_layout, user_set_layout_fields};
     use crate::config;
@@ -607,7 +602,7 @@ mod tests {
             "[ui]\nshow_icons = true\n\n[ui.directory]\ntruncation_length = 4\n",
         )
         .expect("write config");
-        let user_set = user_set_layout_fields(path.to_str().expect("path str"));
+        let user_set = user_set_layout_fields(&path);
         assert!(user_set.show_icons, "show_icons key is present");
         assert!(
             user_set.directory_truncation_length,
@@ -622,7 +617,8 @@ mod tests {
 
     #[test]
     fn user_set_layout_fields_missing_file_is_all_false() {
-        let user_set = user_set_layout_fields("/nonexistent/path/config.toml");
+        let user_set =
+            user_set_layout_fields(std::path::Path::new("/nonexistent/path/config.toml"));
         assert_eq!(user_set, UserSetLayoutFields::default());
     }
 

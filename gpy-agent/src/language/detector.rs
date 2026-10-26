@@ -21,29 +21,26 @@ pub struct Detector;
 impl Detector {
     /// Detect languages in a directory, aggregated by normalized name.
     #[must_use]
-    pub fn detect_directory<P: AsRef<Path>>(path: P) -> Vec<DetectedLanguage> {
+    pub fn detect_directory(path: &Path) -> Vec<DetectedLanguage> {
         Self::detect_directory_impl(path, true)
     }
 
-    /// Benchmark-only variant that skips the per-file size lookup.
+    /// [`Self::detect_directory`] without the per-file size lookup, for benchmarks.
+    #[cfg(feature = "test-support")]
     #[must_use]
-    #[doc(hidden)]
-    pub fn detect_directory_without_metadata<P: AsRef<Path>>(path: P) -> Vec<DetectedLanguage> {
+    pub fn detect_directory_without_metadata(path: &Path) -> Vec<DetectedLanguage> {
         Self::detect_directory_impl(path, false)
     }
 
-    fn detect_directory_impl<P: AsRef<Path>>(
-        path: P,
-        include_file_sizes: bool,
-    ) -> Vec<DetectedLanguage> {
-        let detections = walk_directory(path.as_ref(), include_file_sizes);
+    fn detect_directory_impl(path: &Path, include_file_sizes: bool) -> Vec<DetectedLanguage> {
+        let detections = walk_directory(path, include_file_sizes);
         languages_from_aggregates(aggregate_detections(detections))
     }
 
     /// Detect languages using the configured [`DetectionMode`].
     #[must_use]
-    pub fn detect_directory_for_mode<P: AsRef<Path>>(
-        path: P,
+    pub fn detect_directory_for_mode(
+        path: &Path,
         mode: crate::config::types::DetectionMode,
     ) -> Vec<DetectedLanguage> {
         match mode {
@@ -57,13 +54,12 @@ impl Detector {
     /// is present. Extensions are not used: a stray `.py` script already has
     /// one, so only a real marker distinguishes "a project of X".
     #[must_use]
-    pub fn detect_directory_hybrid<P: AsRef<Path>>(path: P) -> Vec<DetectedLanguage> {
-        let path_ref = path.as_ref();
-        let content = Self::detect_directory(path_ref);
+    pub(crate) fn detect_directory_hybrid(path: &Path) -> Vec<DetectedLanguage> {
+        let content = Self::detect_directory(path);
         if content.is_empty() {
             return content;
         }
-        let marker_file_languages = Self::directory_marker_file_languages(path_ref);
+        let marker_file_languages = Self::directory_marker_file_languages(path);
         content
             .into_iter()
             .filter(|lang| marker_file_languages.contains(lang.name.as_str()))
@@ -81,29 +77,36 @@ impl Detector {
     /// can take minutes. External paths MUST use this; known repo roots may
     /// call [`Self::detect_directory_for_mode`].
     #[must_use]
-    pub fn detect_directory_bounded<P: AsRef<Path>>(
-        path: P,
+    pub fn detect_directory_bounded(
+        path: &Path,
         mode: crate::config::types::DetectionMode,
     ) -> Vec<DetectedLanguage> {
-        Self::detect_directory_bounded_with_budget(path, mode, CONTENT_SCAN_FILE_BUDGET)
+        Self::detect_directory_bounded_within(path, mode, CONTENT_SCAN_FILE_BUDGET)
     }
 
-    /// [`Self::detect_directory_bounded`] with an injectable file budget.
+    /// [`Self::detect_directory_bounded`] with an explicit file budget.
+    #[cfg(feature = "test-support")]
     #[must_use]
-    #[doc(hidden)]
-    pub fn detect_directory_bounded_with_budget<P: AsRef<Path>>(
-        path: P,
+    pub fn detect_directory_bounded_with_budget(
+        path: &Path,
         mode: crate::config::types::DetectionMode,
         budget: usize,
     ) -> Vec<DetectedLanguage> {
-        let path_ref = path.as_ref();
-        let needs_fallback =
-            matches!(
-                mode,
-                crate::config::types::DetectionMode::Content
-                    | crate::config::types::DetectionMode::Hybrid
-            ) && (crate::watcher::multi_repo::MultiRepoWatcher::find_git_root(path_ref).is_none()
-                || exceeds_file_budget(path_ref, budget));
+        Self::detect_directory_bounded_within(path, mode, budget)
+    }
+
+    /// [`Self::detect_directory_bounded`] with a content scan capped at `budget` files.
+    fn detect_directory_bounded_within(
+        path_ref: &Path,
+        mode: crate::config::types::DetectionMode,
+        budget: usize,
+    ) -> Vec<DetectedLanguage> {
+        let needs_fallback = matches!(
+            mode,
+            crate::config::types::DetectionMode::Content
+                | crate::config::types::DetectionMode::Hybrid
+        ) && (crate::git::find_git_dir_only(path_ref).is_none()
+            || exceeds_file_budget(path_ref, budget));
         let bounded_mode = if needs_fallback {
             crate::config::types::DetectionMode::Markers
         } else {
@@ -115,8 +118,8 @@ impl Detector {
     /// Detect languages by marker files/extensions among immediate entries,
     /// ordered by evidence count then name. Unreadable directories yield none.
     #[must_use]
-    pub fn detect_directory_markers<P: AsRef<Path>>(path: P) -> Vec<DetectedLanguage> {
-        let evidence = marker_evidence(path.as_ref(), true);
+    pub(crate) fn detect_directory_markers(path: &Path) -> Vec<DetectedLanguage> {
+        let evidence = marker_evidence(path, true);
 
         let mut languages: Vec<DetectedLanguage> = evidence
             .into_iter()
@@ -140,20 +143,18 @@ impl Detector {
     ///
     /// # Errors
     /// If an ambiguous path's fallback content read fails.
-    pub fn detect_file<P: AsRef<Path>>(path: P) -> Result<Option<DetectedLanguage>> {
-        let file_path = path.as_ref();
-
-        let detected = detect_language(file_path).map_err(|error| {
+    pub fn detect_file(path: &Path) -> Result<Option<DetectedLanguage>> {
+        let detected = detect_language(path).map_err(|error| {
             crate::Error::language(format!(
                 "language detection failed for {}: {error}",
-                file_path.display()
+                path.display()
             ))
         })?;
         let Some(language) = detected else {
             return Ok(None);
         };
 
-        let file_size = std::fs::metadata(file_path).map_or(0, |metadata| metadata.len());
+        let file_size = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
         Ok(Some(DetectedLanguage {
             name: normalize_language_name(language.name()).to_owned(),
             confidence: 1.0, // Single-file detection has no prevalence to weigh.
@@ -446,20 +447,8 @@ pub fn normalize_language_name(detected_name: &str) -> &str {
     crate::language::metadata::get_canonical_name(detected_name).unwrap_or(detected_name)
 }
 
-/// Get a language's background color from the theme.
-#[must_use]
-pub fn get_language_color_from_theme(
-    language: &str,
-    theme: &crate::config::LanguageTheme,
-) -> String {
-    theme.get_bg_color(language).to_owned()
-}
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

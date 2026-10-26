@@ -3,7 +3,6 @@
 //! zero-width markers. Unresolved palette/prev colors are no-ops, never panics.
 
 use crate::template::{Attr, Color, Span, SpanKind, Style, canonical_ansi_name};
-use std::fmt::Write as _;
 
 /// Output dialect. Bash/zsh expand `PS1`/`PROMPT` as code on every draw, so
 /// their dialects escape text; [`Self::Ansi`] (fish) emits it verbatim.
@@ -47,51 +46,55 @@ impl PromptDialect {
 /// (Starship's convention) so trailing literal text renders uncolored.
 #[must_use]
 pub fn encode_ansi(spans: &[Span]) -> String {
-    encode_sgr(spans, push_sgr, |out, span| out.push_str(&span.text))
+    encode_sgr(spans, ("\x1b[", "m"), |_| None)
 }
 
 /// Encode `spans` as bash `PS1` source: SGR inside `\[ \]`, text escaped;
 /// `PromptToken` spans (`\D{…}`) emitted raw.
 #[must_use]
 pub fn encode_bash_prompt(spans: &[Span]) -> String {
-    encode_sgr(spans, push_bash_sgr, push_bash_text)
+    encode_sgr(spans, ("\\[\x1b[", "m\\]"), bash_escape)
 }
 
 /// Encode `spans` as zsh `PROMPT` source: SGR inside `%{ %}`, text escaped;
 /// `PromptToken` spans (`%D{…}`) emitted raw.
 #[must_use]
 pub fn encode_zsh_prompt(spans: &[Span]) -> String {
-    encode_sgr(spans, push_zsh_sgr, push_zsh_text)
+    encode_sgr(spans, ("%{\x1b[", "m%}"), zsh_escape)
 }
 
-/// Span walk shared by every SGR encoder. A styled span that would inherit
-/// from the previous one folds in a reset (`0;<codes>`); otherwise only new codes.
+/// Span walk shared by every SGR encoder. `wrap` is the (open, close) text around
+/// each SGR sequence; `escape` maps a text character to its replacement, if any.
+/// A styled span that would inherit from the previous one folds in a reset
+/// (`0;<codes>`); otherwise only new codes.
 fn encode_sgr(
     spans: &[Span],
-    sgr: impl Fn(&mut String, &str),
-    text: impl Fn(&mut String, &Span),
+    wrap: (&str, &str),
+    escape: fn(char) -> Option<&'static str>,
 ) -> String {
+    let (open_seq, close_seq) = wrap;
     let mut out = String::with_capacity(64_usize);
     let mut open: Option<&Style> = None;
     for span in spans {
-        let codes = ansi_codes(&span.style);
-        if codes.is_empty() {
-            if open.take().is_some() {
-                sgr(&mut out, "0");
-            }
-        } else {
-            let joined = codes.join(";");
+        if emits_codes(&span.style) {
+            out.push_str(open_seq);
             if open.is_some_and(|before| leaks_into(before, &span.style)) {
-                sgr(&mut out, &format!("0;{joined}"));
-            } else {
-                sgr(&mut out, &joined);
+                out.push_str("0;");
             }
+            push_codes(&mut out, &span.style);
+            out.push_str(close_seq);
             open = Some(&span.style);
+        } else if open.take().is_some() {
+            out.push_str(open_seq);
+            out.push('0');
+            out.push_str(close_seq);
         }
-        text(&mut out, span);
+        push_text(&mut out, span, escape);
     }
     if open.is_some() {
-        sgr(&mut out, "0");
+        out.push_str(open_seq);
+        out.push('0');
+        out.push_str(close_seq);
     }
     out
 }
@@ -99,83 +102,76 @@ fn encode_sgr(
 /// Whether `next`, written after `prev` without reset, inherits from it (SGR is additive).
 fn leaks_into(prev: &Style, next: &Style) -> bool {
     prev.attrs.iter().any(|attr| !next.attrs.contains(attr))
-        || (sets_color(prev.fg.as_ref(), false) && !sets_color(next.fg.as_ref(), false))
-        || (sets_color(prev.bg.as_ref(), true) && !sets_color(next.bg.as_ref(), true))
+        || (sets_color(prev.fg.as_ref()) && !sets_color(next.fg.as_ref()))
+        || (sets_color(prev.bg.as_ref()) && !sets_color(next.bg.as_ref()))
 }
 
 /// Whether `color` emits any SGR code (unresolved variants emit none).
-fn sets_color(color: Option<&Color>, bg: bool) -> bool {
-    color.is_some_and(|value| {
-        let mut codes = Vec::new();
-        push_color(&mut codes, value, bg);
-        !codes.is_empty()
-    })
+fn sets_color(color: Option<&Color>) -> bool {
+    match color {
+        Some(Color::Named(name)) => named_base(name).is_some(),
+        Some(Color::Rgb { .. } | Color::Ansi256(_)) => true,
+        Some(Color::Palette(_) | Color::PrevFg | Color::PrevBg) | None => false,
+    }
 }
 
-/// Write one raw SGR sequence, `ESC [ codes m`.
-fn push_sgr(out: &mut String, codes: &str) {
-    let _ = write!(out, "\x1b[{codes}m");
+/// Whether `style` emits at least one SGR code.
+fn emits_codes(style: &Style) -> bool {
+    !style.attrs.is_empty() || sets_color(style.fg.as_ref()) || sets_color(style.bg.as_ref())
 }
 
-/// Write one SGR sequence inside bash's non-printing markers `\[ \]`.
-fn push_bash_sgr(out: &mut String, codes: &str) {
-    let _ = write!(out, "\\[\x1b[{codes}m\\]");
-}
-
-/// Write one SGR sequence inside zsh's non-printing markers `%{ %}`.
-fn push_zsh_sgr(out: &mut String, codes: &str) {
-    let _ = write!(out, "%{{\x1b[{codes}m%}}");
-}
-
-/// Write text escaped for bash `PS1` with `promptvars`: prompt decoding then
-/// double-quote expansion, so `\` needs four backslashes and `$`/`` ` `` need `\\`.
-/// `\$` is avoided: it decodes to `#` when euid is 0.
-fn push_bash_text(out: &mut String, span: &Span) {
+/// Write `span`'s text, escaping each character through `escape` unless the
+/// span is a `PromptToken`, which the shell must interpret and so stays raw.
+///
+/// Bash with `promptvars` decodes prompt escapes then double-quote expands, so
+/// `\` needs four backslashes and `$`/`` ` `` need `\\`; `\$` is avoided since
+/// it decodes to `#` when euid is 0. Zsh with `prompt_subst` and
+/// `prompt_percent` needs `\`, `$` and `` ` `` backslash-quoted and `%` doubled.
+fn push_text(out: &mut String, span: &Span, escape: fn(char) -> Option<&'static str>) {
     if span.kind == SpanKind::PromptToken {
         out.push_str(&span.text);
         return;
     }
     for ch in span.text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\\\\\"),
-            '$' => out.push_str("\\\\$"),
-            '`' => out.push_str("\\\\`"),
-            _ => out.push(ch),
+        match escape(ch) {
+            Some(replacement) => out.push_str(replacement),
+            None => out.push(ch),
         }
     }
 }
 
-/// Write a span's text escaped for zsh `PROMPT` with `prompt_subst` and
-/// `prompt_percent` on: backslash-quote `\`, `$` and `` ` ``, and double `%`.
-fn push_zsh_text(out: &mut String, span: &Span) {
-    if span.kind == SpanKind::PromptToken {
-        out.push_str(&span.text);
-        return;
-    }
-    for ch in span.text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '$' => out.push_str("\\$"),
-            '`' => out.push_str("\\`"),
-            '%' => out.push_str("%%"),
-            _ => out.push(ch),
-        }
+const fn bash_escape(ch: char) -> Option<&'static str> {
+    match ch {
+        '\\' => Some("\\\\\\\\"),
+        '$' => Some("\\\\$"),
+        '`' => Some("\\\\`"),
+        _ => None,
     }
 }
 
-/// Collect SGR numeric codes (as strings) for one style, in attr→fg→bg order.
-fn ansi_codes(style: &Style) -> Vec<String> {
-    let mut codes: Vec<String> = Vec::new();
+const fn zsh_escape(ch: char) -> Option<&'static str> {
+    match ch {
+        '\\' => Some("\\\\"),
+        '$' => Some("\\$"),
+        '`' => Some("\\`"),
+        '%' => Some("%%"),
+        _ => None,
+    }
+}
+
+/// Write the `;`-joined SGR codes for one style in attr→fg→bg order.
+fn push_codes(out: &mut String, style: &Style) {
+    let mut first = true;
     for attr in &style.attrs {
-        codes.push(attr_code(*attr).to_owned());
+        push_separator(out, &mut first);
+        out.push_str(attr_code(*attr));
     }
     if let Some(fg) = &style.fg {
-        push_color(&mut codes, fg, false);
+        push_color(out, &mut first, fg, false);
     }
     if let Some(bg) = &style.bg {
-        push_color(&mut codes, bg, true);
+        push_color(out, &mut first, bg, true);
     }
-    codes
 }
 
 const fn attr_code(attr: Attr) -> &'static str {
@@ -191,56 +187,85 @@ const fn attr_code(attr: Attr) -> &'static str {
     }
 }
 
-/// Push SGR codes for `color` onto `codes`. `bg` selects background variants.
-/// Unresolved palette/prev variants are skipped (defensive: eval resolves them).
-fn push_color(codes: &mut Vec<String>, color: &Color, bg: bool) {
+/// Write a `;` before every code but the first of a style.
+fn push_separator(out: &mut String, first: &mut bool) {
+    if !*first {
+        out.push(';');
+    }
+    *first = false;
+}
+
+/// Write SGR codes for `color` after a separator each. `bg` selects
+/// background variants. Unresolved palette/prev variants write nothing
+/// (defensive: eval resolves them).
+fn push_color(out: &mut String, first: &mut bool, color: &Color, bg: bool) {
+    let lead = if bg { "48" } else { "38" };
     match color {
         Color::Named(name) => {
-            if let Some(code) = named_code(name, bg) {
-                codes.push(code);
+            if let Some(base) = named_base(name) {
+                push_separator(out, first);
+                push_u8(out, if bg { base.saturating_add(10) } else { base });
             }
         }
         Color::Rgb { r, g, b } => {
-            let lead = if bg { "48" } else { "38" };
-            codes.push(format!("{lead};2;{r};{g};{b}"));
+            push_separator(out, first);
+            out.push_str(lead);
+            out.push_str(";2;");
+            push_u8(out, *r);
+            out.push(';');
+            push_u8(out, *g);
+            out.push(';');
+            push_u8(out, *b);
         }
         Color::Ansi256(index) => {
-            let lead = if bg { "48" } else { "38" };
-            codes.push(format!("{lead};5;{index}"));
+            push_separator(out, first);
+            out.push_str(lead);
+            out.push_str(";5;");
+            push_u8(out, *index);
         }
         Color::Palette(_) | Color::PrevFg | Color::PrevBg => {}
     }
 }
 
-/// Map an engine named color to its SGR code string, or `None` if unrecognized.
-fn named_code(name: &str, bg: bool) -> Option<String> {
+/// Write `value` in decimal without going through `fmt`.
+fn push_u8(out: &mut String, value: u8) {
+    if value >= 100 {
+        out.extend(char::from_digit(u32::from(value / 100), 10));
+    }
+    if value >= 10 {
+        out.extend(char::from_digit(u32::from(value / 10 % 10), 10));
+    }
+    out.extend(char::from_digit(u32::from(value % 10), 10));
+}
+
+/// Foreground SGR code of an engine named color, or `None` if unrecognized.
+/// The background code is this plus 10.
+fn named_base(name: &str) -> Option<u8> {
     let canonical = if name == "default" {
         name
     } else {
         canonical_ansi_name(name)?
     };
-    let base: u16 = match canonical {
-        "black" => 30,
-        "red" => 31,
-        "green" => 32,
-        "yellow" => 33,
-        "blue" => 34,
-        "purple" => 35,
-        "cyan" => 36,
-        "white" => 37,
-        "default" => 39,
-        "bright-black" => 90,
-        "bright-red" => 91,
-        "bright-green" => 92,
-        "bright-yellow" => 93,
-        "bright-blue" => 94,
-        "bright-purple" => 95,
-        "bright-cyan" => 96,
-        "bright-white" => 97,
-        _ => return None,
-    };
-    let code = if bg { base.checked_add(10)? } else { base };
-    Some(code.to_string())
+    match canonical {
+        "black" => Some(30),
+        "red" => Some(31),
+        "green" => Some(32),
+        "yellow" => Some(33),
+        "blue" => Some(34),
+        "purple" => Some(35),
+        "cyan" => Some(36),
+        "white" => Some(37),
+        "default" => Some(39),
+        "bright-black" => Some(90),
+        "bright-red" => Some(91),
+        "bright-green" => Some(92),
+        "bright-yellow" => Some(93),
+        "bright-blue" => Some(94),
+        "bright-purple" => Some(95),
+        "bright-cyan" => Some(96),
+        "bright-white" => Some(97),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -343,7 +368,7 @@ mod tests {
     fn default_directory_spans() -> (Vec<Span>, String) {
         use crate::config::Config;
         use crate::formatter::SegmentPosition;
-        use crate::formatter::directory_resolver::DirectoryResolver;
+        use crate::formatter::directory_resolver::{DirectoryEnv, DirectoryResolver};
         use crate::template::{RenderContext as TemplateContext, render};
 
         let config = Config::default();
@@ -359,6 +384,7 @@ mod tests {
         let resolver = DirectoryResolver::new(
             "/home/user/project",
             false,
+            DirectoryEnv::unprobed(),
             &config,
             &theme,
             SegmentPosition::MIDDLE,

@@ -60,7 +60,7 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 5. ← one line of rendered text, which the shell prints
 ```
 
-**Timing**: a cached response costs one IPC round trip (`ipc_ping` baseline 0.037 ms); a fresh git query on a 100-file repository baselines at 17.2 ms (`git_status_100_files`). Both figures are from `tests/performance-baselines.json`.
+**Timing**: a cached response costs one IPC round trip (0.037 ms measured for an IPC ping); a fresh git query on a 100-file repository measured 17.2 ms. Both figures are 2026-05-15 diagnostics from one dev machine, not budgets; the budgets are in `tests/performance-baselines.json`.
 
 ---
 
@@ -193,7 +193,7 @@ concatenates them into the prompt.
 
 **Limitations**:
 - No native JSON parsing (uses `socat` or `nc -U`)
-- `PROMPT_COMMAND` less elegant than Fish/Zsh hooks
+- `PROMPT_COMMAND` runs synchronously on each prompt without Fish/Zsh repaint hooks
 - Signal handling more complex (no clean repaint primitive)
 - Code avoids associative arrays, so it runs on Bash 3.2 (macOS default)
 - Duration needs `EPOCHREALTIME` (Bash 5.0+); Bash 3.2 disables that segment
@@ -693,7 +693,7 @@ for equality and restart the agent on mismatch. There is no negotiation.
 
 ### Performance Characteristics
 
-A cached git status costs one IPC round trip (`tests/performance-baselines.json`: `ipc_latency` budget 1 ms target, 1.5 ms max; `ipc_ping` baseline 0.037 ms). A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh cache entry returns without spawning git at all.
+A cached git status costs one IPC round trip (`tests/performance-baselines.json`: `ipc_latency` budget 1 ms target, 1.5 ms max; measured 0.037 ms on a dev machine, 2026-05-15). A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh cache entry returns without spawning git at all.
 
 ### Security Considerations
 
@@ -732,7 +732,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 - One subprocess returns branch, ahead/behind and file status together
 - `--porcelain=v2` is machine-readable and has been stable since Git 2.11.0 (2016)
 - Spawn overhead is real but small against what the untracked cache saves:
-  see `git_status_cold`/`git_status_warm` in `tests/performance-baselines.json`
+  see the `git_status_cold` budget in `tests/performance-baselines.json`
 
 ### Why Separate Debouncing and Cache Cooldown?
 
@@ -910,7 +910,7 @@ These tests cover the bug where disabling `git.enabled` sent no reload notificat
 
 **Fish** (tests/fish/):
 - `e2e_live_updates_signal.test.fish`: Repaint signal delivery, agent restart
-- `e2e_agent_autostart.test.fish`: Auto-start on Fish init
+- `e2e_interactive_session.test.fish`: Real `fish -i` on a pty: idle repaint, registration, config reload
 - `doorbell_signal.test.fish`: SIGURG handler, flag files, repaint trigger
 
 ### Coverage Goals
@@ -929,7 +929,7 @@ cargo test --quiet
 just lint
 
 # Fish integration tests
-./scripts/test_fish.sh
+./scripts/test-fish.sh
 
 # Interactive sessions on a real pseudo-terminal (idle repaint, two shells,
 # a config reload reaching a Fish client)
@@ -998,7 +998,7 @@ time git status --porcelain
 1. **Read this doc**
 2. **Read module docs**: `gpy-agent/src/agent/mod.rs`, `gpy-agent/src/watcher/mod.rs`
 3. **Trace a request**: Follow git status request through entire stack
-4. **Run tests**: `cargo test`, `./scripts/test_fish.sh`
+4. **Run tests**: `cargo test`, `./scripts/test-fish.sh`
 5. **Read [add-new-segment.md](add-new-segment.md)**: Learn how to add segments
 6. **Pick a good first issue**: Look for `good-first-issue` label
 

@@ -5,6 +5,8 @@
 # must be "true" at their edge and "" elsewhere.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
 # Sandbox config disables the supervisor (theme export reads config.toml).
@@ -15,17 +17,6 @@ export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 source bash/gpy.bash
 
-FAILED=0
-
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 # Stubs record args: __gpy_segment_<name> "$is_last" "$prev_bg" "$is_first".
 __gpy_segment_stuba() { printf 'stuba:%s|%s;' "$1" "$3"; }
@@ -42,12 +33,4 @@ check "middle segment gets both empty" true \
 check "last segment gets is_last set, is_first empty" true \
     "$([[ "$PS1" == *"stubc:true|;"* ]] && echo true || echo false)"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo ""
-    echo "PS1 was: $PS1"
-    echo "=== FAILED ==="
-    exit 1
-fi
-
-echo ""
-echo "=== All Tests Passed ==="
+test_finish "prompt dispatch positions"

@@ -1,5 +1,6 @@
 //! `ratatui` widget composition for the wizard frame.
 
+use super::bindings;
 use super::keys::InputMode;
 use super::preview::to_ratatui_color;
 use super::state::{Section, WizardState};
@@ -93,7 +94,7 @@ pub fn draw(frame: &mut Frame, args: &DrawArgs) {
     );
 
     if args.mode == InputMode::Help {
-        render_help_overlay(frame, area, args.state.focus(), args.colors);
+        render_help_overlay(frame, area, args.state, args.colors);
     }
 }
 
@@ -136,13 +137,17 @@ fn render_sections(frame: &mut Frame, area: Rect, state: &WizardState, colors: W
         colors,
     );
 
+    let segments_title = format!(
+        "Segments ({} to toggle)",
+        bindings::key_hint(&[bindings::Command::Activate])
+    );
     render_one_section(
         frame,
         segments_area,
         state,
         &SectionSource {
             section: Section::Segments,
-            title: "Segments (space to toggle)",
+            title: &segments_title,
             items: state.available_segments(),
             raw_cursor: state.segment_cursor(),
             is_selected: &|name| state.is_segment_enabled(name),
@@ -248,8 +253,9 @@ struct FooterArgs<'a> {
     colors: WizardColors,
 }
 
-/// Single-line footer: discard prompt, help hint, filter status, or key summary.
+/// Single-line footer: discard prompt, or the mode's key hints.
 fn render_footer(frame: &mut Frame, area: Rect, args: &FooterArgs) {
+    let hints = bindings::footer_hints(args.mode);
     let (footer, style) = match args.mode {
         InputMode::ConfirmQuit => (
             "Discard changes and quit? [y/N]".to_owned(),
@@ -257,17 +263,13 @@ fn render_footer(frame: &mut Frame, area: Rect, args: &FooterArgs) {
                 .danger
                 .map_or_else(Style::default, |color| Style::default().fg(color)),
         ),
-        InputMode::Help => ("[?/esc] close help".to_owned(), Style::default()),
         InputMode::Filter => (
-            format!(
-                "FILTERING: /{}_  [tab] switch section  [enter/space] activate  [esc] clear filter",
-                args.filter_query
-            ),
+            format!("FILTERING: /{}_  {hints}", args.filter_query),
             args.colors
                 .warning
                 .map_or_else(Style::default, |color| Style::default().fg(color)),
         ),
-        InputMode::Normal => ("[?] help  [s] save  [q] quit".to_owned(), Style::default()),
+        InputMode::Normal | InputMode::Help => (hints, Style::default()),
     };
     frame.render_widget(Paragraph::new(footer).style(style), area);
 }
@@ -359,20 +361,16 @@ fn render_section(frame: &mut Frame, area: Rect, spec: &SectionSpec) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-/// `?` help overlay scoped to `focus`. `Clear` first: ratatui doesn't blend
-/// widgets, so old glyphs would show through.
-fn render_help_overlay(frame: &mut Frame, area: Rect, focus: Section, colors: WizardColors) {
-    let popup = centered_rect(70, 60, area);
+/// `?` help overlay listing the keys bound right now. `Clear` first: ratatui
+/// doesn't blend widgets, so old glyphs would show through.
+fn render_help_overlay(frame: &mut Frame, area: Rect, state: &WizardState, colors: WizardColors) {
+    let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
 
-    let mut lines = vec![
-        Line::from("[tab] next section   [shift+tab] previous section"),
-        Line::from(""),
-    ];
-    lines.extend(section_help_lines(focus));
-    lines.push(Line::from(""));
-    lines.push(Line::from("[s] save & exit   [q] quit"));
-    lines.push(Line::from("[?] or [esc] close this help"));
+    let lines: Vec<Line> = bindings::help_lines(state.focused_builtin())
+        .into_iter()
+        .map(Line::from)
+        .collect();
 
     frame.render_widget(
         Paragraph::new(Text::from(lines))
@@ -382,48 +380,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect, focus: Section, colors: Wi
                     .borders(Borders::ALL)
                     .border_style(border_style(true, colors.accent)),
             )
-            .wrap(Wrap { trim: true }),
+            .wrap(Wrap { trim: false }),
         popup,
     );
-}
-
-/// Bindings for the focused section (activate differs: multi- vs single-select).
-fn section_help_lines(focus: Section) -> Vec<Line<'static>> {
-    let (title, activate) = match focus {
-        Section::Theme => ("Theme", "[space/enter] select theme"),
-        Section::Palette => ("Palette", "[space/enter] select palette"),
-        Section::Segments => ("Segments", "[space/enter] toggle segment"),
-    };
-    let mut lines = vec![
-        Line::from(title),
-        Line::from("  [↑/↓ or ←/→] move cursor"),
-        Line::from(format!("  {activate}")),
-        Line::from("  [/] filter (narrows all sections)"),
-    ];
-    if focus == Section::Segments {
-        lines.push(Line::from(
-            "  [[ / ]] cycle directory display style (when 'directory' is highlighted)",
-        ));
-        lines.push(Line::from(
-            "  [[ / ]] cycle language icon/text style (when 'language' is highlighted)",
-        ));
-        lines.push(Line::from(
-            "  [v] toggle language show-versions (when 'language' is highlighted)",
-        ));
-        lines.push(Line::from(
-            "  [[ / ]] cycle clock 12h/24h time format (when 'clock' is highlighted)",
-        ));
-        lines.push(Line::from(
-            "  [:] toggle clock show-seconds (when 'clock' is highlighted)",
-        ));
-        lines.push(Line::from(
-            "  [m] toggle duration show-milliseconds (when 'duration' is highlighted)",
-        ));
-        lines.push(Line::from(
-            "  [b]/[a]/[t] toggle git branch / ahead-behind / stash (when 'git' is highlighted)",
-        ));
-    }
-    lines
 }
 
 /// Centered `percent_x` × `percent_y` rect within `area`.
@@ -479,8 +438,6 @@ fn section_block(title: &str, focused: bool, accent: Option<RatatuiColor>) -> Bl
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use crate::config::Config;

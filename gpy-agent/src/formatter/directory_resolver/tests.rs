@@ -4,9 +4,8 @@
     clippy::panic,
     clippy::missing_panics_doc
 )]
-#![allow(clippy::missing_errors_doc)]
 
-use super::DirectoryResolver;
+use super::{DirectoryEnv, DirectoryResolver};
 use crate::config::Config;
 use crate::formatter::{IsFirst, IsLast, SegmentPosition};
 use crate::template::VariableResolver;
@@ -18,6 +17,7 @@ fn path_is_present_for_nonempty_cwd() {
     let resolver = DirectoryResolver::new(
         "/home/user/project",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -31,6 +31,7 @@ fn read_only_none_when_false() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -38,17 +39,54 @@ fn read_only_none_when_false() {
     assert_eq!(resolver.resolve("read_only"), None);
 }
 
+/// The lock glyph for a read-only `cwd` under `config`/`theme`.
+fn read_only_marker(config: &Config, theme: &ThemeConfig) -> Option<String> {
+    DirectoryResolver::new(
+        "/tmp",
+        true,
+        DirectoryEnv::unprobed(),
+        config,
+        theme,
+        SegmentPosition::MIDDLE,
+    )
+    .resolve("read_only")
+}
+
 #[test]
 fn read_only_some_when_true() {
     let (config, theme) = (Config::default(), ThemeConfig::default());
-    let resolver = DirectoryResolver::new(
-        "/tmp",
-        true,
-        &config,
-        &theme,
-        SegmentPosition::new(IsLast::No, IsFirst::No),
+    assert_eq!(
+        read_only_marker(&config, &theme),
+        Some("\u{1f512}".to_owned())
     );
-    assert_eq!(resolver.resolve("read_only"), Some("\u{1f512}".to_owned()));
+}
+
+#[test]
+fn read_only_with_plain_glyphs_renders_no_emoji_lock() {
+    let mut config = Config::default();
+    config.ui.show_icons = false;
+    let theme = ThemeConfig::default();
+    assert_eq!(read_only_marker(&config, &theme), Some("ro".to_owned()));
+}
+
+#[test]
+fn read_only_icon_comes_from_the_theme() {
+    let mut theme = ThemeConfig::default();
+    theme.segments.directory.read_only_icon =
+        Some(crate::config::types::Icon::new("\u{f023}").unwrap());
+    let config = Config::default();
+    assert_eq!(
+        read_only_marker(&config, &theme),
+        Some("\u{f023}".to_owned())
+    );
+
+    let mut plain = Config::default();
+    plain.ui.show_icons = false;
+    assert_eq!(
+        read_only_marker(&plain, &theme),
+        Some("ro".to_owned()),
+        "plain glyphs drop a Nerd Font lock for the text fallback"
+    );
 }
 
 #[test]
@@ -57,6 +95,7 @@ fn style_contains_bg_color() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -71,6 +110,7 @@ fn unknown_variable_is_none() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -97,6 +137,7 @@ fn max_length_boundary_ascii_1_through_6() {
         let resolver = DirectoryResolver::new(
             "/abcdefgh",
             false,
+            DirectoryEnv::unprobed(),
             &config,
             &theme,
             SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -129,6 +170,7 @@ fn max_length_boundary_unicode_1_through_6() {
         let resolver = DirectoryResolver::new(
             "/一二三四五六七八九",
             false,
+            DirectoryEnv::unprobed(),
             &config,
             &theme,
             SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -153,6 +195,7 @@ fn unicode_cjk_path_truncated_correctly() {
     let resolver = DirectoryResolver::new(
         cjk,
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -169,6 +212,7 @@ fn sep_close_is_half_circle_when_last() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::Yes, IsFirst::No),
@@ -182,6 +226,7 @@ fn sep_close_is_triangle_when_not_last() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -195,6 +240,7 @@ fn sep_gap_is_space_when_not_last() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -208,6 +254,7 @@ fn sep_gap_is_none_when_last() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::Yes, IsFirst::No),
@@ -221,6 +268,7 @@ fn bg_is_some_with_directory_bg_color() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -237,6 +285,7 @@ fn sep_open_is_none_when_first() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::Yes),
@@ -250,6 +299,7 @@ fn sep_open_is_glyph_when_not_first() {
     let resolver = DirectoryResolver::new(
         "/tmp",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -260,7 +310,6 @@ fn sep_open_is_glyph_when_not_first() {
 use super::abbreviate_path;
 use super::anchor_root;
 use super::contract_home;
-use super::enclosing_anchor_root;
 use super::normalize_cwd;
 use super::repo_anchored_path;
 use super::truncate_to_components;
@@ -450,6 +499,7 @@ fn abbreviate_display_mode_renders_via_resolver() {
     let resolver = DirectoryResolver::new(
         "/usr/local/bin/foo",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -467,6 +517,7 @@ fn trailing_slash_cwd_renders_real_basename() {
         let resolver = DirectoryResolver::new(
             cwd,
             false,
+            DirectoryEnv::unprobed(),
             &config,
             &theme,
             SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -476,6 +527,7 @@ fn trailing_slash_cwd_renders_real_basename() {
     let resolver = DirectoryResolver::new(
         "/",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -558,6 +610,7 @@ fn truncated_display_mode_renders_via_resolver() {
     let resolver = DirectoryResolver::new(
         "/usr/local/bin/foo",
         false,
+        DirectoryEnv::unprobed(),
         &config,
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
@@ -594,13 +647,9 @@ fn truncate_to_repo_anchors_truncated_via_resolver() {
     let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Truncated);
     let theme = ThemeConfig::default();
     let cwd = deep.to_str().expect("utf8 cwd");
-    let resolver = DirectoryResolver::new(
-        cwd,
-        false,
-        &config,
-        &theme,
-        SegmentPosition::new(IsLast::No, IsFirst::No),
-    );
+    let env = DirectoryEnv::probe(cwd, &config.ui.directory);
+    let resolver =
+        DirectoryResolver::new(cwd, false, &env, &config, &theme, SegmentPosition::MIDDLE);
     // m=5 (R,a,b,c,d) > N=3 -> R/…/c/d
     assert_eq!(
         resolver.resolve("path").expect("path present"),
@@ -623,13 +672,9 @@ fn truncate_to_repo_full_shows_whole_in_repo_path() {
     let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Full);
     let theme = ThemeConfig::default();
     let cwd = deep.to_str().expect("utf8 cwd");
-    let resolver = DirectoryResolver::new(
-        cwd,
-        false,
-        &config,
-        &theme,
-        SegmentPosition::new(IsLast::No, IsFirst::No),
-    );
+    let env = DirectoryEnv::probe(cwd, &config.ui.directory);
+    let resolver =
+        DirectoryResolver::new(cwd, false, &env, &config, &theme, SegmentPosition::MIDDLE);
     assert_eq!(
         resolver.resolve("path").expect("path present"),
         format!("{root_name}/a/b/c/d")
@@ -647,13 +692,9 @@ fn truncate_to_repo_falls_back_when_not_in_repo() {
     let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Full);
     let theme = ThemeConfig::default();
     let cwd = nested.to_str().expect("utf8 cwd");
-    let resolver = DirectoryResolver::new(
-        cwd,
-        false,
-        &config,
-        &theme,
-        SegmentPosition::new(IsLast::No, IsFirst::No),
-    );
+    let env = DirectoryEnv::probe(cwd, &config.ui.directory);
+    let resolver =
+        DirectoryResolver::new(cwd, false, &env, &config, &theme, SegmentPosition::MIDDLE);
     // Full + not in repo -> home-contracted absolute path unchanged.
     assert_eq!(resolver.resolve("path").expect("path present"), cwd);
 }
@@ -672,23 +713,30 @@ fn anchor_root_ignores_repo_rooted_at_home() {
     assert_eq!(anchor_root(Some(home.clone()), None), Some(home));
 }
 
-/// Resolver as `new` builds it, but with an injected `$HOME` (no env mutation).
-fn resolver_with_home<'a>(
-    cwd: &'a str,
-    config: &'a Config,
-    theme: &'a ThemeConfig,
-    home: &str,
-) -> DirectoryResolver<'a> {
-    let mut resolver = DirectoryResolver::new(
-        cwd,
-        false,
-        config,
-        theme,
-        SegmentPosition::new(IsLast::No, IsFirst::No),
+/// `$path` as rendered after a probe with `home` in place of `$HOME` (no env mutation).
+fn path_with_home(cwd: &str, config: &Config, theme: &ThemeConfig, home: &str) -> String {
+    let env = DirectoryEnv::probe_with_home(cwd, &config.ui.directory, Some(home.to_owned()));
+    DirectoryResolver::new(cwd, false, &env, config, theme, SegmentPosition::MIDDLE)
+        .resolve("path")
+        .expect("path present")
+}
+
+#[test]
+fn probe_finds_the_repository_only_when_the_path_anchors_there() {
+    let tmp = tempdir().expect("temp dir");
+    let root = fs::canonicalize(tmp.path()).expect("canonicalize root");
+    fs::create_dir_all(root.join(".git")).expect("mk .git");
+    let cwd = root.to_str().expect("utf8 cwd");
+
+    let plain = Config::default();
+    assert!(!plain.ui.directory.truncate_to_repo);
+    assert_eq!(
+        DirectoryEnv::probe_with_home(cwd, &plain.ui.directory, None).repo,
+        None
     );
-    resolver.home = Some(home.to_owned());
-    resolver.repo_root = enclosing_anchor_root(cwd, config, Some(home));
-    resolver
+    let anchored = config_with_truncate_to_repo(DirectoryDisplay::Full);
+    let env = DirectoryEnv::probe_with_home(cwd, &anchored.ui.directory, None);
+    assert_eq!(env.repo.map(|repo| repo.root), Some(root));
 }
 
 #[cfg(unix)]
@@ -719,11 +767,8 @@ fn truncate_to_repo_ignores_repo_rooted_at_home_via_resolver() {
 
     let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Full);
     let theme = ThemeConfig::default();
-    let resolver = resolver_with_home(cwd, &config, &theme, &home_str);
-    assert_eq!(resolver.resolve("path").expect("path present"), "~/src/x");
-
-    let at_home = resolver_with_home(&home_str, &config, &theme, &home_str);
-    assert_eq!(at_home.resolve("path").expect("path present"), "~");
+    assert_eq!(path_with_home(cwd, &config, &theme, &home_str), "~/src/x");
+    assert_eq!(path_with_home(&home_str, &config, &theme, &home_str), "~");
 }
 
 #[test]
@@ -740,6 +785,5 @@ fn truncate_to_repo_still_anchors_repo_below_home_via_resolver() {
 
     let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Full);
     let theme = ThemeConfig::default();
-    let resolver = resolver_with_home(cwd, &config, &theme, &home_str);
-    assert_eq!(resolver.resolve("path").expect("path present"), "proj/lib");
+    assert_eq!(path_with_home(cwd, &config, &theme, &home_str), "proj/lib");
 }

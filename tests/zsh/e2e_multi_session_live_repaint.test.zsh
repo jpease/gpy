@@ -15,9 +15,7 @@
 #      `gpy-agent config reload` (the watcher path) -> a powerline glyph
 #      U+E0B0..E0BF appears in the raw transcript (timed)
 # Then the agent reports two registered clients and both show the same git
-# segment. With GPY_E2E_LATENCY_LOG set, each timed step appends
-# `e2e_multi_session_live_repaint <step> <A|B> <ms>` to it (summarise with
-# tests/lib/latency_median.py).
+# segment.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -97,9 +95,6 @@ record_latency() {
         }
         ms=$(( (t - stamp) / 1000000 ))
         printf 'latency %s %s: %s ms\n' "$1" "$s" "$ms"
-        if [ -n "${GPY_E2E_LATENCY_LOG:-}" ]; then
-            printf 'e2e_multi_session_live_repaint %s %s %s\n' "$1" "$s" "$ms" >>"$GPY_E2E_LATENCY_LOG"
-        fi
     done
 }
 

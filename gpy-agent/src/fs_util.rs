@@ -1,5 +1,6 @@
 //! Small filesystem helpers.
 
+use crate::deadline::Deadline;
 use std::io::Read as _;
 use std::path::Path;
 
@@ -43,6 +44,23 @@ pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<
     Ok(buf)
 }
 
+/// Create `path` with `contents`, failing with `AlreadyExists` instead of
+/// replacing a file that is already there (including one created concurrently).
+///
+/// # Errors
+/// Returns an error if the file exists or cannot be created or written.
+pub fn create_new(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(contents)
+}
+
+static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Replace `path` with `contents` through a temp file in the same directory
 /// and a rename, so a failed write (disk full, crash) leaves the previous file
 /// whole. A symlinked `path` is resolved first so the link survives, and an
@@ -65,7 +83,8 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let file_name = target
         .file_name()
         .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
-    let temp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    let count = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = parent.join(format!(".{file_name}.tmp.{}.{count}", std::process::id()));
 
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::create(&temp)?;
@@ -121,9 +140,7 @@ pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<Pa
         options.mode(0o600);
     }
     let file = options.open(&lock_path)?;
-    let deadline = std::time::Instant::now()
-        .checked_add(wait)
-        .unwrap_or_else(std::time::Instant::now);
+    let deadline = Deadline::after(wait);
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(PathLock { lock: file }),
@@ -131,7 +148,7 @@ pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<Pa
             Err(TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(TryLockError::Error(e)) => return Err(e),
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 format!("{} is held by another process", lock_path.to_string_lossy()),
@@ -158,9 +175,6 @@ pub fn directory_is_read_only(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{directory_is_read_only, read_small_file};
     #[cfg(unix)]
@@ -289,6 +303,32 @@ mod tests {
         assert!(result.is_err(), "a read-only directory must fail the write");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
         assert_eq!(entries, 1, "no temp file may be left behind");
+    }
+
+    /// Concurrent atomic writes to the same target don't collide on temp files.
+    #[test]
+    fn concurrent_write_atomically_does_not_collide() {
+        use super::write_atomically;
+        use std::sync::Arc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = Arc::new(tmp.path().join("concurrent.txt"));
+        let mut handles = Vec::new();
+
+        for i in 0_u32..10_u32 {
+            let p = Arc::clone(&path);
+            handles.push(std::thread::spawn(move || {
+                let data = format!("thread-{i}");
+                write_atomically(&p, data.as_bytes()).unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let content = std::fs::read_to_string(&*path).unwrap();
+        assert!(content.starts_with("thread-"));
     }
 
     /// A second locker waits out the first and gets in once it drops.

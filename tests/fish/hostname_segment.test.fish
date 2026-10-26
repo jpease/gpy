@@ -7,57 +7,61 @@
 # directly and drive its functions with stubbed globals rather than
 # exercising it through fish_prompt.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/segments/hostname.fish"
 
-set -g pass_count 0
-set -g fail_count 0
+# --- detect without a theme export: show_always unset, nothing on stderr ---
 
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
+set -e __hostname_show_always
+set -l __stderr_file (mktemp)
+segment_hostname_detect 2>$__stderr_file
+set -l detect_rc $status
+check "detect: no SSH and no show_always hides the segment" 1 $detect_rc
+check "detect: unset show_always writes nothing to stderr" "" (cat $__stderr_file)
+set -g __gpy_is_ssh 1
+segment_hostname_detect 2>$__stderr_file
+check "detect: SSH shows the segment with show_always unset" 0 $status
+check "detect: SSH with show_always unset writes nothing to stderr" "" (cat $__stderr_file)
+set -e __gpy_is_ssh
+rm -f $__stderr_file
 
 # --- __gpy_hostname_trim (pure) ---
 
 set -l trimmed (__gpy_hostname_trim host.example.com .)
 if test "$trimmed" = host
-    check "trim cuts the value at the first delimiter occurrence" pass
+    check "trim cuts the value at the first delimiter occurrence" pass pass
 else
-    check "trim cuts the value at the first delimiter occurrence (got: '$trimmed')" fail
+    check "trim cuts the value at the first delimiter occurrence (got: '$trimmed')" pass fail
 end
 
 set -l untrimmed (__gpy_hostname_trim host.example.com "")
 if test "$untrimmed" = host.example.com
-    check "trim leaves the value unchanged when the delimiter is empty" pass
+    check "trim leaves the value unchanged when the delimiter is empty" pass pass
 else
-    check "trim leaves the value unchanged when the delimiter is empty (got: '$untrimmed')" fail
+    check "trim leaves the value unchanged when the delimiter is empty (got: '$untrimmed')" pass fail
 end
 
 # --- __gpy_hostname_should_show (pure) ---
 
 if __gpy_hostname_should_show 1 0
-    check "should_show: SSH session shows regardless of show_always" pass
+    check "should_show: SSH session shows regardless of show_always" pass pass
 else
-    check "should_show: SSH session shows regardless of show_always" fail
+    check "should_show: SSH session shows regardless of show_always" pass fail
 end
 
 if not __gpy_hostname_should_show 0 0
-    check "should_show: local session with show_always=0 hides" pass
+    check "should_show: local session with show_always=0 hides" pass pass
 else
-    check "should_show: local session with show_always=0 hides" fail
+    check "should_show: local session with show_always=0 hides" pass fail
 end
 
 if __gpy_hostname_should_show 0 1
-    check "should_show: local session with show_always=1 shows" pass
+    check "should_show: local session with show_always=1 shows" pass pass
 else
-    check "should_show: local session with show_always=1 shows" fail
+    check "should_show: local session with show_always=1 shows" pass fail
 end
 
 # --- segment_hostname_detect (edge) ---
@@ -65,25 +69,25 @@ end
 set -g __gpy_is_ssh 1
 set -g __hostname_show_always 0
 if segment_hostname_detect
-    check "detect: SSH session is shown" pass
+    check "detect: SSH session is shown" pass pass
 else
-    check "detect: SSH session is shown" fail
+    check "detect: SSH session is shown" pass fail
 end
 
 set -g __gpy_is_ssh 0
 set -g __hostname_show_always 0
 if not segment_hostname_detect
-    check "detect: local session with show_always=0 is hidden" pass
+    check "detect: local session with show_always=0 is hidden" pass pass
 else
-    check "detect: local session with show_always=0 is hidden" fail
+    check "detect: local session with show_always=0 is hidden" pass fail
 end
 
 set -g __gpy_is_ssh 0
 set -g __hostname_show_always 1
 if segment_hostname_detect
-    check "detect: local session with show_always=1 is shown" pass
+    check "detect: local session with show_always=1 is shown" pass pass
 else
-    check "detect: local session with show_always=1 is shown" fail
+    check "detect: local session with show_always=1 is shown" pass fail
 end
 
 # --- segment_hostname_render: pure-fish path (zero IPC, zero forks) ---
@@ -109,15 +113,15 @@ set -g __gpy_last_segment_bg black
 segment_hostname_render true
 
 if test "$__test_hostname_content" = " $real_hostname"
-    check "pure-fish render: renders the hostname with one leading space and omits the icon when unset" pass
+    check "pure-fish render: renders the hostname with one leading space and omits the icon when unset" pass pass
 else
-    check "pure-fish render: renders the hostname with one leading space and omits the icon when unset (got: '$__test_hostname_content')" fail
+    check "pure-fish render: renders the hostname with one leading space and omits the icon when unset (got: '$__test_hostname_content')" pass fail
 end
 
 if test "$__gpy_last_segment_bg" = blue
-    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron" pass
+    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron" pass pass
 else
-    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron (got: '$__gpy_last_segment_bg')" fail
+    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # The icon is Starship's ssh_symbol — drawn only in SSH sessions.
@@ -127,18 +131,18 @@ set -g __gpy_last_segment_bg black
 segment_hostname_render true
 
 if test "$__test_hostname_content" = " ICON $real_hostname"
-    check "pure-fish render: includes the icon over SSH when __icon_hostname is set" pass
+    check "pure-fish render: includes the icon over SSH when __icon_hostname is set" pass pass
 else
-    check "pure-fish render: includes the icon over SSH when __icon_hostname is set (got: '$__test_hostname_content')" fail
+    check "pure-fish render: includes the icon over SSH when __icon_hostname is set (got: '$__test_hostname_content')" pass fail
 end
 
 set -g __gpy_is_ssh 0
 segment_hostname_render true
 
 if test "$__test_hostname_content" = " $real_hostname"
-    check "pure-fish render: omits the icon in a local session" pass
+    check "pure-fish render: omits the icon in a local session" pass pass
 else
-    check "pure-fish render: omits the icon in a local session (got: '$__test_hostname_content')" fail
+    check "pure-fish render: omits the icon in a local session (got: '$__test_hostname_content')" pass fail
 end
 set -g __gpy_is_ssh 1
 
@@ -147,9 +151,9 @@ set -g __gpy_last_segment_bg black
 segment_hostname_render true
 
 if test "$__test_hostname_content" = " $real_hostname"
-    check "pure-fish render: omits the icon again once __icon_hostname is cleared" pass
+    check "pure-fish render: omits the icon again once __icon_hostname is cleared" pass pass
 else
-    check "pure-fish render: omits the icon again once __icon_hostname is cleared (got: '$__test_hostname_content')" fail
+    check "pure-fish render: omits the icon again once __icon_hostname is cleared (got: '$__test_hostname_content')" pass fail
 end
 
 # --- segment_hostname_render: dual-path branch to agent-resolved rendering ---
@@ -177,21 +181,21 @@ set -g __gpy_last_segment_bg black
 set -l agent_output (segment_hostname_render true | string collect)
 
 if test "$agent_output" = AGENT_SENTINEL
-    check "agent path: non-empty __hostname_format routes to __gpy_request_hostname" pass
+    check "agent path: non-empty __hostname_format routes to __gpy_request_hostname" pass pass
 else
-    check "agent path: non-empty __hostname_format routes to __gpy_request_hostname (got: '$agent_output')" fail
+    check "agent path: non-empty __hostname_format routes to __gpy_request_hostname (got: '$agent_output')" pass fail
 end
 
 if test -z "$__test_hostname_content"
-    check "agent path: does not fall through to the pure-fish renderer" pass
+    check "agent path: does not fall through to the pure-fish renderer" pass pass
 else
-    check "agent path: does not fall through to the pure-fish renderer" fail
+    check "agent path: does not fall through to the pure-fish renderer" pass fail
 end
 
 if test "$__gpy_last_segment_bg" = blue
-    check "agent path: still tracks __gpy_last_segment_bg for the next segment" pass
+    check "agent path: still tracks __gpy_last_segment_bg for the next segment" pass pass
 else
-    check "agent path: still tracks __gpy_last_segment_bg for the next segment (got: '$__gpy_last_segment_bg')" fail
+    check "agent path: still tracks __gpy_last_segment_bg for the next segment (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # When the hostname segment is NOT the last rendered segment, fish_prompt.fish
@@ -207,15 +211,15 @@ set -e __test_hostname_arg_prev_bg
 segment_hostname_render >/dev/null
 
 if test "$__test_hostname_arg_prev_bg" = green
-    check "agent path (not last): prev_bg reaches __gpy_request_hostname as the 3rd arg" pass
+    check "agent path (not last): prev_bg reaches __gpy_request_hostname as the 3rd arg" pass pass
 else
-    check "agent path (not last): prev_bg reaches __gpy_request_hostname as the 3rd arg (got: '$__test_hostname_arg_prev_bg')" fail
+    check "agent path (not last): prev_bg reaches __gpy_request_hostname as the 3rd arg (got: '$__test_hostname_arg_prev_bg')" pass fail
 end
 
 if test -z "$__test_hostname_arg_is_last"
-    check "agent path (not last): is_last is forwarded as empty, not shifted" pass
+    check "agent path (not last): is_last is forwarded as empty, not shifted" pass pass
 else
-    check "agent path (not last): is_last is forwarded as empty, not shifted (got: '$__test_hostname_arg_is_last')" fail
+    check "agent path (not last): is_last is forwarded as empty, not shifted (got: '$__test_hostname_arg_is_last')" pass fail
 end
 
 # The 4th arg carries $__gpy_is_ssh, for both states, and stays in the
@@ -227,9 +231,9 @@ for ssh_state in 0 1
     set -e __test_hostname_arg_is_ssh
     segment_hostname_render >/dev/null
     if test "$__test_hostname_arg_is_ssh" = $ssh_state
-        check "agent path: __gpy_is_ssh=$ssh_state reaches __gpy_request_hostname as the 4th arg" pass
+        check "agent path: __gpy_is_ssh=$ssh_state reaches __gpy_request_hostname as the 4th arg" pass pass
     else
-        check "agent path: __gpy_is_ssh=$ssh_state reaches __gpy_request_hostname as the 4th arg (got: '$__test_hostname_arg_is_ssh')" fail
+        check "agent path: __gpy_is_ssh=$ssh_state reaches __gpy_request_hostname as the 4th arg (got: '$__test_hostname_arg_is_ssh')" pass fail
     end
 end
 
@@ -239,9 +243,9 @@ set -e __test_hostname_arg_is_ssh
 set -e __test_hostname_arg_prev_bg
 segment_hostname_render >/dev/null
 if test "$__test_hostname_arg_is_ssh" = 1; and test -z "$__test_hostname_arg_prev_bg"
-    check "agent path: unset prev_bg does not shift is_ssh out of the 4th slot" pass
+    check "agent path: unset prev_bg does not shift is_ssh out of the 4th slot" pass pass
 else
-    check "agent path: unset prev_bg does not shift is_ssh out of the 4th slot (prev_bg: '$__test_hostname_arg_prev_bg', is_ssh: '$__test_hostname_arg_is_ssh')" fail
+    check "agent path: unset prev_bg does not shift is_ssh out of the 4th slot (prev_bg: '$__test_hostname_arg_prev_bg', is_ssh: '$__test_hostname_arg_is_ssh')" pass fail
 end
 
 # is_first rides in the 5th slot: "true" when first, "" (not shifted) otherwise, so
@@ -251,17 +255,17 @@ set -g __gpy_last_segment_bg green
 set -e __test_hostname_arg_is_first
 segment_hostname_render "" true >/dev/null
 if test "$__test_hostname_arg_is_first" = true
-    check "agent path: is_first=true reaches __gpy_request_hostname as the 5th arg" pass
+    check "agent path: is_first=true reaches __gpy_request_hostname as the 5th arg" pass pass
 else
-    check "agent path: is_first=true reaches __gpy_request_hostname as the 5th arg (got: '$__test_hostname_arg_is_first')" fail
+    check "agent path: is_first=true reaches __gpy_request_hostname as the 5th arg (got: '$__test_hostname_arg_is_first')" pass fail
 end
 
 set -g __test_hostname_arg_is_first sentinel
 segment_hostname_render true >/dev/null
 if test -z "$__test_hostname_arg_is_first"
-    check "agent path: a non-first hostname forwards is_first as empty" pass
+    check "agent path: a non-first hostname forwards is_first as empty" pass pass
 else
-    check "agent path: a non-first hostname forwards is_first as empty (got: '$__test_hostname_arg_is_first')" fail
+    check "agent path: a non-first hostname forwards is_first as empty (got: '$__test_hostname_arg_is_first')" pass fail
 end
 
 functions -e __gpy_request_hostname
@@ -289,74 +293,74 @@ end
 
 set -l result_last (__gpy_request_hostname 'my"host' true prevbg)
 if test "$result_last" = RENDERED
-    check "__gpy_request_hostname: returns the IPC result on success" pass
+    check "__gpy_request_hostname: returns the IPC result on success" pass pass
 else
-    check "__gpy_request_hostname: returns the IPC result on success (got: '$result_last')" fail
+    check "__gpy_request_hostname: returns the IPC result on success (got: '$result_last')" pass fail
 end
 
 if string match -q '*"is_last":true*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_last=true emits \"is_last\":true" pass
+    check "__gpy_request_hostname: is_last=true emits \"is_last\":true" pass pass
 else
-    check "__gpy_request_hostname: is_last=true emits \"is_last\":true (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_last=true emits \"is_last\":true (got: $__test_hostname_payload)" pass fail
 end
 
 if string match -q '*"hostname":"my\\"host"*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: JSON-escapes the hostname argument" pass
+    check "__gpy_request_hostname: JSON-escapes the hostname argument" pass pass
 else
-    check "__gpy_request_hostname: JSON-escapes the hostname argument (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: JSON-escapes the hostname argument (got: $__test_hostname_payload)" pass fail
 end
 
 if string match -q '*"prev_bg":"prevbg"*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: includes prev_bg when non-empty" pass
+    check "__gpy_request_hostname: includes prev_bg when non-empty" pass pass
 else
-    check "__gpy_request_hostname: includes prev_bg when non-empty (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: includes prev_bg when non-empty (got: $__test_hostname_payload)" pass fail
 end
 
 __gpy_request_hostname host2 "" "" >/dev/null
 if not string match -q '*is_last*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_last='' omits is_last" pass
+    check "__gpy_request_hostname: is_last='' omits is_last" pass pass
 else
-    check "__gpy_request_hostname: is_last='' omits is_last (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_last='' omits is_last (got: $__test_hostname_payload)" pass fail
 end
 
 if not string match -q '*prev_bg*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: omits prev_bg when empty" pass
+    check "__gpy_request_hostname: omits prev_bg when empty" pass pass
 else
-    check "__gpy_request_hostname: omits prev_bg when empty (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: omits prev_bg when empty (got: $__test_hostname_payload)" pass fail
 end
 
 __gpy_request_hostname host3 "" "" 1 >/dev/null
 if string match -q '*,"is_ssh":true}' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_ssh=1 emits \"is_ssh\":true" pass
+    check "__gpy_request_hostname: is_ssh=1 emits \"is_ssh\":true" pass pass
 else
-    check "__gpy_request_hostname: is_ssh=1 emits \"is_ssh\":true (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_ssh=1 emits \"is_ssh\":true (got: $__test_hostname_payload)" pass fail
 end
 
 __gpy_request_hostname host4 "" "" 0 >/dev/null
 if not string match -q '*is_ssh*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_ssh=0 omits is_ssh" pass
+    check "__gpy_request_hostname: is_ssh=0 omits is_ssh" pass pass
 else
-    check "__gpy_request_hostname: is_ssh=0 omits is_ssh (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_ssh=0 omits is_ssh (got: $__test_hostname_payload)" pass fail
 end
 
 __gpy_request_hostname host5 "" "" 1 true >/dev/null
 if string match -q '*"is_first":true*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_first=true emits \"is_first\":true" pass
+    check "__gpy_request_hostname: is_first=true emits \"is_first\":true" pass pass
 else
-    check "__gpy_request_hostname: is_first=true emits \"is_first\":true (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_first=true emits \"is_first\":true (got: $__test_hostname_payload)" pass fail
 end
 
 if string match -q '*,"is_ssh":true}' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_first does not displace the trailing is_ssh" pass
+    check "__gpy_request_hostname: is_first does not displace the trailing is_ssh" pass pass
 else
-    check "__gpy_request_hostname: is_first does not displace the trailing is_ssh (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_first does not displace the trailing is_ssh (got: $__test_hostname_payload)" pass fail
 end
 
 __gpy_request_hostname host6 "" "" 1 "" >/dev/null
 if not string match -q '*is_first*' -- "$__test_hostname_payload"
-    check "__gpy_request_hostname: is_first='' omits is_first" pass
+    check "__gpy_request_hostname: is_first='' omits is_first" pass pass
 else
-    check "__gpy_request_hostname: is_first='' omits is_first (got: $__test_hostname_payload)" fail
+    check "__gpy_request_hostname: is_first='' omits is_first (got: $__test_hostname_payload)" pass fail
 end
 
 functions -e __gpy_ipc_send
@@ -367,15 +371,11 @@ function __gpy_ipc_send --argument-names payload timeout_ms
 end
 
 if not __gpy_request_hostname host3 true ""
-    check "__gpy_request_hostname: returns nonzero when IPC is unavailable (no oneshot fallback)" pass
+    check "__gpy_request_hostname: returns nonzero when IPC is unavailable (no oneshot fallback)" pass pass
 else
-    check "__gpy_request_hostname: returns nonzero when IPC is unavailable (no oneshot fallback)" fail
+    check "__gpy_request_hostname: returns nonzero when IPC is unavailable (no oneshot fallback)" pass fail
 end
 
 functions -e __gpy_ipc_send
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count hostname segment tests passed"
+test_finish "hostname segment tests"

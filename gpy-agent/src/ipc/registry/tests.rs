@@ -1,18 +1,19 @@
-use super::ClientDirectory;
 #[cfg(unix)]
 use super::ThrottleRecord;
-#[cfg(unix)]
+use super::{ClientDirectory, ClientInfo, PidIdentity};
 use crate::sync_ext::MutexExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(unix)]
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
-#[cfg(unix)]
 impl ClientDirectory {
+    #[cfg(unix)]
     fn client_cwd(&self, pid: u32) -> Option<PathBuf> {
         self.inner
             .lock_or_recover()
@@ -20,12 +21,51 @@ impl ClientDirectory {
             .and_then(|info| info.cwd.clone())
     }
 
+    #[cfg(unix)]
     fn throttle_allows(&self, repo: &Path) -> bool {
         self.should_notify_repo(repo, None)
     }
 
+    #[cfg(unix)]
     fn throttle_allows_token(&self, repo: &Path, token: u64) -> bool {
         self.should_notify_repo(repo, Some(token))
+    }
+
+    /// Registered PIDs.
+    #[must_use]
+    pub fn clients(&self) -> Vec<u32> {
+        self.inner.lock_or_recover().keys().copied().collect()
+    }
+
+    /// Register with an explicit `started_at`, to test PID-recycle handling.
+    pub(crate) fn register_with_started_at_for_test(
+        &self,
+        pid: u32,
+        cwd: Option<PathBuf>,
+        started_at: Option<u64>,
+    ) {
+        self.inner
+            .lock_or_recover()
+            .insert(pid, ClientInfo { cwd, started_at });
+    }
+
+    /// A directory whose doorbell counts rings into the returned counter
+    /// instead of signalling. Unthrottled, with this process as its one
+    /// client, subscribed to every repository.
+    #[cfg(unix)]
+    pub(crate) fn counting_rings() -> (Self, Arc<AtomicU64>) {
+        let rings = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&rings);
+        let directory = Self {
+            doorbell: Box::new(move |_pid| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            ..Self::new()
+        };
+        directory.set_throttle_ms(0);
+        directory.register(std::process::id(), None);
+        (directory, rings)
     }
 }
 
@@ -265,16 +305,6 @@ fn is_client_alive_current_process() {
 
 #[test]
 #[cfg(unix)]
-fn is_client_alive_nonexistent_pid() {
-    let fake_pid = 999_999_u32;
-    assert!(
-        !ClientDirectory::is_client_alive(fake_pid),
-        "Non-existent PID should be detected as dead"
-    );
-}
-
-#[test]
-#[cfg(unix)]
 fn prune_dead_clients_removes_dead() {
     let directory = ClientDirectory::new();
     let current_pid = std::process::id();
@@ -285,22 +315,15 @@ fn prune_dead_clients_removes_dead() {
 
     assert_eq!(directory.len(), 2, "Should have 2 clients registered");
 
-    let pruned_pids = directory.prune_dead_clients();
-    assert_eq!(pruned_pids.len(), 1, "Should have pruned 1 dead client");
-    assert!(
-        pruned_pids.contains(&fake_pid),
-        "Pruned list should contain fake PID"
+    assert_eq!(
+        directory.prune_dead_clients(),
+        vec![fake_pid],
+        "only the dead client is pruned"
     );
-    assert_eq!(directory.len(), 1, "Should have 1 client remaining");
-
-    let clients = directory.clients();
-    assert!(
-        clients.contains(&current_pid),
-        "Current process should still be registered"
-    );
-    assert!(
-        !clients.contains(&fake_pid),
-        "Fake PID should have been removed"
+    assert_eq!(
+        directory.clients(),
+        vec![current_pid],
+        "only the live client remains registered"
     );
 }
 
@@ -332,30 +355,42 @@ fn prune_dead_clients_empty_registry() {
     assert_eq!(directory.len(), 0, "Should still have 0 clients");
 }
 
-#[cfg(unix)]
 #[test]
 /// A failed lookup at registration must not permanently disable notifications.
-fn identity_matches_true_when_recorded_is_none() {
-    assert!(ClientDirectory::identity_matches(None, Some(123)));
-    assert!(ClientDirectory::identity_matches(None, None));
+fn classify_identity_matches_when_recorded_is_none() {
+    assert_eq!(
+        ClientDirectory::classify_identity(None, Some(123)),
+        PidIdentity::Matches
+    );
+    assert_eq!(
+        ClientDirectory::classify_identity(None, None),
+        PidIdentity::Matches
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn identity_matches_true_when_start_times_match() {
-    assert!(ClientDirectory::identity_matches(Some(100), Some(100)));
+fn classify_identity_matches_when_start_times_match() {
+    assert_eq!(
+        ClientDirectory::classify_identity(Some(100), Some(100)),
+        PidIdentity::Matches
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn identity_matches_false_when_start_times_differ() {
-    assert!(!ClientDirectory::identity_matches(Some(100), Some(200)));
+fn classify_identity_recycled_only_when_both_known_and_differ() {
+    assert_eq!(
+        ClientDirectory::classify_identity(Some(5), Some(9)),
+        PidIdentity::Recycled
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn identity_matches_false_when_current_lookup_fails() {
-    assert!(!ClientDirectory::identity_matches(Some(100), None));
+/// A transient current-lookup failure on a still-registered PID is not a recycle.
+fn classify_identity_unverified_when_current_lookup_fails() {
+    assert_eq!(
+        ClientDirectory::classify_identity(Some(100), None),
+        PidIdentity::Unverified
+    );
 }
 
 #[test]
@@ -417,18 +452,6 @@ fn prune_dead_clients_keeps_live_pid_without_recorded_start_time() {
 
     assert_eq!(directory.prune_dead_clients(), Vec::<u32>::new());
     assert_eq!(directory.len(), 1);
-}
-
-#[cfg(unix)]
-#[test]
-/// A failed current lookup (`None`) is not a confirmed recycle; real sysinfo can't be forced to fail.
-fn is_confirmed_recycle_only_when_both_known_and_differ() {
-    assert!(!ClientDirectory::is_confirmed_recycle(None, None));
-    assert!(!ClientDirectory::is_confirmed_recycle(None, Some(5)));
-    // The crux: transient current-lookup failure on a still-registered PID.
-    assert!(!ClientDirectory::is_confirmed_recycle(Some(5), None));
-    assert!(!ClientDirectory::is_confirmed_recycle(Some(5), Some(5)));
-    assert!(ClientDirectory::is_confirmed_recycle(Some(5), Some(9)));
 }
 
 #[test]

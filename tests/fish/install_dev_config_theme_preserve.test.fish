@@ -17,20 +17,11 @@
 # silently reintroduces `~/.local/bin` (where gpy-agent lives) even when
 # the outer `env PATH=...` only lists safe directories.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
-
-set -g failed 0
-
-function __gpy_test_fail --argument-names msg
-    echo "❌ $msg"
-    set -g failed 1
-end
-
-function __gpy_test_pass --argument-names msg
-    echo "✅ $msg"
-end
 
 # Expose tools, not their installation directories: Homebrew can also contain
 # the developer's live gpy-agent.
@@ -38,7 +29,7 @@ set -l safe_path (mktemp -d)
 for tool in fish mkdir cp cmp rm readlink grep date mv ln cat
     set -l executable (command -s $tool)
     if test -z "$executable"
-        __gpy_test_fail "sandbox: required tool $tool is unavailable"
+        fail "sandbox: required tool $tool is unavailable"
         rm -rf "$safe_path"
         exit 1
     end
@@ -68,9 +59,9 @@ end
 # proceeding.
 set -l path_check (env PATH=$safe_path fish --no-config -c 'command -v gpy gpy-agent; or echo NOTFOUND' 2>&1)
 if test "$path_check" = NOTFOUND
-    __gpy_test_pass "sandbox: gpy and gpy-agent are unreachable under scrubbed PATH/--no-config"
+    pass "sandbox: gpy and gpy-agent are unreachable under scrubbed PATH/--no-config"
 else
-    __gpy_test_fail "sandbox: installed gpy binary is still reachable ($path_check) -- refusing to run install-dev.fish"
+    fail "sandbox: installed gpy binary is still reachable ($path_check) -- refusing to run install-dev.fish"
     exit 1
 end
 
@@ -86,22 +77,22 @@ set -l out1 (__gpy_run_install_dev "$home1" "$safe_path" "")
 set -l status1 $status
 
 if test $status1 -ne 0
-    __gpy_test_fail "install-dev.fish --fish-only exited $status1: $out1"
+    fail "install-dev.fish --fish-only exited $status1: $out1"
 else
     if diff -q "$home1/original_config.toml" "$custom_config" >/dev/null 2>&1
-        __gpy_test_pass "install-dev.fish: customized config.toml left untouched"
+        pass "install-dev.fish: customized config.toml left untouched"
     else
-        __gpy_test_fail "install-dev.fish: customized config.toml was modified"
+        fail "install-dev.fish: customized config.toml was modified"
     end
 
     if test -f "$home1/.config/gpy/config.toml.new"
-        if diff -q "$repo_root/config/config.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
-            __gpy_test_pass "install-dev.fish: config.toml.new matches shipped default"
+        if diff -q "$repo_root/config/config.example.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
+            pass "install-dev.fish: config.toml.new matches shipped default"
         else
-            __gpy_test_fail "install-dev.fish: config.toml.new does not match shipped default"
+            fail "install-dev.fish: config.toml.new does not match shipped default"
         end
     else
-        __gpy_test_fail "install-dev.fish: config.toml.new was not created for a divergent config"
+        fail "install-dev.fish: config.toml.new was not created for a divergent config"
     end
 end
 
@@ -109,18 +100,18 @@ end
 # row does not misbehave. ---
 __gpy_run_install_dev "$home1" "$safe_path" "" >/dev/null 2>&1
 if test -f "$home1/.config/gpy/config.toml.new"
-    if diff -q "$repo_root/config/config.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
-        __gpy_test_pass "install-dev.fish: repeat run keeps a single correct config.toml.new"
+    if diff -q "$repo_root/config/config.example.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
+        pass "install-dev.fish: repeat run keeps a single correct config.toml.new"
     else
-        __gpy_test_fail "install-dev.fish: repeat run corrupted config.toml.new"
+        fail "install-dev.fish: repeat run corrupted config.toml.new"
     end
 else
-    __gpy_test_fail "install-dev.fish: repeat run removed config.toml.new"
+    fail "install-dev.fish: repeat run removed config.toml.new"
 end
 if diff -q "$home1/original_config.toml" "$custom_config" >/dev/null 2>&1
-    __gpy_test_pass "install-dev.fish: repeat run still leaves customized config.toml untouched"
+    pass "install-dev.fish: repeat run still leaves customized config.toml untouched"
 else
-    __gpy_test_fail "install-dev.fish: repeat run modified customized config.toml"
+    fail "install-dev.fish: repeat run modified customized config.toml"
 end
 
 rm -rf "$home1"
@@ -133,17 +124,17 @@ set -l out3 (__gpy_run_install_dev "$home3" "$safe_path" "")
 set -l status3 $status
 
 if test $status3 -ne 0
-    __gpy_test_fail "install-dev.fish --fish-only exited $status3: $out3"
+    fail "install-dev.fish --fish-only exited $status3: $out3"
 else
-    if diff -q "$repo_root/config/config.toml" "$home3/.config/gpy/config.toml" >/dev/null 2>&1
-        __gpy_test_pass "install-dev.fish: first install creates config.toml matching shipped default"
+    if diff -q "$repo_root/config/config.example.toml" "$home3/.config/gpy/config.toml" >/dev/null 2>&1
+        pass "install-dev.fish: first install creates config.toml matching shipped default"
     else
-        __gpy_test_fail "install-dev.fish: first install config.toml does not match shipped default"
+        fail "install-dev.fish: first install config.toml does not match shipped default"
     end
     if test -e "$home3/.config/gpy/config.toml.new"
-        __gpy_test_fail "install-dev.fish: first install unexpectedly created config.toml.new"
+        fail "install-dev.fish: first install unexpectedly created config.toml.new"
     else
-        __gpy_test_pass "install-dev.fish: first install does not create a spurious config.toml.new"
+        pass "install-dev.fish: first install does not create a spurious config.toml.new"
     end
 end
 
@@ -159,21 +150,17 @@ set -l out4 (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$sa
     fish --no-config install-dev.fish --fish-only 2>&1 | string collect)
 set -l status4 $pipestatus[1]
 if test $status4 -ne 0; and string match -q "*already installed at $pkg_bin/gpy*" -- "$out4"
-    __gpy_test_pass "install-dev.fish: refuses to shadow a packaged gpy"
+    pass "install-dev.fish: refuses to shadow a packaged gpy"
 else
-    __gpy_test_fail "install-dev.fish: did not refuse a packaged gpy (status $status4): $out4"
+    fail "install-dev.fish: did not refuse a packaged gpy (status $status4): $out4"
 end
 set -l out4b (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
     fish --no-config install-dev.fish --fish-only --allow-shadow 2>&1 | string collect)
 if string match -q "*already installed at*" -- "$out4b"
-    __gpy_test_fail "install-dev.fish: --allow-shadow still refused: $out4b"
+    fail "install-dev.fish: --allow-shadow still refused: $out4b"
 else
-    __gpy_test_pass "install-dev.fish: --allow-shadow bypasses the guard"
+    pass "install-dev.fish: --allow-shadow bypasses the guard"
 end
 rm -rf "$home4" "$pkg_bin"
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ install-dev.fish preserves customized config.toml"
+test_finish "install-dev.fish preserves customized config.toml"

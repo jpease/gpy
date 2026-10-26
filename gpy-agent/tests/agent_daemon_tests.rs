@@ -5,17 +5,27 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)] // Test functions don't need panic docs
-#![allow(clippy::missing_errors_doc)] // Test functions don't need error docs
 
 #[path = "common/env_guard.rs"]
 mod env_guard;
+#[path = "common/git.rs"]
+mod git;
+#[path = "common/sgr.rs"]
+#[allow(
+    clippy::many_single_char_names,
+    reason = "the shared terminal model names rgb operands r, g, b"
+)]
+mod sgr;
 
 use env_guard::EnvGuard;
 use gpy_agent::Result;
 use gpy_agent::agent::Agent;
 use gpy_agent::config::{Config, loader};
+use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
+use gpy_agent::ipc::Response;
+use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
+use std::path::Path;
 use tempfile::{TempDir, tempdir};
 
 #[tokio::test]
@@ -78,6 +88,49 @@ async fn test_oneshot_language_command() -> Result<()> {
                 "Each detected language should have color field from theme"
             );
             // version is optional.
+        }
+    }
+
+    Ok(())
+}
+
+/// Every oneshot kind must render in JSON and in ANSI.
+#[tokio::test]
+#[serial]
+async fn test_oneshot_every_kind_renders_json_and_ansi() -> Result<()> {
+    let _env = set_test_env();
+    let path = env!("CARGO_MANIFEST_DIR");
+    let extras = [
+        ("git_status", serde_json::json!({})),
+        ("language_detect", serde_json::json!({})),
+        ("directory", serde_json::json!({})),
+        ("duration", serde_json::json!({"duration_ms": 2_500_u64})),
+        ("character", serde_json::json!({"success": true})),
+        (
+            "hostname",
+            serde_json::json!({"hostname": "box", "is_ssh": true}),
+        ),
+        (
+            "username",
+            serde_json::json!({"username": "me", "is_root": false}),
+        ),
+        ("exit_status", serde_json::json!({"success": false})),
+    ];
+
+    for (kind, extra) in extras {
+        for format in ["json", "ansi"] {
+            let mut request = serde_json::json!({"type": kind, "path": path, "format": format});
+            request
+                .as_object_mut()
+                .expect("request is an object")
+                .extend(extra.as_object().expect("extras are an object").clone());
+            let output = Agent::handle_oneshot(&request.to_string())
+                .map_err(|e| gpy_agent::Error::ipc(format!("{kind}/{format} failed: {e}")))?;
+            if format == "json" {
+                serde_json::from_str::<serde_json::Value>(&output).map_err(|e| {
+                    gpy_agent::Error::ipc(format!("{kind} JSON output is not JSON: {e}"))
+                })?;
+            }
         }
     }
 
@@ -235,20 +288,20 @@ async fn test_agent_creation() -> Result<()> {
 async fn test_rapid_oneshot_execution() -> Result<()> {
     let _env = set_test_env();
 
-    let handles = (0_i32..5_i32).map(|i| async move {
-        let request = if i % 2_i32 == 0_i32 {
-            r#"{"type":"git_status","path":".","format":"json"}"#
-        } else {
-            r#"{"type":"language_detect","path":".","format":"json"}"#
-        };
-        Agent::handle_oneshot(request)
-    });
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0_i32..5_i32 {
+        set.spawn(async move {
+            let request = if i % 2_i32 == 0_i32 {
+                r#"{"type":"git_status","path":".","format":"json"}"#
+            } else {
+                r#"{"type":"language_detect","path":".","format":"json"}"#
+            };
+            (i, Agent::handle_oneshot(request))
+        });
+    }
 
-    for (i, result) in futures::future::join_all(handles)
-        .await
-        .into_iter()
-        .enumerate()
-    {
+    while let Some(res) = set.join_next().await {
+        let (i, result) = res.expect("join handle");
         let response = result?;
         assert!(
             !response.is_empty(),
@@ -257,6 +310,104 @@ async fn test_rapid_oneshot_execution() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// A git theme that sets only the segment colors, no per-state ones.
+const THEME_WITHOUT_STATE_COLORS: &str = "[ui]\n\n[segments.git]\n\
+    format = \"[ $branch ]($style)\"\nbg_color = \"blue\"\ntext_color = \"yellow\"\n";
+
+/// A theme omitting every git state color renders in the segment colors, and
+/// the oneshot path and the agent's theme load render it identically.
+#[tokio::test]
+#[serial]
+async fn omitted_git_state_colors_render_the_same_via_oneshot_and_agent() -> Result<()> {
+    let _env = set_test_env_with_theme(THEME_WITHOUT_STATE_COLORS);
+    let repo = committed_repo();
+
+    let oneshot = oneshot_git_ansi(repo.path())?;
+    assert_eq!(oneshot, agent_git_ansi(repo.path())?);
+
+    let (drawn, _) = sgr::interpret(&oneshot).expect("oneshot output is plain SGR");
+    let branch: Vec<_> = drawn
+        .iter()
+        .filter(|(ch, _)| "main".contains(*ch))
+        .map(|(_, look)| (look.fg, look.bg))
+        .collect();
+    let blue = sgr::Shade::Basic {
+        index: 4,
+        bright: false,
+    };
+    let yellow = sgr::Shade::Basic {
+        index: 3,
+        bright: false,
+    };
+    assert!(
+        !branch.is_empty()
+            && branch
+                .iter()
+                .all(|look| *look == (Some(yellow), Some(blue))),
+        "clean branch must draw in the segment colors, got {oneshot:?}"
+    );
+    Ok(())
+}
+
+/// A theme that fails to load falls back to the `default` theme on the oneshot
+/// path, as it does in the agent.
+#[tokio::test]
+#[serial]
+async fn broken_theme_falls_back_to_default_via_oneshot_and_agent() -> Result<()> {
+    let _env = set_test_env_with_theme("[ui\n");
+    let repo = committed_repo();
+
+    let oneshot = oneshot_git_ansi(repo.path())?;
+    assert!(
+        oneshot.contains("main"),
+        "fallback theme must render the branch, got {oneshot:?}"
+    );
+    assert_eq!(oneshot, agent_git_ansi(repo.path())?);
+    Ok(())
+}
+
+/// A clean repository on branch `main` with one commit.
+fn committed_repo() -> TempDir {
+    let repo = tempdir().expect("create repo dir");
+    git::git_init(repo.path());
+    git::git(
+        repo.path(),
+        &["commit", "-q", "--allow-empty", "-m", "init"],
+    );
+    repo
+}
+
+/// The git segment `gpy-agent oneshot` renders for `repo`.
+fn oneshot_git_ansi(repo: &Path) -> Result<String> {
+    let request = serde_json::json!({
+        "type": "git_status",
+        "path": repo.to_str().expect("utf-8 repo path"),
+        "format": "ansi",
+    });
+    Agent::handle_oneshot(&request.to_string())
+}
+
+/// The git segment the agent renders for `repo`: the theme loaded as `Agent`
+/// loads it (configured name, else `default`), drawn by the IPC formatter.
+fn agent_git_ansi(repo: &Path) -> Result<String> {
+    let config = loader::load_config()?;
+    let theme = ThemeManager::new(config.ui.theme.as_str())
+        .or_else(|_| ThemeManager::new("default"))?
+        .get();
+    let status = gpy_agent::git::native::NativeGitBackend::get_complete_status(
+        repo,
+        None,
+        config.git.max_ahead_behind,
+        config.git.stash_enabled,
+        std::time::Duration::from_secs(config.git.timeout_seconds.get()),
+    )?
+    .expect("a git repository")
+    .status;
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE)
+        .with_palette(gpy_agent::palette::active_palette(&config));
+    create_formatter(Format::Ansi).render(&Response::RepositoryStatus(status), &ctx)
 }
 
 /// Temp HOME/XDG dirs plus env overrides; field order restores env before removing dirs.
@@ -281,9 +432,7 @@ fn set_test_env() -> TestEnv {
     let config_path = gpy_config_dir.join("config.toml");
     let default_config = Config::default();
     loader::save_config(
-        config_path
-            .to_str()
-            .expect("config path should be valid UTF-8"),
+        &config_path,
         &default_config,
         &default_config,
         &["ui.show_icons"],
@@ -301,4 +450,15 @@ fn set_test_env() -> TestEnv {
         _env: env,
         _home: home_dir,
     }
+}
+
+/// [`set_test_env`] with `theme_toml` installed as the active user theme `audit`.
+fn set_test_env_with_theme(theme_toml: &str) -> TestEnv {
+    let env = set_test_env();
+    let config_path = std::env::var_os("GPY_CONFIG_PATH").expect("GPY_CONFIG_PATH is set");
+    std::fs::write(&config_path, "[ui]\ntheme = \"audit\"\n").expect("write config");
+    let themes_dir = ThemeManager::user_themes_dir();
+    std::fs::create_dir_all(&themes_dir).expect("create themes dir");
+    std::fs::write(themes_dir.join("audit.toml"), theme_toml).expect("write theme");
+    env
 }

@@ -5,11 +5,10 @@
 # __gpy_request_character/_duration (raw ANSI, printf'd straight into the
 # prompt) — it would corrupt terminal rendering.
 #
-# The "wedged-mid-write agent" is simulated with a tiny Python listener that
-# accept()s the connection, writes a partial (non-newline-terminated) frame,
-# then goes silent. The listener self-destructs after a few seconds so this
-# test has a hard, deterministic upper bound even if the client hangs
-# waiting for more bytes.
+# The "wedged-mid-write agent" is a stub listener in partial mode: it writes
+# a partial (non-newline-terminated) frame, then goes silent. It exits after
+# a few seconds so this test has a hard, deterministic upper bound even if the
+# client hangs waiting for more bytes.
 #
 # A second case guards against over-strict validation: a normally-terminated
 # complete response must still be returned intact.
@@ -31,89 +30,40 @@ if not command -q socat; and not command -q nc
 end
 
 set -l test_tmp_dir (mktemp -d)
-set -l test_result PASS
-
-function _ipc_partial_cleanup --argument-names listener_pid
-    kill -9 $listener_pid 2>/dev/null
-end
+test_track_dir $test_tmp_dir
 
 # --- Case 1: partial write then stall must not leak the truncated bytes ---
 
 set -l sock1 $test_tmp_dir/gpy-partial-test.sock
-set -l listener_lifetime_secs 3
-python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-conn.sendall(b"{\"status\":\"o")
-time.sleep(float(sys.argv[2]))
-' $sock1 $listener_lifetime_secs &
-set -l listener1_pid $last_pid
-
-poll_until 2 test -S $sock1
-
-if not test -S $sock1
-    _ipc_partial_cleanup $listener1_pid
-    rm -rf $test_tmp_dir
-    test_skip "could not create test Unix socket listener"
-end
+test_stub_listener $sock1 partial --reply '{"status":"o' --lifetime 3
 
 set -gx GPY_AGENT_SOCKET_PATH $sock1
 # Well under the listener's stall duration, so the client's own timeout (not
-# the listener self-destructing) is what ends this call.
+# the listener exiting) is what ends this call.
 set -l result (__gpy_ipc_send '{"op":"ping"}' 300)
 
-_ipc_partial_cleanup $listener1_pid
+test_stop_pids $test_stub_pid
 
 if test -n "$result"
-    print_test_result "partial write is discarded, not returned" FAIL "got '$result'"
-    set test_result FAIL
+    fail "partial write is discarded, not returned" "got '$result'"
 else
-    print_test_result "partial write is discarded, not returned" PASS
+    pass "partial write is discarded, not returned"
 end
 
 # --- Case 2: a complete, newline-terminated response still round-trips ---
 
 set -l sock2 $test_tmp_dir/gpy-complete-test.sock
-python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-conn.sendall(b"{\"status\":\"ok\"}\n")
-conn.close()
-' $sock2 &
-set -l listener2_pid $last_pid
-
-poll_until 2 test -S $sock2
-
-if not test -S $sock2
-    _ipc_partial_cleanup $listener2_pid
-    rm -rf $test_tmp_dir
-    test_skip "could not create second test Unix socket listener"
-end
+test_stub_listener $sock2 reply --reply '{"status":"ok"}'
 
 set -gx GPY_AGENT_SOCKET_PATH $sock2
 set -l complete_result (__gpy_ipc_send '{"op":"ping"}' 1000)
 
-_ipc_partial_cleanup $listener2_pid
-functions -e _ipc_partial_cleanup
-rm -rf $test_tmp_dir
+test_stop_pids $test_stub_pid
 
 if test "$complete_result" = '{"status":"ok"}'
-    print_test_result "complete response still round-trips" PASS
+    pass "complete response still round-trips"
 else
-    print_test_result "complete response still round-trips" FAIL "got '$complete_result'"
-    set test_result FAIL
+    fail "complete response still round-trips" "got '$complete_result'"
 end
 
-print_test_footer "IPC partial-response validation" $test_result
-
-if test "$test_result" = PASS
-    exit 0
-else
-    exit 1
-end
+test_finish "IPC partial-response validation"

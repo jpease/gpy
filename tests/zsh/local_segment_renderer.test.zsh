@@ -20,6 +20,7 @@
 #   - the color table maps names, bright names, `#RRGGBB` and 0-255.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
 SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-local-renderer.XXXXXX")
@@ -29,16 +30,6 @@ export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 source zsh/gpy.zsh
 
-FAILED=0
-check() {
-    local label=$1 expected=$2 actual=$3
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 contains() { [[ $1 == *"$2"* ]] && echo true || echo false; }
 
 # Theme state the renderer reads: ASCII delimiters, named colors.
@@ -173,8 +164,4 @@ long='' long_expected=''
 for ((i = 0; i < 4096; i++)); do long+='%'; long_expected+='%%'; done
 check "escape: 4096 percent signs" "$long_expected" "$(esc "$long")"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish "local segment renderer"

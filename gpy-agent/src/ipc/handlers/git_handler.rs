@@ -98,7 +98,7 @@ impl GitHandler {
 
             // The watcher may have missed an event (submodules, dropped FSEvents),
             // so revalidate in the background past the cooldown; never awaited.
-            let _ = self.revalidate_stale_hit(&git_root, path_buf, config.git.max_ahead_behind);
+            self.revalidate_stale_hit(&git_root, path_buf, config.git.max_ahead_behind);
 
             return Ok(Self::make_git_response(
                 cached_status,
@@ -175,20 +175,12 @@ impl GitHandler {
 
     /// Revalidate a within-TTL cache hit in the background once past its cooldown.
     ///
-    /// The cooldown throttles this to one recompute per window per repo. Returns
-    /// the job handle (for tests) or `None` when throttled; never awaited on the
-    /// request path.
-    #[must_use]
-    fn revalidate_stale_hit(
-        &self,
-        git_root: &Path,
-        path: &Path,
-        max_ahead_behind: usize,
-    ) -> Option<Arc<SharedJob<SharedGitStatusResult>>> {
-        if self.git_cache.is_fresh_canonical(git_root) {
-            return None;
+    /// The cooldown throttles this to one recompute per window per repo; never
+    /// awaited on the request path.
+    fn revalidate_stale_hit(&self, git_root: &Path, path: &Path, max_ahead_behind: usize) {
+        if !self.git_cache.is_fresh_canonical(git_root) {
+            drop(self.git_status_job(git_root, path.to_path_buf(), max_ahead_behind));
         }
-        Some(self.git_status_job(git_root, path.to_path_buf(), max_ahead_behind))
     }
 
     fn git_status_job(
@@ -219,8 +211,7 @@ impl GitHandler {
         let job = move || {
             let stash_enabled = job_spec.render.config_manager.get().git.stash_enabled;
             let started = Instant::now();
-            let result = crate::git::status::load_repository_state_with(
-                &crate::git::native::NativeGitBackend,
+            let result = crate::git::native::NativeGitBackend::get_complete_status(
                 &job_spec.path,
                 None,
                 job_spec.max_ahead_behind,
@@ -283,10 +274,10 @@ impl GitHandler {
 impl RequestHandler for GitHandler {
     fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
         match message {
-            Message::RepositoryStatus { path, prev_bg, .. } => {
+            Message::RepositoryStatus { path, segment } => {
                 // `write_git` uses the raw wire string for both chevron color and
                 // cache-key token, so the reading shell resolves the same file.
-                self.get_git_status(path, prev_bg.as_deref())
+                self.get_git_status(path, segment.prev_bg.as_deref())
             }
             _ => Err(HandlerError::UnexpectedMessage {
                 handler: "GitHandler",
@@ -295,24 +286,17 @@ impl RequestHandler for GitHandler {
             }),
         }
     }
-
-    fn name(&self) -> &'static str {
-        "GitHandler"
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
     use super::*;
-    use crate::cache::{CachePolicy, InstantPromptCache};
+    use crate::cache::CachePolicy;
     use crate::config::manager::ConfigManager;
     use crate::git::status::load_repository_state;
     use crate::git::{RepositoryState, RepositoryStatus};
     use crate::ipc::ClientDirectory;
-    use crate::palette::PaletteCache;
-    use crate::theme::ThemeManager;
+    use crate::ipc::fixtures::render_deps;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -331,18 +315,9 @@ mod tests {
         git_cache: Arc<GitStatusCache>,
         config_manager: Arc<ConfigManager>,
     ) -> (GitHandler, Arc<ClientDirectory>) {
-        let registry = ClientDirectory::new().shared();
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
-        let render = RenderDeps {
-            config_manager,
-            // Builtin theme keeps the test hermetic against on-disk themes.
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
-            palette_cache,
-            instant_cache: Arc::new(InstantPromptCache::new_for_test()),
-            client_registry: Arc::clone(&registry),
-        };
-        let handler = GitHandler::new(render, git_cache);
-        (handler, registry)
+        let render = render_deps(config_manager);
+        let registry = Arc::clone(&render.client_registry);
+        (GitHandler::new(render, git_cache), registry)
     }
 
     /// Cache with a 0ms cooldown so revalidation always fires.
@@ -352,6 +327,22 @@ mod tests {
             cooldown: Duration::ZERO,
         };
         Arc::new(GitStatusCache::with_policy(policy))
+    }
+
+    /// Poll until the cached status for `root` reaches `state`, so the temp dir
+    /// outlives the background job that produces it.
+    fn wait_for_canonical_state(cache: &GitStatusCache, root: &Path, state: RepositoryState) {
+        let started = std::time::Instant::now();
+        while cache
+            .get_any_canonical(root)
+            .is_none_or(|cached| cached.state != state)
+        {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "background revalidation did not reach {state:?} within the timeout"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Create a repo with one untracked file; returns the canonical root.
@@ -401,9 +392,17 @@ mod tests {
     }
 
     /// Repaint fires only when the rendered output changes.
+    #[cfg(unix)]
     #[test]
     fn publish_and_repaint_notifies_only_on_content_change() {
-        let (handler, registry) = make_handler();
+        use std::sync::atomic::Ordering;
+
+        let (handler, _registry) = make_handler();
+        let (registry, rings) = ClientDirectory::counting_rings();
+        let render = RenderDeps {
+            client_registry: registry.shared(),
+            ..handler.render.clone()
+        };
         // Unique temp path so the first write is always a change.
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let git_root = temp_dir.path().join("repo");
@@ -412,23 +411,23 @@ mod tests {
         let clean = status(0);
         let dirty = status(3);
 
-        publish_and_repaint(&handler.render, &git_root, &clean, None);
+        publish_and_repaint(&render, &git_root, &clean, None);
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "first write should repaint live shells"
         );
 
-        publish_and_repaint(&handler.render, &git_root, &clean, None);
+        publish_and_repaint(&render, &git_root, &clean, None);
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "an unchanged refresh must not wake terminals"
         );
 
-        publish_and_repaint(&handler.render, &git_root, &dirty, None);
+        publish_and_repaint(&render, &git_root, &dirty, None);
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             2,
             "a changed status should repaint live shells"
         );
@@ -492,8 +491,7 @@ mod tests {
 
         let mut config = crate::config::Config::default();
         config.git.skip_paths = vec![link.to_string_lossy().into_owned()];
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
-        config_manager.overwrite_for_tests(config);
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
         let (handler, _registry) =
             make_handler_with_config(Arc::new(GitStatusCache::new()), config_manager);
 
@@ -542,16 +540,8 @@ mod tests {
         );
 
         // (b) Background revalidation recomputes the true Dirty status.
-        let handle = handler
-            .revalidate_stale_hit(&git_root, &git_root, 0)
-            .expect("entry is past cooldown, so revalidation must be spawned");
-        let job_result = handle
-            .wait_timeout(Duration::from_secs(5))
-            .expect("background revalidation should complete within the timeout");
-        assert!(
-            matches!(job_result, Ok(Some(_))),
-            "revalidation job should produce a fresh status: {job_result:?}"
-        );
+        handler.revalidate_stale_hit(&git_root, &git_root, 0);
+        wait_for_canonical_state(&cache, &git_root, RepositoryState::Dirty);
 
         let refreshed = cache
             .get_any_canonical(&git_root)
@@ -577,26 +567,23 @@ mod tests {
         let default_cache = Arc::new(GitStatusCache::new());
         let (fresh_handler, _r1) = make_handler_with_cache(Arc::clone(&default_cache));
         default_cache.set_canonical(&git_root, status(0), HashMap::new());
+        fresh_handler.revalidate_stale_hit(&git_root, &git_root, 0);
         assert!(
             fresh_handler
-                .revalidate_stale_hit(&git_root, &git_root, 0)
-                .is_none(),
+                .in_flight
+                .jobs
+                .lock()
+                .expect("jobs lock")
+                .is_empty(),
             "a within-cooldown entry must not spawn a background revalidation"
         );
 
-        // 0ms cooldown: spawned.
+        // 0ms cooldown: spawned, and the recompute replaces the seeded Clean entry.
         let hot_cache = zero_cooldown_cache();
         let (hot_handler, _r2) = make_handler_with_cache(Arc::clone(&hot_cache));
         hot_cache.set_canonical(&git_root, status(0), HashMap::new());
-        let handle = hot_handler.revalidate_stale_hit(&git_root, &git_root, 0);
-        assert!(
-            handle.is_some(),
-            "an entry past its cooldown must spawn a background revalidation"
-        );
-        // Drain the job so it doesn't outlive the temp dir.
-        if let Some(job) = handle {
-            let _ = job.wait_timeout(Duration::from_secs(5));
-        }
+        hot_handler.revalidate_stale_hit(&git_root, &git_root, 0);
+        wait_for_canonical_state(&hot_cache, &git_root, RepositoryState::Dirty);
     }
 
     /// A stale entry older than `MAX_IMMEDIATE_STALE_AGE` isn't served; the fresh recompute is.

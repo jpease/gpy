@@ -5,13 +5,14 @@ use crate::config::Config;
 use crate::debug_log;
 use crate::git::cache::GitStatusCache;
 use crate::git::native::NativeGitBackend;
-use crate::git::status::{GitBackend, load_repository_state_with};
+use crate::git::status::GitBackend;
 use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::ClientDirectory;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
+use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::palette::PaletteCache;
 use crate::sync_ext::MutexExt;
-use crate::theme::{ThemeConfig, ThemeManager};
+use crate::theme::{GitState, ThemeConfig, ThemeManager};
 use crate::watcher::{
     DebouncedEvent, FileEvent, GitPaths, WatcherConfig, multi_repo::MultiRepoWatcher,
 };
@@ -21,12 +22,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod coalesce;
 mod refresh;
+pub use coalesce::RepoRefreshCoordinator;
+use coalesce::run_coalesced;
 use refresh::config_refresh_required;
-#[cfg(test)]
-use refresh::{
-    agent_refresh_required, git_refresh_required, language_refresh_required, ui_refresh_required,
-};
 
 /// Shared thread-safe storage for the file watcher, allowing it to be replaced or stopped
 pub type SharedWatcherSlot = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
@@ -59,55 +59,6 @@ pub struct AgentContext {
     pub announce_gate: Arc<Mutex<()>>,
 }
 
-/// Serializes [`refresh_and_notify_if_changed`] per repository so a stale scan
-/// cannot overwrite a fresher one; different repositories stay concurrent.
-/// The inner lock covers only map bookkeeping, never the git scan.
-#[derive(Default)]
-pub struct RepoRefreshCoordinator {
-    /// Present key = refresh in flight; value = follow-up pending.
-    /// Entries are removed when the owner finishes, so the map stays bounded.
-    state: Mutex<std::collections::HashMap<PathBuf, bool>>,
-}
-
-impl RepoRefreshCoordinator {
-    /// Returns `true` if the caller now owns the repo's refresh; otherwise records
-    /// a pending follow-up for the current owner.
-    fn try_start(&self, repo: &Path) -> bool {
-        let mut guard = self.state.lock_or_recover();
-        match guard.entry(repo.to_path_buf()) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                *entry.get_mut() = true;
-                false
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(false);
-                true
-            }
-        }
-    }
-
-    /// Returns `true` if exactly one more pass is needed; otherwise drops the entry.
-    fn finish(&self, repo: &Path) -> bool {
-        let mut guard = self.state.lock_or_recover();
-        if let Some(pending) = guard.get_mut(repo)
-            && *pending
-        {
-            *pending = false;
-            return true;
-        }
-        guard.remove(repo);
-        false
-    }
-
-    /// Release the slot ignoring any pending follow-up; used only by the follow-up cap.
-    fn abandon(&self, repo: &Path) {
-        self.state.lock_or_recover().remove(repo);
-    }
-}
-
-/// Cap on catch-up passes per coalesced refresh; the reconcile backstop handles the rest.
-const MAX_COALESCED_FOLLOW_UPS: u32 = 32;
-
 /// Handle a debounced file system event.
 pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Config) {
     debug_log!("agent", "handle_file_event called: {:?}", event);
@@ -132,7 +83,7 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
                 return;
             }
 
-            let Some(repo_root) = MultiRepoWatcher::find_git_root(path)
+            let Some(repo_root) = crate::git::find_git_dir_only(path)
                 .or_else(|| path.parent().map(Path::to_path_buf))
             else {
                 return;
@@ -144,7 +95,7 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
             // so it must not hold the event thread.
             let refresh_ctx = ctx.clone();
             let refresh_config = config.clone();
-            spawn_language_job(move || {
+            crate::ipc::handlers::spawn_detached(move || {
                 let theme = refresh_ctx.theme_manager.get();
                 refresh_language_for(
                     &refresh_ctx,
@@ -238,13 +189,10 @@ fn refresh_language_for(
     let palette = ctx.palette_cache.get();
     let stashed_venv = crate::language::venv::stashed_project_venv(root);
     // Off the request path, so a cold version is probed here.
-    let languages = crate::language::display::build_language_display_info_at(
-        &detected,
-        theme,
-        &config.language,
-        Some(root),
-        stashed_venv.as_ref(),
-    );
+    let request = DisplayRequest::new(&detected, theme, &config.language)
+        .with_cwd(Some(root))
+        .with_venv(stashed_venv.as_ref());
+    let languages = display_info(&request, Versions::Probe).unwrap_or_default();
 
     let mut wrote = false;
     for prev_bg in std::iter::once(None).chain(extra_prev_bg.map(Some)) {
@@ -399,35 +347,6 @@ pub(super) fn refresh_and_notify_coalesced(
     });
 }
 
-/// Run `scan(false)`, then `scan(true)` until no follow-up is pending, bounded by
-/// [`MAX_COALESCED_FOLLOW_UPS`]. Nothing else re-drives this, so drain until quiet.
-fn run_coalesced<F: FnMut(bool)>(coordinator: &RepoRefreshCoordinator, repo: &Path, mut scan: F) {
-    if !coordinator.try_start(repo) {
-        // Another thread owns this repo and will service our pending change.
-        return;
-    }
-
-    scan(false);
-
-    let mut follow_ups = 0_u32;
-    while coordinator.finish(repo) {
-        if follow_ups >= MAX_COALESCED_FOLLOW_UPS {
-            debug_log!(
-                "agent",
-                "Coalesced refresh hit follow-up cap ({}) for {}; deferring remaining churn to reconcile",
-                MAX_COALESCED_FOLLOW_UPS,
-                repo.display()
-            );
-            // Cap hit with a real pending change: service it once, defer further churn.
-            scan(true);
-            coordinator.abandon(repo);
-            break;
-        }
-        follow_ups = follow_ups.saturating_add(1);
-        scan(true);
-    }
-}
-
 /// Whether a status transition warrants notifying clients.
 ///
 /// Content-based: states that render identically (e.g. ahead/behind already
@@ -490,8 +409,7 @@ fn try_incremental_update_with<B: GitBackend>(
         return not_attempted;
     }
 
-    match load_repository_state_with(
-        backend,
+    match backend.complete_status(
         git_root,
         Some(&relative_paths),
         config.git.max_ahead_behind,
@@ -559,8 +477,7 @@ fn refresh_repo_status_with<B: GitBackend>(
 
     // Invalidate first so the scan reflects the triggering mutation.
     ctx.cache.invalidate_canonical(git_root);
-    match load_repository_state_with(
-        backend,
+    match backend.complete_status(
         git_root,
         None,
         config.git.max_ahead_behind,
@@ -642,7 +559,6 @@ fn schedule_language_refresh_from_git_status(
     }
 
     let signature = git_status_signature(status);
-
     // Pre-check; `refresh_language_for` re-checks when the job runs.
     if !ctx
         .language_cache
@@ -654,7 +570,6 @@ fn schedule_language_refresh_from_git_status(
     let refresh_ctx = ctx.clone();
     let refresh_repo_root = repo_root.to_path_buf();
     let refresh_config = config.clone();
-
     let job = move || {
         let theme = refresh_ctx.theme_manager.get();
         refresh_language_for(
@@ -667,17 +582,7 @@ fn schedule_language_refresh_from_git_status(
         );
     };
 
-    spawn_language_job(job);
-}
-
-/// Run a language refresh on the blocking pool when a runtime is current, else
-/// on its own thread: it may probe versions, which must not hold the caller.
-fn spawn_language_job(job: impl FnOnce() + Send + 'static) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn_blocking(job);
-    } else {
-        std::thread::spawn(job);
-    }
+    crate::ipc::handlers::spawn_detached(job);
 }
 
 fn git_status_signature(status: &crate::git::RepositoryStatus) -> u64 {
@@ -690,6 +595,13 @@ fn git_status_signature(status: &crate::git::RepositoryStatus) -> u64 {
     )
         .hash(&mut hasher);
     hasher.finish()
+}
+
+/// Whether `event` is a git change no registered client would see, so its
+/// refresh is skipped. Applied by the watcher callback, not in
+/// `handle_file_event`, whose tests use an empty registry.
+fn git_event_lacks_subscriber(ctx: &AgentContext, event: &DebouncedEvent) -> bool {
+    matches!(event.event, FileEvent::Git { .. }) && !ctx.registry.has_subscriber(&event.repo)
 }
 
 /// Create the filesystem watcher used for live updates.
@@ -706,11 +618,7 @@ pub(super) fn create_watcher(
         .registry(Arc::clone(&ctx.watch_registry))
         .config(watcher_config)
         .callback(Box::new(move |event: DebouncedEvent| {
-            // Skip git refreshes no subscribed client would receive. Gated here, not in
-            // `handle_file_event`, whose tests use an empty registry.
-            if matches!(event.event, FileEvent::Git { .. })
-                && !ctx_for_callback.registry.has_subscriber(&event.repo)
-            {
+            if git_event_lacks_subscriber(&ctx_for_callback, &event) {
                 debug_log!(
                     "agent",
                     "Skipping git refresh for {}: no registered client subscribes to it",
@@ -798,7 +706,9 @@ fn sync_watcher_state(
             Ok(new_watcher) => {
                 let repos = ctx.registry.get_registered_repos();
                 for (pid, path) in repos {
-                    let _ = new_watcher.register_client(pid, &path);
+                    if let Err(e) = new_watcher.attach_client(pid, &path) {
+                        debug_log!("config", "registration failed for {pid}: {e}");
+                    }
                 }
                 *watcher_guard = Some(new_watcher);
             }
@@ -950,7 +860,6 @@ pub(super) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool)
 pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
     let theme = ctx.theme_manager.get();
     let palette = ctx.palette_cache.get();
-
     // prev_bg for git under the new theme; mirrors `ThemeManager::export`.
     let git_prev_bg = theme.segments.directory.bg_color.as_str();
     // Repos `config` includes again may publish git caches once more.
@@ -960,14 +869,12 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
     for (_pid, cwd) in ctx.registry.get_registered_repos() {
-        let git_root = MultiRepoWatcher::find_git_root(&cwd);
+        let git_root = crate::git::find_git_dir_only(&cwd);
         // Keyed by request path when there is no git root.
         let lang_root = git_root.clone().unwrap_or_else(|| cwd.clone());
-
         if !seen_keys.insert(lang_root.clone()) {
             continue;
         }
-
         if let Some(root) = git_root.as_ref() {
             if config.git.is_enabled_for(root) {
                 if let Some(status) = ctx.cache.get(root) {
@@ -1009,7 +916,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
         regen_language_caches(&regen_ctx, &root, &regen_config);
     };
 
-    spawn_language_job(job);
+    crate::ipc::handlers::spawn_detached(job);
 }
 
 /// Synchronous body of [`schedule_language_cache_regen`]; returns `true` when a
@@ -1017,12 +924,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
 fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) -> bool {
     // One theme snapshot for both `lang_prev_bg` and the render, to avoid a torn read.
     let theme = ctx.theme_manager.get();
-    let lang_prev_bg = theme
-        .segments
-        .git
-        .clean_bg_color
-        .as_deref()
-        .unwrap_or(theme.segments.git.bg_color.as_str());
+    let lang_prev_bg = theme.segments.git.get_bg_color(GitState::Clean);
 
     refresh_language_for(
         ctx,
@@ -1035,7 +937,6 @@ fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) 
 }
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 mod coordinator_tests;
+#[cfg(test)]
+mod tests;

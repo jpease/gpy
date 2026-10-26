@@ -3,6 +3,7 @@
 use crate::config::validation::{ValidationError, ValidationErrorKind};
 use crate::config::{Config, types};
 use crate::{Error, Result};
+use std::str::FromStr;
 
 /// Build an `Error::Config` from a [`ValidationErrorKind::InvalidValue`] error.
 fn invalid_value(field_path: &str, expected: &'static str, value: impl Into<String>) -> Error {
@@ -38,7 +39,7 @@ macro_rules! git_icon_key {
             key: concat!("git.icons.", stringify!($field)),
             get: |c| c.git.icons.$field.to_string(),
             set: Some(|c, v| {
-                c.git.icons.$field = types::Icon::new(v).map_err(|_| {
+                c.git.icons.$field = types::Icon::new(v).ok().ok_or_else(|| {
                     invalid_value(concat!("git.icons.", stringify!($field)), "icon", v)
                 })?;
                 Ok(())
@@ -68,7 +69,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.agent.timeout_seconds.to_string(),
         set: Some(|c, v| {
             c.agent.timeout_seconds =
-                types::AgentTimeout::new(parse_u64_field(v, "agent.timeout_seconds")?)
+                types::AgentTimeout::new(parse_field(v, "agent.timeout_seconds")?)
                     .ok_or_else(|| invalid_value("agent.timeout_seconds", "agent timeout", v))?;
             Ok(())
         }),
@@ -97,7 +98,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.agent.supervisor.check_interval_seconds.to_string(),
         set: Some(|c, v| {
             c.agent.supervisor.check_interval_seconds = types::SupervisorCheckInterval::new(
-                parse_u64_field(v, "agent.supervisor.check_interval_seconds")?,
+                parse_field(v, "agent.supervisor.check_interval_seconds")?,
             )
             .ok_or_else(|| {
                 invalid_value(
@@ -115,7 +116,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.agent.supervisor.max_restart_attempts.to_string(),
         set: Some(|c, v| {
             c.agent.supervisor.max_restart_attempts = types::SupervisorMaxRestartAttempts::new(
-                parse_u32_field(v, "agent.supervisor.max_restart_attempts")?,
+                parse_field(v, "agent.supervisor.max_restart_attempts")?,
             )
             .ok_or_else(|| {
                 invalid_value(
@@ -159,9 +160,8 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "git.timeout_seconds",
         get: |c| c.git.timeout_seconds.to_string(),
         set: Some(|c, v| {
-            c.git.timeout_seconds =
-                types::GitTimeout::new(parse_u64_field(v, "git.timeout_seconds")?)
-                    .ok_or_else(|| invalid_value("git.timeout_seconds", "git timeout", v))?;
+            c.git.timeout_seconds = types::GitTimeout::new(parse_field(v, "git.timeout_seconds")?)
+                .ok_or_else(|| invalid_value("git.timeout_seconds", "git timeout", v))?;
             Ok(())
         }),
         description: "Git command timeout in seconds",
@@ -171,10 +171,9 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.git.max_branch_length.to_string(),
         set: Some(|c, v| {
             c.git.max_branch_length =
-                types::MaxBranchLength::new(parse_usize_field(v, "git.max_branch_length")?)
-                    .ok_or_else(|| {
-                        invalid_value("git.max_branch_length", "max branch length", v)
-                    })?;
+                types::MaxBranchLength::new(parse_field(v, "git.max_branch_length")?).ok_or_else(
+                    || invalid_value("git.max_branch_length", "max branch length", v),
+                )?;
             Ok(())
         }),
         description: "Maximum branch name length to display",
@@ -189,7 +188,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "git.max_ahead_behind",
         get: |c| c.git.max_ahead_behind.to_string(),
         set: Some(|c, v| {
-            c.git.max_ahead_behind = parse_usize_field(v, "git.max_ahead_behind")?;
+            c.git.max_ahead_behind = parse_field(v, "git.max_ahead_behind")?;
             Ok(())
         }),
         description: "Maximum ahead/behind commit count to report (0 = unlimited)",
@@ -207,7 +206,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "git.icon_set",
         get: |c| c.git.icon_set.to_string(),
         set: Some(|c, v| {
-            c.git.icon_set = v.parse().map_err(Error::config)?;
+            c.git.icon_set = v.parse()?;
             Ok(())
         }),
         description: "Glyph set for stash/detached/in-progress icons: 'unicode' or 'nerd_font'",
@@ -249,7 +248,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.detection_mode",
         get: |c| c.language.detection_mode.to_string(),
         set: Some(|c, v| {
-            c.language.detection_mode = v.parse().map_err(Error::config)?;
+            c.language.detection_mode = v.parse()?;
             Ok(())
         }),
         description: "Detection strategy: 'content', 'markers', or 'hybrid'",
@@ -259,7 +258,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.language.cache_ttl_hours.to_string(),
         set: Some(|c, v| {
             c.language.cache_ttl_hours =
-                types::CacheTtlHours::new(parse_u64_field(v, "language.cache_ttl_hours")?)
+                types::CacheTtlHours::new(parse_field(v, "language.cache_ttl_hours")?)
                     .ok_or_else(|| invalid_value("language.cache_ttl_hours", "cache TTL", v))?;
             Ok(())
         }),
@@ -269,17 +268,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.display",
         get: |c| c.language.display.to_string(),
         set: Some(|c, v| {
-            // Plain text: keeps the allowed-values hint `InvalidValue` can't express.
-            #[allow(
-                clippy::map_err_ignore,
-                reason = "the message quotes the rejected value and lists the allowed ones; a cause would append to it"
-            )]
-            let display = v.parse().map_err(|_| {
-                Error::config(format!(
-                    "Invalid language.display '{v}'. Use 'icon' or 'text'"
-                ))
-            })?;
-            c.language.display = display;
+            c.language.display = v.parse()?;
             Ok(())
         }),
         description: "Display mode: 'icon' or 'text'",
@@ -288,8 +277,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.filter",
         get: |c| c.language.filter.to_string(),
         set: Some(|c, v| {
-            // Plain text: message is composed by `LanguageFilter::from_str`.
-            c.language.filter = v.parse().map_err(Error::config)?;
+            c.language.filter = v.parse()?;
             Ok(())
         }),
         description: "Language filter: 'all', 'primary', or top N (e.g. '3')",
@@ -298,13 +286,10 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.confidence_threshold",
         get: |c| c.language.confidence_threshold.to_string(),
         set: Some(|c, v| {
-            #[allow(
-                clippy::map_err_ignore,
-                reason = "ValidationError has no source field; the message already quotes the rejected value"
-            )]
             let threshold = v
                 .parse::<f32>()
-                .map_err(|_| invalid_value("language.confidence_threshold", "threshold", v))?;
+                .ok()
+                .ok_or_else(|| invalid_value("language.confidence_threshold", "threshold", v))?;
 
             c.language.confidence_threshold = types::ConfidenceThreshold::new(threshold)
                 .ok_or_else(|| {
@@ -321,7 +306,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             c.ui.show_icons = parse_bool_field(v, "ui.show_icons")?;
             Ok(())
         }),
-        description: "Show icons for languages",
+        description: "Show glyphs: language icons, git icons and powerline separators",
     },
     ConfigKeyMeta {
         key: "ui.transient_prompt",
@@ -346,7 +331,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "ui.directory.display",
         get: |c| c.ui.directory.display.to_string(),
         set: Some(|c, v| {
-            c.ui.directory.display = parse_directory_display(v)?;
+            c.ui.directory.display = v.parse()?;
             Ok(())
         }),
         description: "Directory display mode: 'basename', 'abbreviated', 'truncated', 'full'",
@@ -355,9 +340,10 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "ui.directory.truncation_length",
         get: |c| c.ui.directory.truncation_length.to_string(),
         set: Some(|c, v| {
-            c.ui.directory.truncation_length = types::DirectoryTruncationLength::new(
-                parse_usize_field(v, "ui.directory.truncation_length")?,
-            )
+            c.ui.directory.truncation_length = types::DirectoryTruncationLength::new(parse_field(
+                v,
+                "ui.directory.truncation_length",
+            )?)
             .ok_or_else(|| {
                 invalid_value("ui.directory.truncation_length", "truncation length", v)
             })?;
@@ -382,10 +368,9 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.ui.directory.max_length.to_string(),
         set: Some(|c, v| {
             c.ui.directory.max_length =
-                types::MaxPathLength::new(parse_usize_field(v, "ui.directory.max_length")?)
-                    .ok_or_else(|| {
-                        invalid_value("ui.directory.max_length", "max path length", v)
-                    })?;
+                types::MaxPathLength::new(parse_field(v, "ui.directory.max_length")?).ok_or_else(
+                    || invalid_value("ui.directory.max_length", "max path length", v),
+                )?;
             Ok(())
         }),
         description: "Maximum path length to display",
@@ -412,8 +397,8 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
     ConfigKeyMeta {
         key: "ui.enabled_segments",
         get: |c| c.ui.enabled_segments.join(" "),
-        set: None, // Setting requires Vec<String> parsing, not yet implemented
-        description: "Enabled segments and their order",
+        set: None, // List-valued: edited in config.toml or with `gpy enable`/`gpy disable`
+        description: "Enabled segments and their order (see `gpy enable`/`gpy disable`)",
     },
 ];
 
@@ -488,10 +473,6 @@ pub fn get_config_value(config: &Config, key: &str) -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if the config key is unknown, read-only, or the value is invalid.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "ValidationError has no source field; the message already quotes the rejected icon"
-)]
 pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
     for meta in CONFIG_KEYS {
         if meta.key == key {
@@ -506,17 +487,13 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
         }
     }
     if let Some(name) = language_icon_name(key) {
-        let icon = types::Icon::new(value).map_err(|_| invalid_value(key, "icon", value))?;
+        let icon = types::Icon::new(value)
+            .ok()
+            .ok_or_else(|| invalid_value(key, "icon", value))?;
         config.language.icons.icons.insert(name, icon);
         return Ok(());
     }
     Err(unknown_key(key))
-}
-
-/// Check if a config key is valid
-#[must_use]
-pub fn validate_config_key(key: &str) -> bool {
-    CONFIG_KEYS.iter().any(|m| m.key == key)
 }
 
 /// Parse a boolean (`true/false`, `1/0`, `yes/no`, `on/off`).
@@ -531,58 +508,18 @@ fn parse_bool_field(s: &str, field_path: &'static str) -> Result<bool> {
     }
 }
 
+/// Parse a whole number into any integer type; the type's range is the bound.
+///
 /// # Errors
-/// Returns an error if the value is not a valid u64.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "ValidationError has no source field; the message already quotes the rejected value"
-)]
-fn parse_u64_field(s: &str, field_path: &'static str) -> Result<u64> {
+/// Returns an error if the value is not a whole number that fits `T`.
+fn parse_field<T: FromStr>(s: &str, field_path: &str) -> Result<T> {
     s.parse()
-        .map_err(|_| invalid_value(field_path, "u64 value", s))
-}
-
-/// # Errors
-/// Returns an error if the value is not a valid u32.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "ValidationError has no source field; the message already quotes the rejected value"
-)]
-fn parse_u32_field(s: &str, field_path: &'static str) -> Result<u32> {
-    s.parse()
-        .map_err(|_| invalid_value(field_path, "u32 value", s))
-}
-
-/// # Errors
-/// Returns an error if the value is not a valid usize.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "ValidationError has no source field; the message already quotes the rejected value"
-)]
-fn parse_usize_field(s: &str, field_path: &'static str) -> Result<usize> {
-    s.parse()
-        .map_err(|_| invalid_value(field_path, "usize value", s))
-}
-
-/// # Errors
-/// Returns an error if the value is not a valid directory display mode.
-fn parse_directory_display(s: &str) -> Result<types::DirectoryDisplay> {
-    s.parse()
-        .map_err(|e: <types::DirectoryDisplay as std::str::FromStr>::Err| {
-            invalid_value(
-                "ui.directory.display",
-                "directory display mode",
-                e.to_string(),
-            )
-        })
+        .ok()
+        .ok_or_else(|| invalid_value(field_path, "whole number", s))
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{
         CONFIG_KEYS, DYNAMIC_KEY_PREFIXES, canonical_config_key, get_config_value, set_config_value,
@@ -595,20 +532,20 @@ mod tests {
     #[test]
     fn set_config_value_error_messages() {
         let cases: &[(&str, &str, &str)] = &[
-            ("agent.timeout_seconds", "abc", "Invalid u64 value: abc"),
+            ("agent.timeout_seconds", "abc", "Invalid whole number: abc"),
             ("agent.timeout_seconds", "0", "Invalid agent timeout: 0"),
             ("agent.enabled", "maybe", "Invalid boolean value: maybe"),
             (
                 "agent.supervisor.max_restart_attempts",
                 "-1",
-                "Invalid u32 value: -1",
+                "Invalid whole number: -1",
             ),
-            ("git.max_branch_length", "abc", "Invalid usize value: abc"),
+            ("git.max_branch_length", "abc", "Invalid whole number: abc"),
             ("ui.theme", "", "Invalid theme name: "),
             (
                 "ui.directory.display",
                 "sideways",
-                "Invalid directory display mode: unrecognized directory display mode: sideways",
+                "Invalid ui.directory.display 'sideways'. Use 'basename', 'abbreviated', 'truncated', or 'full'",
             ),
             (
                 "language.confidence_threshold",

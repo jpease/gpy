@@ -18,33 +18,15 @@ if ! command -v socat >/dev/null 2>&1 && ! command -v nc >/dev/null 2>&1; then
 fi
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/gpy-epipe.XXXXXX")"
-listener_pid=""
 cleanup() {
-    [[ -n "$listener_pid" ]] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$scratch"
 }
 trap cleanup EXIT
 
 sock="$scratch/gpy.sock"
 requests=8
-python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(8)
-for _ in range(int(sys.argv[2])):
-    conn, _ = s.accept()
-    conn.recv(4096)
-    conn.sendall(b"{\"status\":\"ok\"}\n")
-    conn.close()
-' "$sock" "$requests" &
-listener_pid=$!
-disown "$listener_pid" 2>/dev/null
-
-if ! shell_e2e_poll 5 test -S "$sock"; then
-    echo "FAIL: the listener never bound $sock"
-    exit 1
-fi
+shell_e2e_stub_listener "$sock" reply --reply '{"status":"ok"}'
 
 # The single quotes are deliberate: the code runs in the child bash, not here.
 # shellcheck disable=SC2016

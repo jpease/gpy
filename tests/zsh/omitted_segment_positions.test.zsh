@@ -30,18 +30,6 @@ source zsh/gpy.zsh
 export GPY_AGENT_ENABLED=1
 source zsh/segments/language.zsh
 
-FAILED=0
-
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        echo "  PROMPT was: $PROMPT"
-        FAILED=1
-    fi
-}
 
 __gpy_add_newline=0
 function __gpy_request_character() { : }
@@ -106,8 +94,4 @@ printf LANG >"$cache_dir/$long_key.lang_first.magenta.zsh"
 check "probe: a contextual-only entry under a chunked key counts as present" "chunked 0" \
     "$([[ "$long_key" == */* ]] && printf 'chunked '; __gpy_instant_cache_present lang "$long_project"; echo $?)"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish "omitted segment positions"

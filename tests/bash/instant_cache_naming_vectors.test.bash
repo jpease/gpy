@@ -32,14 +32,6 @@ unescape_value() {
     printf '%s' "$s"
 }
 
-check() {
-    if [[ "$3" == "$2" ]]; then
-        pass "$1"
-    else
-        fail "$1: expected [$2], got [$3]"
-    fi
-}
-
 yes_no() {
     if "$@"; then echo yes; else echo no; fi
 }

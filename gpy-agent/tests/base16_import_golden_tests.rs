@@ -2,8 +2,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(missing_docs)]
 
 use gpy_agent::config::types::ColorSpec;
 use gpy_agent::import::base16::import_scheme;

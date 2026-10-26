@@ -1,7 +1,10 @@
 //! RAII guards that terminate spawned child processes when a test ends,
 //! whether it returns, fails an assertion, panics, or times out.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "included by several test binaries, each using a subset"
+)]
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;

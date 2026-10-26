@@ -12,18 +12,7 @@
 # (never touches `__gpy_segment_position`) and the real status segment, with
 # plain-ASCII delimiters.
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
+source (dirname (status --filename))/../lib/test_helpers.fish
 
 set -l script_dir (dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -69,15 +58,15 @@ end
 
 set -g __enabled_segments agentx status
 set -l out (render_plain | string collect)
-check "agent segment then status: status opens with delim_start" (string match -q '*AGENTS OK*' -- $out; and echo pass; or echo fail)
-check "agent segment then status: no first-delimiter before status" (string match -q '*AGENTF OK*' -- $out; and echo fail; or echo pass)
+check "agent segment then status: status opens with delim_start" pass (string match -q '*AGENTS OK*' -- $out; and echo pass; or echo fail)
+check "agent segment then status: no first-delimiter before status" pass (string match -q '*AGENTF OK*' -- $out; and echo fail; or echo pass)
 if not string match -q '*AGENTS OK*' -- $out
     echo "  got: "(string escape -- $out)
 end
 
 set -g __enabled_segments status agentx
 set out (render_plain | string collect)
-check "status then agent segment: status opens with delim_first" (string match -q 'F OK*' -- $out; and echo pass; or echo fail)
+check "status then agent segment: status opens with delim_first" pass (string match -q 'F OK*' -- $out; and echo pass; or echo fail)
 if not string match -q 'F OK*' -- $out
     echo "  got: "(string escape -- $out)
 end
@@ -90,8 +79,4 @@ else
     set -e XDG_CONFIG_HOME
 end
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count mixed-renderer segment position tests passed"
+test_finish "mixed-renderer segment position tests"

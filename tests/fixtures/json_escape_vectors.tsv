@@ -1,7 +1,7 @@
 # tests/fixtures/json_escape_vectors.tsv
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Shared JSON-escape test vectors for __gpy_escape_json (bash/zsh) and
+# Shared JSON-escape test vectors for __gpy_escape_json_into (bash/zsh) and
 # __gpy_json_escape (fish). Tab-separated: input<TAB>expected, one
 # pair per line. Blank lines and lines starting with # are ignored.
 #

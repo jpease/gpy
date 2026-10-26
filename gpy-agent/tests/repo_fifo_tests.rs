@@ -3,7 +3,6 @@
 //! within `git.timeout_seconds`, not once per git command it runs.
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 
 #[path = "common/cli_harness.rs"]
 mod cli_harness;

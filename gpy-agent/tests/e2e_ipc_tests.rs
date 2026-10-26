@@ -6,13 +6,12 @@
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
-#![allow(clippy::missing_errors_doc)]
 
 mod common;
 
+use common::endpoint::{endpoint_with_config, wait_for_socket};
+use common::fixtures::gpy_test_root;
 use common::git::{git, git_init};
-use common::{endpoint_builder_with_config, gpy_test_root, wait_for_socket};
 use gpy_agent::config::manager::ConfigManager;
 use gpy_agent::{Error, Result};
 use std::path::PathBuf;
@@ -36,9 +35,7 @@ async fn start_test_ipc_server(
         .expect("failed to create temp dir");
     let socket_path = temp_dir.path().join(socket_name);
 
-    let mut server = endpoint_builder_with_config(socket_path.clone(), config_manager)
-        .build()
-        .expect("Server failed to build");
+    let mut server = endpoint_with_config(socket_path.clone(), config_manager);
     let server_handle = tokio::spawn(async move {
         server.start().await.expect("Server failed to start");
     });

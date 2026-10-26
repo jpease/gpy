@@ -1,7 +1,5 @@
 # cargo-deny policy: advisories, licenses, duplicate versions and sources.
 
-[graph]
-
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
@@ -43,13 +41,9 @@ exceptions = [
 [bans]
 deny = [
     # Prefer the rustls ecosystem.
-    { name = "openssl-sys" },
-    { name = "native-tls" },
-
-    { name = "cmake" },
-
-    { name = "time", version = ">=0.2.0, <0.2.23" },
-    { name = "chrono", version = "<0.4.20" },
+    { name = "openssl-sys", reason = "prefer the rustls ecosystem" },
+    { name = "native-tls", reason = "prefer the rustls ecosystem" },
+    { name = "cmake", reason = "pure-Rust build; no C/C++ build systems" },
 ]
 
 # Accepted duplicates; tests/bash/deny_skip_list.test.bash fails when one

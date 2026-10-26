@@ -102,6 +102,10 @@ Controls the background agent process that serves prompt data over IPC.
 
 Controls automatic restart of a crashed or unresponsive agent process. In every shell (Bash, Zsh, Fish) this flag governs restarts only: with `enabled = false` the shell still starts the agent once when it starts (as long as `[agent] enabled` is `true`), but a crashed agent stays down afterwards. Only `[agent] enabled = false` (`GPY_AGENT_ENABLED=0`) stops shells from starting, registering with, or supervising an agent.
 
+`GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` follow one rule in Bash, Zsh and Fish: a flag is off only when set to `0` or `false`. Unset, empty, `1` and any other value leave it on. `config.toml` exports `0` or `1`.
+
+Fish runs its restart loop as a separate background process and also reads two environment variables that Bash and Zsh have no counterpart for (their health check runs inline on the prompt, governed by `check_interval_seconds` and `max_restart_attempts`): `GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS` (default `60`, minimum gap between restarts) and `GPY_SUPERVISOR_LONG_BACKOFF_SECONDS` (default `300`, wait after the attempt cap is reached). Non-integer values fall back to the default.
+
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
 | `enabled` | bool | `true` | — | Enables the supervisor. When `false`, a crashed agent stays down until manually restarted (`gpy restart`). |
@@ -128,7 +132,7 @@ Controls git status detection: what's computed, how it's capped, and which icons
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `enabled` | bool | `true` | — | Enables git status detection entirely. When `false`, the git segment never renders and no git subprocess/libgit2 calls are made. |
+| `enabled` | bool | `true` | — | Enables git status detection entirely. When `false`, the git segment never renders and no git calls are made. |
 | `show_upstream` | bool | `true` | — | Shows ahead/behind commit counts relative to the upstream branch. |
 | `timeout_seconds` | integer | `10` | `1`–`600` | Time budget for one git status: every git subprocess it runs (status, stash count, branch fallback, untracked-cache setup) shares it, and a subprocess still running when it ends is killed. The IPC handler also uses it (plus a small margin) as the ceiling it waits for a fresh status before falling back to stale/cached data. |
 | `skip_paths` | array of strings | `[]` | must be absolute (`/...`) or home-relative (`~/...`) paths | Directories whose repositories get no git detection — useful for huge monorepos or slow network mounts. A repository is skipped when its root (the directory holding `.git`) is at or under an entry, so an entry can name a repository or a directory of repositories. An entry inside a repository (below its root) does not skip that repository, not even for prompts in that subdirectory. Entries are matched component-wise after `~` expansion and symlink resolution, so `~/x`, `/tmp/x` and `/private/tmp/x` all work (`/tmp/foo` does not skip `/tmp/foobar`). The running agent re-resolves entries every few seconds, so a skipped directory or symlink created, removed or retargeted after startup takes effect without a restart. Skipped repositories get no git status, no instant-prompt cache and no background refresh (watcher events or the periodic reconcile), and `gpy-agent oneshot git` returns the disabled error. |
@@ -195,7 +199,7 @@ Detection runs at the project root, so every subdirectory shows the project's la
 | `cache_ttl_hours` | integer | `24` | `1`–`720` | How long detected version info is cached before being re-checked. |
 | `enabled_languages` | array of strings | `[]` | any known language identifier | Restricts detection to this list; empty means detect all supported languages. |
 | `display` | string | `"icon"` | `"icon"`, `"text"` | Shows a language icon (falling back to the name when no icon exists) or always shows the plain text name. |
-| `filter` | string | `"all"` | `"all"`, `"primary"`, or a number (e.g. `"3"`) | `"all"` shows every detected language above the confidence threshold; `"primary"` shows only the most confident one; a number shows the top N. |
+| `filter` | string | `"all"` | `"all"`, `"primary"`, or a number (e.g. `"3"`) | `"all"` shows every detected language above the confidence threshold; `"primary"` shows only the most confident one; a number shows the top N. The prompt draws at most three of them; JSON output lists them all. |
 | `detection_mode` | string | `"content"` | `"content"`, `"markers"`, `"hybrid"` | `"content"` scans the directory's files and ranks by prevalence — zero-config but can be noisy. `"markers"` shows a language only when its project marker files/extensions are present (Starship-style, more conservative). `"hybrid"` runs the content scan but keeps only languages whose project marker *file* is also present, so a stray helper script (e.g. a lone `.py` file in a Rust repo) doesn't surface a language the repo isn't actually a project of, while still ranking survivors by prevalence. |
 | `confidence_threshold` | float | `0.1` | `0.0`–`1.0` | Minimum confidence score a detected language must meet to be shown. |
 
@@ -227,7 +231,7 @@ Controls top-level layout: theme selection and which segments render.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `show_icons` | bool | `true` | — | Shows icons (language, git, etc.) instead of falling back to text-only rendering where supported. Setting it to `false` also drops the Nerd Font powerline caps (U+E0BA, U+E0BC, U+E0B4) and any private-use delimiter glyph the theme exports to the shell, leaving flat colored blocks that render in any font. Plain-text delimiters such as `[`/`]` are kept. A private-use status icon (`[segments.status]` `ok_icon`/`fail_icon`) is replaced by the plain `ok`/`err`, and a private-use hostname or username `icon` is dropped. |
+| `show_icons` | bool | `true` | — | Shows icons (language, git, etc.) instead of falling back to text-only rendering where supported. Setting it to `false` also drops the Nerd Font powerline caps (U+E0BA, U+E0BC, U+E0B4) and any private-use delimiter glyph the theme exports to the shell, leaving flat colored blocks that render in any font. Plain-text delimiters such as `[`/`]` are kept. A private-use status icon (`[segments.status]` `ok_icon`/`fail_icon`) is replaced by the plain `ok`/`err`, the directory's read-only marker is `ro` instead of 🔒 or a private-use `read_only_icon`, and a private-use hostname or username `icon` is dropped. |
 | `theme` | string | `"default"` | any theme file stem under `~/.config/gpy/themes/` (no path separators, no `..`, no control characters) | Selects which theme file controls colors and segment templates. |
 | `palette` | string | `"default"` | any palette file stem under `~/.config/gpy/palettes/` (same naming rules as `theme`) | Selects the named-color set (e.g. `nord`, `catppuccin-mocha`, `gruvbox-dark-medium`) used when a theme references colors by name. |
 | `enabled_segments` | array of strings | `["clock", "duration", "language", "directory", "git"]` | segment names, alphanumeric/underscore/hyphen only; names that differ only by `-` vs `_` (e.g. `a-b` and `a_b`) may not both appear | The segments to render, in order. Names are trimmed and lowercased on load (`"Directory"` and `" git "` mean `directory` and `git`), and `gpy config get`, `gpy doctor` and every shell see that canonical form. A name listed more than once, in any spelling, keeps only its first position. Segment names not on the built-in list must still pass the naming check (a plugin can register additional segment names). |
@@ -267,7 +271,7 @@ truncate_to_repo = false
 
 ## `[plugin.<segment>]`
 
-Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch.
+Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch. No shell executes script segments yet, so these overrides are accepted and validated but change no prompt.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|

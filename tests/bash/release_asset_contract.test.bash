@@ -11,6 +11,7 @@
 #   5. install-oneline.sh names == matrix minus Windows
 #   6. each installer arm pairs agent and CLI for the same platform/arch
 #   7. the release job publishes checksums, SBOM and attestation
+#   8. each installer installs the agent and the CLI from the names it resolves
 
 set -uo pipefail
 
@@ -266,6 +267,22 @@ else
         echo "install-oneline.sh resolves exactly the non-Windows assets the matrix builds"
     fi
 fi
+
+# A resolved name that nothing installs would pass the checks above: each
+# installer must install the agent and the CLI from the variables it resolves.
+echo "--- installers install both binaries from their resolved names ---"
+
+# shellcheck disable=SC2016  # the literal $VARS in the installer source are what is matched
+{
+    grep -qF 'install_binary "bin/$BINARY" "$INSTALL_DIR/gpy-agent"' "$INSTALLER" ||
+        fail "install.sh does not install bin/\$BINARY as gpy-agent"
+    grep -qF 'install_binary "bin/$CLI_BINARY" "$INSTALL_DIR/gpy"' "$INSTALLER" ||
+        fail "install.sh does not install bin/\$CLI_BINARY as gpy"
+    grep -qF 'install_binary "$BINARY_NAME" gpy-agent' "$ONELINE" ||
+        fail "install-oneline.sh does not install \$BINARY_NAME as gpy-agent"
+    grep -qF 'install_binary "$CLI_BINARY_NAME" gpy ' "$ONELINE" ||
+        fail "install-oneline.sh does not install \$CLI_BINARY_NAME as gpy"
+}
 
 # Installers refuse binaries without a published checksum.
 echo "--- verification metadata is published ---"

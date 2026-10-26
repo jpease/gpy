@@ -37,26 +37,22 @@ impl ClientHandler {
     }
 
     /// Handle client registration (PID already validated by the server).
-    ///
-    /// # Errors
-    /// Fails if workspace path validation fails.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
     fn handle_register_client(
         &self,
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
         cwd: Option<crate::security::SafePath>,
-        shell: Option<&crate::config::types::ShellVariant>,
+        shell: Option<crate::shell::Shell>,
         shell_version: Option<&String>,
-    ) -> Result<Response, HandlerError> {
+    ) -> Response {
         let shell_info = match (&shell, &shell_version) {
             (Some(s), Some(v)) => format!("{s} {v}"),
             (Some(s), None) => format!("{s}"),
             _ => "unknown".to_owned(),
         };
 
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "client",
-            &format!("Registering client: PID={pid}, shell={shell_info}"),
+            "Registering client: PID={pid}, shell={shell_info}"
         );
 
         let sanitized = cwd.map(crate::security::SafePath::into_inner);
@@ -70,11 +66,11 @@ impl ClientHandler {
             // initial scan still fills the cache and TTL reconciles missed events.
             let current_watcher = self.watcher.lock_or_recover().clone();
             if let Some(watcher) = current_watcher
-                && let Err(e) = watcher.register_client(pid.get(), path)
+                && let Err(e) = watcher.attach_client(pid.get(), path)
             {
-                crate::debug::write_debug_log(
+                crate::debug_log!(
                     "client",
-                    &format!("Watcher registration failed for PID={pid} (continuing): {e}"),
+                    "Watcher registration failed for PID={pid} (continuing): {e}"
                 );
             }
 
@@ -82,7 +78,7 @@ impl ClientHandler {
             self.trigger_initial_scan(path);
         }
 
-        Ok(Response::Ack)
+        Response::Ack
     }
 
     /// Handle workspace update for a registered client.
@@ -91,7 +87,7 @@ impl ClientHandler {
     /// Fails if path validation fails or the PID is not registered.
     fn handle_workspace_update(
         &self,
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
         cwd: &crate::security::SafePath,
     ) -> Result<Response, HandlerError> {
         let path_buf = cwd.as_path();
@@ -109,11 +105,11 @@ impl ClientHandler {
         let current_watcher = self.watcher.lock_or_recover().clone();
         // Best-effort: on watcher failure, scan immediately so the cache is fresh.
         if let Some(watcher) = current_watcher
-            && let Err(e) = watcher.update_client(pid.get(), path_buf)
+            && let Err(e) = watcher.attach_client(pid.get(), path_buf)
         {
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "client",
-                &format!("Watcher update failed for PID={pid} (continuing): {e}"),
+                "Watcher update failed for PID={pid} (continuing): {e}"
             );
             self.trigger_initial_scan(path_buf);
         }
@@ -122,29 +118,18 @@ impl ClientHandler {
     }
 
     /// Handle client unregistration.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    fn handle_unregister_client(
-        &self,
-        pid: crate::config::types::ClientPid,
-    ) -> Result<Response, HandlerError> {
+    fn handle_unregister_client(&self, pid: crate::ipc::ClientPid) -> Response {
         self.render.client_registry.unregister(pid.get());
         let current_watcher = self.watcher.lock_or_recover().clone();
         if let Some(watcher) = current_watcher {
             watcher.unregister_client(pid.get());
         }
 
-        Ok(Response::Ack)
+        Response::Ack
     }
 
     /// Handle agent status query.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    fn handle_status(&self) -> Result<Response, HandlerError> {
+    fn handle_status(&self) -> Response {
         let watched_repos = self
             .watcher
             .lock_or_recover()
@@ -153,13 +138,13 @@ impl ClientHandler {
         let registered_clients = self.render.client_registry.len();
         let cache_entries = self.git_cache.len();
 
-        Ok(Response::AgentStatus {
+        Response::AgentStatus {
             version: crate::VERSION.to_owned(),
             protocol_version: crate::ipc::protocol::PROTOCOL_VERSION,
             watched_repos,
             registered_clients,
             cache_entries,
-        })
+        }
     }
 
     /// Handle configuration reload request.
@@ -177,32 +162,11 @@ impl ClientHandler {
         Ok(Response::Ack)
     }
 
-    /// Handle ping request.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    #[expect(clippy::unused_self, reason = "dispatch signature")]
-    const fn handle_ping(&self) -> Result<Response, HandlerError> {
-        Ok(Response::Ack)
-    }
-
-    /// Handle shutdown request.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    #[expect(clippy::unused_self, reason = "dispatch signature")]
-    const fn handle_shutdown(&self) -> Result<Response, HandlerError> {
-        Ok(Response::Ack)
-    }
-
     /// Populate the instant-prompt cache for a newly registered client's repo.
     fn trigger_initial_scan(&self, path: &std::path::Path) {
         use crate::git::status::load_repository_state;
-        use crate::watcher::multi_repo::MultiRepoWatcher;
 
-        let Some(git_root) = MultiRepoWatcher::find_git_root(path) else {
+        let Some(git_root) = crate::git::find_git_dir_only(path) else {
             return;
         };
 
@@ -261,18 +225,12 @@ impl RequestHandler for ClientHandler {
                 cwd,
                 shell,
                 shell_version,
-            } => self.handle_register_client(
-                *pid,
-                cwd.clone(),
-                shell.as_ref(),
-                shell_version.as_ref(),
-            ),
-            Message::UnregisterClient { pid } => self.handle_unregister_client(*pid),
+            } => Ok(self.handle_register_client(*pid, cwd.clone(), *shell, shell_version.as_ref())),
+            Message::UnregisterClient { pid } => Ok(self.handle_unregister_client(*pid)),
             Message::WorkspaceUpdate { pid, cwd } => self.handle_workspace_update(*pid, cwd),
-            Message::Status => self.handle_status(),
+            Message::Status => Ok(self.handle_status()),
             Message::ConfigReload => self.handle_config_reload(),
-            Message::Ping => self.handle_ping(),
-            Message::Shutdown => self.handle_shutdown(),
+            Message::Ping | Message::Shutdown => Ok(Response::Ack),
             _ => Err(HandlerError::UnexpectedMessage {
                 handler: "ClientHandler",
                 qualifier: "unexpected",
@@ -280,23 +238,15 @@ impl RequestHandler for ClientHandler {
             }),
         }
     }
-
-    fn name(&self) -> &'static str {
-        "ClientHandler"
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
     use super::*;
     use crate::cache::InstantPromptCache;
     use crate::config::manager::ConfigManager;
     use crate::config::{Config, GitSettings};
-    use crate::ipc::ClientDirectory;
-    use crate::palette::PaletteCache;
-    use crate::theme::ThemeManager;
+    use crate::ipc::fixtures::render_deps;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -313,22 +263,21 @@ mod tests {
     }
 
     fn handler_with(skip_paths: Vec<String>, cache_dir: &Path) -> ClientHandler {
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
-        config_manager.overwrite_for_tests(Config {
-            git: GitSettings {
-                skip_paths,
-                ..GitSettings::default()
-            },
-            ..Config::default()
-        });
+        let config_manager = Arc::new(
+            ConfigManager::from_config(Config {
+                git: GitSettings {
+                    skip_paths,
+                    ..GitSettings::default()
+                },
+                ..Config::default()
+            })
+            .expect("config"),
+        );
         let render = RenderDeps {
-            palette_cache: Arc::new(PaletteCache::from_config(&config_manager.get())),
-            config_manager,
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
             instant_cache: Arc::new(
                 InstantPromptCache::new_in_dir(cache_dir.to_path_buf()).expect("cache"),
             ),
-            client_registry: ClientDirectory::new().shared(),
+            ..render_deps(config_manager)
         };
         ClientHandler::new(
             render,
@@ -347,11 +296,9 @@ mod tests {
     }
 
     fn register(handler: &ClientHandler, cwd: &Path) {
-        let pid = crate::config::types::ClientPid::new(std::process::id()).expect("pid");
+        let pid = crate::ipc::ClientPid::new(std::process::id()).expect("pid");
         let safe = crate::security::SafePath::new(cwd.to_str().expect("utf8")).expect("safe");
-        handler
-            .handle_register_client(pid, Some(safe), None, None)
-            .expect("register");
+        let _ack = handler.handle_register_client(pid, Some(safe), None, None);
     }
 
     /// Registering in a repo skipped via a symlinked entry writes no git cache files.
@@ -368,7 +315,8 @@ mod tests {
         let handler = handler_with(vec![link.to_string_lossy().into_owned()], &cache_dir);
         register(&handler, &repo);
 
-        // No job to wait on; allow a real scan's latency to elapse.
+        // Absence window: a skipped repo starts no job to wait on, so allow a
+        // real scan's latency (1.5 s) to elapse before checking nothing was written.
         std::thread::sleep(Duration::from_millis(1500));
         assert_eq!(git_cache_files(&cache_dir), Vec::<String>::new());
     }

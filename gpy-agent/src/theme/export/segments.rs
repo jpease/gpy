@@ -2,10 +2,12 @@
 
 use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
-use crate::config::{Config, DelimiterConfig};
+use crate::config::{
+    Config, DEFAULT_UI_PROMPT_COLOR, DEFAULT_UI_ROOT_PROMPT_COLOR, DelimiterConfig,
+};
 use crate::formatter::separator::Glyphs;
 use crate::shell::Shell;
-use crate::theme::model::ThemeConfig;
+use crate::theme::model::{GitState, ThemeConfig};
 
 /// Render a boolean setting as the `1`/`0` the shell integration expects.
 const fn flag(value: bool) -> &'static str {
@@ -96,7 +98,8 @@ pub(super) fn append_global_assignments(
 }
 
 /// Prompt and root-prompt icons/colors plus the two-line layout flag.
-/// `__gpy_ui_*_icon_color` is skipped when unset; `__prompt_color`/`__root_prompt_color` fall back to green/red.
+/// `__prompt_color`/`__root_prompt_color` fall back to
+/// [`DEFAULT_UI_PROMPT_COLOR`]/[`DEFAULT_UI_ROOT_PROMPT_COLOR`].
 pub(super) fn append_prompt_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -104,48 +107,33 @@ pub(super) fn append_prompt_assignments(
 ) {
     let shell = colors.shell;
 
-    let prompt_icon = &theme.ui.prompt_icon;
-    append_shell_assignments(
+    append_shell_assignment(
         output,
         shell,
-        [
-            ShellAssignment::local("__gpy_ui_prompt_icon", prompt_icon.as_str()),
-            ShellAssignment::local("__icon_prompt", prompt_icon.as_str()),
-        ],
+        ShellAssignment::local("__icon_prompt", theme.ui.prompt_icon.as_str()),
     );
 
-    if let Some(c) = &theme.ui.prompt_color {
-        append_shell_assignment(
-            output,
-            shell,
-            ShellAssignment::local("__gpy_ui_prompt_icon_color", colors.resolve(c)),
-        );
-    }
-    let prompt_color = theme.ui.prompt_color.as_deref().unwrap_or("green");
+    let prompt_color = theme
+        .ui
+        .prompt_color
+        .as_deref()
+        .unwrap_or(DEFAULT_UI_PROMPT_COLOR);
     append_shell_assignment(
         output,
         shell,
         ShellAssignment::local("__prompt_color", colors.resolve(prompt_color)),
     );
 
-    let root_icon = &theme.ui.root_prompt_icon;
-    append_shell_assignments(
+    append_shell_assignment(
         output,
         shell,
-        [
-            ShellAssignment::local("__gpy_ui_root_prompt_icon", root_icon.as_str()),
-            ShellAssignment::local("__icon_root_prompt", root_icon.as_str()),
-        ],
+        ShellAssignment::local("__icon_root_prompt", theme.ui.root_prompt_icon.as_str()),
     );
-
-    if let Some(c) = &theme.ui.root_prompt_color {
-        append_shell_assignment(
-            output,
-            shell,
-            ShellAssignment::local("__gpy_ui_root_prompt_icon_color", colors.resolve(c)),
-        );
-    }
-    let root_color = theme.ui.root_prompt_color.as_deref().unwrap_or("red");
+    let root_color = theme
+        .ui
+        .root_prompt_color
+        .as_deref()
+        .unwrap_or(DEFAULT_UI_ROOT_PROMPT_COLOR);
     append_shell_assignment(
         output,
         shell,
@@ -176,8 +164,6 @@ pub(super) fn append_builtin_segment_assignments(
     theme: &ThemeConfig,
 ) {
     let shell = colors.shell;
-    let bool_flag = |v: Option<bool>| flag(v.unwrap_or(false));
-
     append_shell_assignments(
         output,
         shell,
@@ -195,10 +181,7 @@ pub(super) fn append_builtin_segment_assignments(
     append_shell_assignment(
         output,
         shell,
-        ShellAssignment::local(
-            "__time_format",
-            theme.segments.clock.time_format.as_deref().unwrap_or("12"),
-        ),
+        ShellAssignment::local("__time_format", theme.segments.clock.time_format()),
     );
     append_shell_assignments(
         output,
@@ -206,11 +189,11 @@ pub(super) fn append_builtin_segment_assignments(
         [
             ShellAssignment::local(
                 "__clock_show_leading_zero",
-                bool_flag(theme.segments.clock.show_leading_zero),
+                flag(theme.segments.clock.show_leading_zero()),
             ),
             ShellAssignment::local(
                 "__clock_show_seconds",
-                bool_flag(theme.segments.clock.show_seconds),
+                flag(theme.segments.clock.show_seconds()),
             ),
             ShellAssignment::local(
                 "__clock_format",
@@ -411,11 +394,11 @@ pub(super) fn append_git_language_color_assignments(
         [
             ShellAssignment::local(
                 "__color_git_clean_bg",
-                colors.resolve(git.clean_bg_color.as_deref().unwrap_or(&git.bg_color)),
+                colors.resolve(git.get_bg_color(GitState::Clean)),
             ),
             ShellAssignment::local(
                 "__color_git_dirty_bg",
-                colors.resolve(git.dirty_bg_color.as_deref().unwrap_or(&git.bg_color)),
+                colors.resolve(git.get_bg_color(GitState::Modified)),
             ),
             ShellAssignment::local(
                 "__color_language_bg",

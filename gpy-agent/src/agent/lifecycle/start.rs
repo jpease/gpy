@@ -1,11 +1,13 @@
 //! Unix startup path for the agent daemon: check enablement, clean up stale
 //! sockets, fork, wait for readiness, and nudge registered shells after restart.
 
+#[cfg(unix)]
+use crate::deadline::Deadline;
 use crate::{Error, Result};
 #[cfg(unix)]
 use crate::{agent::Agent, debug_log};
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::path::Path;
 #[cfg(unix)]
 use std::time::{Duration, SystemTime};
 
@@ -16,13 +18,13 @@ use crate::ipc::registry::{
 #[cfg(unix)]
 use fork::Fork;
 #[cfg(unix)]
-use nix::errno::Errno;
-#[cfg(unix)]
-use nix::fcntl::{Flock, FlockArg};
-#[cfg(unix)]
 use nix::sys::signal::kill;
 #[cfg(unix)]
 use nix::unistd::Pid;
+
+/// The progress line `gpy-agent start` prints on stderr before forking.
+/// `gpy restart` filters this exact line from its own normalized output.
+pub const START_PROGRESS_LINE: &str = "Starting GPY Agent in background...";
 
 /// Whether the agent is disabled via configuration (`agent.enabled = false`).
 #[cfg(unix)]
@@ -34,60 +36,21 @@ fn agent_disabled() -> bool {
 #[cfg(unix)]
 const START_LOCK_WAIT_MAX: Duration = Duration::from_secs(10);
 
-/// Poll interval while another start holds the lock.
-#[cfg(unix)]
-const START_LOCK_POLL: Duration = Duration::from_millis(50);
-
-/// Per-socket start lock path, `<socket>.lock`. Never unlinked: removing a
-/// lock file races like removing the socket.
-#[cfg(unix)]
-fn start_lock_path(socket_path: &std::path::Path) -> PathBuf {
-    let mut lock = socket_path.as_os_str().to_owned();
-    lock.push(".lock");
-    PathBuf::from(lock)
-}
-
-/// Take the exclusive per-socket start lock, held across check → evict → fork
-/// → bind. The forked daemon inherits the flock and drops it once bound; the
-/// wait is bounded so a hung daemon cannot block later starts forever.
+/// Take the exclusive per-socket start lock (`<socket>.lock`), held across
+/// check → evict → fork → bind. The forked daemon inherits the lock and drops
+/// it once bound; the wait is bounded so a hung daemon cannot block later
+/// starts forever.
 ///
 /// # Errors
 /// Returns an error if the lock cannot be opened or taken within [`START_LOCK_WAIT_MAX`].
 #[cfg(unix)]
-fn acquire_start_lock(socket_path: &std::path::Path) -> Result<Flock<std::fs::File>> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let lock_path = start_lock_path(socket_path);
-    let lock_error = |detail: String| {
+fn acquire_start_lock(socket_path: &Path) -> Result<crate::fs_util::PathLock> {
+    crate::fs_util::lock_beside(socket_path, START_LOCK_WAIT_MAX).map_err(|e| {
         Error::process(
-            "start_lock".to_owned(),
-            format!("cannot take start lock {}: {detail}", lock_path.display()),
+            "start_lock",
+            format!("cannot take start lock for {}: {e}", socket_path.display()),
         )
-    };
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(&lock_path)
-        .map_err(|e| lock_error(e.to_string()))?;
-    let deadline = std::time::Instant::now()
-        .checked_add(START_LOCK_WAIT_MAX)
-        .unwrap_or_else(std::time::Instant::now);
-    loop {
-        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
-            Ok(lock) => return Ok(lock),
-            Err((unlocked, Errno::EWOULDBLOCK | Errno::EINTR)) => file = unlocked,
-            Err((_, errno)) => return Err(lock_error(errno.to_string())),
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err(lock_error(format!(
-                "another gpy-agent start held it for more than {}s",
-                START_LOCK_WAIT_MAX.as_secs()
-            )));
-        }
-        std::thread::sleep(START_LOCK_POLL);
-    }
+    })
 }
 
 /// Max re-nudges per tracked shell PID per agent lifetime, so a shell that can
@@ -263,13 +226,11 @@ const READY_WAIT_POLL: Duration = Duration::from_millis(10);
 /// the daemon fails or does not answer within [`READY_WAIT_MAX`].
 #[cfg(unix)]
 fn wait_for_agent_ready(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     agent_pid: i32,
     mut report: StartupReport,
 ) -> Result<()> {
-    let deadline = std::time::Instant::now()
-        .checked_add(READY_WAIT_MAX)
-        .unwrap_or_else(std::time::Instant::now);
+    let deadline = Deadline::after(READY_WAIT_MAX);
     loop {
         report.poll();
         if let Some(reason) = report.failure() {
@@ -283,9 +244,9 @@ fn wait_for_agent_ready(
             report.poll();
             return Err(startup_failed(report.failure().as_deref()));
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return Err(Error::process(
-                "startup_timeout".to_owned(),
+                "startup_timeout",
                 "Agent process did not become ready before timeout".to_owned(),
             ));
         }
@@ -300,7 +261,7 @@ fn startup_failed(reason: Option<&str>) -> Error {
         || "Agent process exited before it was ready".to_owned(),
         |detail| format!("Agent process failed before it was ready: {detail}"),
     );
-    Error::process("startup_failed".to_owned(), message)
+    Error::process("startup_failed", message)
 }
 
 /// Daemon half of the startup handshake with the waiting `gpy-agent start`:
@@ -309,7 +270,7 @@ fn startup_failed(reason: Option<&str>) -> Error {
 /// before then goes down the pipe for `start` to print.
 #[cfg(unix)]
 pub(crate) struct StartupHandoff {
-    _start_lock: Flock<std::fs::File>,
+    _start_lock: crate::fs_util::PathLock,
     report: std::io::PipeWriter,
 }
 
@@ -320,7 +281,7 @@ impl StartupHandoff {
         use std::io::Write;
 
         let reason = crate::error::user_message(err);
-        crate::debug::write_debug_log("agent", &format!("Fatal startup error: {reason}"));
+        debug_log!("agent", "Fatal startup error: {reason}");
         let _ = self.report.write_all(reason.as_bytes());
     }
 }
@@ -344,7 +305,7 @@ impl StartupReport {
         use nix::fcntl::{FcntlArg, OFlag, fcntl};
 
         fcntl(&pipe, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))
-            .map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+            .map_err(|e| Error::process("pipe", e.to_string()))?;
         Ok(Self {
             pipe,
             text: Vec::new(),
@@ -431,11 +392,11 @@ fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() ->
 /// Returns an error if the pipe or fork fails, the daemon never reports its
 /// PID, or it fails or is not ready in time. In the daemon, the agent's result.
 #[cfg(unix)]
-fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result<()> {
+fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Result<()> {
     use std::io::Read;
 
     let (mut reader, writer) =
-        std::io::pipe().map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+        std::io::pipe().map_err(|e| Error::process("pipe", e.to_string()))?;
 
     match fork::fork() {
         Ok(Fork::Parent(intermediate_pid)) => {
@@ -443,12 +404,7 @@ fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result
             let mut pid_bytes = [0_u8; 4];
             let read = reader.read_exact(&mut pid_bytes);
             let _ = fork::waitpid(intermediate_pid);
-            read.map_err(|e| {
-                Error::process(
-                    "fork".to_owned(),
-                    format!("Agent process did not start: {e}"),
-                )
-            })?;
+            read.map_err(|e| Error::process("fork", format!("Agent process did not start: {e}")))?;
             let ready = StartupReport::new(reader).and_then(|report| {
                 wait_for_agent_ready(socket_path, i32::from_ne_bytes(pid_bytes), report)
             });
@@ -461,7 +417,7 @@ fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result
             fork_daemon_from_intermediate();
             run_daemon(announce_daemon(start_lock, writer)?)
         }
-        Err(e) => Err(Error::process("fork".to_owned(), e.to_string())),
+        Err(e) => Err(Error::process("fork", e.to_string())),
     }
 }
 
@@ -487,14 +443,14 @@ fn fork_daemon_from_intermediate() {
 /// Returns an error if the PID cannot be written.
 #[cfg(unix)]
 fn announce_daemon(
-    start_lock: Flock<std::fs::File>,
+    start_lock: crate::fs_util::PathLock,
     mut report: std::io::PipeWriter,
 ) -> Result<StartupHandoff> {
     use std::io::Write;
 
     report
         .write_all(&nix::unistd::getpid().as_raw().to_ne_bytes())
-        .map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("pipe", e.to_string()))?;
     Ok(StartupHandoff {
         _start_lock: start_lock,
         report,
@@ -540,12 +496,14 @@ fn enter_daemon() -> Result<tokio::runtime::Runtime> {
     // Inputs were absolutized pre-fork; don't keep the launch dir busy.
     if let Err(e) = fork::chdir() {
         crate::warn_log!("agent", "Failed to chdir to /: {e}");
-        return Err(Error::process("chdir".to_owned(), e.to_string()));
+        return Err(Error::process("chdir", e.to_string()));
     }
 
-    let _ = super::write_agent_version();
+    if let Err(e) = super::write_agent_version() {
+        crate::warn_log!("agent", "Failed to write agent version file: {e}");
+    }
 
-    tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime".to_owned(), e.to_string()))
+    tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime", e.to_string()))
 }
 
 /// Start the agent in background with race-free socket coordination.
@@ -576,7 +534,7 @@ pub fn start_background_agent() -> Result<()> {
         // Absolutize a relative `GPY_AGENT_SOCKET_PATH`; the default socket stays
         // unset so it keeps the `agent.version` marker.
         if crate::paths::socket_path_override().is_some() {
-            let _ = crate::paths::SOCKET_OVERRIDE.set(socket_path.clone());
+            crate::paths::set_socket_override(&socket_path)?;
         }
 
         // Vet the directory before the lock file, stale-socket eviction, or
@@ -591,21 +549,20 @@ pub fn start_background_agent() -> Result<()> {
             return Ok(());
         }
 
-        eprintln!("Starting GPY Agent in background...");
+        eprintln!("{START_PROGRESS_LINE}");
         fork_agent(&socket_path, start_lock)
     }
 
     #[cfg(not(unix))]
     {
         Err(Error::process(
-            "platform".to_owned(),
+            "platform",
             "Background agent only supported on Unix-like systems".to_owned(),
         ))
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     #[cfg(unix)]
     /// Seed `dir` with one tracking file per PID, as Fish does.

@@ -6,17 +6,9 @@
 #
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
-
-failures=0
-check() {
-    if [[ "$3" == "$2" ]]; then
-        echo "PASS: $1"
-    else
-        echo "FAIL: $1 (expected [$2], got [$3])"
-        failures=$((failures + 1))
-    fi
-}
 
 # constants_with VAR=VALUE...: "ipc git lang" as a child bash sees them.
 # shellcheck disable=SC2016 # the child shell expands its own variables
@@ -67,5 +59,4 @@ __gpy_read_instant_cache git "$tmp/repo" "" ignored 2>/dev/null
 status=$?
 check "a non-numeric TTL falls back to the default and ages an old entry to stale" "2" "$status"
 
-[[ "$failures" -eq 0 ]] || exit 1
-echo "PASS: bash env knobs"
+test_finish "bash env knobs"

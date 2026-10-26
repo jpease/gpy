@@ -1,25 +1,51 @@
 //! Maps a detected language to Starship-exact template variables (`symbol`, `version`, `style`)
-//! so imported Starship `format` strings work verbatim.
+//! so imported Starship `format` strings work verbatim, and picks which detected languages
+//! the language segment draws.
 
 use crate::config::Config;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
-use crate::formatter::{SegmentPosition, get_language_display};
+use crate::config::types::LanguageDisplay;
+use crate::formatter::SegmentPosition;
+use crate::formatter::chrome::SegmentChrome;
+use crate::formatter::separator::Glyphs;
 use crate::ipc::LanguageInfo;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
+
+/// Most language pills one prompt draws.
+pub(crate) const MAX_LANGUAGE_PILLS: usize = 3;
+
+/// The languages the segment draws, in order, at most [`MAX_LANGUAGE_PILLS`]. With
+/// `show_versions`, versionless ones are dropped unless `show_symbol_without_version`.
+pub(crate) fn select_languages<'a>(
+    config: &Config,
+    theme: &ThemeConfig,
+    languages: &'a [LanguageInfo],
+) -> Vec<&'a LanguageInfo> {
+    let versions_required = config.language.show_versions
+        && !theme
+            .segments
+            .language
+            .show_symbol_without_version
+            .unwrap_or(false);
+    languages
+        .iter()
+        .filter(|lang| !versions_required || lang.version.is_some())
+        .take(MAX_LANGUAGE_PILLS)
+        .collect()
+}
 
 /// Resolves Starship-exact language variable names from one detected language.
 pub struct LanguageResolver<'a> {
     lang: &'a LanguageInfo,
     config: &'a Config,
     theme: &'a ThemeConfig,
-    pos: SegmentPosition,
+    chrome: SegmentChrome<'a>,
 }
 
 impl<'a> LanguageResolver<'a> {
     /// Build a resolver for one language's segment render.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         lang: &'a LanguageInfo,
         config: &'a Config,
         theme: &'a ThemeConfig,
@@ -29,42 +55,51 @@ impl<'a> LanguageResolver<'a> {
             lang,
             config,
             theme,
-            pos,
+            chrome: SegmentChrome::pill(
+                pos,
+                Glyphs::from(&config.ui),
+                theme.segments.language.get_text_color(&lang.name),
+                lang.color.as_str(),
+            ),
         }
     }
 
-    /// Style string: language color as bg, the theme's text color as fg.
-    fn style(&self) -> String {
-        let bg = self.lang.color.as_str();
-        let fg = self.theme.segments.language.get_text_color(&self.lang.name);
-        format!("fg:{fg} bg:{bg}")
+    /// `$symbol`: the theme symbol when icons are on, else the configured icon or
+    /// the name; an empty icon leaves it unresolved.
+    fn symbol(&self) -> Option<String> {
+        let name = self.lang.name.as_str();
+        let icons_on =
+            self.config.ui.show_icons && self.config.language.display == LanguageDisplay::Icon;
+        if !icons_on {
+            return (!name.is_empty()).then(|| name.to_owned());
+        }
+        if let Some(symbol) = self.theme.segments.language.get_symbol(name) {
+            return Some(symbol.to_owned());
+        }
+        let icon_key = crate::language::metadata::get_icon_key(name).unwrap_or(name);
+        let display = self
+            .config
+            .language
+            .icons
+            .icons
+            .get(icon_key)
+            .map_or(name, |icon| icon.as_str());
+        (!display.is_empty()).then(|| display.to_owned())
     }
 }
 
 impl VariableResolver for LanguageResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
-        let glyphs = Glyphs::from(&self.config.ui);
         match name {
-            // Theme symbol when icons are on; else config icon or language name.
-            "symbol" => {
-                if self.config.ui.show_icons
-                    && self.config.language.display == crate::config::types::LanguageDisplay::Icon
-                    && let Some(sym) = self.theme.segments.language.get_symbol(&self.lang.name)
-                {
-                    return Some(sym.to_owned());
-                }
-                let display = get_language_display(self.config, &self.lang.name);
-                (!display.is_empty()).then_some(display)
-            }
+            "symbol" => self.symbol(),
             "version" => self
                 .config
                 .language
                 .show_versions
                 .then(|| self.lang.version.clone())
                 .flatten(),
-            "style" => Some(self.style()),
-            // `$color`/`$bg`: the language's own color.
-            "color" | "bg" => Some(self.lang.color.as_str().to_owned()),
+            // `$color`: the language's own color, which is also its `$bg`.
+            "color" => Some(self.lang.color.as_str().to_owned()),
             // `$attr`: style attributes, defaulting to `bold`.
             "attr" => Some(
                 self.theme
@@ -73,18 +108,13 @@ impl VariableResolver for LanguageResolver<'_> {
                     .get_style(&self.lang.name)
                     .to_owned(),
             ),
-            "sep_gap" | "sep_open" | "sep_close" => {
-                separator_var(name, self.pos, SeparatorStyle::Chained, glyphs)
-            }
-            _ => None,
+            _ => self.chrome.resolve(name),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::LanguageResolver;
     use crate::config::Config;

@@ -29,8 +29,8 @@ shown() {
     printf '%s' "$out" | python3 -c 'import re,sys; sys.stdout.write(re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read()))'
 }
 
-# check LABEL SOURCE LITERAL: SOURCE must display LITERAL verbatim.
-check() {
+# assert_shows LABEL SOURCE LITERAL: SOURCE must display LITERAL verbatim.
+assert_shows() {
     local label="$1" source="$2" literal="$3" display
     display="$(shown "$source")"
     case "$display" in
@@ -48,14 +48,14 @@ for name in "${names[@]}"; do
     mkdir -p "$dir"
     cd "$dir" || exit 1
     __gpy_render_prompt 0
-    check "IPC directory render" "$PS1" "$name"
+    assert_shows "IPC directory render" "$PS1" "$name"
 done
 
 dir="$SHELL_E2E_ROOT/w/\$(echo GPY_EXPANDED)"
 cd "$dir" || exit 1
 __gpy_oneshot_used=0
 oneshot_out="$(__gpy_fallback_oneshot directory "$PWD" bash-prompt true "")"
-check "oneshot directory render" "$oneshot_out" '$(echo GPY_EXPANDED)'
+assert_shows "oneshot directory render" "$oneshot_out" '$(echo GPY_EXPANDED)'
 
 branch='feat/$HOME-100%_x'
 cd "$SHELL_E2E_REPO" || exit 1
@@ -71,7 +71,7 @@ ipc_git_shows_branch() {
     return 1
 }
 shell_e2e_poll 5 ipc_git_shows_branch
-check "IPC git render" "$ipc_git" "$branch"
+assert_shows "IPC git render" "$ipc_git" "$branch"
 
 suffix=""
 __gpy_cache_variant_suffix git true true suffix
@@ -82,10 +82,10 @@ cache_file="$cache_dir/$resolved_key.$suffix.none.bash"
 if shell_e2e_poll 3 test -f "$cache_file"; then
     cached=""
     __gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "" cached
-    check "instant-cache git hit" "$cached" "$branch"
+    assert_shows "instant-cache git hit" "$cached" "$branch"
     __enabled_segments="git"
     __gpy_render_prompt 0
-    check "cached git render" "$PS1" "$branch"
+    assert_shows "cached git render" "$PS1" "$branch"
 else
     fail "the agent did not write the bash-dialect git cache file $cache_file"
 fi

@@ -14,7 +14,7 @@ use gpy_agent::{
         oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request},
     },
     config::schema,
-    paths::SOCKET_OVERRIDE,
+    paths::set_socket_override,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -195,49 +195,24 @@ enum ConfigCommands {
     Reload,
 }
 
-/// Log panics through `warn_log!` (the daemon's stderr is `/dev/null`), and
-/// exit 0 when a CLI pipeline closes stdout early: `unsafe` is forbidden, so
-/// `SIGPIPE` cannot be reset to its default.
-#[allow(
-    clippy::exit,
-    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
-)]
+/// Log panics through `warn_log!`: the daemon's stderr is `/dev/null`.
 fn install_panic_handler() {
-    std::panic::set_hook(Box::new(|panic_info| {
-        let message = panic_info
-            .payload()
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic_info.payload().downcast_ref::<&str>().copied())
-            .unwrap_or_default();
-        if message.contains("failed printing to stdout") && message.contains("Broken pipe") {
-            std::process::exit(0);
-        }
+    gpy_agent::error::install_broken_pipe_hook(|panic_info| {
         gpy_agent::warn_log!("agent", "PANIC: {:?}", panic_info);
-    }));
+    });
 }
 
 /// Record `--socket`, made absolute against the current directory so a
 /// forked daemon (which runs in `/`) binds the path the user meant.
-fn apply_socket_override(socket: Option<PathBuf>) {
+fn apply_socket_override(socket: Option<PathBuf>) -> Result<()> {
     if let Some(given) = socket {
-        let path = gpy_agent::paths::absolutize(&given);
-        match SOCKET_OVERRIDE.set(path.clone()) {
-            Ok(()) => {}
-            Err(existing) => {
-                debug_assert!(
-                    existing.as_path() == path.as_path(),
-                    "socket override mismatch: existing={}, new={}",
-                    existing.display(),
-                    path.display()
-                );
-            }
-        }
+        set_socket_override(&given)?;
     }
+    Ok(())
 }
 
 /// Request fields every `oneshot` subcommand shares.
-fn base_oneshot_request(
+const fn base_oneshot_request(
     request_type: OneshotKind,
     path: String,
     segment: SegmentArgs,
@@ -245,7 +220,7 @@ fn base_oneshot_request(
     OneshotRequest {
         request_type,
         path,
-        format: segment.format.as_str().to_owned(),
+        format: segment.format,
         is_last: !segment.not_last,
         is_first: segment.first,
         benchmark_mode: false,
@@ -366,14 +341,7 @@ fn main() -> ExitCode {
     install_panic_handler();
     let cli = Cli::parse();
 
-    match run(cli) {
-        Ok(code) => code,
-        Err(err) if gpy_agent::error::is_broken_pipe(&err) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("Error: {}", gpy_agent::error::user_message(&err));
-            ExitCode::from(gpy_agent::error::CLI_FAILURE_EXIT_CODE)
-        }
-    }
+    gpy_agent::error::report(run(cli))
 }
 
 /// Dispatch the parsed command. Only `status` has a non-zero success-path
@@ -384,15 +352,15 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Commands::Start { socket } => {
-            apply_socket_override(socket);
+            apply_socket_override(socket)?;
             start_background_agent()?;
         }
         Commands::Stop { socket } => {
-            apply_socket_override(socket);
+            apply_socket_override(socket)?;
             tokio::runtime::Runtime::new()?.block_on(stop_agent())?;
         }
         Commands::Status { socket } => {
-            apply_socket_override(socket);
+            apply_socket_override(socket)?;
             let liveness = tokio::runtime::Runtime::new()?.block_on(print_agent_status())?;
             return Ok(match liveness {
                 AgentLiveness::Responding => ExitCode::SUCCESS,

@@ -6,7 +6,7 @@
 # does: an exported RUSTUP_TOOLCHAIN beats the file, and clippy then fails on
 # lints the pin does not raise, which reads as a code problem.
 #
-# For `just lint` and quality-check.sh --rust-only / --fast / --fix / full:
+# For `just lint` and quality-check.sh --rust-only / --clippy / --fast / --fix / full:
 #   (a) with a non-pin rustc active it exits non-zero
 #   (b) the message names the RUSTUP_TOOLCHAIN override
 #   (c) no cargo command ran (fail fast, not after a lint run)
@@ -50,13 +50,14 @@ check_entry() {
 
 echo "--- Rust entry points fail fast naming the override ---"
 check_entry "quality-check --rust-only" ./scripts/quality-check.sh --rust-only
+check_entry "quality-check --clippy" ./scripts/quality-check.sh --clippy
 check_entry "quality-check --fast" ./scripts/quality-check.sh --fast
 check_entry "quality-check --fix" ./scripts/quality-check.sh --fix
 check_entry "quality-check (full)" ./scripts/quality-check.sh
 if command -v just >/dev/null 2>&1; then
     check_entry "just lint" just lint
 else
-    echo "SKIP: just not installed"
+    test_skip_part "just not installed"
 fi
 
 test_finish

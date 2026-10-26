@@ -28,7 +28,7 @@ gpy theme use my-prompt
 
 ## What carries over automatically
 
-The importer (`gpy-agent/src/import/starship/`, exercised by `gpy-agent/tests/starship_import_golden_tests.rs`) translates:
+The importer translates:
 
 - **Colors** — your active `[palettes.x]` table, plus any colors it finds inline in module `style` fields, become a GPY palette.
 - **Directory, git, duration, and character segments** — `format`/`style` fields map onto GPY's equivalent segment `format` strings, including conditional groups (`(...)`) and style tokens (`bold`, `fg:`, `bg:`, `prev_fg`/`prev_bg`). `prev_fg` is accepted but renders as the terminal default in the live prompt, because only `prev_bg` is transferred; the wizard preview does show it.

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::cache::ttl_map::TtlMap;
-use crate::language::version::{ColdVersion, ProbePolicy};
+use crate::language::probe_memo::ProbeMemo;
+use crate::language::version::{ColdVersion, ProbePolicy, detect_python_binary_version};
 
 /// Candidate venv directory names probed under a project root, in order.
 const VENV_DIR_NAMES: [&str; 2] = [".venv", "venv"];
@@ -121,14 +122,9 @@ fn parse_pyvenv_cfg_version(contents: &str) -> Option<String> {
     (!components.is_empty()).then(|| components.join("."))
 }
 
-/// Successful interpreter-probe versions, keyed by canonical path + mtime so
-/// recreating the venv busts the entry.
-static VENV_BINARY_VERSION_CACHE: TtlMap<(PathBuf, SystemTime), String> =
-    TtlMap::new(VENV_STASH_CAPACITY);
-
-/// Failed interpreter probes; suppress re-probing only for [`VERSION_FAILURE_TTL`].
-static VENV_BINARY_FAILURE_CACHE: TtlMap<(PathBuf, SystemTime), SystemTime> =
-    TtlMap::new(VENV_STASH_CAPACITY);
+/// Interpreter-probe results keyed by canonical path + mtime so recreating
+/// the venv busts the entry.
+static VENV_BINARY_MEMO: ProbeMemo<(PathBuf, SystemTime)> = ProbeMemo::new(VENV_STASH_CAPACITY);
 
 /// Probe the venv interpreter for its version, memoizing the outcome;
 /// [`ColdVersion`] when nothing is memoized and `policy` forbids the probe.
@@ -142,30 +138,7 @@ fn memoized_binary_version(
     }) else {
         return Ok(None);
     };
-    if let Some(version) = VENV_BINARY_VERSION_CACHE.get(&key) {
-        return Ok(Some(version));
-    }
-    let recently_failed = VENV_BINARY_FAILURE_CACHE
-        .get(&key)
-        .is_some_and(|recorded_at| {
-            SystemTime::now()
-                .duration_since(recorded_at)
-                .is_ok_and(|elapsed| elapsed < crate::language::version::VERSION_FAILURE_TTL)
-        });
-    if recently_failed {
-        return Ok(None);
-    }
-    if policy == ProbePolicy::CachedOnly {
-        return Err(ColdVersion);
-    }
-    if let Some(version) = crate::language::version::detect_python_binary_version(python) {
-        VENV_BINARY_FAILURE_CACHE.remove(&key);
-        VENV_BINARY_VERSION_CACHE.insert(key, version.clone());
-        Ok(Some(version))
-    } else {
-        VENV_BINARY_FAILURE_CACHE.insert(key, SystemTime::now());
-        Ok(None)
-    }
+    VENV_BINARY_MEMO.lookup_or_probe(key, policy, || detect_python_binary_version(python))
 }
 
 /// Max repos tracked by the forwarded-venv stash.
@@ -201,9 +174,6 @@ pub fn stashed_project_venv(repo_root: &Path) -> Option<PythonVenv> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use std::time::{Duration, SystemTime};
@@ -426,9 +396,9 @@ mod tests {
 
         let python = venv_python_binary(tmp.path()).canonicalize().unwrap();
         let modified = std::fs::metadata(&python).unwrap().modified().unwrap();
-        VENV_BINARY_FAILURE_CACHE.insert(
+        VENV_BINARY_MEMO.failed().insert(
             (python, modified),
-            SystemTime::now() - crate::language::version::VERSION_FAILURE_TTL * 2,
+            SystemTime::now() - crate::language::probe_memo::FAILURE_TTL * 2,
         );
         assert_eq!(venv.version(), None);
         assert_eq!(spawn_count(&counter), 2, "an aged failure is re-probed");

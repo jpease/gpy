@@ -7,10 +7,10 @@
 //! `gpy config get/set/list` address the entries as `plugin.<segment>.<key>`.
 
 use crate::config::Config;
-use crate::plugin::script::detail;
+use crate::plugin::newtype::detail;
 use crate::plugin::{
-    EntryType, PluginDiscovery, RESERVED_SETTING_KEYS, ScriptSegmentManifest, SegmentName,
-    SettingKey, SettingValue, TimeoutMs, TtlSecs,
+    EntryType, PluginDiscovery, ScriptSegmentManifest, SegmentName, SettingKey, SettingValue,
+    TIMEOUT_MS_KEY, TTL_SECS_KEY, TimeoutMs, TtlSecs,
 };
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -51,11 +51,11 @@ impl<'de> Deserialize<'de> for PluginSegmentConfig {
                     .ok_or_else(|| fail(format!("expected a whole number, got {raw}")))
             };
             match key.as_str() {
-                "ttl_secs" => {
+                TTL_SECS_KEY => {
                     config.ttl_secs =
                         Some(TtlSecs::new(whole(&value)?).map_err(|e| fail(detail(e)))?);
                 }
-                "timeout_ms" => {
+                TIMEOUT_MS_KEY => {
                     config.timeout_ms =
                         Some(TimeoutMs::new(whole(&value)?).map_err(|e| fail(detail(e)))?);
                 }
@@ -104,9 +104,9 @@ fn check_timeout(
     if timeout > manifest.timeout_ms {
         return Err(key_error(
             segment,
-            "timeout_ms",
+            TIMEOUT_MS_KEY,
             format!(
-                "{timeout} is above the segment's timeout_ms {}; an override may only lower it",
+                "{timeout} is above the segment's {TIMEOUT_MS_KEY} {}; an override may only lower it",
                 manifest.timeout_ms
             ),
         ));
@@ -215,8 +215,8 @@ pub fn get(config: &Config, discovery: &PluginDiscovery, key: &str) -> Result<St
     let manifest = manifest_for(discovery, &segment)?;
     let resolved = resolve(&segment, manifest, config.plugin.get(&segment))?;
     match field {
-        "ttl_secs" => Ok(resolved.ttl_secs.to_string()),
-        "timeout_ms" => Ok(resolved.timeout_ms.to_string()),
+        TTL_SECS_KEY => Ok(resolved.ttl_secs.to_string()),
+        TIMEOUT_MS_KEY => Ok(resolved.timeout_ms.to_string()),
         other => SettingKey::new(other)
             .ok()
             .and_then(|setting| resolved.settings.get(&setting))
@@ -243,12 +243,12 @@ pub fn set(config: &mut Config, discovery: &PluginDiscovery, key: &str, raw: &st
     };
     let entry = config.plugin.entry(segment.clone()).or_default();
     match field {
-        "ttl_secs" => {
+        TTL_SECS_KEY => {
             entry.ttl_secs = Some(
                 TtlSecs::new(parse_u32(raw)?).map_err(|e| key_error(&segment, field, detail(e)))?,
             );
         }
-        "timeout_ms" => {
+        TIMEOUT_MS_KEY => {
             let timeout = TimeoutMs::new(parse_u32(raw)?)
                 .map_err(|e| key_error(&segment, field, detail(e)))?;
             check_timeout(&segment, manifest, timeout)?;
@@ -278,14 +278,14 @@ pub fn list_keys(discovery: &PluginDiscovery) -> Vec<(String, String)> {
         for (segment, manifest) in &plugin.script_segments {
             let prefix = format!("{PLUGIN_KEY_PREFIX}{segment}.");
             keys.push((
-                format!("{prefix}{}", RESERVED_SETTING_KEYS[0]),
+                format!("{prefix}{TTL_SECS_KEY}"),
                 format!(
                     "Seconds a result is reused, 0 disables (plugin {}, default {})",
                     plugin.manifest.id, manifest.ttl_secs
                 ),
             ));
             keys.push((
-                format!("{prefix}{}", RESERVED_SETTING_KEYS[1]),
+                format!("{prefix}{TIMEOUT_MS_KEY}"),
                 format!(
                     "Script time limit in ms, at most {} (plugin {})",
                     manifest.timeout_ms, plugin.manifest.id

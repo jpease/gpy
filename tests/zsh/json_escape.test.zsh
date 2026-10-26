@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # tests/zsh/json_escape.test.zsh
 #
-# __gpy_escape_json must escape a lone backslash. In zsh's
+# __gpy_escape_json_into must escape a lone backslash. In zsh's
 # pattern-substitution syntax `s=${s//\/\\}` matches the literal
 # two-character sequence `/\` and deletes it, never escaping a lone backslash;
 # a cwd or branch name containing `\` (e.g. a Windows-style path) would then
@@ -10,13 +10,14 @@
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 source zsh/core/ipc.zsh
 
 test_result=0
 
 if ! command -v jq &>/dev/null; then
-    echo "SKIP: jq not installed, cannot validate JSON round-trip"
+    test_skip_part "jq not installed, cannot validate JSON round-trip"
 else
 
 run_case() {
@@ -24,7 +25,7 @@ run_case() {
     local input=$2
 
     local escaped
-    escaped=$(__gpy_escape_json "$input")
+    __gpy_escape_json_into escaped "$input"
 
     local json_string
     json_string="{\"test\":\"${escaped}\"}"
@@ -57,7 +58,7 @@ run_case "slash and backslash" 'x/\y'
 
 fi
 
-# __gpy_escape_json must also escape control characters (\n, \r, \t)
+# __gpy_escape_json_into must also escape control characters (\n, \r, \t)
 # the same way Fish's __gpy_json_escape does. Read the shared vector file
 # (tests/fixtures/json_escape_vectors.tsv) so escaping cannot silently
 # drift between bash/zsh/fish -- see the fixture's own header comment
@@ -81,7 +82,7 @@ while IFS=$'\t' read -r input_col expected_col; do
 
     vector_count=$((vector_count + 1))
     real_input=$(unescape_input "$input_col")
-    actual=$(__gpy_escape_json "$real_input")
+    __gpy_escape_json_into actual "$real_input"
     if [[ "$actual" == "$expected_col" ]]; then
         print -r -- "PASS: vector $vector_count ($input_col) round-trips correctly"
     else

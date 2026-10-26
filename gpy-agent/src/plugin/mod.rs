@@ -4,6 +4,8 @@
 mod builtin;
 /// Plugin manifest data models and parser
 pub mod manifest;
+/// Shared plumbing for validated string newtypes
+pub(crate) mod newtype;
 /// Plugin discovery and registry model
 pub mod registry;
 /// Script segment manifests (`entry_type = "script"`)
@@ -22,8 +24,8 @@ pub use registry::{
 };
 pub use script::{
     CacheScope, EnvName, Extension, InputName, RESERVED_SETTING_KEYS, ScanName, ScriptPath,
-    ScriptSegmentManifest, TimeoutMs, TtlSecs, VariantColorKey, VariantColorPart, VariantName,
-    script_segment_manifest_path,
+    ScriptSegmentManifest, TIMEOUT_MS_KEY, TTL_SECS_KEY, TimeoutMs, TtlSecs, VariantColorKey,
+    VariantColorPart, VariantName, script_segment_manifest_path,
 };
 pub use settings::{SettingDecl, SettingKey, SettingValue};
 

@@ -13,17 +13,6 @@ cd "$ROOT" || exit 1
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 
-FAILED=0
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
-
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 mkdir -p "$TMP_DIR/bin" "$TMP_DIR/cache" "$TMP_DIR/work" "$TMP_DIR/home/.config"
@@ -64,7 +53,7 @@ run_shell() {
         "GPY_AGENT_SOCKET_PATH=$TMP_DIR/dead.sock"
         "XDG_CACHE_HOME=$TMP_DIR/cache"
         "GPY_AGENT_START_DELAY_MS=0"
-        "GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0"
+        "GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0"
     )
     case "$shell" in
         bash)
@@ -107,8 +96,7 @@ scenarios=(
 
 for shell in bash zsh fish; do
     if ! command -v "$shell" >/dev/null 2>&1; then
-        echo "SKIP: $shell not installed"
-        [[ -n "${CI:-}" ]] && FAILED=1
+        test_skip_part "$shell not installed"
         continue
     fi
     echo "--- $shell ---"
@@ -123,8 +111,4 @@ for shell in bash zsh fish; do
     done
 done
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== supervisor flag contract passed ==="
+test_finish "supervisor flag contract"

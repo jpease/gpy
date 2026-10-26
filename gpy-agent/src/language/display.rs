@@ -2,30 +2,16 @@
 //!
 //! Must not depend on `crate::agent` or `crate::cache`; both depend on this.
 
+use crate::config::types::ColorSpec;
 use crate::config::{LanguageSettings, LanguageTheme};
+use crate::debug_log;
 use crate::ipc::LanguageInfo;
-use crate::language::detector::{DetectedLanguage, get_language_color_from_theme};
+use crate::language::detector::DetectedLanguage;
 use crate::language::venv::PythonVenv;
-use crate::language::version::{ColdVersion, ProbePolicy, ReleaseSource};
+use crate::language::version::{ColdVersion, ProbePolicy, ReleaseSource, get_version_detectors};
 use crate::theme::ThemeConfig;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
-
-/// Test-only count of version-probe attempts; stays zero when versions are hidden.
-#[cfg(test)]
-static PROBE_CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Reset [`PROBE_CALL_COUNT`] to zero (test-only).
-#[cfg(test)]
-pub(crate) fn reset_probe_call_count_for_test() {
-    PROBE_CALL_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Read [`PROBE_CALL_COUNT`] (test-only).
-#[cfg(test)]
-pub(crate) fn probe_call_count_for_test() -> u64 {
-    PROBE_CALL_COUNT.load(std::sync::atomic::Ordering::Relaxed)
-}
 
 /// Select which detected languages to display (pure, no I/O).
 ///
@@ -37,8 +23,6 @@ pub fn select_display_languages<'a>(
     theme_lang: &LanguageTheme,
     cfg: &LanguageSettings,
 ) -> Vec<&'a DetectedLanguage> {
-    use std::collections::HashSet;
-
     // A theme allow-list overrides config.language.enabled_languages.
     let theme_languages = theme_lang
         .enabled_languages
@@ -79,7 +63,6 @@ pub fn select_display_languages<'a>(
         }
     }
 
-    // Only the survivors warrant a version probe.
     match cfg.filter {
         crate::config::types::LanguageFilter::Primary => candidates.into_iter().take(1).collect(),
         crate::config::types::LanguageFilter::All => candidates,
@@ -89,199 +72,175 @@ pub fn select_display_languages<'a>(
     }
 }
 
-/// Build language display information from detected languages.
-///
-/// # Panics
-/// If the constant fallback color fails to parse.
-#[must_use]
-pub fn build_language_display_info(
-    detected_languages: &[DetectedLanguage],
-    theme: &ThemeConfig,
-    language_cfg: &LanguageSettings,
-) -> Vec<LanguageInfo> {
-    build_language_display_info_at(detected_languages, theme, language_cfg, None, None)
+/// What to display: detected languages, the theme and settings selecting
+/// among them, and where to resolve versions.
+#[derive(Clone, Copy)]
+pub struct DisplayRequest<'a> {
+    detected: &'a [DetectedLanguage],
+    theme: &'a ThemeConfig,
+    settings: &'a LanguageSettings,
+    version_cwd: Option<&'a Path>,
+    python_venv: Option<&'a PythonVenv>,
+    sources: &'a [Box<dyn ReleaseSource + Sync + Send>],
 }
 
-/// Like [`build_language_display_info`], resolving versions from `version_cwd`.
-/// Python uses `python_venv` when the caller already resolved one, else a
-/// project venv under `version_cwd`. Cold versions are probed, each bounded by
-/// its own timeout.
-///
-/// # Panics
-/// If the constant fallback color fails to parse.
-#[must_use]
-pub fn build_language_display_info_at(
-    detected_languages: &[DetectedLanguage],
-    theme: &ThemeConfig,
-    language_cfg: &LanguageSettings,
-    version_cwd: Option<&Path>,
-    python_venv: Option<&PythonVenv>,
-) -> Vec<LanguageInfo> {
-    display_info(
-        detected_languages,
-        theme,
-        language_cfg,
-        version_cwd,
-        python_venv,
-        Versions::Probe,
-    )
-    .unwrap_or_default()
-}
+impl<'a> DisplayRequest<'a> {
+    /// A request resolving versions through the registered release sources
+    /// with no project directory.
+    #[must_use]
+    pub fn new(
+        detected: &'a [DetectedLanguage],
+        theme: &'a ThemeConfig,
+        settings: &'a LanguageSettings,
+    ) -> Self {
+        Self {
+            detected,
+            theme,
+            settings,
+            version_cwd: None,
+            python_venv: None,
+            sources: get_version_detectors(),
+        }
+    }
 
-/// [`build_language_display_info_at`] from cached versions only: never runs a
-/// probe, and is `None` when any displayed language's version is cold.
-///
-/// # Panics
-/// If the constant fallback color fails to parse.
-#[must_use]
-pub fn cached_language_display_info_at(
-    detected_languages: &[DetectedLanguage],
-    theme: &ThemeConfig,
-    language_cfg: &LanguageSettings,
-    version_cwd: Option<&Path>,
-    python_venv: Option<&PythonVenv>,
-) -> Option<Vec<LanguageInfo>> {
-    display_info(
-        detected_languages,
-        theme,
-        language_cfg,
-        version_cwd,
-        python_venv,
-        Versions::Cached,
-    )
-    .ok()
-}
+    /// Resolve versions from `version_cwd`; Python uses a project venv under it
+    /// unless [`Self::with_venv`] supplies one.
+    #[must_use]
+    pub const fn with_cwd(mut self, version_cwd: Option<&'a Path>) -> Self {
+        self.version_cwd = version_cwd;
+        self
+    }
 
-/// [`cached_language_display_info_at`] once a probe job for these languages
-/// has finished: a version still cold shows as none instead of failing the
-/// render. The job cached every result, success or failure, so a cold one
-/// means the entry is already gone again (expired, evicted, or a wall-clock
-/// step back made it read as stale).
-///
-/// # Panics
-/// If the constant fallback color fails to parse.
-#[must_use]
-pub fn settled_language_display_info_at(
-    detected_languages: &[DetectedLanguage],
-    theme: &ThemeConfig,
-    language_cfg: &LanguageSettings,
-    version_cwd: Option<&Path>,
-    python_venv: Option<&PythonVenv>,
-) -> Vec<LanguageInfo> {
-    display_info(
-        detected_languages,
-        theme,
-        language_cfg,
-        version_cwd,
-        python_venv,
-        Versions::Settled,
-    )
-    .unwrap_or_default()
+    /// Use `python_venv`, already resolved by the caller, for Python's version.
+    #[must_use]
+    pub const fn with_venv(mut self, python_venv: Option<&'a PythonVenv>) -> Self {
+        self.python_venv = python_venv;
+        self
+    }
+
+    /// Probe through `sources` instead of the registered ones.
+    #[cfg(test)]
+    const fn with_sources(mut self, sources: &'a [Box<dyn ReleaseSource + Sync + Send>]) -> Self {
+        self.sources = sources;
+        self
+    }
 }
 
 /// Where [`display_info`] gets versions.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Versions {
-    /// Probe cold versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Versions {
+    /// Probe cold versions, each bounded by its own timeout.
     Probe,
     /// Cache only; a cold version fails with [`ColdVersion`].
     Cached,
-    /// Cache only; a cold version shows as none.
+    /// Cache only; a cold version shows as none instead of failing. For
+    /// after a probe job for these languages finished: it cached every result,
+    /// success or failure, so a cold one means the entry is already gone again
+    /// (expired, evicted, or a wall-clock step back made it read as stale).
     Settled,
 }
 
-/// Display entries with versions from `versions`; [`ColdVersion`] only under
-/// [`Versions::Cached`].
-fn display_info(
-    detected_languages: &[DetectedLanguage],
-    theme: &ThemeConfig,
-    language_cfg: &LanguageSettings,
-    version_cwd: Option<&Path>,
-    python_venv: Option<&PythonVenv>,
+/// Display entries for `request` with versions from `versions`.
+///
+/// # Errors
+/// [`ColdVersion`] under [`Versions::Cached`] when a displayed language's
+/// version is not cached.
+pub fn display_info(
+    request: &DisplayRequest<'_>,
     versions: Versions,
 ) -> Result<Vec<LanguageInfo>, ColdVersion> {
-    if !language_cfg.enabled {
+    let settings = request.settings;
+    if !settings.enabled {
         return Ok(Vec::new());
     }
 
-    let displayed_languages: Vec<&DetectedLanguage> =
-        select_display_languages(detected_languages, &theme.segments.language, language_cfg);
-
-    let policy = if versions == Versions::Probe {
-        ProbePolicy::Spawn
+    let displayed =
+        select_display_languages(request.detected, &request.theme.segments.language, settings);
+    let version_slots = if settings.show_versions {
+        resolve_versions(request, &displayed, versions)?
     } else {
-        ProbePolicy::CachedOnly
-    };
-    let version_slots: Vec<Option<String>> = if language_cfg.show_versions {
-        let version_detectors: HashMap<_, _> = crate::language::version::get_version_detectors()
-            .iter()
-            .map(|probe| (probe.language_name().to_owned(), probe.as_ref()))
-            .collect();
-        let lookup = |detected_lang: &DetectedLanguage| {
-            language_version(
-                detected_lang,
-                version_detectors.get(&detected_lang.name).copied(),
-                version_cwd,
-                python_venv,
-                policy,
-            )
-        };
-
-        match versions {
-            // Cache reads only: nothing to overlap.
-            Versions::Cached => displayed_languages
-                .iter()
-                .map(|detected_lang| lookup(detected_lang))
-                .collect::<Result<Vec<_>, _>>()?,
-            Versions::Settled => displayed_languages
-                .iter()
-                .map(|detected_lang| lookup(detected_lang).unwrap_or(None))
-                .collect(),
-            // Probe concurrently (each probe has its own timeout); slots keep order.
-            Versions::Probe => std::thread::scope(|scope| {
-                // Spawn eagerly before joining; a lazy iterator would serialize.
-                let mut probe_handles = Vec::with_capacity(displayed_languages.len());
-                for detected_lang in &displayed_languages {
-                    let lookup_ref = &lookup;
-                    probe_handles.push(scope.spawn(move || {
-                        #[cfg(test)]
-                        PROBE_CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        lookup_ref(detected_lang).ok().flatten()
-                    }));
-                }
-
-                probe_handles
-                    .into_iter()
-                    // A panicked probe degrades to "no version".
-                    .map(|handle| handle.join().ok().flatten())
-                    .collect()
-            }),
-        }
-    } else {
-        vec![None; displayed_languages.len()]
+        vec![None; displayed.len()]
     };
 
-    let mut languages_info: Vec<LanguageInfo> = Vec::with_capacity(displayed_languages.len());
-    for (detected_lang, version) in displayed_languages.iter().zip(version_slots) {
-        let color_str =
-            get_language_color_from_theme(&detected_lang.name, &theme.segments.language);
-        #[expect(
-            clippy::expect_used,
-            reason = "constant fallback literal always parses"
-        )]
-        let color = crate::config::types::ColorSpec::new(&color_str).unwrap_or_else(|_| {
-            crate::config::types::ColorSpec::new("#ffffff")
-                .expect("Hardcoded default color must be valid")
-        });
-
-        languages_info.push(LanguageInfo {
+    Ok(displayed
+        .into_iter()
+        .zip(version_slots)
+        .map(|(detected_lang, version)| LanguageInfo {
             name: detected_lang.name.clone(),
             version,
-            color,
-        });
-    }
+            color: language_color(&detected_lang.name, &request.theme.segments.language),
+        })
+        .collect())
+}
 
-    Ok(languages_info)
+/// `name`'s themed colour, else white.
+fn language_color(name: &str, theme_lang: &LanguageTheme) -> ColorSpec {
+    ColorSpec::new(theme_lang.get_bg_color(name)).unwrap_or_else(|_| ColorSpec::white())
+}
+
+/// One version per language in `displayed`, in order.
+fn resolve_versions(
+    request: &DisplayRequest<'_>,
+    displayed: &[&DetectedLanguage],
+    versions: Versions,
+) -> Result<Vec<Option<String>>, ColdVersion> {
+    let policy = match versions {
+        Versions::Probe => ProbePolicy::Spawn,
+        Versions::Cached | Versions::Settled => ProbePolicy::CachedOnly,
+    };
+    let lookup = |detected_lang: &DetectedLanguage| {
+        let source = request
+            .sources
+            .iter()
+            .find(|source| source.language_name() == detected_lang.name)
+            .map(|source| &**source);
+        language_version(
+            detected_lang,
+            source,
+            request.version_cwd,
+            request.python_venv,
+            policy,
+        )
+    };
+
+    match versions {
+        Versions::Cached => displayed.iter().map(|lang| lookup(lang)).collect(),
+        Versions::Settled => Ok(displayed
+            .iter()
+            .map(|lang| lookup(lang).unwrap_or(None))
+            .collect()),
+        Versions::Probe => Ok(probe_concurrently(displayed, &lookup)),
+    }
+}
+
+/// Run `lookup` for every language on its own thread (each probe has its own
+/// timeout); slots keep `displayed`'s order. A probe that panics logs and
+/// shows no version.
+fn probe_concurrently<F>(displayed: &[&DetectedLanguage], lookup: &F) -> Vec<Option<String>>
+where
+    F: Fn(&DetectedLanguage) -> Result<Option<String>, ColdVersion> + Sync,
+{
+    std::thread::scope(|scope| {
+        // Spawn every probe before joining any; a lazy iterator would serialize.
+        let handles: Vec<_> = displayed
+            .iter()
+            .map(|&detected_lang| scope.spawn(move || lookup(detected_lang).ok().flatten()))
+            .collect();
+        displayed
+            .iter()
+            .zip(handles)
+            .map(|(detected_lang, handle)| {
+                handle.join().unwrap_or_else(|_panic| {
+                    debug_log!(
+                        "language",
+                        "version probe for {} panicked",
+                        detected_lang.name
+                    );
+                    None
+                })
+            })
+            .collect()
+    })
 }
 
 /// One displayed language's version under `policy`; [`ColdVersion`] when only
@@ -334,13 +293,73 @@ fn language_version(
     clippy::missing_panics_doc
 )]
 mod tests {
-    use super::{
-        build_language_display_info_at, probe_call_count_for_test, reset_probe_call_count_for_test,
-        select_display_languages,
-    };
+    use super::{DisplayRequest, Versions, display_info, select_display_languages};
     use crate::config::LanguageSettings;
     use crate::language::detector::DetectedLanguage;
+    use crate::language::version::ColdVersion;
+    use crate::language::version::ReleaseSource;
     use crate::theme::ThemeConfig;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A `rust` release source counting how often its version command is read.
+    struct CountingSource(Arc<AtomicUsize>);
+
+    impl ReleaseSource for CountingSource {
+        fn language_name(&self) -> &'static str {
+            "rust"
+        }
+
+        fn version_command(&self) -> &[&str] {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            &["gpy-test-no-such-version-command"]
+        }
+
+        fn parse_version(&self, _output: &str) -> Option<String> {
+            None
+        }
+    }
+
+    /// Version-command reads while displaying one `rust` language with versions
+    /// shown or hidden, probing from a fresh directory so no cached version answers.
+    fn probes_for(show_versions: bool) -> usize {
+        let probes = Arc::new(AtomicUsize::new(0));
+        let sources: Vec<Box<dyn ReleaseSource + Sync + Send>> =
+            vec![Box::new(CountingSource(Arc::clone(&probes)))];
+        let detected = vec![DetectedLanguage {
+            name: "rust".to_owned(),
+            confidence: 1.0,
+            file_count: 1,
+            total_bytes: 42,
+        }];
+        let language_cfg = LanguageSettings {
+            show_versions,
+            ..LanguageSettings::default()
+        };
+        let cwd = tempfile::TempDir::new().expect("temp dir");
+
+        let theme = ThemeConfig::default();
+        let request = DisplayRequest::new(&detected, &theme, &language_cfg)
+            .with_cwd(Some(cwd.path()))
+            .with_sources(&sources);
+        let info =
+            display_info(&request, Versions::Probe).expect("probing never reports a cold version");
+
+        assert_eq!(
+            info.len(),
+            1,
+            "the language is displayed with or without a version"
+        );
+        probes.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn fallback_white_is_the_canonical_white() {
+        assert_eq!(
+            crate::config::types::ColorSpec::white(),
+            crate::config::types::ColorSpec::new("#ffffff").unwrap()
+        );
+    }
 
     fn sample_detected_languages() -> Vec<DetectedLanguage> {
         vec![
@@ -442,7 +461,7 @@ mod tests {
     }
 
     /// After a probe job, a version whose cache entry is already gone again
-    /// renders without a version instead of failing the request (#951).
+    /// renders without a version instead of failing the request.
     #[test]
     fn settled_read_shows_a_cold_version_as_none() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -458,24 +477,14 @@ mod tests {
             ..LanguageSettings::default()
         };
 
-        assert!(
-            super::cached_language_display_info_at(
-                &detected,
-                &theme,
-                &language_cfg,
-                Some(dir.path()),
-                None
-            )
-            .is_none(),
+        let request =
+            DisplayRequest::new(&detected, &theme, &language_cfg).with_cwd(Some(dir.path()));
+        assert_eq!(
+            display_info(&request, Versions::Cached).map(|_| ()),
+            Err(ColdVersion),
             "never probed here, so the version is cold"
         );
-        let settled = super::settled_language_display_info_at(
-            &detected,
-            &theme,
-            &language_cfg,
-            Some(dir.path()),
-            None,
-        );
+        let settled = display_info(&request, Versions::Settled).expect("settled never fails");
         let shown: Vec<(&str, Option<&str>)> = settled
             .iter()
             .map(|lang| (lang.name.as_str(), lang.version.as_deref()))
@@ -564,58 +573,37 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial(probe_call_count)]
-    fn probe_skipped_when_show_versions_false() {
-        reset_probe_call_count_for_test();
-        let detected = vec![DetectedLanguage {
-            name: "rust".to_owned(),
-            confidence: 1.0,
-            file_count: 1,
-            total_bytes: 42,
-        }];
+    fn display_info_is_empty_when_languages_are_disabled() {
+        let detected = sample_detected_languages();
         let theme = ThemeConfig::default();
         let language_cfg = LanguageSettings {
-            show_versions: false,
+            enabled: false,
             ..LanguageSettings::default()
         };
 
-        let info = build_language_display_info_at(&detected, &theme, &language_cfg, None, None);
+        let info = display_info(
+            &DisplayRequest::new(&detected, &theme, &language_cfg),
+            Versions::Probe,
+        )
+        .expect("a disabled segment never probes");
 
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn probe_skipped_when_show_versions_false() {
         assert_eq!(
-            info.len(),
-            1,
-            "the language is still displayed, just without a version probe"
-        );
-        assert_eq!(
-            probe_call_count_for_test(),
+            probes_for(false),
             0,
             "show_versions=false must attempt zero probes"
         );
     }
 
-    // Serialized: shares the global `PROBE_CALL_COUNT` with the test above.
     #[test]
-    #[serial_test::serial(probe_call_count)]
     fn probe_runs_when_show_versions_true() {
-        reset_probe_call_count_for_test();
-        let detected = vec![DetectedLanguage {
-            name: "rust".to_owned(),
-            confidence: 1.0,
-            file_count: 1,
-            total_bytes: 42,
-        }];
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            show_versions: true,
-            ..LanguageSettings::default()
-        };
-
-        let info = build_language_display_info_at(&detected, &theme, &language_cfg, None, None);
-
-        assert_eq!(info.len(), 1);
         assert!(
-            probe_call_count_for_test() > 0,
-            "show_versions=true must attempt at least one probe, unlike the false case above"
+            probes_for(true) > 0,
+            "show_versions=true must attempt at least one probe"
         );
     }
 }

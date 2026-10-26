@@ -9,16 +9,16 @@ runtime shuts down, and can interfere with the rest of the test.
 
 ## `ServerGuard`
 
-`ServerGuard` (`tests/common/fixtures.rs`, re-exported as
-`common::ServerGuard`) owns the task's `JoinHandle` and calls `.abort()` in
-`Drop`. `Drop` runs on normal return and while unwinding from a panic or
-failed assertion. It does not run when the process is killed (Ctrl+C,
-SIGKILL, a nextest timeout); for those, `scripts/cleanup-test-agents.sh`
-removes leftover agents and sockets under the test root.
+`ServerGuard` (`tests/common/fixtures.rs`) owns the task's `JoinHandle` and
+calls `.abort()` in `Drop`. `Drop` runs on normal return and while unwinding
+from a panic or failed assertion. It does not run when the process is killed
+(Ctrl+C, SIGKILL, a nextest timeout); for those,
+`scripts/cleanup-test-agents.sh` removes leftover agents and sockets under
+the test root.
 
 ```rust
 mod common;
-use common::ServerGuard;
+use common::fixtures::ServerGuard;
 
 let server_handle = tokio::spawn(async move { server.start().await });
 let _guard = ServerGuard::new(server_handle); // aborted when `_guard` drops
@@ -42,9 +42,6 @@ handle.abort();
 assert!(handle.await.expect_err("task was aborted").is_cancelled());
 ```
 
-**Check completion**: `guard.is_finished()` reports whether the task has
-already exited (for example because `start()` returned an error).
-
 ## Spawned processes
 
 `tests/common/child_guard.rs` holds the same contract for child processes:
@@ -55,7 +52,7 @@ step that can fail, and bind it to a named variable.
 
 ## Related
 
-- `tests/common/endpoint.rs` — `endpoint_builder` and `wait_for_socket` for
+- `tests/common/endpoint.rs` — `endpoint` and `wait_for_socket` for
   building and starting the in-process server the guard wraps.
 - `scripts/cleanup-test-agents.sh` — removes agents and sockets left by
   killed test runs.

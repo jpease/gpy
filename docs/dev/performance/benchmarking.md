@@ -85,9 +85,10 @@ RUSTC_WRAPPER= just bench-ci
 RUSTC_WRAPPER= just bench-rust
 ```
 
-3) Plugin discovery overhead budgets (0/10/50 plugins)
+3) Plugin discovery overhead (0/10/50 plugins; part of step 2, alone when
+   checking the [plugin budgets](plugin-budgets.md))
 ```bash
-(cd gpy-agent && RUSTC_WRAPPER= cargo test --test plugin_performance_tests)
+(cd gpy-agent && RUSTC_WRAPPER= cargo bench --bench plugin_bench)
 ```
 
 Optional:
@@ -195,7 +196,7 @@ The `prompt_render` budget is met by the following architectural mechanisms, not
    computation asynchronously. The updated value is stored for the next prompt.
 
 3. **IPC hot path** — For prompts that hit the live in-memory cache, roundtrip IPC latency stays within the
-   `ipc_latency` budget (1 ms target, 1.5 ms max; `ipc_ping` baseline 0.037 ms).
+   `ipc_latency` budget (1 ms target, 1.5 ms max; 0.037 ms measured on a dev machine, 2026-05-15).
 
 If any of these mechanisms are bypassed (e.g. cold agent start, cache miss with no stale entry,
 or `--no-cache` flag), the user-visible latency is bounded by fresh git/language computation time,

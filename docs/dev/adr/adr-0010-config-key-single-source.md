@@ -13,7 +13,7 @@ Tests already catch drift between the two:
 - `every_config_leaf_has_registry_entry` and `every_registry_key_is_a_config_leaf` compare the registry with the leaves of a serialized `Config::default()`.
 - `reference_doc_matches_registry` and `cli_reference_common_keys_are_registered` tie `docs/user/configuration-reference.md` and `docs/user/cli-reference.md` to the registry.
 - `config_list_matches_registry` ties `gpy config list` to it.
-- `shipped_config_toml_sets_only_known_keys` covers `config/config.toml` and `config/config.example.toml`.
+- `config_template_sets_every_config_key_at_its_default` ties `config/config.example.toml`, the one shipped template, to `Config`: every leaf is present, no key is unknown, and every value is the built-in default.
 
 Ghostty (`src/config/Config.zig`) declares each field once and generates its CLI flag and docs from that declaration. This ADR measures what the same approach would cost gpy.
 
@@ -38,12 +38,12 @@ Registry descriptions and the `///` comments on the same fields mostly differ in
 
 ## Decision
 
-Proposed: option A. Keep `CONFIG_KEYS` and its guards.
+Accepted: option A. Keep `CONFIG_KEYS` and its guards.
 
 - The registry costs 1 file and 9 of the 19 lines of a new boolean key, and forgetting it fails a test that names the key.
 - Option C is rejected for what it changes, not for its size. It changes the CLI error text, prints widened floats, rejects mixed-case enum input that works today, and needs the registry guards rewritten. Each of these could be special-cased, but every special case is per-type metadata, which is what the registry already holds.
 - Options B and D were rejected on reasoning and not spiked. The add-key run bounds what they could save: at most the registry edit, 1 of 5 files and 9 of 19 lines. The field, its `Default`, the exhaustive destructure and the struct literals would still be forced by the compiler, because those name fields directly. At 42 keys that saving does not justify a macro DSL (B) or a new proc-macro crate (D).
-- B, C and D each cross the project's autonomy boundaries, which require maintainer approval before altering configuration schema structure, adding cross-module dependencies, or adding a dependency:
+- B, C and D each need maintainer approval, because they alter configuration schema structure, adding cross-module dependencies, or adding a dependency:
   - B moves the settings structs into macro syntax.
   - C makes `get`/`set` depend on the serialized TOML shape and the loader's deserialization path.
   - D adds a crate, and `schemars` would add 6.

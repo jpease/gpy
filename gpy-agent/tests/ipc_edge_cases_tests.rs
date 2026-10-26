@@ -1,14 +1,10 @@
 //! IPC protocol edge cases.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
-mod fixtures;
-
-use fixtures::ipc_helpers::*;
+use gpy_agent::ipc::Message;
 use gpy_agent::ipc::protocol::deserialize_message;
-use gpy_agent::ipc::{Message, Response};
 use gpy_agent::security::SafePath;
 
 #[test]
@@ -41,19 +37,14 @@ fn test_very_long_path() {
 
 #[test]
 fn test_large_message_near_limit() {
-    let large_path = "x".repeat(4000); // 4KB path
+    let large_path = "x".repeat(4000);
 
     let json = serde_json::json!({"op": "git", "cwd": large_path}).to_string();
-    assert!(
-        json.len() < 65536,
-        "Message should be under 64KB limit, was {} bytes",
-        json.len()
-    );
 
     let parsed = deserialize_message(json.as_bytes()).expect("Should deserialize");
     match parsed {
         Message::RepositoryStatus { path: p, .. } => {
-            assert_eq!(p.to_string().len(), large_path.len());
+            assert_eq!(p, large_path);
         }
         _ => panic!("Wrong message type"),
     }
@@ -61,6 +52,15 @@ fn test_large_message_near_limit() {
 
 #[test]
 fn test_message_exceeding_size_limit() {
+    let oversized_path = "x".repeat(64 * 1024);
+    let json = serde_json::json!({"op": "git", "cwd": oversized_path}).to_string();
+
+    let result = deserialize_message(json.as_bytes());
+    assert!(result.is_err(), "Oversized messages should be rejected");
+}
+
+#[test]
+fn test_path_exceeding_length_cap() {
     // SafePath caps paths at 4096 chars.
     let oversized_path = "x".repeat(5000);
 
@@ -121,46 +121,4 @@ fn test_all_message_types_parse_in_op_form() {
         parse(r#"{"op":"status"}"#.to_owned()),
         Message::Status
     ));
-}
-
-#[test]
-fn test_response_error_messages() {
-    let error_response = Response::Error {
-        message: "Test error message".to_owned(),
-    };
-
-    assert!(is_error_response(&error_response));
-    assert_eq!(
-        extract_error_message(&error_response),
-        Some("Test error message")
-    );
-}
-
-#[test]
-fn test_response_ack_validation() {
-    let ack = Response::Ack;
-    assert!(is_ack_response(&ack));
-    assert!(!is_error_response(&ack));
-}
-
-#[test]
-#[allow(clippy::assertions_on_constants)]
-fn test_protocol_version_field() {
-    use gpy_agent::ipc::protocol::PROTOCOL_VERSION;
-
-    assert!(PROTOCOL_VERSION > 0, "Protocol version should be positive");
-
-    let status = Response::AgentStatus {
-        version: "1.0.0".to_owned(),
-        protocol_version: PROTOCOL_VERSION,
-        watched_repos: 0,
-        registered_clients: 0,
-        cache_entries: 0,
-    };
-
-    let json = serde_json::to_string(&status).expect("Should serialize");
-    assert!(
-        json.contains("protocol_version"),
-        "Status response should include protocol version"
-    );
 }

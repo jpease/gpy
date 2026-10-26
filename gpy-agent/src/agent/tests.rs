@@ -1,94 +1,5 @@
-mod language_tests {
-    #![allow(clippy::missing_panics_doc)]
-
-    use crate::config::LanguageSettings;
-    use crate::language::detector::DetectedLanguage;
-    use crate::language::display::build_language_display_info;
-    use crate::theme::ThemeConfig;
-
-    fn sample_detected_languages() -> Vec<DetectedLanguage> {
-        vec![
-            DetectedLanguage {
-                name: "alpha".to_owned(),
-                confidence: 1.0,
-                file_count: 1,
-                total_bytes: 42,
-            },
-            DetectedLanguage {
-                name: "beta".to_owned(),
-                confidence: 0.8,
-                file_count: 2,
-                total_bytes: 256,
-            },
-        ]
-    }
-
-    #[test]
-    fn build_language_display_retains_languages_when_versions_hidden() {
-        let detected = sample_detected_languages();
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            show_versions: false,
-            ..LanguageSettings::default()
-        };
-
-        let info = build_language_display_info(&detected, &theme, &language_cfg);
-
-        assert_eq!(info.len(), detected.len());
-    }
-
-    #[test]
-    fn build_language_display_filters_enabled_languages() {
-        let detected = sample_detected_languages();
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            show_versions: true,
-            enabled_languages: vec!["alpha".to_owned()],
-            ..LanguageSettings::default()
-        };
-
-        let info = build_language_display_info(&detected, &theme, &language_cfg);
-        let names: Vec<&str> = info.iter().map(|lang| lang.name.as_str()).collect();
-        assert_eq!(names, vec!["alpha"]);
-    }
-
-    #[test]
-    fn build_language_display_disabled_returns_empty() {
-        let detected = sample_detected_languages();
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            enabled: false,
-            ..LanguageSettings::default()
-        };
-
-        let info = build_language_display_info(&detected, &theme, &language_cfg);
-        assert!(info.is_empty());
-    }
-}
-
-mod reconcile_interval_tests {
-    #![allow(clippy::missing_panics_doc)]
-
-    use super::super::parse_reconcile_interval_secs;
-
-    #[test]
-    fn parse_reconcile_interval_secs_rejects_unset_zero_and_invalid() {
-        assert_eq!(parse_reconcile_interval_secs(None), None);
-        assert_eq!(parse_reconcile_interval_secs(Some("0")), None);
-        assert_eq!(parse_reconcile_interval_secs(Some("not-a-number")), None);
-    }
-
-    #[test]
-    fn parse_reconcile_interval_secs_accepts_positive_integer() {
-        assert_eq!(parse_reconcile_interval_secs(Some("5")), Some(5_u64));
-    }
-}
-
 /// Reconcile ticks skipped during an in-flight scan are caught up afterwards, never concurrently.
 mod reconcile_scan_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::super::{PathBuf, run_reconcile_scan};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -303,12 +214,10 @@ mod reconcile_scan_tests {
 
 /// Registry and watcher agree after every prune, even when a broadcast dropped clients from the registry alone.
 mod prune_reconcile_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::super::{Arc, Mutex, PathBuf, prune_dead_clients};
-    use super::super::{ClientDirectory, MultiRepoWatcher, SharedWatcherSlot, WatcherConfig};
+    use super::super::{ClientDirectory, SharedWatcherSlot, WatcherConfig};
+    use crate::watcher::multi_repo::MultiRepoWatcher;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
     use std::process::Command;
@@ -382,7 +291,7 @@ mod prune_reconcile_tests {
 
         fx.registry
             .register_with_started_at_for_test(pid, Some(repo.clone()), Some(1));
-        fx.watcher.register_client(pid, &repo).unwrap();
+        fx.watcher.attach_client(pid, &repo).unwrap();
         assert_eq!(fx.watcher.watched_repo_count(), 1);
 
         fx.registry.notify_repaint(None);
@@ -399,6 +308,30 @@ mod prune_reconcile_tests {
         assert_eq!(fx.watcher.client_pids(), Vec::<u32>::new());
         assert_eq!(fx.watcher.watched_repo_count(), 0);
         assert_eq!(fx.watcher.watched_roots(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_unregisters_a_dead_client_from_the_watcher() {
+        let fx = fixture();
+        let repo = fx.repos.first().expect("repo").clone();
+        // Exited and reaped: its pid no longer names a live process.
+        let mut child = Command::new("true").spawn().expect("spawn `true`");
+        let dead_pid = child.id();
+        child.wait().expect("reap `true`");
+        fx.registry.register(dead_pid, Some(repo.clone()));
+        fx.watcher.attach_client(dead_pid, &repo).unwrap();
+        assert_eq!(fx.watcher.watched_repo_count(), 1);
+
+        let pruned = prune_dead_clients(&fx.registry, &fx.slot);
+
+        assert_eq!(pruned, vec![dead_pid]);
+        assert!(!fx.registry.is_registered(dead_pid));
+        assert_eq!(
+            fx.watcher.watched_repo_count(),
+            0,
+            "pruning must also unregister the dead client from the watcher"
+        );
     }
 
     proptest::proptest! {
@@ -436,12 +369,12 @@ mod prune_reconcile_tests {
                     0 => {
                         fx.registry
                             .register_with_started_at_for_test(pid, Some(cwd.clone()), None);
-                        fx.watcher.register_client(pid, cwd).unwrap();
+                        fx.watcher.attach_client(pid, cwd).unwrap();
                         model.insert(pid, *repo_index);
                     }
                     1 => {
                         if fx.registry.update_workspace(pid, cwd) {
-                            fx.watcher.update_client(pid, cwd).unwrap();
+                            fx.watcher.attach_client(pid, cwd).unwrap();
                             model.insert(pid, *repo_index);
                         }
                     }

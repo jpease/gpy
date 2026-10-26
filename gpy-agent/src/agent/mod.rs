@@ -13,6 +13,7 @@ pub mod oneshot;
 pub mod startup;
 
 use crate::debug_log;
+use crate::env_config::{env_flag, env_u64_positive};
 use crate::git::cache::GitStatusCache;
 use crate::ipc::{
     ClientDirectory,
@@ -20,47 +21,33 @@ use crate::ipc::{
 };
 use crate::sync_ext::MutexExt;
 use crate::theme::ThemeManager;
+use crate::watcher::WatcherConfig;
 use crate::watcher::hot_reload::HOT_RELOAD_DEBOUNCE;
-use crate::watcher::{WatcherConfig, multi_repo::MultiRepoWatcher};
 use crate::{Error, Result};
 use events::SharedWatcherSlot;
-use std::env;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn matches_ignore_case(value: &str, truthy: &[&str]) -> bool {
-    truthy
-        .iter()
-        .any(|candidate| value.trim().eq_ignore_ascii_case(candidate))
-}
-
 /// Whether `GPY_DISABLE_WATCHER` disables the file watcher. Startup and
 /// hot-reload both check it so a reload never re-enables the watcher.
 fn watcher_disabled_by_env() -> bool {
-    env::var("GPY_DISABLE_WATCHER")
-        .is_ok_and(|value| matches_ignore_case(&value, &["1", "true", "yes", "on"]))
+    env_flag("GPY_DISABLE_WATCHER", false)
 }
 
 /// Default reconcile interval; above the git-status cache TTL so scans see fresh state.
 const RECONCILE_INTERVAL_SECS: u64 = 45;
 
-/// Parse `GPY_RECONCILE_INTERVAL_SECS`; `None` when unset, non-numeric, or `0`.
-/// Pure so tests avoid `std::env::set_var` (needs `unsafe`, which is forbidden).
-fn parse_reconcile_interval_secs(raw: Option<&str>) -> Option<u64> {
-    raw?.parse::<u64>().ok().filter(|value| *value > 0)
-}
-
 /// Resolve the reconcile interval from `GPY_RECONCILE_INTERVAL_SECS`, else
 /// [`RECONCILE_INTERVAL_SECS`]. For setups where `FSEvents` never arrive.
 fn reconcile_interval_secs() -> u64 {
-    let raw = std::env::var("GPY_RECONCILE_INTERVAL_SECS").ok();
-    parse_reconcile_interval_secs(raw.as_deref()).unwrap_or(RECONCILE_INTERVAL_SECS)
+    env_u64_positive("GPY_RECONCILE_INTERVAL_SECS").unwrap_or(RECONCILE_INTERVAL_SECS)
 }
 
 /// Runs `scan_fn` over `repos` on a blocking thread (git status is a subprocess).
-/// A panic in `scan_fn` is logged, not propagated.
+/// Where panics unwind (debug and test builds; release aborts), a panic in
+/// `scan_fn` is logged, not propagated.
 async fn run_reconcile_pass<F>(repos: Vec<PathBuf>, scan_fn: F)
 where
     F: Fn(Vec<PathBuf>) + Send + 'static,
@@ -163,13 +150,7 @@ fn handle_clock_tick(
         return last_notified_minute;
     }
 
-    let clock_show_seconds = ctx
-        .theme_manager
-        .get()
-        .segments
-        .clock
-        .show_seconds
-        .unwrap_or(false);
+    let clock_show_seconds = ctx.theme_manager.get().segments.clock.show_seconds();
     debug_log!("agent", "Clock tick: show_seconds={}", clock_show_seconds);
 
     let current_minute = std::time::SystemTime::now()
@@ -261,22 +242,11 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn with_watcher<F>(&self, f: F)
-    where
-        F: FnOnce(&MultiRepoWatcher),
-    {
-        if let Some(watcher) = self.watcher.lock_or_recover().as_ref() {
-            f(watcher);
-        }
-    }
-
     /// Create a new agent instance.
     ///
     /// # Errors
     /// Returns an error if the IPC server or file watcher cannot be initialized.
     ///
-    /// # Panics
-    /// Panics if the bundled default theme cannot be loaded.
     pub fn new() -> Result<Self> {
         let watcher_config = WatcherConfig::from_env();
         let client_registry = ClientDirectory::new().shared();
@@ -329,8 +299,20 @@ impl Agent {
         Self::init_watcher(&initial_config, watcher_config, &ctx, &watcher_slot);
 
         crate::agent::lifecycle::ensure_runtime_dir()?;
-        let socket_path = crate::paths::get_socket_path()?;
-        let server = Self::init_server(&ctx, &watcher_slot, language_cache, socket_path)?;
+        let server = EndpointHandle::new(EndpointDeps {
+            socket_path: crate::paths::get_socket_path()?,
+            #[cfg(unix)]
+            socket_dir_repair: crate::agent::lifecycle::socket_dir_repair(),
+            security_config: crate::security::GuardSettings::default(),
+            watcher_slot: Arc::clone(&watcher_slot),
+            client_registry: Arc::clone(&ctx.registry),
+            git_cache: Arc::clone(&ctx.cache),
+            config_manager: Arc::clone(&ctx.config_manager),
+            theme_manager: Arc::clone(&ctx.theme_manager),
+            instant_cache: Arc::clone(&ctx.instant_cache),
+            language_cache,
+            palette_cache: Arc::clone(&ctx.palette_cache),
+        });
 
         Ok(Self {
             server,
@@ -456,37 +438,6 @@ impl Agent {
         }
     }
 
-    /// # Errors
-    /// Returns an error if the endpoint handle builder fails.
-    fn init_server(
-        ctx: &events::AgentContext,
-        watcher_slot: &SharedWatcherSlot,
-        language_cache: crate::language::DetectionCache,
-        socket_path: std::path::PathBuf,
-    ) -> Result<EndpointHandle> {
-        let builder = EndpointHandle::builder(EndpointDeps {
-            client_registry: Arc::clone(&ctx.registry),
-            git_cache: Arc::clone(&ctx.cache),
-            config_manager: Arc::clone(&ctx.config_manager),
-            theme_manager: Arc::clone(&ctx.theme_manager),
-            instant_cache: Arc::clone(&ctx.instant_cache),
-            language_cache,
-        })
-        .socket_path(socket_path)
-        .watcher_slot(Arc::clone(watcher_slot))
-        .palette_cache(Arc::clone(&ctx.palette_cache));
-        #[cfg(unix)]
-        let configured = builder.socket_dir_repair(crate::agent::lifecycle::socket_dir_repair());
-        #[cfg(not(unix))]
-        let configured = builder;
-        configured.build()
-    }
-
-    /// Prune dead clients from the registry and clean up the watcher.
-    pub fn prune_dead_clients_and_cleanup(&self) {
-        let _pruned_pids = prune_dead_clients(&self.ctx.registry, &self.watcher);
-    }
-
     /// Start the agent in background mode.
     ///
     /// # Errors
@@ -513,7 +464,7 @@ impl Agent {
             let config_for_export = ctx.config_manager.get();
             let palette_for_export = ctx.palette_cache.get();
             #[cfg(unix)]
-            let socket_path = server.socket_path().to_owned();
+            let socket_path = server.socket_path().to_path_buf();
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 {
@@ -647,99 +598,24 @@ impl Agent {
         oneshot::handle_oneshot(request)
     }
 
-    /// Create an Agent for integration testing with the watcher enabled.
-    ///
-    /// # Errors
-    /// Returns an error if watcher creation fails.
-    #[doc(hidden)]
-    pub fn new_for_testing_with_watcher(_repo_path: &std::path::Path) -> Result<Self> {
-        use crate::git::cache::GitStatusCache;
-        use crate::watcher::{DebouncedEvent, WatcherConfig, multi_repo::MultiRepoWatcher};
-        use std::sync::Mutex;
-
-        // Embedded theme, default config, temp cache: never the developer's ~/.config.
-        let theme_manager = Arc::new(ThemeManager::builtin("default")?);
-        let config_manager = Arc::new(crate::config::manager::ConfigManager::with_defaults()?);
-        let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-
-        let config = WatcherConfig::default();
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let events_clone = Arc::clone(&events);
-        let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = Box::new(move |event| {
-            events_clone.lock_or_recover().push(event);
-        });
-        let watcher = Arc::new(
-            MultiRepoWatcher::builder()
-                .config(config)
-                .callback(callback)
-                .build()?,
-        );
-        let watcher_slot = Arc::new(Mutex::new(Some(Arc::clone(&watcher))));
-
-        let client_registry = Arc::new(ClientDirectory::new());
-        let git_cache = Arc::new(GitStatusCache::new());
-        let server = EndpointHandle::new_test_handle(
-            Arc::clone(&client_registry),
-            &git_cache,
-            Arc::clone(&watcher_slot),
-        );
-
-        let initial_config_for_testing = config_manager.get();
-        let ctx = events::AgentContext {
-            registry: Arc::clone(&client_registry),
-            cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache: crate::language::DetectionCache::new(),
-            palette_cache: Arc::new(crate::palette::PaletteCache::from_config(
-                &initial_config_for_testing,
-            )),
-            dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
-            watch_registry: Arc::clone(watcher.registry()),
-            theme_export_dir: std::env::temp_dir()
-                .join(format!("gpy-test-theme-export-{}", std::process::id())),
-            announce_gate: Arc::new(Mutex::new(())),
-        };
-
-        Ok(Self {
-            server,
-            watcher: watcher_slot,
-            ctx,
-        })
-    }
-
-    /// The palette the agent currently renders with, for integration testing.
-    #[doc(hidden)]
+    /// The palette the agent currently renders with.
+    #[cfg(feature = "test-support")]
     #[must_use]
     pub fn active_palette_for_testing(&self) -> crate::template::Palette {
         self.ctx.palette_cache.get()
     }
 
-    /// Register a test client for integration testing
-    #[doc(hidden)]
+    /// Register client `pid` in `repo_path` with the registry and the watcher.
+    #[cfg(feature = "test-support")]
     pub fn register_test_client(&self, pid: u32, repo_path: &std::path::Path) {
         self.ctx
             .registry
             .register(pid, Some(repo_path.to_path_buf()));
-        self.with_watcher(|watcher| {
-            let _ = watcher.register_client(pid, repo_path);
-        });
-    }
-
-    /// Get client count for integration testing
-    #[doc(hidden)]
-    pub fn client_count(&self) -> usize {
-        self.ctx.registry.len()
-    }
-
-    /// Get watcher repo count for integration testing
-    #[doc(hidden)]
-    pub fn watcher_repo_count(&self) -> usize {
-        self.watcher
-            .lock_or_recover()
-            .as_ref()
-            .map_or(0, |w| w.watched_repo_count())
+        if let Some(watcher) = self.watcher.lock_or_recover().as_ref()
+            && let Err(e) = watcher.attach_client(pid, repo_path)
+        {
+            crate::debug_log!("agent", "Watcher registration failed for PID={pid}: {e}");
+        }
     }
 }
 

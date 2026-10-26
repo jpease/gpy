@@ -4,7 +4,9 @@ use super::state::WizardState;
 use crate::Result;
 use crate::commands::palette;
 use crate::commands::theme;
-use crate::commands::utils::{active_config_path, load_active_config, save_config_to};
+use crate::commands::utils::{active_config_path, load_active_config};
+use crate::config::loader::save_config;
+use std::path::{Path, PathBuf};
 
 /// Apply, validate, and persist `state`'s selection onto the config at `path`.
 ///
@@ -15,7 +17,7 @@ use crate::commands::utils::{active_config_path, load_active_config, save_config
 /// # Errors
 ///
 /// Returns an error if loading, validation, or the write fails.
-pub fn save_to(state: &WizardState, path: &str) -> Result<()> {
+pub fn save_to(state: &WizardState, path: &Path) -> Result<()> {
     let original = load_active_config(path)?;
     let mut config = original.clone();
 
@@ -24,7 +26,7 @@ pub fn save_to(state: &WizardState, path: &str) -> Result<()> {
     theme::validate_by_name(state.selected_theme())?;
     palette::validate_by_name(state.selected_palette())?;
 
-    save_config_to(path, &original, &config, &[])?;
+    save_config(path, &original, &config, &[])?;
     Ok(())
 }
 
@@ -33,7 +35,7 @@ pub fn save_to(state: &WizardState, path: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the path cannot be resolved or [`save_to`] fails.
-pub fn save(state: &WizardState) -> Result<String> {
+pub fn save(state: &WizardState) -> Result<PathBuf> {
     let path = active_config_path()?;
     save_to(state, &path)?;
     // Theme field edits go to a user copy of the theme file, never the builtin.
@@ -45,23 +47,21 @@ pub fn save(state: &WizardState) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
-    use crate::commands::wizard::state::WizardState;
+    use crate::commands::wizard::state::{SegmentEdit, WizardState};
     use crate::config::Config;
     use crate::config::types::GitTimeout;
+    use crate::theme::ThemeConfig;
     use std::fs;
     use tempfile::TempDir;
 
     /// The `TempDir` must outlive the returned path.
-    fn write_starting_config(contents: &str) -> (TempDir, String) {
+    fn write_starting_config(contents: &str) -> (TempDir, PathBuf) {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("gpy.toml");
         fs::write(&path, contents).expect("write starting config");
-        let path_str = path.to_string_lossy().into_owned();
-        (dir, path_str)
+        (dir, path)
     }
 
     fn test_state(config: Config) -> WizardState {
@@ -182,18 +182,7 @@ mod tests {
         assert_eq!(config.ui.directory.display, DirectoryDisplay::Basename);
 
         let mut state = test_state(config);
-        // Directory display only takes effect when "directory" is focused.
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("directory")
-        {
-            state.move_cursor_down();
-        }
-        state.cycle_directory_display(true);
+        state.apply_edit(SegmentEdit::NextDirectoryDisplay, &ThemeConfig::default());
 
         save_to(&state, &path).expect("save_to should succeed");
 
@@ -215,19 +204,9 @@ mod tests {
         assert!(config.language.show_versions);
 
         let mut state = test_state(config);
-        // Language options only take effect when "language" is focused.
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("language")
-        {
-            state.move_cursor_down();
-        }
-        state.cycle_language_display(true);
-        state.toggle_language_show_versions();
+        let theme = ThemeConfig::default();
+        state.apply_edit(SegmentEdit::ToggleLanguageDisplay, &theme);
+        state.apply_edit(SegmentEdit::ToggleLanguageShowVersions, &theme);
 
         save_to(&state, &path).expect("save_to should succeed");
 

@@ -19,10 +19,9 @@ test_require_command python3 "python3 not installed, cannot simulate a slow-to-r
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-budget.XXXXXX")"
 mkdir -p "$tmp/bin" "$tmp/cache"
-listener_pid=""
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
-    [ -n "$listener_pid" ] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -33,21 +32,7 @@ printf '%s\n' '#!/bin/sh' 'echo "oneshot $*" >> "$GPY_TEST_ONESHOT_LOG"' 'echo O
 chmod +x "$tmp/bin/gpy-agent"
 
 sock="$tmp/slow.sock"
-python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1]); s.listen(4); s.settimeout(3)
-try:
-    while True:
-        c, _ = s.accept(); c.recv(65536); time.sleep(float(sys.argv[2]))
-        try: c.sendall(b"GITSEGMENT\n")
-        except OSError: pass
-        c.close()
-except OSError:
-    pass
-' "$sock" 0.12 &
-listener_pid=$!
-shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
+shell_e2e_stub_listener "$sock" reply --reply GITSEGMENT --delay 0.12
 
 : >"$oneshot_log"
 out="$(

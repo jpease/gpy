@@ -134,7 +134,7 @@ For edge cases not yet supported by gix:
 
 ## Performance
 
-The benchmark that motivated this decision is not reproducible against the current code. Current git-status budgets and measurements are in `tests/performance-baselines.json`.
+The benchmark that motivated this decision is not reproducible against the current code. The current git-status budget is in `tests/performance-baselines.json`.
 
 ## Edge Cases Handled
 

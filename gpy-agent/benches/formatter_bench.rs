@@ -2,12 +2,16 @@
 //!
 //! Run with: cargo bench --bench `formatter_bench`
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::missing_panics_doc,
+    reason = "benchmarks panic on fixture and setup failures"
+)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::config::Config;
-use gpy_agent::formatter::{FishAnsiFormatter, Formatter, RenderContext, SegmentPosition};
+use gpy_agent::formatter::{Formatter, PromptFormatter, RenderContext, SegmentPosition};
 use gpy_agent::ipc::{LanguageInfo, Response};
 use gpy_agent::theme::ThemeConfig;
 use std::hint::black_box;
@@ -16,7 +20,7 @@ use std::hint::black_box;
 fn bench_git_status_rendering(c: &mut Criterion) {
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
 
     c.bench_function("git_status_ansi_short_branch", |b| {
         let response = Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
@@ -102,7 +106,7 @@ fn bench_git_status_rendering(c: &mut Criterion) {
 fn bench_language_rendering(c: &mut Criterion) {
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
 
     c.bench_function("language_ansi_single", |b| {
         let response = Response::Language {

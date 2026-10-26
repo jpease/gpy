@@ -1,12 +1,19 @@
 //! JSON IPC protocol between shells and the agent.
 
-use super::{Message, Response};
+use super::{Format, Message, Response, Segment};
+use crate::security::SafePath;
 use crate::{Error, Result};
 use serde::Deserialize;
-use serde_json;
 
 /// Wire payload for a client-initiated config reload; shared so send sites cannot diverge.
 pub const CONFIG_RELOAD_JSON: &str = r#"{"op":"config_reload"}"#;
+
+/// Longest accepted `prev_bg` color.
+const MAX_PREV_BG_LEN: usize = 64;
+/// Longest accepted client-supplied hostname or username.
+const MAX_IDENTITY_LEN: usize = 256;
+/// Longest accepted `shell_version`.
+const MAX_SHELL_VERSION_LEN: usize = 64;
 
 /// Deserialize JSON bytes into a message.
 ///
@@ -22,13 +29,13 @@ pub fn deserialize_message(data: &[u8]) -> Result<Message> {
 /// The format is read before op dispatch and path resolution, so a request that
 /// fails later (an unknown op, a missing field, a denylisted `cwd`) can still be
 /// answered in the client's format.
-pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, Result<Message>) {
-    let wire = match parse_wire(data) {
-        Ok(wire) => wire,
+pub fn deserialize_message_with_format(data: &[u8]) -> (Option<Format>, Result<Message>) {
+    let request = match parse_request(data) {
+        Ok(request) => request,
         Err(e) => return (requested_format(data), Err(e)),
     };
-    let format = wire.format();
-    let message = resolve(wire).and_then(|msg| {
+    let format = parse_format(request.format.as_deref());
+    let message = request.into_message(format).and_then(|msg| {
         validate_message_content(&msg)?;
         Ok(msg)
     });
@@ -37,198 +44,36 @@ pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, R
 
 /// Best-effort read of `format` from a request that failed to parse; `None`
 /// when the payload is oversize, not JSON, or names no known format.
-fn requested_format(data: &[u8]) -> Option<super::Format> {
+fn requested_format(data: &[u8]) -> Option<Format> {
     #[derive(Deserialize)]
     struct FormatOnly {
         format: Option<String>,
     }
 
     validate_message_size(data).ok()?;
-    serde_json::from_slice::<FormatOnly>(data)
-        .ok()?
-        .format?
-        .parse()
-        .ok()
+    let request = serde_json::from_slice::<FormatOnly>(data).ok()?;
+    parse_format(request.format.as_deref())
 }
 
-/// Parse wire bytes into a [`WireMessage`] with zero I/O.
+/// A wire `format` value, or `None` when absent or unknown.
+fn parse_format(value: Option<&str>) -> Option<Format> {
+    value?.parse().ok()
+}
+
+/// Size-check and decode request bytes into their flat wire form.
 #[allow(
     clippy::map_err_ignore,
-    reason = "the fixed deserialize message is the IPC error text clients see; serde's detail is kept out of it"
+    reason = "the fixed deserialize message is the IPC error text clients see; serde's detail is logged via debug_log!"
 )]
-fn parse_wire(data: &[u8]) -> Result<WireMessage> {
+fn parse_request(data: &[u8]) -> Result<ShellIpcMessage> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)
         .map_err(|e| Error::ipc(format!("Invalid UTF-8 in message: {e}")))?;
 
-    let shell_msg = serde_json::from_str::<ShellIpcMessage>(json)
-        .map_err(|_| Error::ipc("Failed to deserialize message: invalid format".to_owned()))?;
-    shell_msg.into_wire_message()
-}
-
-/// Resolve a [`WireMessage`] into a [`Message`]; the only place the stronger
-/// types (`SafePath`, which touches the filesystem, and `ClientPid`) are built.
-#[expect(clippy::too_many_lines, reason = "one arm per Message variant")]
-fn resolve(wire: WireMessage) -> Result<Message> {
-    match wire {
-        WireMessage::RepositoryStatus {
-            path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => Ok(Message::RepositoryStatus {
-            path: crate::security::SafePath::new(&path)
-                .map_err(|e| Error::ipc(format!("Invalid path: {e}")))?,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        }),
-        WireMessage::LanguageDetect {
-            path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-            virtual_env,
-        } => Ok(Message::LanguageDetect {
-            path: crate::security::SafePath::new(&path)
-                .map_err(|e| Error::ipc(format!("Invalid path: {e}")))?,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-            virtual_env,
-        }),
-        WireMessage::DirectoryRequest {
-            path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => Ok(Message::DirectoryRequest {
-            path: crate::security::SafePath::new(&path)
-                .map_err(|e| Error::ipc(format!("Invalid path: {e}")))?,
-            display_path: path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        }),
-        WireMessage::ClockRequest {
-            shell,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => Ok(Message::ClockRequest {
-            shell,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        }),
-        WireMessage::DurationRequest {
-            duration_ms,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => Ok(Message::DurationRequest {
-            duration_ms,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        }),
-        WireMessage::CharacterRequest {
-            success,
-            format,
-            is_last,
-            prev_bg,
-        } => Ok(Message::CharacterRequest {
-            success,
-            format,
-            is_last,
-            prev_bg,
-        }),
-        WireMessage::HostnameRequest {
-            hostname,
-            format,
-            is_last,
-            is_first,
-            is_ssh,
-            prev_bg,
-        } => Ok(Message::HostnameRequest {
-            hostname,
-            format,
-            is_last,
-            is_first,
-            is_ssh,
-            prev_bg,
-        }),
-        WireMessage::UsernameRequest {
-            username,
-            format,
-            is_last,
-            is_first,
-            is_root,
-            prev_bg,
-        } => Ok(Message::UsernameRequest {
-            username,
-            format,
-            is_last,
-            is_first,
-            is_root,
-            prev_bg,
-        }),
-        WireMessage::ExitStatusRequest {
-            success,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => Ok(Message::ExitStatusRequest {
-            success,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        }),
-        WireMessage::RegisterClient {
-            pid,
-            cwd,
-            shell,
-            shell_version,
-        } => Ok(Message::RegisterClient {
-            // `cwd` before `pid`: fields evaluate in order, so a both-invalid input reports "Invalid cwd".
-            cwd: cwd
-                .map(|path| {
-                    crate::security::SafePath::new(&path)
-                        .map_err(|e| Error::ipc(format!("Invalid cwd: {e}")))
-                })
-                .transpose()?,
-            pid: crate::config::types::ClientPid::new(pid)
-                .map_err(|e| Error::ipc(format!("Invalid PID: {e}")))?,
-            shell,
-            shell_version,
-        }),
-        WireMessage::UnregisterClient { pid } => Ok(Message::UnregisterClient {
-            pid: crate::config::types::ClientPid::new(pid)
-                .map_err(|e| Error::ipc(format!("Invalid PID: {e}")))?,
-        }),
-        WireMessage::WorkspaceUpdate { pid, cwd } => Ok(Message::WorkspaceUpdate {
-            pid: crate::config::types::ClientPid::new(pid)
-                .map_err(|e| Error::ipc(format!("Invalid PID: {e}")))?,
-            cwd: crate::security::SafePath::new(&cwd)
-                .map_err(|e| Error::ipc(format!("Invalid workspace path: {e}")))?,
-        }),
-        WireMessage::Ping => Ok(Message::Ping),
-        WireMessage::Status => Ok(Message::Status),
-        WireMessage::Shutdown => Ok(Message::Shutdown),
-        WireMessage::ConfigReload => Ok(Message::ConfigReload),
-    }
+    serde_json::from_str(json).map_err(|e| {
+        crate::debug_log!("protocol", "Failed to deserialize IPC message: {e}");
+        Error::ipc("Failed to deserialize message: invalid format".to_owned())
+    })
 }
 
 /// Serialize a response to JSON bytes.
@@ -277,60 +122,36 @@ pub fn validate_message_size(data: &[u8]) -> Result<()> {
 /// # Errors
 /// Returns an error if a field violates schema rules.
 pub fn validate_message_content(msg: &Message) -> Result<()> {
+    if let Some(bg) = msg.segment().and_then(|segment| segment.prev_bg.as_deref()) {
+        validate_string_field("prev_bg", bg, MAX_PREV_BG_LEN)?;
+    }
     match msg {
-        Message::RepositoryStatus { prev_bg, .. }
-        | Message::LanguageDetect { prev_bg, .. }
-        | Message::DirectoryRequest { prev_bg, .. }
-        | Message::ClockRequest { prev_bg, .. }
-        | Message::DurationRequest { prev_bg, .. }
-        | Message::CharacterRequest { prev_bg, .. }
-        | Message::ExitStatusRequest { prev_bg, .. } => {
-            if let Some(bg) = prev_bg {
-                validate_string_field("prev_bg", bg, 64)?;
-            }
+        Message::HostnameRequest { hostname, .. } => {
+            validate_string_field("hostname", hostname, MAX_IDENTITY_LEN)
         }
-        Message::HostnameRequest {
-            prev_bg, hostname, ..
-        } => validate_hostname_request(prev_bg.as_deref(), hostname)?,
-        Message::UsernameRequest {
-            prev_bg, username, ..
-        } => validate_username_request(prev_bg.as_deref(), username)?,
-        Message::RegisterClient { shell_version, .. } => {
-            validate_register_client(shell_version.as_deref())?;
+        Message::UsernameRequest { username, .. } => {
+            validate_string_field("username", username, MAX_IDENTITY_LEN)
         }
-        // `ClientPid` is range-checked at construction; liveness is probed at route time.
-        Message::UnregisterClient { .. }
+        Message::RegisterClient {
+            shell_version: Some(version),
+            ..
+        } => validate_string_field("shell_version", version, MAX_SHELL_VERSION_LEN),
+        // Paths and `ClientPid`s are checked at construction; liveness is probed at route time.
+        Message::RepositoryStatus { .. }
+        | Message::LanguageDetect { .. }
+        | Message::DirectoryRequest { .. }
+        | Message::ClockRequest { .. }
+        | Message::DurationRequest { .. }
+        | Message::CharacterRequest { .. }
+        | Message::ExitStatusRequest { .. }
+        | Message::RegisterClient { .. }
+        | Message::UnregisterClient { .. }
         | Message::WorkspaceUpdate { .. }
         | Message::Ping
         | Message::Shutdown
         | Message::Status
-        | Message::ConfigReload => {}
+        | Message::ConfigReload => Ok(()),
     }
-    Ok(())
-}
-
-fn validate_hostname_request(prev_bg: Option<&str>, hostname: &str) -> Result<()> {
-    if let Some(bg) = prev_bg {
-        validate_string_field("prev_bg", bg, 64)?;
-    }
-    validate_string_field("hostname", hostname, 256)?;
-    Ok(())
-}
-
-fn validate_username_request(prev_bg: Option<&str>, username: &str) -> Result<()> {
-    if let Some(bg) = prev_bg {
-        validate_string_field("prev_bg", bg, 64)?;
-    }
-    validate_string_field("username", username, 256)?;
-    Ok(())
-}
-
-/// Validate a `RegisterClient` message's optional shell version.
-fn validate_register_client(shell_version: Option<&str>) -> Result<()> {
-    if let Some(v) = shell_version {
-        validate_string_field("shell_version", v, 64)?;
-    }
-    Ok(())
 }
 
 /// Validate string length and reject control characters via the shared
@@ -354,10 +175,9 @@ fn validate_length(field_name: &str, value: &str, max_length: usize) -> Result<(
     }
 }
 
-/// IPC protocol version.
+/// IPC protocol version, reported as `protocol_version` in the status reply.
 ///
-/// v2: shells are notified only via SIGURG (ignored by default) plus per-shell
-/// flag files under `<runtime_root>/shells/`; wire messages unchanged from v1.
+/// Shells restart an agent whose version differs; `SCHEMA_EVOLUTION.md` says when to bump it.
 pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Stands in for `\n` inside a reply, which must stay one newline-terminated
@@ -381,270 +201,159 @@ pub fn encode_reply_newlines(payload: &str) -> std::borrow::Cow<'_, str> {
     )
 }
 
-/// Unvalidated form of [`Message`] built from a [`ShellIpcMessage`] with zero I/O; [`resolve`] builds the validated types.
-#[derive(Debug)]
-enum WireMessage {
-    RepositoryStatus {
-        path: String,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        prev_bg: Option<String>,
-    },
-    LanguageDetect {
-        path: String,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        prev_bg: Option<String>,
-        virtual_env: Option<String>,
-    },
-    DirectoryRequest {
-        path: String,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        prev_bg: Option<String>,
-    },
-    ClockRequest {
-        shell: crate::shell::Shell,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        prev_bg: Option<String>,
-    },
-    DurationRequest {
-        duration_ms: u64,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        prev_bg: Option<String>,
-    },
-    CharacterRequest {
-        success: bool,
-        format: super::Format,
-        is_last: bool,
-        prev_bg: Option<String>,
-    },
-    HostnameRequest {
-        hostname: String,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        is_ssh: bool,
-        prev_bg: Option<String>,
-    },
-    UsernameRequest {
-        username: String,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        is_root: bool,
-        prev_bg: Option<String>,
-    },
-    ExitStatusRequest {
-        success: bool,
-        format: super::Format,
-        is_last: bool,
-        is_first: bool,
-        prev_bg: Option<String>,
-    },
-    RegisterClient {
-        pid: u32,
-        cwd: Option<String>,
-        shell: Option<crate::config::types::ShellVariant>,
-        shell_version: Option<String>,
-    },
-    UnregisterClient {
-        pid: u32,
-    },
-    WorkspaceUpdate {
-        pid: u32,
-        cwd: String,
-    },
-    Ping,
-    Status,
-    Shutdown,
-    ConfigReload,
-}
-
-impl WireMessage {
-    /// Requested response format, or `None` for ops without one.
-    const fn format(&self) -> Option<super::Format> {
-        match self {
-            Self::RepositoryStatus { format, .. }
-            | Self::LanguageDetect { format, .. }
-            | Self::DirectoryRequest { format, .. }
-            | Self::ClockRequest { format, .. }
-            | Self::DurationRequest { format, .. }
-            | Self::CharacterRequest { format, .. }
-            | Self::HostnameRequest { format, .. }
-            | Self::UsernameRequest { format, .. }
-            | Self::ExitStatusRequest { format, .. } => Some(*format),
-            Self::RegisterClient { .. }
-            | Self::UnregisterClient { .. }
-            | Self::WorkspaceUpdate { .. }
-            | Self::Ping
-            | Self::Status
-            | Self::Shutdown
-            | Self::ConfigReload => None,
-        }
-    }
-}
-
-/// Flat shell-side message format keyed by `op`.
+/// Flat shell-side message format keyed by `op`; absent flags read as `false`.
 #[derive(Debug, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct wire flag of the flat protocol"
+)]
 struct ShellIpcMessage {
     op: String,
     cwd: Option<String>,
     pid: Option<u32>,
     format: Option<String>,
-    is_last: Option<bool>,
     #[serde(default)]
-    is_first: Option<bool>,
+    is_last: bool,
+    #[serde(default)]
+    is_first: bool,
     shell: Option<String>,
     shell_version: Option<String>,
     #[serde(default)]
     duration_ms: u64,
     #[serde(default)]
-    success: Option<bool>,
-    #[serde(default)]
+    success: bool,
     prev_bg: Option<String>,
-    #[serde(default)]
     hostname: Option<String>,
-    /// Absent means `false`.
     #[serde(default)]
-    is_ssh: Option<bool>,
-    #[serde(default)]
+    is_ssh: bool,
     username: Option<String>,
-    /// Absent means `false`.
     #[serde(default)]
-    is_root: Option<bool>,
-    #[serde(default)]
+    is_root: bool,
     virtual_env: Option<String>,
 }
 
 impl ShellIpcMessage {
-    /// Convert to [`WireMessage`], checking only wire shape; validation happens in [`resolve`].
-    #[expect(clippy::too_many_lines, reason = "one arm per shell op")]
-    fn into_wire_message(self) -> Result<WireMessage> {
+    /// Build the [`Message`] for `op`. Missing required fields are reported
+    /// before any path is canonicalized or PID range-checked.
+    fn into_message(self, format: Option<Format>) -> Result<Message> {
         // Unlike `Format::from_str`, a bad format defaults to JSON: shell IPC is best-effort.
-        let format = self
-            .format
-            .as_deref()
-            .and_then(|value| value.parse::<super::Format>().ok())
-            .unwrap_or(super::Format::Json);
+        let segment = Segment {
+            format: format.unwrap_or(Format::Json),
+            is_last: self.is_last,
+            is_first: self.is_first,
+            prev_bg: self.prev_bg,
+        };
+        let cwd = self.cwd.as_deref().unwrap_or(".");
 
         match self.op.as_str() {
-            "git" => Ok(WireMessage::RepositoryStatus {
-                path: self.cwd.unwrap_or_else(|| ".".to_owned()),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                prev_bg: self.prev_bg,
+            "git" => Ok(Message::RepositoryStatus {
+                path: safe_path(cwd, "path")?,
+                segment,
             }),
-            "lang" => Ok(WireMessage::LanguageDetect {
-                path: self.cwd.unwrap_or_else(|| ".".to_owned()),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                prev_bg: self.prev_bg,
-                virtual_env: self.virtual_env,
+            "lang" => Ok(Message::LanguageDetect {
+                path: safe_path(cwd, "path")?,
+                segment,
+                virtual_env: self.virtual_env.map(validate_virtual_env).transpose()?,
             }),
-            "directory" => Ok(WireMessage::DirectoryRequest {
-                path: self.cwd.unwrap_or_else(|| ".".to_owned()),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                prev_bg: self.prev_bg,
+            "directory" => Ok(Message::DirectoryRequest {
+                path: safe_path(cwd, "path")?,
+                display_path: self.cwd.unwrap_or_else(|| ".".to_owned()),
+                segment,
             }),
-            "clock" => Ok(WireMessage::ClockRequest {
+            "clock" => Ok(Message::ClockRequest {
                 // Unknown shell falls back to Fish, whose render is a no-op, rather
                 // than leaking another shell's prompt escapes as literal text.
-                shell: self
-                    .shell
-                    .as_deref()
-                    .and_then(|s| s.parse::<crate::shell::Shell>().ok())
-                    .unwrap_or(crate::shell::Shell::Fish),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                prev_bg: self.prev_bg,
+                shell: parse_shell(self.shell.as_deref()).unwrap_or(crate::shell::Shell::Fish),
+                segment,
             }),
-            "duration" => Ok(WireMessage::DurationRequest {
+            "duration" => Ok(Message::DurationRequest {
                 duration_ms: self.duration_ms,
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                prev_bg: self.prev_bg,
+                segment,
             }),
-            "character" => Ok(WireMessage::CharacterRequest {
-                success: self.success.unwrap_or(false),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                prev_bg: self.prev_bg,
+            "character" => Ok(Message::CharacterRequest {
+                success: self.success,
+                segment,
             }),
-            "hostname" => Ok(WireMessage::HostnameRequest {
+            "hostname" => Ok(Message::HostnameRequest {
                 hostname: self.hostname.unwrap_or_default(),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                is_ssh: self.is_ssh.unwrap_or(false),
-                prev_bg: self.prev_bg,
+                is_ssh: self.is_ssh,
+                segment,
             }),
-            "username" => Ok(WireMessage::UsernameRequest {
+            "username" => Ok(Message::UsernameRequest {
                 username: self.username.unwrap_or_default(),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                is_root: self.is_root.unwrap_or(false),
-                prev_bg: self.prev_bg,
+                is_root: self.is_root,
+                segment,
             }),
             // Not "status": that op is the agent health check.
-            "exit_status" => Ok(WireMessage::ExitStatusRequest {
-                success: self.success.unwrap_or(false),
-                format,
-                is_last: self.is_last.unwrap_or(false),
-                is_first: self.is_first.unwrap_or(false),
-                prev_bg: self.prev_bg,
+            "exit_status" => Ok(Message::ExitStatusRequest {
+                success: self.success,
+                segment,
             }),
-            "ping" => Ok(WireMessage::Ping),
-            "status" => Ok(WireMessage::Status),
-            "shutdown" => Ok(WireMessage::Shutdown),
-            "config_reload" => Ok(WireMessage::ConfigReload),
+            "ping" => Ok(Message::Ping),
+            "status" => Ok(Message::Status),
+            "shutdown" => Ok(Message::Shutdown),
+            "config_reload" => Ok(Message::ConfigReload),
             "register" => {
                 let pid = self
                     .pid
                     .ok_or_else(|| Error::ipc("register missing pid".to_owned()))?;
-                let shell = self.shell.as_deref().map(|s| {
-                    std::str::FromStr::from_str(s)
-                        .unwrap_or(crate::config::types::ShellVariant::Unknown)
-                });
-
-                Ok(WireMessage::RegisterClient {
-                    pid,
-                    cwd: self.cwd,
-                    shell,
+                // `cwd` before `pid`, so a both-invalid input reports "Invalid cwd".
+                let register_cwd = self
+                    .cwd
+                    .as_deref()
+                    .map(|path| safe_path(path, "cwd"))
+                    .transpose()?;
+                Ok(Message::RegisterClient {
+                    pid: client_pid(pid)?,
+                    cwd: register_cwd,
+                    shell: parse_shell(self.shell.as_deref()),
                     shell_version: self.shell_version,
                 })
             }
-            "unregister" => Ok(WireMessage::UnregisterClient {
-                pid: self
+            "unregister" => {
+                let pid = self
                     .pid
-                    .ok_or_else(|| Error::ipc("unregister missing pid".to_owned()))?,
-            }),
+                    .ok_or_else(|| Error::ipc("unregister missing pid".to_owned()))?;
+                Ok(Message::UnregisterClient {
+                    pid: client_pid(pid)?,
+                })
+            }
             "workspace" => {
                 let pid = self
                     .pid
                     .ok_or_else(|| Error::ipc("Workspace update missing pid".to_owned()))?;
-                let cwd = self
+                let workspace_cwd = self
                     .cwd
+                    .as_deref()
                     .ok_or_else(|| Error::ipc("Workspace update missing cwd".to_owned()))?;
-                Ok(WireMessage::WorkspaceUpdate { pid, cwd })
+                Ok(Message::WorkspaceUpdate {
+                    pid: client_pid(pid)?,
+                    cwd: safe_path(workspace_cwd, "workspace path")?,
+                })
             }
             _ => Err(Error::ipc(format!("Unknown shell operation: {}", self.op))),
         }
     }
+}
+
+/// Canonicalize and validate a client path; `field` names it in the error.
+fn safe_path(path: &str, field: &str) -> Result<SafePath> {
+    SafePath::new(path).map_err(|e| Error::ipc(format!("Invalid {field}: {e}")))
+}
+
+fn client_pid(pid: u32) -> Result<super::ClientPid> {
+    super::ClientPid::new(pid).map_err(|e| Error::ipc(format!("Invalid PID: {e}")))
+}
+
+/// A shell name, or `None` when unrecognized.
+fn parse_shell(name: Option<&str>) -> Option<crate::shell::Shell> {
+    name?.parse().ok()
+}
+
+fn validate_virtual_env(venv: String) -> Result<String> {
+    crate::security::PathValidator::validate_path(&venv)
+        .map_err(|e| Error::ipc(format!("Invalid virtual_env: {e}")))?;
+    Ok(venv)
 }
 
 #[cfg(test)]

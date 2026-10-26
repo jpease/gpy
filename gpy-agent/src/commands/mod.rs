@@ -1,5 +1,7 @@
 //! Command implementations for the GPY CLI.
 
+#[cfg(unix)]
+mod backup_stamp;
 /// Hidden `gpy __complete <kind>` command used by shell completion glue.
 pub mod complete;
 /// Configuration management commands.

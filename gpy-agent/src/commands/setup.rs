@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 const BLOCK_START: &str = "# >>> gpy-init >>>";
 /// Last line of the rc-file block.
 const BLOCK_END: &str = "# <<< gpy-init <<<";
+/// Comment on the line after [`BLOCK_START`] that says what the block is for.
+const RC_BLOCK_HEADER: &str = "GPY shell integration";
 /// Tag in the block header for an rc file `gpy setup` itself created, so the
 /// uninstaller may delete it again.
 const CREATED_NOTE: &str = " (gpy-created-file)";
@@ -372,7 +374,7 @@ pub fn find_source_root(from: Option<&Path>, env: &Environment, shell: Shell) ->
         .map(|dir| fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()))
         .ok_or_else(|| {
             Error::invalid(format!(
-                "could not find GPY's {shell} files next to this binary. \
+                "cannot find GPY's {shell} files next to this binary. \
                  Point setup at a checkout of the repository with `gpy setup --from <dir>` \
                  (the directory containing fish/, zsh/ and bash/), \
                  or use the curl installer, which downloads them."
@@ -449,11 +451,20 @@ fn install_files(
             let dir = config_home.join("fish").join("completions");
             fs::create_dir_all(&dir)?;
             // Never autoloaded as its own file.
-            let _ = fs::remove_file(dir.join("gpy-dynamic.fish"));
-            let mut script = generated;
-            if let Ok(glue) = fs::read(source.join("completions/gpy-dynamic.fish")) {
-                script.extend_from_slice(&glue);
+            match fs::remove_file(dir.join("gpy-dynamic.fish")) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
             }
+            let glue_path = source.join("completions/gpy-dynamic.fish");
+            let glue = fs::read(&glue_path).map_err(|err| {
+                Error::invalid(format!(
+                    "cannot read completion glue {}: {err}",
+                    glue_path.display()
+                ))
+            })?;
+            let mut script = generated;
+            script.extend_from_slice(&glue);
             write_replacing(&dir.join("gpy.fish"), &script)?;
         }
         Shell::Zsh => write_replacing(&shell_dir.join("completions/_gpy"), &generated)?,
@@ -542,7 +553,7 @@ fn wire_fish(config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         "if status is-interactive\n    source \"{}\"\nend",
         shell_dir.join("conf.d/gpy_init.fish").display()
     );
-    let added = append_block(&config, "GPY Prompt Enhancement", &body)?;
+    let added = append_block(&config, RC_BLOCK_HEADER, &body)?;
     link_fish_prompt(
         &fish_dir.join("functions/fish_prompt.fish"),
         &shell_dir.join("functions/fish_prompt.fish"),
@@ -567,7 +578,10 @@ fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |elapsed| elapsed.as_secs());
             let mut backup = target.as_os_str().to_owned();
-            backup.push(format!(".backup.{}", backup_stamp(now)));
+            backup.push(format!(
+                ".backup.{}",
+                super::backup_stamp::backup_stamp(now)
+            ));
             fs::rename(target, &backup)?;
             println!(
                 "Moved your existing fish_prompt to {}",
@@ -592,40 +606,6 @@ fn is_gpy_prompt_copy(path: &Path) -> bool {
     })
 }
 
-/// `YYYYMMDD_HHMMSS` (UTC), the suffix the installers write and
-/// `scripts/uninstall.*` restore. Civil-from-days after Howard Hinnant.
-#[cfg(unix)]
-#[allow(
-    clippy::arithmetic_side_effects,
-    reason = "days is at most u64::MAX / 86_400, so no step overflows, and each subtraction is non-negative by the civil-from-days algorithm"
-)]
-fn backup_stamp(epoch_secs: u64) -> String {
-    let days = epoch_secs / 86_400;
-    let secs_of_day = epoch_secs % 86_400;
-
-    let z = days + 719_468;
-    let era = z / 146_097;
-    let day_of_era = z % 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = year_of_era + era * 400 + u64::from(month <= 2);
-
-    format!(
-        "{year:04}{month:02}{day:02}_{:02}{:02}{:02}",
-        secs_of_day / 3_600,
-        secs_of_day % 3_600 / 60,
-        secs_of_day % 60
-    )
-}
-
 #[cfg(not(unix))]
 fn link_fish_prompt(_target: &Path, _source: &Path) -> Result<()> {
     Err(Error::invalid("shell integration needs a Unix shell"))
@@ -639,7 +619,7 @@ fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         .map_or_else(|| env.home(), Ok)?
         .join(".zshrc");
     let body = format!("source \"{}\"", shell_dir.join("gpy.zsh").display());
-    let added = append_block(&rc, "GPY Prompt Enhancement", &body)?;
+    let added = append_block(&rc, RC_BLOCK_HEADER, &body)?;
     Ok((rc, added))
 }
 
@@ -648,7 +628,7 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let home = env.home()?;
     let rc = home.join(".bashrc");
     let body = format!("source \"{}\"", shell_dir.join("gpy.bash").display());
-    let added = append_block(&rc, "GPY Prompt Enhancement", &body)?;
+    let added = append_block(&rc, RC_BLOCK_HEADER, &body)?;
 
     // A login shell reads only the first of these. With none present, create
     // ~/.profile (~/.bash_profile would shadow a later ~/.profile).
@@ -745,10 +725,6 @@ fn print_next_steps(shell: Shell, rc_file: &Path, login_shell: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::*;
 
@@ -816,16 +792,6 @@ mod tests {
         let text = fs::read_to_string(&rc).unwrap();
         assert!(text.starts_with("export A=1\n"));
         assert!(!text.contains("gpy-created-file"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn backup_stamp_matches_the_shell_installers_format() {
-        // `date -u -r N +%Y%m%d_%H%M%S` for each of these.
-        assert_eq!(backup_stamp(0), "19700101_000000");
-        assert_eq!(backup_stamp(951_782_400), "20000229_000000");
-        assert_eq!(backup_stamp(1_760_485_533), "20251014_234533");
-        assert_eq!(backup_stamp(4_102_444_799), "20991231_235959");
     }
 
     #[test]

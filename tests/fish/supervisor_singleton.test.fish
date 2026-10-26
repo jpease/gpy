@@ -37,8 +37,8 @@ function cleanup
 end
 test_track_cleanup cleanup
 
-function fail
-    echo "❌ $argv"
+function die
+    fail "$argv"
     exit 1
 end
 
@@ -47,6 +47,7 @@ function start_supervisor --inherit-variable repo_root
         source $argv[1]/fish/core/constants.fish
         source $argv[1]/fish/core/util.fish
         source $argv[1]/fish/core/ipc.fish
+        source $argv[1]/fish/core/supervisor.fish
         __gpy_agent_supervisor_start' -- $repo_root
 end
 
@@ -67,13 +68,13 @@ start_supervisor &
 start_supervisor &
 start_supervisor &
 wait
-poll_until 3 pidfile_written; or fail "no supervisor wrote $pidfile"
+poll_until 3 pidfile_written; or die "no supervisor wrote $pidfile"
 # Wait for the losing concurrent starts to exit.
 poll_until 3 supervisor_running
 
 set -l running (supervisors)
-test (count $running) -eq 1; or fail "expected 1 supervisor, found "(count $running)": $running"
-test "$running" = (cat $pidfile); or fail "supervisor.pid ("(cat $pidfile)") does not name the running supervisor ($running)"
+test (count $running) -eq 1; or die "expected 1 supervisor, found "(count $running)": $running"
+test "$running" = (cat $pidfile); or die "supervisor.pid ("(cat $pidfile)") does not name the running supervisor ($running)"
 
 for pid in $running
     kill $pid
@@ -87,7 +88,7 @@ test_track_pid $sleep_pid
 mkdir -p (path dirname $pidfile)
 echo $sleep_pid >$pidfile
 start_supervisor
-poll_until 3 supervisor_running; or fail "a stale pidfile naming a live non-supervisor PID blocked the supervisor"
-poll_until 3 pidfile_names_supervisor; or fail "supervisor did not claim the stale pidfile"
+poll_until 3 supervisor_running; or die "a stale pidfile naming a live non-supervisor PID blocked the supervisor"
+poll_until 3 pidfile_names_supervisor; or die "supervisor did not claim the stale pidfile"
 
-echo "✅ One supervisor per runtime root"
+test_finish "One supervisor per runtime root"

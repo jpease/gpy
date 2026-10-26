@@ -1,157 +1,22 @@
 //! Pure per-module translators: a Starship module table → a GPY segment theme.
 
+mod style;
+
 use crate::config::LanguageTheme;
 use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTruncationSymbol, Icon};
+use crate::import::starship::format::{
+    Token, inline_style_vars, remove_literal, rename_vars, retain_known_vars, tokens,
+};
 use crate::import::starship::model::StarshipConfig;
-use crate::import::starship::{WarningKind, Warnings};
+use crate::import::starship::warn::{WarningKind, Warnings};
 use crate::template::ast::Node;
-use crate::template::{Attr, Color, TemplateError, parse_style};
 use crate::theme::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, HostnameTheme,
     RecommendedDirectory, UsernameTheme,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasher;
-
-/// Replace `$style`/`$*_style` in `format` with the module's literal style values.
-#[must_use]
-pub fn inline_style_vars(format: &str, table: &toml::value::Table) -> String {
-    let mut style_keys: Vec<(&String, &str)> = table
-        .iter()
-        .filter(|(key, _)| key.ends_with("style"))
-        .filter_map(|(key, value)| value.as_str().map(|text| (key, text)))
-        .collect();
-    // Longest key first so `$read_only_style` is replaced before `$style`.
-    style_keys.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
-    let mut out = format.to_owned();
-    for (key, style) in style_keys {
-        out = out.replace(&format!("${{{key}}}"), style);
-        out = out.replace(&format!("${key}"), style);
-    }
-    out
-}
-
-/// One lexical unit of a Starship format string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Token<'a> {
-    /// Literal text, with backslash escapes kept verbatim.
-    Literal(&'a str),
-    /// A `$name` or `${name}` variable reference.
-    Var {
-        /// Bare variable name.
-        name: &'a str,
-        /// Original source text, for verbatim re-emission.
-        raw: &'a str,
-    },
-}
-
-/// Tokenize a Starship format string into literal runs and variable references.
-#[must_use]
-pub fn tokens(format: &str) -> Vec<Token<'_>> {
-    let mut out = Vec::new();
-    let mut literal_start = 0_usize;
-    // Markers are ASCII, so slicing between them respects UTF-8 boundaries.
-    let mut index = 0_usize;
-    let bytes_len = format.len();
-    while index < bytes_len {
-        match format.as_bytes().get(index) {
-            Some(b'\\') => {
-                // Backslash plus next char is literal.
-                let after_backslash = index.saturating_add(1_usize);
-                let next_index = format
-                    .get(after_backslash..)
-                    .and_then(|rest| rest.chars().next())
-                    .map_or(after_backslash, |ch| {
-                        after_backslash.saturating_add(ch.len_utf8())
-                    });
-                index = next_index;
-            }
-            Some(b'$') => {
-                if let Some((name, raw_end)) = scan_var(format, index) {
-                    if literal_start < index
-                        && let Some(text) = format.get(literal_start..index)
-                    {
-                        out.push(Token::Literal(text));
-                    }
-                    if let Some(raw) = format.get(index..raw_end) {
-                        out.push(Token::Var { name, raw });
-                    }
-                    index = raw_end;
-                    literal_start = index;
-                } else {
-                    // Malformed `$`: extend the ongoing literal run past it.
-                    index = index.saturating_add(1_usize);
-                }
-            }
-            _ => {
-                let next_index = format
-                    .get(index..)
-                    .and_then(|rest| rest.chars().next())
-                    .map_or_else(|| bytes_len, |ch| index.saturating_add(ch.len_utf8()));
-                index = next_index;
-            }
-        }
-    }
-    if literal_start < bytes_len
-        && let Some(text) = format.get(literal_start..bytes_len)
-    {
-        out.push(Token::Literal(text));
-    }
-    out
-}
-
-/// Scan a `$name`/`${name}` token at `start`; `None` if malformed (incl. unclosed `${`).
-fn scan_var(format: &str, start: usize) -> Option<(&str, usize)> {
-    let after_dollar = start.saturating_add(1_usize);
-    if format.as_bytes().get(after_dollar) == Some(&b'{') {
-        let name_start = after_dollar.saturating_add(1_usize);
-        let close = format.get(name_start..)?.find('}')?;
-        let name_end = name_start.saturating_add(close);
-        let name = format.get(name_start..name_end)?;
-        return Some((name, name_end.saturating_add(1_usize)));
-    }
-    let name_start = after_dollar;
-    let mut name_end = name_start;
-    while let Some(ch) = format.get(name_end..).and_then(|rest| rest.chars().next()) {
-        if ch.is_alphanumeric() || ch == '_' {
-            name_end = name_end.saturating_add(ch.len_utf8());
-        } else {
-            break;
-        }
-    }
-    if name_end == name_start {
-        return None;
-    }
-    let name = format.get(name_start..name_end)?;
-    Some((name, name_end))
-}
-
-/// Drop variable references not present in `known`, warning once per dropped name.
-#[must_use]
-pub fn retain_known_vars(
-    format: &str,
-    known: &[&str],
-    segment: &str,
-    warnings: &mut Warnings,
-) -> String {
-    tokens(format)
-        .into_iter()
-        .map(|token| match token {
-            Token::Literal(text) => text.to_owned(),
-            Token::Var { name, raw } => {
-                if known.contains(&name) {
-                    raw.to_owned()
-                } else {
-                    warnings.push(
-                        WarningKind::LossyMapping,
-                        format!("{segment}: variable '${name}' has no GPY equivalent; dropped"),
-                    );
-                    String::new()
-                }
-            }
-        })
-        .collect()
-}
+use style::{StyleColor, attr_tokens, style_color};
 
 /// Granular `git_status` flags, approximated as GPY's aggregate `$status`.
 const GRANULAR_STATUS_FLAGS: [&str; 7_usize] = [
@@ -174,26 +39,23 @@ fn collapse_granular_status_flags(format: &str, warnings: &mut Warnings) -> Stri
     let out: String = tokens(format)
         .into_iter()
         .filter_map(|token| match token {
-            Token::Literal(text) => Some(text.to_owned()),
+            Token::Literal(text) => Some(text),
             Token::Var { name, raw } => GRANULAR_STATUS_FLAGS
                 .iter()
                 .copied()
                 .find(|&candidate| candidate == name)
-                .map_or_else(
-                    || Some(raw.to_owned()),
-                    |flag| {
-                        // First granular token → `$status`; later ones dropped.
-                        if !found.contains(&flag) {
-                            found.push(flag);
-                        }
-                        if collapsed_first {
-                            None
-                        } else {
-                            collapsed_first = true;
-                            Some("$status".to_owned())
-                        }
-                    },
-                ),
+                .map_or(Some(raw), |flag| {
+                    // First granular token → `$status`; later ones dropped.
+                    if !found.contains(&flag) {
+                        found.push(flag);
+                    }
+                    if collapsed_first {
+                        None
+                    } else {
+                        collapsed_first = true;
+                        Some("$status")
+                    }
+                }),
         })
         .collect();
     if !found.is_empty() {
@@ -310,13 +172,14 @@ pub fn translate_git(
             .and_then(toml::Value::as_str)
             .unwrap_or("on [$symbol$branch]($style) ");
         let inlined = inline_style_vars(raw, &filled);
-        retain_known_vars(
+        let retained = retain_known_vars(
             &inlined,
             &["symbol", "branch", "status", "ahead_behind", "style"],
             "git",
             warnings,
-        )
-        .replace("(:)", "")
+        );
+        // Dropping `$remote_branch` leaves its `(:$remote_branch)` group as an empty `(:)`.
+        remove_literal(&retained, "(:)")
     });
 
     let status_part = status_table.map_or_else(String::new, |table| {
@@ -326,10 +189,7 @@ pub fn translate_git(
             .and_then(toml::Value::as_str)
             .unwrap_or(r"([\[$all_status$ahead_behind\]]($style) )");
         let inlined = inline_style_vars(raw, &filled);
-        // Braced form first so the unbraced replace can't match inside it.
-        let remapped = inlined
-            .replace("${all_status}", "$status")
-            .replace("$all_status", "$status");
+        let remapped = rename_vars(&inlined, &[("all_status", "status")]);
         // Before retain_known_vars, so per-flag presets keep a status marker.
         let collapsed = collapse_granular_status_flags(&remapped, warnings);
         retain_known_vars(
@@ -401,82 +261,6 @@ pub fn canonical_language(module_name: &str) -> Option<&'static str> {
         .iter()
         .find(|(starship, _)| *starship == module_name)
         .map(|(_, canonical)| *canonical)
-}
-
-/// The colors of a Starship `style` string, resolved to concrete GPY colors.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StyleColor {
-    /// The style parsed. `fg`/`bg` are `None` when the style sets no such color.
-    Resolved {
-        /// Foreground color, a valid [`ColorSpec`] spelling.
-        fg: Option<String>,
-        /// Background color, a valid [`ColorSpec`] spelling.
-        bg: Option<String>,
-    },
-    /// A token is not a color GPY can represent (the offending text).
-    Invalid(String),
-}
-
-/// Resolve a Starship `style`'s colors, mapping palette references through `palette`.
-#[must_use]
-#[allow(
-    clippy::map_err_ignore,
-    reason = "StyleColor::Invalid reports the offending token, which replaces ColorSpec's error by design"
-)]
-pub fn style_color<S: BuildHasher>(
-    style: &str,
-    palette: Option<&HashMap<String, String, S>>,
-) -> StyleColor {
-    let parsed = match parse_style(style) {
-        Ok(parsed) => parsed,
-        Err(
-            TemplateError::UnknownColor { name: token } | TemplateError::InvalidStyle { token },
-        ) => return StyleColor::Invalid(token),
-        Err(_) => return StyleColor::Invalid(style.to_owned()),
-    };
-    let resolve = |color: Option<Color>| -> Result<Option<String>, String> {
-        let Some(parsed_color) = color else {
-            return Ok(None);
-        };
-        let text = match parsed_color {
-            Color::Named(name) => name,
-            Color::Palette(name) => palette.and_then(|p| p.get(&name)).cloned().unwrap_or(name),
-            Color::Rgb { r, g, b } => format!("#{r:02x}{g:02x}{b:02x}"),
-            Color::Ansi256(index) => index.to_string(),
-            Color::PrevFg => "prev_fg".to_owned(),
-            Color::PrevBg => "prev_bg".to_owned(),
-        };
-        ColorSpec::new(&text)
-            .map(|_| Some(text.clone()))
-            .map_err(|_| text)
-    };
-    match (resolve(parsed.fg), resolve(parsed.bg)) {
-        (Ok(fg), Ok(bg)) => StyleColor::Resolved { fg, bg },
-        (Err(token), _) | (_, Err(token)) => StyleColor::Invalid(token),
-    }
-}
-
-/// Attribute keywords of a style string, in declaration order.
-#[must_use]
-pub fn attr_tokens(style: &str) -> Vec<&'static str> {
-    parse_style(style)
-        .map(|parsed| {
-            parsed
-                .attrs
-                .into_iter()
-                .map(|attr| match attr {
-                    Attr::Bold => "bold",
-                    Attr::Italic => "italic",
-                    Attr::Underline => "underline",
-                    Attr::Dimmed => "dimmed",
-                    Attr::Inverted => "inverted",
-                    Attr::Blink => "blink",
-                    Attr::Hidden => "hidden",
-                    Attr::Strikethrough => "strikethrough",
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Translate present Starship language modules onto `base`.
@@ -772,10 +556,7 @@ pub fn translate_hostname(table: &toml::value::Table, warnings: &mut Warnings) -
         .get("format")
         .and_then(toml::Value::as_str)
         .unwrap_or("[$ssh_symbol$hostname]($style) in ");
-    // Braced form first so the unbraced replace can't match inside it.
-    let renamed = raw
-        .replace("${ssh_symbol}", "${symbol}")
-        .replace("$ssh_symbol", "$symbol");
+    let renamed = rename_vars(raw, &[("ssh_symbol", "symbol")]);
     let inlined = inline_style_vars(
         &renamed,
         &with_default_style(table, "style", "bold dimmed green"),
@@ -795,10 +576,7 @@ pub fn translate_username(table: &toml::value::Table, warnings: &mut Warnings) -
         .get("format")
         .and_then(toml::Value::as_str)
         .unwrap_or("[$user]($style) in ");
-    // Braced form first so the unbraced replace can't match inside it.
-    let renamed = raw
-        .replace("${user}", "${username}")
-        .replace("$user", "$username");
+    let renamed = rename_vars(raw, &[("user", "username")]);
     // `$style` is `style_root` in `format` and `style_user` in `user_format`.
     let styled_with = |key: &str, default: &str, sink: &mut Warnings| {
         let mut styles = table.clone();

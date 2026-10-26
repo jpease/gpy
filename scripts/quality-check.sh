@@ -64,6 +64,14 @@ skip_tool() {
     [[ -z "${CI:-}" ]]
 }
 
+# with_tool TOOL CMD...: run CMD, or skip_tool when the TOOL binary is missing.
+with_tool() {
+    local tool="$1"
+    shift
+    command -v "$tool" >/dev/null 2>&1 || { skip_tool "$tool"; return; }
+    "$@"
+}
+
 fish_files() {
     find . -name "*.fish" -type f -not -path "*/target/*" -not -path "*/.git/*" \
         -not -path "*/demo/.fixture-home/*" "$@" -print0
@@ -102,7 +110,7 @@ check_fish_formatting() {
 check_shellcheck() {
     command -v shellcheck >/dev/null 2>&1 || { skip_tool shellcheck; return; }
     local failed=0 checked=0 target
-    for target in install.sh install-oneline.sh scripts/*.sh tests/bash/*.test.bash \
+    for target in install.sh install-oneline.sh scripts/*.sh scripts/lib/*.sh tests/bash/*.test.bash \
         benchmarks/*/*.sh bash/*.bash bash/*/*.bash; do
         [[ -f "$target" ]] || continue
         checked=$((checked + 1))
@@ -175,7 +183,7 @@ shell_test_root_end() {
 # XDG root, so a developer's theme cache cannot leak in and whatever agent the
 # file autostarted is stopped as soon as it ends.
 run_shell_suite() {
-    local label="$1" runner="$2" pattern="$3" test_file base env xdg
+    local label="$1" runner="$2" pattern="$3" test_file base xdg
     local -a files=()
     for test_file in $pattern; do
         [[ -e "$test_file" ]] && files+=("$test_file")
@@ -188,16 +196,11 @@ run_shell_suite() {
     fi
     for test_file in "${files[@]}"; do
         base="$(basename "$test_file")"
-        env=""
-        case "$base" in
-            integration.test.*)
-                env="GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_SOCKET_PATH=/tmp/.gpy-qc-missing-$$.sock " ;;
-        esac
         SHELL_TEST_XDG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gpy-qc-xdg.XXXXXX")"
         mkdir -p "$SHELL_TEST_XDG_ROOT/cache" "$SHELL_TEST_XDG_ROOT/config" "$SHELL_TEST_XDG_ROOT/run"
         chmod 700 "$SHELL_TEST_XDG_ROOT/run"
         xdg="XDG_RUNTIME_DIR=$SHELL_TEST_XDG_ROOT/run XDG_CACHE_HOME=$SHELL_TEST_XDG_ROOT/cache XDG_CONFIG_HOME=$SHELL_TEST_XDG_ROOT/config "
-        run_check "$label $base" "${xdg}${env}PATH=\"\$SHELL_TEST_AGENT_DIR:\$PATH\" $runner $test_file" || true
+        run_check "$label $base" "${xdg}PATH=\"\$SHELL_TEST_AGENT_DIR:\$PATH\" $runner $test_file" || true
         shell_test_root_end
     done
 }
@@ -216,7 +219,7 @@ run_shell_tests() {
         return 0
     fi
     if shell_part fish; then
-        run_check "Fish tests" "./scripts/test_fish.sh" || true
+        run_check "Fish tests" "./scripts/test-fish.sh" || true
     fi
 
     SHELL_TEST_AGENT_DIR="${CARGO_TARGET_DIR:-$PWD/gpy-agent/target}/debug"
@@ -263,7 +266,7 @@ run_repo_checks() {
     run_check "License metadata" "./scripts/check-license-metadata.sh" || true
     run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
     run_check "Documentation links" "./scripts/check-doc-links.sh" || true
-    run_check "File size" "python3 ./scripts/check_file_size.py" || true
+    run_check "File size" "python3 ./scripts/check-file-size.py" || true
 }
 
 run_fish_lint() {
@@ -279,14 +282,21 @@ run_shell_checks() {
     run_shell_tests
 }
 
-# Run from gpy-agent/. $1: extra nextest flags. test-support compiles the
-# test-only library surface so clippy lints it too; lint levels live in Cargo.toml.
+# Every Clippy gate (here, `just lint`, the CI Rust leg) runs this, from
+# gpy-agent/. Lint levels live in Cargo.toml. All targets first, with the
+# `test-support` surface the self dev-dependency enables for test and bench
+# builds; then the library and binaries as they ship, without it.
+run_clippy() {
+    cargo clippy --all-targets && cargo clippy --lib --bins
+}
+
+# Run from gpy-agent/. $1: extra nextest flags.
 run_rust_lint_and_tests() {
     local nextest_flags="${1:-}" nextest_log retries
     run_check "Rust format check" "cargo fmt -- --check" || true
-    run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
+    run_check "Clippy" "run_clippy" || true
     nextest_log="$(mktemp)"
-    run_check "Rust tests" "cargo nextest run --features test-support${nextest_flags:+ $nextest_flags} 2>&1 | tee \"$nextest_log\"" || true
+    run_check "Rust tests" "cargo nextest run${nextest_flags:+ $nextest_flags} 2>&1 | tee \"$nextest_log\"" || true
     # Retries come only from named overrides in .config/nextest.toml; its
     # final-status-level = "flaky" prints a FLAKY line per retried test.
     retries=$(grep -cE '^ *FLAKY [0-9]+/[0-9]+ ' "$nextest_log" || true)
@@ -302,16 +312,11 @@ run_rust_lint_and_tests() {
 
 run_rust_deep_checks() {
     run_check "Doc tests" "cargo test --doc" || true
-    if command -v cargo-audit >/dev/null 2>&1; then
-        run_check "Security audit" "cargo audit" || true
-    else
-        warn "skipping security audit (cargo-audit not installed)"
-    fi
-    if command -v cargo-deny >/dev/null 2>&1; then
-        run_check "Dependency check" "cargo deny check" || true
-    else
-        warn "skipping dependency check (cargo-deny not installed)"
-    fi
+    run_check "Security audit" "with_tool cargo-audit cargo audit" || true
+    run_check "Dependency check" "with_tool cargo-deny cargo deny check" || true
+    # --with-metadata also resolves bench and dev targets, catching unused
+    # dev-dependencies.
+    run_check "Unused dependencies" "with_tool cargo-machete cargo machete --with-metadata" || true
 }
 
 finish_report() {
@@ -335,14 +340,7 @@ main() {
     pushd gpy-agent >/dev/null
     run_rust_lint_and_tests --no-fail-fast
     run_rust_deep_checks
-    # --with-metadata also resolves bench and dev targets, catching unused
-    # dev-dependencies.
-    if command -v cargo-machete >/dev/null 2>&1; then
-        run_check "Unused dependencies" "cargo machete --with-metadata" || true
-    else
-        warn "skipping unused dependency check (cargo-machete not installed)"
-    fi
-    # The release build is the slowest leg; --rust-only (pre-push, CI) always
+    # The release build is the slowest leg; --rust-only (and CI) always
     # runs it, the local full gate only under CI or GPY_GATE_RELEASE=1.
     if [[ -n "${CI:-}" || -n "${GPY_GATE_RELEASE:-}" ]]; then
         run_check "Release build" "cargo build --release" || true
@@ -360,24 +358,33 @@ Usage: $0 [OPTION]
 
     (none)        Full gate: repo checks, shell lint and suites, Rust checks
     --fast        Repo checks, Fish syntax, shellcheck, parity tests, Rust lint and tests
-    --rust-only   fmt, clippy, tests, doc tests, audit, deny, release build
+    --rust-only   fmt, clippy, tests, doc tests, audit, deny, unused dependencies, release build
     --shell-only [PARTS]
                   Fish lint, shellcheck and the Fish/Bash/Zsh suites (no Rust
                   checks). PARTS limits it to a comma-separated subset of
                   $SHELL_PARTS_ALL; \`checks\` is the repo checks, Fish lint
                   and shellcheck
     --fish-only   Fish syntax and formatting
+    --clippy      Clippy only: the exact commands the gate runs (also \`just lint\`)
     --fix         Apply fish_indent, cargo fmt and clippy fixes, then run the full gate
     -h, --help    Show this help
 
 Requires cargo (with clippy, rustfmt, nextest), fish, cargo-audit and cargo-deny.
-Optional: fish_indent, shellcheck, cargo-machete, zsh.
+Optional: zsh. A missing fish_indent, shellcheck or cargo-machete (and, under
+--rust-only, cargo-audit or cargo-deny) is skipped locally and fails under CI.
 EOF
 }
 
 case "${1:-}" in
     -h|--help)
         show_help
+        ;;
+    --clippy)
+        require_pinned_toolchain
+        pushd gpy-agent >/dev/null
+        run_check "Clippy" "run_clippy" || true
+        popd >/dev/null
+        finish_report "Clippy"
         ;;
     --fix)
         require_pinned_toolchain

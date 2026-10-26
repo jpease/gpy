@@ -4,12 +4,13 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(missing_docs)]
 
 mod common;
 
-use common::{CliCommandResult, CliTestEnv, gpy_test_root};
+use common::child_guard::KillOnDrop;
+use common::cli_harness::{CliCommandResult, CliTestEnv};
+use common::fixtures::gpy_test_root;
+use common::wait::wait_until;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -423,16 +424,16 @@ fn concurrent_starts_during_eviction_leave_one_daemon() {
     sandbox.wait_until_responding();
     std::fs::write(format!("{socket}.version"), "0.0.0-old").expect("age the running agent");
 
-    let mut first = common::KillOnDrop::new(start());
+    let mut first = KillOnDrop::new(start());
     // Stagger the second start into the first one's eviction window.
     std::thread::sleep(Duration::from_millis(100));
-    let mut second = common::KillOnDrop::new(start());
+    let mut second = KillOnDrop::new(start());
     let _ = first.wait().expect("first racing start");
     let _ = second.wait().expect("second racing start");
 
     // The evicted daemon exits asynchronously; wait for the survivor count to
     // settle instead of sampling after a fixed pause.
-    let _ = common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+    let _ = wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
         pids_matching(&sandbox.socket_path).len() == 1
     });
 
@@ -534,7 +535,7 @@ fn gpy_agent_start_reports_the_daemon_initialization_error() {
     );
     assert!(!sandbox.socket_path.exists(), "nothing was bound");
     assert!(
-        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+        wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
             pids_matching(&sandbox.socket_path).is_empty()
         }),
         "the failed daemon exits"
@@ -624,7 +625,7 @@ fn sigterm_stops_the_daemon_and_unlinks_its_socket() {
     send_signal("-TERM", &pid);
 
     assert!(
-        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+        wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
             pids_matching(&sandbox.socket_path).is_empty() && !sandbox.socket_path.exists()
         }),
         "SIGTERM must stop the daemon and unlink its socket"
@@ -641,7 +642,7 @@ fn sigkill_leaves_a_stale_socket_that_start_replaces() {
     send_signal("-KILL", &pid);
 
     assert!(
-        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+        wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
             pids_matching(&sandbox.socket_path).is_empty()
         }),
         "SIGKILL must end the daemon"
@@ -663,7 +664,7 @@ fn sigkill_leaves_a_stale_socket_that_start_replaces() {
         .run_gpy_agent(&["stop", "--socket", &socket])
         .expect("spawn gpy-agent stop");
     assert!(
-        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+        wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
             pids_matching(&sandbox.socket_path).is_empty() && !sandbox.socket_path.exists()
         }),
         "the restarted daemon must stop and unlink its socket"

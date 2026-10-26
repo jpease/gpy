@@ -105,7 +105,7 @@ function test_variant_fallback_bounded_refresh
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
@@ -134,9 +134,9 @@ function test_variant_fallback_bounded_refresh
     set -gx PATH $fake_bin_dir $PATH
 
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -152,17 +152,17 @@ function test_variant_fallback_bounded_refresh
     segment_language_render >/dev/null
 
     if poll_until 8 __gpy_lang_none_cache_present
-        print_test_result "Instant cache created (.none variant)" PASS
+        pass "Instant cache created (.none variant)"
     else
-        print_test_result "Instant cache created (.none variant)" FAIL "no .none lang cache written after initial render"
+        fail "Instant cache created (.none variant)" "no .none lang cache written after initial render"
         cleanup_test_files
         return 1
     end
 
     if __gpy_lang_token_cache_absent $__gpy_test_prev_bg_a
-        print_test_result "No token-specific cache file for token A yet" PASS
+        pass "No token-specific cache file for token A yet"
     else
-        print_test_result "No token-specific cache file for token A yet" FAIL "a lang.$__gpy_test_prev_bg_a.ansi file already exists; test setup did not start with a genuine variant gap"
+        fail "No token-specific cache file for token A yet" "a lang.$__gpy_test_prev_bg_a.ansi file already exists; test setup did not start with a genuine variant gap"
         cleanup_test_files
         return 1
     end
@@ -173,11 +173,11 @@ function test_variant_fallback_bounded_refresh
     set -l rendered_a1 (segment_language_render)
 
     if test -z "$rendered_a1"
-        print_test_result "First render at token A is non-empty" FAIL "segment_language_render produced no output"
+        fail "First render at token A is non-empty" "segment_language_render produced no output"
         cleanup_test_files
         return 1
     end
-    print_test_result "First render at token A is non-empty" PASS
+    pass "First render at token A is non-empty"
 
     # AC2: the correction must be BOUNDED, not synchronous -- the first render
     # at the new context still serves the `.none` fallback's chevron (does NOT
@@ -185,19 +185,19 @@ function test_variant_fallback_bounded_refresh
     # deliberately background-only, so the correction here is a throttled
     # background refresh, not a bounded synchronous IPC query.
     if string match -q "*38;5;$__gpy_test_prev_bg_a*" -- $rendered_a1
-        print_test_result "First render at token A does not block for a synchronous correction" FAIL "unexpectedly contained the corrected chevron already; language's cold-miss path is supposed to stay background-only"
+        fail "First render at token A does not block for a synchronous correction" "unexpectedly contained the corrected chevron already; language's cold-miss path is supposed to stay background-only"
         cleanup_test_files
         return 1
     else
-        print_test_result "First render at token A does not block for a synchronous correction" PASS
+        pass "First render at token A does not block for a synchronous correction"
     end
 
     # AC3: the corrected token-A-specific cache entry is written (bounded
     # background refresh) and later reused.
     if poll_until 8 __gpy_lang_token_cache_present $__gpy_test_prev_bg_a
-        print_test_result "Token-A cache file written by bounded background refresh" PASS
+        pass "Token-A cache file written by bounded background refresh"
     else
-        print_test_result "Token-A cache file written by bounded background refresh" FAIL "no lang.$__gpy_test_prev_bg_a.ansi file appeared after the variant-fallback render"
+        fail "Token-A cache file written by bounded background refresh" "no lang.$__gpy_test_prev_bg_a.ansi file appeared after the variant-fallback render"
         cleanup_test_files
         return 1
     end
@@ -213,9 +213,9 @@ function test_variant_fallback_bounded_refresh
     set -l rendered_a2 (segment_language_render)
 
     if string match -q "*38;5;$__gpy_test_prev_bg_a*" -- $rendered_a2
-        print_test_result "Second render at token A shows token A's correct chevron color" PASS
+        pass "Second render at token A shows token A's correct chevron color"
     else
-        print_test_result "Second render at token A shows token A's correct chevron color" FAIL "rendered output did not contain token A's chevron color (38;5;$__gpy_test_prev_bg_a): $rendered_a2"
+        fail "Second render at token A shows token A's correct chevron color" "rendered output did not contain token A's chevron color (38;5;$__gpy_test_prev_bg_a): $rendered_a2"
         cleanup_test_files
         return 1
     end
@@ -225,9 +225,9 @@ function test_variant_fallback_bounded_refresh
     # ANSI (or fail to fire its own correction) when the render moves to a
     # DIFFERENT prev_bg context. ---
     if __gpy_lang_token_cache_absent $__gpy_test_prev_bg_b
-        print_test_result "No token-specific cache file for token B yet" PASS
+        pass "No token-specific cache file for token B yet"
     else
-        print_test_result "No token-specific cache file for token B yet" FAIL "a lang.$__gpy_test_prev_bg_b.ansi file already exists; test setup did not start with a genuine variant gap"
+        fail "No token-specific cache file for token B yet" "a lang.$__gpy_test_prev_bg_b.ansi file already exists; test setup did not start with a genuine variant gap"
         cleanup_test_files
         return 1
     end
@@ -237,29 +237,29 @@ function test_variant_fallback_bounded_refresh
     set -l rendered_b1 (segment_language_render)
 
     if test -z "$rendered_b1"
-        print_test_result "First render at token B is non-empty" FAIL "segment_language_render produced no output"
+        fail "First render at token B is non-empty" "segment_language_render produced no output"
         cleanup_test_files
         return 1
     end
-    print_test_result "First render at token B is non-empty" PASS
+    pass "First render at token B is non-empty"
 
     # Must NOT reuse token A's cached ANSI (switching backgrounds must not
     # retain the wrong transition).
     if string match -q "*38;5;$__gpy_test_prev_bg_a*" -- $rendered_b1
-        print_test_result "First render at token B does not reuse token A's chevron" FAIL "rendered output still contained token A's chevron color (38;5;$__gpy_test_prev_bg_a): $rendered_b1"
+        fail "First render at token B does not reuse token A's chevron" "rendered output still contained token A's chevron color (38;5;$__gpy_test_prev_bg_a): $rendered_b1"
         cleanup_test_files
         return 1
     else
-        print_test_result "First render at token B does not reuse token A's chevron" PASS
+        pass "First render at token B does not reuse token A's chevron"
     end
 
     # AC3 for token B, and a live test of the per-token throttle key: if the
     # throttle were keyed only by path+suffix (not also by
     # token), token A's very recent correction could starve this one.
     if poll_until 8 __gpy_lang_token_cache_present $__gpy_test_prev_bg_b
-        print_test_result "Token-B cache file written by bounded background refresh" PASS
+        pass "Token-B cache file written by bounded background refresh"
     else
-        print_test_result "Token-B cache file written by bounded background refresh" FAIL "no lang.$__gpy_test_prev_bg_b.ansi file appeared after the variant-fallback render"
+        fail "Token-B cache file written by bounded background refresh" "no lang.$__gpy_test_prev_bg_b.ansi file appeared after the variant-fallback render"
         cleanup_test_files
         return 1
     end
@@ -269,9 +269,9 @@ function test_variant_fallback_bounded_refresh
     set -l rendered_b2 (segment_language_render)
 
     if string match -q "*38;5;$__gpy_test_prev_bg_b*" -- $rendered_b2
-        print_test_result "Second render at token B shows token B's correct chevron color" PASS
+        pass "Second render at token B shows token B's correct chevron color"
     else
-        print_test_result "Second render at token B shows token B's correct chevron color" FAIL "rendered output did not contain token B's chevron color (38;5;$__gpy_test_prev_bg_b): $rendered_b2"
+        fail "Second render at token B shows token B's correct chevron color" "rendered output did not contain token B's chevron color (38;5;$__gpy_test_prev_bg_b): $rendered_b2"
         cleanup_test_files
         return 1
     end
@@ -280,8 +280,5 @@ function test_variant_fallback_bounded_refresh
     return 0
 end
 
-if not test_variant_fallback_bounded_refresh
-    exit 1
-end
-
-exit 0
+test_variant_fallback_bounded_refresh; or exit 1
+test_finish "lang variant fallback bounded refresh"

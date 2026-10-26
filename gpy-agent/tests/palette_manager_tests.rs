@@ -2,7 +2,6 @@
 //! `$XDG_CONFIG_HOME/gpy/palettes` shadows a builtin, so each case points
 //! `XDG_CONFIG_HOME` at an empty temp dir (serialized: env mutation).
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 

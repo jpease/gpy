@@ -7,8 +7,8 @@
 # __gpy_registered=1, so the shell would stop retrying and receive no repaint
 # doorbells.
 #
-# A Python Unix-socket listener plays the agent and answers every request
-# (sourcing init may itself register once); it is killed on exit.
+# A stub listener plays the agent and answers every request (sourcing init
+# may itself register once); it is stopped on exit.
 
 ROOT=${0:a:h:h:h}
 # Shared skip contract: exits 0 locally, fails under CI.
@@ -23,10 +23,9 @@ if ! (( $+commands[socat] )) && ! (( $+commands[nc] )); then
 fi
 
 test_tmp_dir=$(mktemp -d)
-listener_pid=""
 
 cleanup() {
-    [[ -n "$listener_pid" ]] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$test_tmp_dir"
 }
 trap cleanup EXIT
@@ -35,22 +34,7 @@ trap cleanup EXIT
 run_case() {
     local name="$1" reply="$2" want_rc="$3" want_reg="$4"
     local sock="$test_tmp_dir/$name.sock"
-    python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-while True:
-    conn, _ = s.accept()
-    conn.recv(65536)
-    conn.sendall(sys.argv[2].encode() + b"\n")
-    conn.close()
-' "$sock" "$reply" &
-    listener_pid=$!
-    disown 2>/dev/null
-    if ! shell_e2e_poll 2 test -S "$sock"; then
-        test_skip "could not create test Unix socket listener"
-    fi
+    shell_e2e_stub_listener "$sock" reply --reply "$reply"
 
     local out
     out="$(
@@ -63,8 +47,7 @@ while True:
         __gpy_register_with_agent
         echo "rc=$? registered=[$__gpy_registered]"
     )"
-    kill -9 "$listener_pid" 2>/dev/null
-    listener_pid=""
+    shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 
     if [[ "$out" == *"rc=$want_rc registered=[$want_reg]" ]]; then
         pass "$name"

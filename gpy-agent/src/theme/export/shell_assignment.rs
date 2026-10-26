@@ -78,16 +78,22 @@ pub(super) fn append_shell_assignments(
 /// Escape a theme value for a double-quoted shell assignment.
 ///
 /// Theme values are attacker-influenceable and only checked for control chars upstream.
-/// Order matters: `\` first (so later escapes aren't doubled and a trailing `\`
-/// can't eat the quote), then `$`, then backtick (bash/zsh only; inert in fish), then `"`.
+/// Each of `\`, `$`, `"` and (bash/zsh only; inert in fish) backtick gets one
+/// leading backslash, so a trailing `\` can't eat the closing quote.
 pub(crate) fn escape_shell_value(text: &str, shell: Shell) -> String {
-    let backslash_escaped = text.replace('\\', "\\\\");
-    let dollar_escaped = backslash_escaped.replace('$', "\\$");
-    let backtick_escaped = match shell {
-        Shell::Fish => dollar_escaped,
-        Shell::Bash | Shell::Zsh => dollar_escaped.replace('`', "\\`"),
-    };
-    backtick_escaped.replace('"', "\\\"")
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let needs_escape = match ch {
+            '\\' | '$' | '"' => true,
+            '`' => matches!(shell, Shell::Bash | Shell::Zsh),
+            _ => false,
+        };
+        if needs_escape {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 /// Append formatted `args` plus a newline to `output`.

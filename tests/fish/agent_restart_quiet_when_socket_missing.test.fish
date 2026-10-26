@@ -5,6 +5,8 @@
 # Verifies that cold-start recovery does not call `gpy-agent stop` when the
 # socket is absent, which would otherwise print a noisy stdout notice.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
@@ -44,22 +46,22 @@ end
 set -l output (__gpy_agent_restart 2>&1)
 
 if test -n "$output"
-    echo "❌ Expected no output when socket is missing, got: $output"
+    fail "Expected no output when socket is missing, got: $output"
     rm -rf "$temp_dir"
     exit 1
 end
 
 if test -f "$stop_marker"
-    echo "❌ Expected cold-start restart to skip 'gpy-agent stop' when socket is missing"
+    fail "Expected cold-start restart to skip 'gpy-agent stop' when socket is missing"
     rm -rf "$temp_dir"
     exit 1
 end
 
 if not test -f "$start_marker"
-    echo "❌ Expected restart helper to invoke agent start"
+    fail "Expected restart helper to invoke agent start"
     rm -rf "$temp_dir"
     exit 1
 end
 
 rm -rf "$temp_dir"
-echo "✅ Cold-start agent restart stays quiet when the socket is missing"
+test_finish "Cold-start agent restart stays quiet when the socket is missing"

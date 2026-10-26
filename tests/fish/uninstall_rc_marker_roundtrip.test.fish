@@ -18,6 +18,8 @@
 # sandboxed $HOME, with network calls stubbed out via
 # a fake `curl` on PATH, so no network access or fixture drift is required.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
@@ -27,17 +29,6 @@ cd "$repo_root"
 # file from ZDOTDIR, so a caller's values would send every sandboxed run
 # outside its $HOME. The XDG sections below pass theirs explicitly.
 set -e XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_RUNTIME_DIR ZDOTDIR
-
-set -g failed 0
-
-function __gpy_test_fail --argument-names msg
-    echo "❌ $msg"
-    set -g failed 1
-end
-
-function __gpy_test_pass --argument-names msg
-    echo "✅ $msg"
-end
 
 set -g __gpy_real_gpy "$repo_root/gpy-agent/target/debug/gpy"
 set -g __gpy_repo_root "$repo_root"
@@ -134,9 +125,9 @@ end
 # Compares $current_file against $original_file (both real files on disk).
 function __gpy_assert_byte_identical --argument-names label original_file current_file
     if diff -q "$original_file" "$current_file" >/dev/null 2>&1
-        __gpy_test_pass "$label: byte-identical round trip"
+        pass "$label: byte-identical round trip"
     else
-        __gpy_test_fail "$label: round trip changed the rc file"
+        fail "$label: round trip changed the rc file"
         echo "--- diff ($original_file vs $current_file) ---"
         diff -u "$original_file" "$current_file"
         echo "--- end diff ---"
@@ -178,21 +169,21 @@ set -l install_a_out (fish -c 'cd $argv[1]; and env HOME=$argv[2] GPY_SHELL=fish
 set -l install_a_status $status
 
 if test $install_a_status -ne 0
-    __gpy_test_fail "install.sh exited $install_a_status: $install_a_out"
+    fail "install.sh exited $install_a_status: $install_a_out"
 else
     if grep -qF '# >>> gpy-init >>>' "$home_a/.config/fish/config.fish"
-        __gpy_test_pass "install.sh: gpy-init marker present after install"
+        pass "install.sh: gpy-init marker present after install"
     else
-        __gpy_test_fail "install.sh: gpy-init marker missing after install"
+        fail "install.sh: gpy-init marker missing after install"
     end
 
     # Idempotency: running install.sh again must not duplicate the block.
     fish -c 'cd $argv[1]; and env HOME=$argv[2] GPY_SHELL=fish bash ./install.sh' -- $pkg_a $home_a >/dev/null 2>&1
     set -l marker_count_a (grep -cF '# >>> gpy-init >>>' "$home_a/.config/fish/config.fish")
     if test "$marker_count_a" = 1
-        __gpy_test_pass "install.sh: append is idempotent"
+        pass "install.sh: append is idempotent"
     else
-        __gpy_test_fail "install.sh: not idempotent, found $marker_count_a marker occurrences after running twice"
+        fail "install.sh: not idempotent, found $marker_count_a marker occurrences after running twice"
     end
 
     # Uninstall and diff against the pristine original.
@@ -224,24 +215,24 @@ function __gpy_test_install_oneline_roundtrip --argument-names shell_name rc_rel
     set -l out1 (env $env_prefix sh install-oneline.sh 2>&1)
     set -l status1 $status
     if test $status1 -ne 0
-        __gpy_test_fail "install-oneline.sh ($shell_name) exited $status1: $out1"
+        fail "install-oneline.sh ($shell_name) exited $status1: $out1"
         rm -rf "$home_b" "$fake_bin"
         return
     end
 
     if grep -qF '# >>> gpy-init >>>' "$rc_file"
-        __gpy_test_pass "install-oneline.sh ($shell_name): gpy-init marker present after install"
+        pass "install-oneline.sh ($shell_name): gpy-init marker present after install"
     else
-        __gpy_test_fail "install-oneline.sh ($shell_name): gpy-init marker missing after install"
+        fail "install-oneline.sh ($shell_name): gpy-init marker missing after install"
     end
 
     # Idempotency
     env $env_prefix sh install-oneline.sh >/dev/null 2>&1
     set -l marker_count_b (grep -cF '# >>> gpy-init >>>' "$rc_file")
     if test "$marker_count_b" = 1
-        __gpy_test_pass "install-oneline.sh ($shell_name): append is idempotent"
+        pass "install-oneline.sh ($shell_name): append is idempotent"
     else
-        __gpy_test_fail "install-oneline.sh ($shell_name): not idempotent, found $marker_count_b marker occurrences after running twice"
+        fail "install-oneline.sh ($shell_name): not idempotent, found $marker_count_b marker occurrences after running twice"
     end
 
     # Uninstall
@@ -284,9 +275,9 @@ printf '%s\n' \
     "set -gx ANOTHER_TOOL after_gpy" >"$expected_fish"
 
 if grep -qF gpy-init "$rc_file_fish"
-    __gpy_test_fail "uninstall.sh (fish) trailing-content: gpy-init block still present after removal"
+    fail "uninstall.sh (fish) trailing-content: gpy-init block still present after removal"
 else
-    __gpy_test_pass "uninstall.sh (fish) trailing-content: gpy-init block removed"
+    pass "uninstall.sh (fish) trailing-content: gpy-init block removed"
 end
 __gpy_assert_byte_identical "uninstall.sh (fish) trailing-content: surrounding content preserved" "$expected_fish" "$rc_file_fish"
 rm -rf "$home_c"
@@ -310,9 +301,9 @@ printf '%s\n' \
     "export ANOTHER_TOOL=after_gpy" >"$expected_zsh"
 
 if grep -qF gpy-init "$rc_file_zsh"
-    __gpy_test_fail "uninstall.sh trailing-content: gpy-init block still present after removal"
+    fail "uninstall.sh trailing-content: gpy-init block still present after removal"
 else
-    __gpy_test_pass "uninstall.sh trailing-content: gpy-init block removed"
+    pass "uninstall.sh trailing-content: gpy-init block removed"
 end
 __gpy_assert_byte_identical "uninstall.sh trailing-content: surrounding content preserved" "$expected_zsh" "$rc_file_zsh"
 rm -rf "$home_d"
@@ -329,10 +320,10 @@ rm -rf "$home_d"
 
 function __gpy_assert_no_default_config_dir --argument-names label home_dir
     if test -e "$home_dir/.config"
-        __gpy_test_fail "$label: unexpected content under \$HOME/.config"
+        fail "$label: unexpected content under \$HOME/.config"
         find "$home_dir/.config"
     else
-        __gpy_test_pass "$label: nothing created under \$HOME/.config"
+        pass "$label: nothing created under \$HOME/.config"
     end
 end
 
@@ -349,18 +340,18 @@ set -l out_e (env $env_prefix_e sh install-oneline.sh 2>&1)
 set -l status_e $status
 
 if test $status_e -ne 0
-    __gpy_test_fail "install-oneline.sh (fish, XDG_CONFIG_HOME) exited $status_e: $out_e"
+    fail "install-oneline.sh (fish, XDG_CONFIG_HOME) exited $status_e: $out_e"
 else
     if test -f "$xdg_config_e/fish/config.fish"; and grep -qF '# >>> gpy-init >>>' "$xdg_config_e/fish/config.fish"
-        __gpy_test_pass "install-oneline.sh (fish, XDG_CONFIG_HOME): config.fish under \$XDG_CONFIG_HOME/fish"
+        pass "install-oneline.sh (fish, XDG_CONFIG_HOME): config.fish under \$XDG_CONFIG_HOME/fish"
     else
-        __gpy_test_fail "install-oneline.sh (fish, XDG_CONFIG_HOME): config.fish missing/unmarked under \$XDG_CONFIG_HOME/fish"
+        fail "install-oneline.sh (fish, XDG_CONFIG_HOME): config.fish missing/unmarked under \$XDG_CONFIG_HOME/fish"
     end
 
     if test -d "$xdg_config_e/fish/gpy/core"
-        __gpy_test_pass "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files under \$XDG_CONFIG_HOME/fish/gpy"
+        pass "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files under \$XDG_CONFIG_HOME/fish/gpy"
     else
-        __gpy_test_fail "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files missing under \$XDG_CONFIG_HOME/fish/gpy"
+        fail "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files missing under \$XDG_CONFIG_HOME/fish/gpy"
     end
 
     __gpy_assert_no_default_config_dir "install-oneline.sh (fish, XDG_CONFIG_HOME)" "$home_e"
@@ -377,21 +368,21 @@ else
     printf '\n' | env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e sh scripts/uninstall.sh >/dev/null 2>&1
 
     if test -d "$xdg_config_e/fish/gpy"
-        __gpy_test_fail "uninstall.sh (XDG_CONFIG_HOME): fish/gpy still present after uninstall"
+        fail "uninstall.sh (XDG_CONFIG_HOME): fish/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.sh (XDG_CONFIG_HOME): fish/gpy removed"
+        pass "uninstall.sh (XDG_CONFIG_HOME): fish/gpy removed"
     end
 
     if test -d "$xdg_config_e/gpy"
-        __gpy_test_fail "uninstall.sh (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy still present after uninstall"
+        fail "uninstall.sh (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.sh (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy removed"
+        pass "uninstall.sh (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy removed"
     end
 
     if test -d "$xdg_cache_e/gpy"
-        __gpy_test_fail "uninstall.sh (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy still present after uninstall"
+        fail "uninstall.sh (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.sh (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy removed"
+        pass "uninstall.sh (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy removed"
     end
 end
 
@@ -410,12 +401,12 @@ set -l out_f (env $env_prefix_f sh install-oneline.sh 2>&1)
 set -l status_f $status
 
 if test $status_f -ne 0
-    __gpy_test_fail "install-oneline.sh (bash, XDG_CONFIG_HOME) exited $status_f: $out_f"
+    fail "install-oneline.sh (bash, XDG_CONFIG_HOME) exited $status_f: $out_f"
 else
     if test -d "$xdg_config_f/gpy/bash/core"
-        __gpy_test_pass "install-oneline.sh (bash, XDG_CONFIG_HOME): shell files under \$XDG_CONFIG_HOME/gpy/bash"
+        pass "install-oneline.sh (bash, XDG_CONFIG_HOME): shell files under \$XDG_CONFIG_HOME/gpy/bash"
     else
-        __gpy_test_fail "install-oneline.sh (bash, XDG_CONFIG_HOME): shell files missing under \$XDG_CONFIG_HOME/gpy/bash"
+        fail "install-oneline.sh (bash, XDG_CONFIG_HOME): shell files missing under \$XDG_CONFIG_HOME/gpy/bash"
     end
 
     __gpy_assert_no_default_config_dir "install-oneline.sh (bash, XDG_CONFIG_HOME)" "$home_f"
@@ -430,15 +421,15 @@ else
     printf '\n' | env HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_CACHE_HOME=$xdg_cache_f GPY_SHELL=bash sh scripts/uninstall.sh >/dev/null 2>&1
 
     if test -d "$xdg_config_f/gpy"
-        __gpy_test_fail "uninstall.sh (XDG): \$XDG_CONFIG_HOME/gpy still present after uninstall"
+        fail "uninstall.sh (XDG): \$XDG_CONFIG_HOME/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.sh (XDG): \$XDG_CONFIG_HOME/gpy removed (shell files and config.toml)"
+        pass "uninstall.sh (XDG): \$XDG_CONFIG_HOME/gpy removed (shell files and config.toml)"
     end
 
     if test -d "$xdg_cache_f/gpy"
-        __gpy_test_fail "uninstall.sh (XDG): \$XDG_CACHE_HOME/gpy still present after uninstall"
+        fail "uninstall.sh (XDG): \$XDG_CACHE_HOME/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.sh (XDG): \$XDG_CACHE_HOME/gpy removed"
+        pass "uninstall.sh (XDG): \$XDG_CACHE_HOME/gpy removed"
     end
 end
 
@@ -466,9 +457,9 @@ for gpy_shell_val in bash zsh
     printf '\n' | env HOME=$h_multi XDG_CONFIG_HOME=$xdg_c_multi XDG_CACHE_HOME=$xdg_cache_multi XDG_RUNTIME_DIR=$xdg_rt_multi GPY_CONFIG_PATH="$xdg_c_multi/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_multi/gpy.sock" GPY_SHELL=$gpy_shell_val sh scripts/uninstall.sh >/dev/null 2>&1
 
     if not grep -qF gpy-init "$bashrc"; and not grep -qF gpy-init "$zshrc"
-        __gpy_test_pass "(sh uninstaller, GPY_SHELL=$gpy_shell_val): neither rc keeps gpy-init block"
+        pass "(sh uninstaller, GPY_SHELL=$gpy_shell_val): neither rc keeps gpy-init block"
     else
-        __gpy_test_fail "(sh uninstaller, GPY_SHELL=$gpy_shell_val): gpy-init block remained in bashrc or zshrc"
+        fail "(sh uninstaller, GPY_SHELL=$gpy_shell_val): gpy-init block remained in bashrc or zshrc"
     end
 
     set -l exp_b "$h_multi/exp_b"
@@ -527,24 +518,24 @@ for uninstaller_entry in "sh:scripts/uninstall.sh"
         end
     end
     if test $rcs_cleaned -eq 1
-        __gpy_test_pass "($u_type uninstaller): all 4 rc locations cleaned"
+        pass "($u_type uninstaller): all 4 rc locations cleaned"
     else
-        __gpy_test_fail "($u_type uninstaller): one or more rc files still have gpy-init"
+        fail "($u_type uninstaller): one or more rc files still have gpy-init"
     end
 
     # Verify fish prompt restored and backup consumed
     set -l active_prompt "$xdg_c_all/fish/functions/fish_prompt.fish"
     if test -f "$active_prompt"; and not test -L "$active_prompt"; and test (cat "$active_prompt") = "function fish_prompt; echo custom_restored; end"; and not test -e "$fish_backup"
-        __gpy_test_pass "($u_type uninstaller): fish prompt restored from backup"
+        pass "($u_type uninstaller): fish prompt restored from backup"
     else
-        __gpy_test_fail "($u_type uninstaller): fish prompt restoration failed"
+        fail "($u_type uninstaller): fish prompt restoration failed"
     end
 
     # Verify gpy init and completions removed, but unrelated completion untouched
     if not test -e "$gpy_init_fish"; and not test -e "$gpy_comp_fish"; and test -f "$custom_comp"
-        __gpy_test_pass "($u_type uninstaller): GPY fish files removed, unrelated completion untouched"
+        pass "($u_type uninstaller): GPY fish files removed, unrelated completion untouched"
     else
-        __gpy_test_fail "($u_type uninstaller): fish completions/conf.d cleanup failed"
+        fail "($u_type uninstaller): fish completions/conf.d cleanup failed"
     end
 
     rm -rf "$h_all"
@@ -573,9 +564,9 @@ for uninstaller_entry in "sh:scripts/uninstall.sh"
 
     set -l restored_prompt "$xdg_c_leg/fish/functions/fish_prompt.fish"
     if test -f "$restored_prompt"; and not test -L "$restored_prompt"; and test (cat "$restored_prompt") = "function fish_prompt; echo legacy_restored; end"; and not test -e "$legacy_backup"
-        __gpy_test_pass "($u_type uninstaller): newest legacy .backup-<date>-<time> prompt restored"
+        pass "($u_type uninstaller): newest legacy .backup-<date>-<time> prompt restored"
     else
-        __gpy_test_fail "($u_type uninstaller): legacy install-dev backup not restored"
+        fail "($u_type uninstaller): legacy install-dev backup not restored"
     end
 
     rm -rf "$h_leg"
@@ -592,9 +583,9 @@ set -l exp_bo "$h_bash_only/exp_bo"
 printf '%s\n' prefix suffix >"$exp_bo"
 __gpy_assert_byte_identical ".bashrc cleaned byte-for-byte" "$exp_bo" "$bashrc_only"
 if not test -e "$h_bash_only/.bash_profile"
-    __gpy_test_pass "missing .bash_profile not created"
+    pass "missing .bash_profile not created"
 else
-    __gpy_test_fail ".bash_profile erroneously created"
+    fail ".bash_profile erroneously created"
 end
 rm -rf "$h_bash_only"
 # --- 4. Multiple complete blocks, trailing content, and incomplete marker ---
@@ -640,9 +631,9 @@ set -l exp_sp "$h_space/exp_sp"
 printf '%s\n' start end >"$exp_sp"
 __gpy_assert_byte_identical "paths with spaces rc bytes preserved" "$exp_sp" "$bashrc_space"
 if test (cat "$fish_prompt_space") = "function fish_prompt; echo space_restored; end"
-    __gpy_test_pass "paths with spaces fish prompt restored"
+    pass "paths with spaces fish prompt restored"
 else
-    __gpy_test_fail "paths with spaces fish prompt restoration failed"
+    fail "paths with spaces fish prompt restoration failed"
 end
 rm -rf "$h_space" "$xdg_c_space" "$xdg_cache_space" "$xdg_rt_space"
 
@@ -673,22 +664,18 @@ for uninstaller in "sh scripts/uninstall.sh"
     __gpy_assert_byte_identical "($uninstaller): orphaned start never pairs with a later block" "$h6/exp_zsh" "$h6/.zshrc"
     __gpy_assert_byte_identical "($uninstaller): symlink target cleaned" "$h6/exp_bash" "$h6/dots/bashrc"
     if test -L "$h6/.bashrc"
-        __gpy_test_pass "($uninstaller): symlinked rc file is still a symlink"
+        pass "($uninstaller): symlinked rc file is still a symlink"
     else
-        __gpy_test_fail "($uninstaller): symlinked rc file was replaced by a regular file"
+        fail "($uninstaller): symlinked rc file was replaced by a regular file"
     end
     set -l mode (stat -c %a "$h6/dots/bashrc" 2>/dev/null; or stat -f %Lp "$h6/dots/bashrc")
     if test "$mode" = 600
-        __gpy_test_pass "($uninstaller): rc file mode preserved"
+        pass "($uninstaller): rc file mode preserved"
     else
-        __gpy_test_fail "($uninstaller): rc file mode changed to $mode"
+        fail "($uninstaller): rc file mode changed to $mode"
     end
     __gpy_assert_byte_identical "($uninstaller): missing trailing newline preserved" "$h6/exp_profile" "$h6/.bash_profile"
     rm -rf "$h6"
 end
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ install/uninstall gpy-init marker round trips are byte-identical across fish/zsh/bash"
+test_finish "install/uninstall gpy-init marker round trips are byte-identical across fish/zsh/bash"

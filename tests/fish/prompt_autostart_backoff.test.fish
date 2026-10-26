@@ -8,10 +8,13 @@
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
 # real, live dogfooding daemon's cache.
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 source fish/core/init.fish
 source fish/core/ipc.fish
+source fish/core/supervisor.fish
 
 # Simulate a crash-looping agent: never available, and the resolved binary is
 # a real no-op executable so `"$agent_binary" start &` succeeds immediately
@@ -82,13 +85,13 @@ for __i in (seq 5)
 end
 
 if test (count $__autostart_sleep_calls) -ne $GPY_AGENT_AUTOSTART_MAX_ATTEMPTS
-    echo "❌ Expected exactly $GPY_AGENT_AUTOSTART_MAX_ATTEMPTS autostart attempts across 5 prompts, got "(count $__autostart_sleep_calls)
+    fail "Expected exactly $GPY_AGENT_AUTOSTART_MAX_ATTEMPTS autostart attempts across 5 prompts, got "(count $__autostart_sleep_calls)
     exit 1
 end
 
 if functions -q __gpy_start_supervisor_on_prompt
-    echo "❌ Expected the per-prompt autostart hook to remove itself after exceeding the attempt limit"
+    fail "Expected the per-prompt autostart hook to remove itself after exceeding the attempt limit"
     exit 1
 end
 
-echo "✅ Per-prompt autostart hook rate-limits and caps restarts against a crash-looping agent"
+test_finish "Per-prompt autostart hook rate-limits and caps restarts against a crash-looping agent"

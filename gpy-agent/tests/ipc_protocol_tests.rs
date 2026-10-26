@@ -3,7 +3,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 use gpy_agent::config::types::ColorSpec;
 use gpy_agent::ipc::protocol::{
@@ -155,41 +154,41 @@ fn test_response_serialization_error() {
 }
 
 #[test]
-fn test_fish_shell_ipc_format_git() {
+fn test_shell_ipc_format_git() {
     let json = r#"{"op":"git","cwd":"/test/path"}"#;
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
-        Message::RepositoryStatus { path, format, .. } => {
+        Message::RepositoryStatus { path, segment } => {
             assert_eq!(path, "/test/path");
-            assert_eq!(format, Format::Json);
+            assert_eq!(segment.format, Format::Json);
         }
         _ => assert!(
             matches!(deserialized, Message::RepositoryStatus { .. }),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_lang() {
+fn test_shell_ipc_format_lang() {
     let json = r#"{"op":"lang","cwd":"/project"}"#;
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
-        Message::LanguageDetect { path, format, .. } => {
+        Message::LanguageDetect { path, segment, .. } => {
             assert_eq!(path, "/project");
-            assert_eq!(format, Format::Json);
+            assert_eq!(segment.format, Format::Json);
         }
         _ => assert!(
             matches!(deserialized, Message::LanguageDetect { .. }),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_register() {
+fn test_shell_ipc_format_register() {
     let pid = std::process::id();
     let json = format!(r#"{{"op":"register","pid":{pid},"cwd":"/tmp"}}"#);
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
@@ -201,13 +200,13 @@ fn test_fish_shell_ipc_format_register() {
         }
         _ => assert!(
             matches!(deserialized, Message::RegisterClient { .. }),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_workspace() {
+fn test_shell_ipc_format_workspace() {
     let pid = std::process::id();
     let json = format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/repo"}}"#);
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
@@ -219,13 +218,13 @@ fn test_fish_shell_ipc_format_workspace() {
         }
         _ => assert!(
             matches!(deserialized, Message::WorkspaceUpdate { .. }),
-            "Wrong message type deserialized from Fish workspace format"
+            "Wrong message type deserialized from wire workspace format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_ping() {
+fn test_shell_ipc_format_ping() {
     let json = r#"{"op":"ping"}"#;
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
@@ -235,7 +234,7 @@ fn test_fish_shell_ipc_format_ping() {
         }
         _ => assert!(
             matches!(deserialized, Message::Ping),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
@@ -267,7 +266,7 @@ fn test_invalid_json_deserialization() {
 }
 
 #[test]
-fn test_unknown_operation_fish_format() {
+fn test_unknown_operation_wire_format() {
     let json = r#"{"op":"unknown_operation","cwd":"/test"}"#;
     let unknown_result = deserialize_message(json.as_bytes());
     assert!(unknown_result.is_err());
@@ -278,11 +277,11 @@ fn test_missing_required_fields() {
     // Missing cwd for git operation
     let git_json = r#"{"op":"git"}"#;
     let git_result = deserialize_message(git_json.as_bytes());
-    let Ok(Message::RepositoryStatus { path, format, .. }) = git_result else {
+    let Ok(Message::RepositoryStatus { path, segment }) = git_result else {
         panic!("missing cwd must deserialize to RepositoryStatus with default path");
     };
     assert_eq!(path, SafePath::new(".").unwrap());
-    assert_eq!(format, Format::Json);
+    assert_eq!(segment.format, Format::Json);
 
     // Missing pid for register operation must be rejected
     let register_json = r#"{"op":"register"}"#;
@@ -300,9 +299,9 @@ fn test_json_string_escaping() {
     let deserialized = deserialize_message(line.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
-        Message::RepositoryStatus { path, format, .. } => {
+        Message::RepositoryStatus { path, segment } => {
             assert_eq!(path, path_with_quotes);
-            assert_eq!(format, Format::Json);
+            assert_eq!(segment.format, Format::Json);
         }
         _ => assert!(
             matches!(deserialized, Message::RepositoryStatus { .. }),

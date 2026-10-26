@@ -10,6 +10,7 @@
 # not-first variant.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
 source "$ROOT/tests/lib/supervisor_off.zsh"
@@ -18,29 +19,18 @@ export GPY_LANGUAGE_ENABLED=1
 
 source zsh/gpy.zsh
 
-FAILED=0
 
-check() {
-    local label="$1" actual="$2" expected="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected '$expected', got '$actual')"
-        FAILED=1
-    fi
-}
-
-# --- Suffix helper: matches gpy-agent's variant_suffix exactly ---
+# --- Suffix helper: matches gpy-agent's cache variant names exactly ---
 __gpy_cache_variant_suffix git false false suffix
-check "not first, not last" "$suffix" "git"
+expect_eq "not first, not last" "$suffix" "git"
 __gpy_cache_variant_suffix git true false suffix
-check "last only" "$suffix" "git_last"
+expect_eq "last only" "$suffix" "git_last"
 __gpy_cache_variant_suffix git false true suffix
-check "first only" "$suffix" "git_first"
+expect_eq "first only" "$suffix" "git_first"
 __gpy_cache_variant_suffix git true true suffix
-check "first and last" "$suffix" "git_first_last"
+expect_eq "first and last" "$suffix" "git_first_last"
 __gpy_cache_variant_suffix lang false true suffix
-check "lang base suffix" "$suffix" "lang_first"
+expect_eq "lang base suffix" "$suffix" "lang_first"
 
 # --- Segment-level: is_first must select the *_first cache file ---
 TMP_DIR="$(mktemp -d)"
@@ -67,24 +57,17 @@ printf 'LANG-FIRST' >"$CACHE_DIR/$CACHE_KEY.lang_first.none.zsh"
 printf 'LANG-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_first_last.none.zsh"
 
 # Segment functions receive is_last/is_first as "true"/"".
-check "git segment: not first, not last" "$(__gpy_segment_git "" "")" "GIT-NORMAL"
-check "git segment: last, not first" "$(__gpy_segment_git true "")" "GIT-LAST"
-check "git segment: first, not last" "$(__gpy_segment_git "" "" true)" "GIT-FIRST"
-check "git segment: first and last" "$(__gpy_segment_git true "" true)" "GIT-FIRST-LAST"
+expect_eq "git segment: not first, not last" "$(__gpy_segment_git "" "")" "GIT-NORMAL"
+expect_eq "git segment: last, not first" "$(__gpy_segment_git true "")" "GIT-LAST"
+expect_eq "git segment: first, not last" "$(__gpy_segment_git "" "" true)" "GIT-FIRST"
+expect_eq "git segment: first and last" "$(__gpy_segment_git true "" true)" "GIT-FIRST-LAST"
 
-check "lang segment: not first, not last" "$(__gpy_segment_language "" "")" "LANG-NORMAL"
-check "lang segment: last, not first" "$(__gpy_segment_language true "")" "LANG-LAST"
-check "lang segment: first, not last" "$(__gpy_segment_language "" "" true)" "LANG-FIRST"
-check "lang segment: first and last" "$(__gpy_segment_language true "" true)" "LANG-FIRST-LAST"
+expect_eq "lang segment: not first, not last" "$(__gpy_segment_language "" "")" "LANG-NORMAL"
+expect_eq "lang segment: last, not first" "$(__gpy_segment_language true "")" "LANG-LAST"
+expect_eq "lang segment: first, not last" "$(__gpy_segment_language "" "" true)" "LANG-FIRST"
+expect_eq "lang segment: first and last" "$(__gpy_segment_language true "" true)" "LANG-FIRST-LAST"
 
 cd "$ROOT" || true
 rm -rf "$TMP_DIR"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo ""
-    echo "=== FAILED ==="
-    exit 1
-fi
-
-echo ""
-echo "=== All Tests Passed ==="
+test_finish "is first instant cache"

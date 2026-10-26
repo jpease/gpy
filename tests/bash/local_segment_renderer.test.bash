@@ -16,6 +16,8 @@
 #   - the color table maps names, bright names, `#RRGGBB` and 0-255.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-local-renderer.XXXXXX")"
@@ -24,17 +26,6 @@ source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 source bash/gpy.bash
-
-FAILED=0
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 # Theme state the renderer reads: ASCII delimiters, named colors.
 __segment_delim_first="<" __segment_delim_start="[" __segment_delim_end="]" __segment_delim_last=")"
@@ -172,8 +163,4 @@ long='' long_expected=''
 for ((i = 0; i < 4096; i++)); do long+='$' long_expected+='\\$'; done
 check "escape: 4096 dollars" "$long_expected" "$(esc "$long")"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish "local segment renderer"

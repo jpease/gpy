@@ -8,8 +8,6 @@ pub struct LanguageMeta {
     pub aliases: &'static [&'static str],
     /// Key used for looking up the icon in `LanguageIcons`
     pub icon_key: &'static str,
-    /// Default background color
-    pub default_color: Option<&'static str>,
     /// Marker filenames (case-insensitive) signalling this language in `DetectionMode::Markers`.
     pub marker_files: &'static [&'static str],
     /// Marker file extensions (no dot) for `DetectionMode::Markers`.
@@ -22,7 +20,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "rust",
         aliases: &["rust", "rs"],
         icon_key: "rust",
-        default_color: Some("red"),
         marker_files: &["Cargo.toml"],
         marker_extensions: &["rs"],
     },
@@ -30,7 +27,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "python",
         aliases: &["python", "py"],
         icon_key: "python",
-        default_color: Some("blue"),
         marker_files: &[
             "pyproject.toml",
             "setup.py",
@@ -45,7 +41,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "node",
         aliases: &["node", "nodejs", "javascript", "js", "typescript", "ts"],
         icon_key: "node",
-        default_color: Some("green"),
         marker_files: &["package.json", "tsconfig.json"],
         marker_extensions: &["js", "mjs", "cjs", "ts", "jsx", "tsx"],
     },
@@ -53,7 +48,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "go",
         aliases: &["go", "golang"],
         icon_key: "go",
-        default_color: Some("cyan"),
         marker_files: &["go.mod", "go.sum"],
         marker_extensions: &["go"],
     },
@@ -61,7 +55,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "java",
         aliases: &["java"],
         icon_key: "java",
-        default_color: Some("blue"),
         marker_files: &["pom.xml", "build.gradle", "build.gradle.kts"],
         marker_extensions: &["java"],
     },
@@ -69,7 +62,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "ruby",
         aliases: &["ruby", "rb"],
         icon_key: "ruby",
-        default_color: Some("red"),
         marker_files: &["Gemfile", "Rakefile", ".ruby-version"],
         marker_extensions: &["rb"],
     },
@@ -77,7 +69,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "swift",
         aliases: &["swift"],
         icon_key: "swift",
-        default_color: Some("red"),
         marker_files: &["Package.swift"],
         marker_extensions: &["swift"],
     },
@@ -85,7 +76,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "elixir",
         aliases: &["elixir", "ex"],
         icon_key: "elixir",
-        default_color: Some("magenta"),
         marker_files: &["mix.exs"],
         marker_extensions: &["ex", "exs"],
     },
@@ -93,7 +83,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "php",
         aliases: &["php"],
         icon_key: "php",
-        default_color: Some("blue"),
         marker_files: &["composer.json"],
         marker_extensions: &["php"],
     },
@@ -101,7 +90,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "csharp",
         aliases: &["csharp", "c#", "cs"],
         icon_key: "csharp",
-        default_color: Some("magenta"),
         marker_files: &[],
         marker_extensions: &["cs", "csproj", "sln"],
     },
@@ -109,7 +97,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "cpp",
         aliases: &["cpp", "c++", "cplusplus"],
         icon_key: "cpp",
-        default_color: Some("blue"),
         marker_files: &["CMakeLists.txt"],
         marker_extensions: &["cpp", "cxx", "cc", "hpp", "hh"],
     },
@@ -117,7 +104,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "c",
         aliases: &["c"],
         icon_key: "c",
-        default_color: Some("blue"),
         marker_files: &["Makefile"],
         marker_extensions: &["c", "h"],
     },
@@ -125,7 +111,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "erlang",
         aliases: &["erlang"],
         icon_key: "erlang",
-        default_color: Some("red"),
         marker_files: &["rebar.config"],
         marker_extensions: &["erl"],
     },
@@ -133,7 +118,6 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "fish",
         aliases: &["fish"],
         icon_key: "fish",
-        default_color: Some("green"),
         marker_files: &[],
         marker_extensions: &["fish"],
     },
@@ -160,12 +144,6 @@ pub fn get_icon_key(alias: &str) -> Option<&'static str> {
     lookup(alias).map(|lang| lang.icon_key)
 }
 
-/// Get the default color for a language (case-insensitive lookup)
-#[must_use]
-pub fn get_default_color(alias: &str) -> Option<&'static str> {
-    lookup(alias).and_then(|lang| lang.default_color)
-}
-
 /// All [`LanguageMeta::marker_files`] flattened, built once. Shared with the
 /// watcher's invalidation so there is one list. Raw case; callers fold case.
 #[must_use]
@@ -182,12 +160,11 @@ pub(crate) fn marker_file_names() -> &'static std::collections::HashSet<&'static
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 
     #[test]
-    fn lookup_table() {
+    fn alias_lookup_is_case_insensitive_and_unknown_aliases_miss() {
         let cases: &[(&str, Option<&str>)] = &[
             ("rust", Some("rust")),
             ("rs", Some("rust")),
@@ -199,17 +176,11 @@ mod tests {
             ("", None),
         ];
         for (alias, expected_canonical) in cases {
-            let actual = lookup(alias).map(|lang| lang.canonical);
-            assert_eq!(actual, *expected_canonical, "alias: {alias:?}");
-        }
-    }
-
-    #[test]
-    fn get_canonical_name_table() {
-        let cases: &[(&str, Option<&str>)] =
-            &[("rust", Some("rust")), ("RS", Some("rust")), ("nope", None)];
-        for (alias, expected) in cases {
-            assert_eq!(get_canonical_name(alias), *expected, "alias: {alias:?}");
+            assert_eq!(
+                get_canonical_name(alias),
+                *expected_canonical,
+                "alias: {alias:?}"
+            );
         }
     }
 
@@ -222,18 +193,6 @@ mod tests {
         ];
         for (alias, expected) in cases {
             assert_eq!(get_icon_key(alias), *expected, "alias: {alias:?}");
-        }
-    }
-
-    #[test]
-    fn get_default_color_table() {
-        let cases: &[(&str, Option<&str>)] = &[
-            ("rust", Some("red")),
-            ("CSHARP", Some("magenta")),
-            ("nope", None),
-        ];
-        for (alias, expected) in cases {
-            assert_eq!(get_default_color(alias), *expected, "alias: {alias:?}");
         }
     }
 }

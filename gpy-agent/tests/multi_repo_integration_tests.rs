@@ -2,24 +2,35 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 
 #[path = "common/git.rs"]
 mod git_helpers;
 #[path = "common/wait.rs"]
 mod wait;
 
-use git_helpers::{git, git_init};
+#[cfg(unix)]
+use git_helpers::git_command;
+use git_helpers::{git, git_bare, git_init, git_stdout};
 use gpy_agent::ipc::ClientDirectory;
 use gpy_agent::watcher::multi_repo::MultiRepoWatcher;
 use gpy_agent::watcher::{DebouncedEvent, FileEvent, WatcherConfig};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use wait::wait_until;
+
+/// File [`arm_watch`] writes in a working tree to prove its watch is live.
+const ARM_PROBE: &str = "gpy-arm-probe.txt";
+/// How long [`prime_watch`] waits on one probe write before writing it again.
+const PROBE_REWRITE: Duration = Duration::from_secs(1);
+/// Absence window: past the debounce and a poll cycle, so a wake that was
+/// coming has arrived. A fixed wait, because these checks prove a wake never
+/// happens.
+const ABSENCE_WINDOW: Duration = Duration::from_secs(3);
 
 /// Create `<parent>/<name>` as a git repo on `main` with one commit.
 ///
@@ -73,14 +84,75 @@ fn wait_for_repo(events: &RepoEvents, expected: &Path, budget: Duration) -> bool
     })
 }
 
-/// Build a watcher that records the `repo` of every debounced event.
+/// Whether `event` covers only [`ARM_PROBE`] writes.
+fn is_probe(event: &DebouncedEvent) -> bool {
+    matches!(&event.event, FileEvent::Git { paths } if paths.as_slice().is_some_and(|changed| {
+        changed
+            .iter()
+            .all(|path| path.file_name() == Some(OsStr::new(ARM_PROBE)))
+    }))
+}
+
+/// What [`recording_watcher`] records for a probe-only event in `repo`: never
+/// equal to a repository root, so probes do not count as wakes.
+fn probe_marker(repo: &Path) -> PathBuf {
+    repo.join(ARM_PROBE)
+}
+
+/// Run `probe` until `delivered` holds, repeating it every [`PROBE_REWRITE`].
+/// OS watches expose no "armed" signal and a write that lands before a
+/// subscription is live is never reported, so a delivered write is the proof.
+fn prime_watch(mut probe: impl FnMut(), mut delivered: impl FnMut() -> bool) {
+    let mut probed_at: Option<Instant> = None;
+    let live = wait_until(Duration::from_secs(20), Duration::from_millis(25), || {
+        if delivered() {
+            return true;
+        }
+        if probed_at.is_none_or(|at| at.elapsed() >= PROBE_REWRITE) {
+            probe();
+            probed_at = Some(Instant::now());
+        }
+        false
+    });
+    assert!(live, "the watch never delivered a probe write");
+}
+
+/// Prove the watches on the canonical `roots` live with a working-tree probe
+/// write in each, then drop every recorded event. Events flush in deadline
+/// order, so whatever arming or an earlier step produced (`FSEvents` replays
+/// pre-arm fixture writes such as `<common>/config`) lands before the probes
+/// and is discarded with them.
+fn arm_watch(events: &RepoEvents, roots: &[impl AsRef<Path>]) {
+    prime_watch(
+        || {
+            for root in roots {
+                fs::write(root.as_ref().join(ARM_PROBE), b"probe").expect("write arm probe");
+            }
+        },
+        || {
+            let seen = events.lock().unwrap();
+            roots
+                .iter()
+                .all(|root| seen.contains(&probe_marker(root.as_ref())))
+        },
+    );
+    events.lock().unwrap().clear();
+}
+
+/// Build a watcher that records the `repo` of every debounced event, or its
+/// [`probe_marker`] for a probe-only event.
 fn recording_watcher() -> (MultiRepoWatcher, RepoEvents) {
     let events: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
     let events_clone = Arc::clone(&events);
     let watcher = MultiRepoWatcher::builder()
         .config(WatcherConfig::default())
         .callback(Box::new(move |event: DebouncedEvent| {
-            events_clone.lock().unwrap().push(event.repo);
+            let recorded = if is_probe(&event) {
+                probe_marker(&event.repo)
+            } else {
+                event.repo
+            };
+            events_clone.lock().unwrap().push(recorded);
         }))
         .build()
         .expect("create watcher");
@@ -109,15 +181,9 @@ fn test_multi_repo_concurrent_registration() {
         .build()
         .expect("create watcher");
 
-    watcher
-        .register_client(1001, &repo1)
-        .expect("register repo1");
-    watcher
-        .register_client(1002, &repo2)
-        .expect("register repo2");
-    watcher
-        .register_client(1003, &repo3)
-        .expect("register repo3");
+    watcher.attach_client(1001, &repo1).expect("register repo1");
+    watcher.attach_client(1002, &repo2).expect("register repo2");
+    watcher.attach_client(1003, &repo3).expect("register repo3");
 
     assert_eq!(watcher.watched_repo_count(), 3);
 }
@@ -130,11 +196,15 @@ fn test_multi_repo_event_isolation() {
     let repo1 = create_git_repo(temp_path, "isolated_repo1");
     let repo2 = create_git_repo(temp_path, "isolated_repo2");
 
-    let events = Arc::new(Mutex::new(Vec::new()));
+    // Canonicalize: macOS resolves /var -> /private/var.
+    let canonical_repo1 = fs::canonicalize(&repo1).expect("canonicalize repo1");
+    let canonical_repo2 = fs::canonicalize(&repo2).expect("canonicalize repo2");
+
+    let events: Arc<Mutex<Vec<DebouncedEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let events_clone = Arc::clone(&events);
 
     let callback = Box::new(move |event: DebouncedEvent| {
-        events_clone.lock().unwrap().push(event.event);
+        events_clone.lock().unwrap().push(event);
     });
 
     let watcher = MultiRepoWatcher::builder()
@@ -143,40 +213,47 @@ fn test_multi_repo_event_isolation() {
         .build()
         .expect("create watcher");
 
-    watcher
-        .register_client(2001, &repo1)
-        .expect("register repo1");
-    watcher
-        .register_client(2002, &repo2)
-        .expect("register repo2");
+    watcher.attach_client(2001, &repo1).expect("register repo1");
+    watcher.attach_client(2002, &repo2).expect("register repo2");
 
     // Arming produces legitimate events for both repos (Linux delivers `git init`
-    // directory events late); drain them. Only repo1 writes may not leak into
-    // repo2. Fixed pause: an OS watch has no observable "armed" signal.
-    thread::sleep(Duration::from_millis(300));
+    // directory events late). They flush ahead of a probe write in each repo, so
+    // drop everything once both probes land. Only repo1 writes may not leak
+    // into repo2.
+    let roots = [canonical_repo1.as_path(), canonical_repo2.as_path()];
+    prime_watch(
+        || {
+            for root in roots {
+                fs::write(root.join(ARM_PROBE), b"probe").expect("write arm probe");
+            }
+        },
+        || {
+            let seen = events.lock().unwrap();
+            roots.iter().all(|root| {
+                seen.iter()
+                    .any(|event| is_probe(event) && event.repo == *root)
+            })
+        },
+    );
     events.lock().unwrap().clear();
 
     create_and_stage_file(&repo1, "file_in_repo1.txt", "content");
     assert!(
         wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
-            !events.lock().unwrap().is_empty()
+            events.lock().unwrap().iter().any(|event| !is_probe(event))
         }),
         "staging a file in repo1 should produce an event"
     );
 
     let captured_events = events.lock().unwrap();
 
-    // Canonicalize: macOS resolves /var -> /private/var.
-    let canonical_repo1 = std::fs::canonicalize(&repo1).unwrap_or_else(|_| repo1.clone());
-    let canonical_repo2 = std::fs::canonicalize(&repo2).unwrap_or_else(|_| repo2.clone());
-
-    for event in captured_events.iter() {
-        let FileEvent::Git { paths } = event else {
+    for event in captured_events.iter().filter(|event| !is_probe(event)) {
+        let FileEvent::Git { paths } = &event.event else {
             continue;
         };
         for path in paths.as_slice().into_iter().flatten() {
-            let canonical_event_path = std::fs::canonicalize(path)
-                .or_else(|_| std::fs::canonicalize(path.parent().unwrap_or(path)))
+            let canonical_event_path = fs::canonicalize(path)
+                .or_else(|_| fs::canonicalize(path.parent().unwrap_or(path)))
                 .unwrap_or_else(|_| path.clone());
 
             assert!(
@@ -209,8 +286,8 @@ fn test_multi_repo_same_relative_path() {
         .build()
         .expect("create watcher");
 
-    watcher.register_client(3001, &src1).expect("register src1");
-    watcher.register_client(3002, &src2).expect("register src2");
+    watcher.attach_client(3001, &src1).expect("register src1");
+    watcher.attach_client(3002, &src2).expect("register src2");
 
     assert_eq!(watcher.watched_repo_count(), 2);
 }
@@ -228,12 +305,8 @@ fn test_multi_repo_unregistration() {
         .build()
         .expect("create watcher");
 
-    watcher
-        .register_client(4001, &repo1)
-        .expect("register repo1");
-    watcher
-        .register_client(4002, &repo2)
-        .expect("register repo2");
+    watcher.attach_client(4001, &repo1).expect("register repo1");
+    watcher.attach_client(4002, &repo2).expect("register repo2");
 
     assert_eq!(watcher.watched_repo_count(), 2);
 
@@ -297,7 +370,7 @@ fn test_multi_repo_scalability() {
     for i in 0..10 {
         let repo = create_git_repo(temp_path, &format!("scalability_repo{i}"));
         watcher
-            .register_client(7000 + i, &repo)
+            .attach_client(7000 + i, &repo)
             .expect("register repo");
         _repos.push(repo);
     }
@@ -326,7 +399,7 @@ fn test_multi_repo_rapid_registration() {
             let repo_clone = repo.clone();
             thread::spawn(move || {
                 watcher_clone
-                    .register_client(8000 + i, &repo_clone)
+                    .attach_client(8000 + i, &repo_clone)
                     .expect("register client");
             })
         })
@@ -358,10 +431,10 @@ fn test_multi_repo_nested_repos() {
         .expect("create watcher");
 
     watcher
-        .register_client(9001, &outer_repo)
+        .attach_client(9001, &outer_repo)
         .expect("register outer");
     watcher
-        .register_client(9002, &nested_repo)
+        .attach_client(9002, &nested_repo)
         .expect("register nested");
 
     assert_eq!(watcher.watched_repo_count(), 2);
@@ -388,10 +461,10 @@ fn test_multi_repo_symlink_handling() {
             .expect("create watcher");
 
         watcher
-            .register_client(10001, &real_repo)
+            .attach_client(10001, &real_repo)
             .expect("register real");
         watcher
-            .register_client(10002, &symlink_path)
+            .attach_client(10002, &symlink_path)
             .expect("register symlink");
 
         // Symlink and real path resolve to one watch.
@@ -431,10 +504,10 @@ fn test_multi_repo_concurrent_events() {
     );
 
     watcher
-        .register_client(11001, &repo1)
+        .attach_client(11001, &repo1)
         .expect("register repo1");
     watcher
-        .register_client(11002, &repo2)
+        .attach_client(11002, &repo2)
         .expect("register repo2");
 
     let handle1 = thread::spawn(move || {
@@ -494,12 +567,12 @@ fn submodule_branch_change_attributes_to_submodule_working_root() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &sub_wd)
+        .attach_client(std::process::id(), &sub_wd)
         .expect("register submodule client");
 
     let canonical_sub = fs::canonicalize(&sub_wd).expect("canonicalize submodule root");
 
-    let_watch_arm();
+    arm_watch(&events, &[&canonical_sub]);
 
     git(&sub_wd, &["checkout", "-b", "other"]);
 
@@ -535,12 +608,12 @@ fn linked_worktree_branch_change_attributes_to_worktree_working_root() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &wt_wd)
+        .attach_client(std::process::id(), &wt_wd)
         .expect("register worktree client");
 
     let canonical_wt = fs::canonicalize(&wt_wd).expect("canonicalize worktree root");
 
-    let_watch_arm();
+    arm_watch(&events, &[&canonical_wt]);
 
     git(&wt_wd, &["checkout", "-b", "other2"]);
 
@@ -562,12 +635,12 @@ fn ordinary_repo_head_change_still_triggers() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register ordinary client");
 
     let canonical_repo = fs::canonicalize(&repo).expect("canonicalize repo root");
 
-    let_watch_arm();
+    arm_watch(&events, &[&canonical_repo]);
 
     git(&repo, &["checkout", "-b", "feature"]);
 
@@ -579,20 +652,7 @@ fn ordinary_repo_head_change_still_triggers() {
 
 /// Run `git rev-parse <rev>` in `dir` and return the resolved object id.
 fn rev_parse(dir: &Path, rev: &str) -> String {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", rev])
-        .current_dir(dir)
-        .output()
-        .expect("git rev-parse");
-    assert!(
-        output.status.success(),
-        "git rev-parse {rev} should succeed in {}",
-        dir.display()
-    );
-    String::from_utf8(output.stdout)
-        .expect("utf-8 object id")
-        .trim()
-        .to_owned()
+    git_stdout(dir, &["rev-parse", rev]).trim().to_owned()
 }
 
 /// Commit the staged index in `dir`.
@@ -681,10 +741,10 @@ fn common_remote_ref_change_outside_worktree_refreshes_linked_worktree() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
-    let_watch_arm();
+    arm_watch(&events, &[&linked]);
 
     fs::write(
         fixture.common.join("refs/remotes/origin/main"),
@@ -712,10 +772,10 @@ fn common_config_upstream_change_outside_worktree_refreshes_linked_worktree() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
-    let_watch_arm();
+    arm_watch(&events, &[&linked]);
 
     // From the main checkout: rewrites the shared `<common>/config`.
     git(
@@ -747,10 +807,10 @@ fn main_checkout_index_write_wakes_zero_linked_worktrees() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
-    drain_fixture_events(&events);
+    arm_watch(&events, &[&linked]);
 
     create_and_stage_file(&fixture.main, "staged.txt", "staged");
 
@@ -804,13 +864,13 @@ fn per_worktree_head_write_wakes_zero_sibling_worktrees() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &first)
+        .attach_client(std::process::id(), &first)
         .expect("register first worktree");
     watcher
-        .register_client(std::process::id() + 1, &second)
+        .attach_client(std::process::id() + 1, &second)
         .expect("register second worktree");
 
-    drain_fixture_events(&events);
+    arm_watch(&events, &[&first, &second]);
 
     // Detach in place: rewriting the same ref is byte-identical and invisible
     // to the poll backend.
@@ -858,15 +918,15 @@ fn common_dir_watch_survives_until_last_dependent_worktree_unregisters() {
     let first_pid = std::process::id();
     let second_pid = first_pid + 1;
     watcher
-        .register_client(first_pid, &first)
+        .attach_client(first_pid, &first)
         .expect("register first worktree");
     watcher
-        .register_client(second_pid, &second)
+        .attach_client(second_pid, &second)
         .expect("register second worktree");
 
     watcher.unregister_client(first_pid);
 
-    let_watch_arm();
+    arm_watch(&events, &[&second]);
 
     fs::write(
         fixture.common.join("refs/remotes/origin/main"),
@@ -902,15 +962,15 @@ fn linked_worktree_keeps_common_coverage_after_main_checkout_unregisters() {
     let main_pid = std::process::id();
     let linked_pid = main_pid + 1;
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
     watcher
-        .register_client(linked_pid, &linked)
+        .attach_client(linked_pid, &linked)
         .expect("register worktree client");
 
     watcher.unregister_client(main_pid);
 
-    let_watch_arm();
+    arm_watch(&events, &[&linked]);
 
     fs::write(
         fixture.common.join("refs/remotes/origin/main"),
@@ -924,26 +984,21 @@ fn linked_worktree_keeps_common_coverage_after_main_checkout_unregisters() {
     );
 }
 
-/// Fixed pause for a new watch to arm; OS watches expose no armed signal.
-fn let_watch_arm() {
-    thread::sleep(Duration::from_millis(150));
-}
-
-/// Let a new watch arm, then discard events arming itself produced.
-fn let_watch_arm_then_drain(events: &RepoEvents) {
-    thread::sleep(Duration::from_millis(300));
-    events.lock().unwrap().clear();
-}
-
-/// Fixed pause for watches to settle after arm/release.
-fn settle() {
-    thread::sleep(Duration::from_millis(500));
-}
-
-/// Settle, then discard events. `FSEvents` may deliver a pre-arm fixture write
-/// (usually `<common>/config`) after arming, which would break zero-wake checks.
-fn drain_fixture_events(events: &RepoEvents) {
-    settle();
+/// [`arm_watch`] for `watch_worktree = false`, where working-tree writes are
+/// ignored: the probe rewrites the shared `<common>/config` from `checkout`
+/// until `root` wakes.
+fn arm_watch_by_config(events: &RepoEvents, checkout: &Path, root: &Path) {
+    let mut generation = 0_u32;
+    prime_watch(
+        || {
+            generation = generation.saturating_add(1);
+            git(
+                checkout,
+                &["config", "gpy.armprobe", &generation.to_string()],
+            );
+        },
+        || wake_count(events, root) > 0,
+    );
     events.lock().unwrap().clear();
 }
 
@@ -965,15 +1020,14 @@ fn nested_repo_keeps_events_after_outer_unregisters() {
     let outer_pid = std::process::id();
     let inner_pid = outer_pid + 1;
     watcher
-        .register_client(outer_pid, &outer)
+        .attach_client(outer_pid, &outer)
         .expect("register outer");
     watcher
-        .register_client(inner_pid, &inner)
+        .attach_client(inner_pid, &inner)
         .expect("register inner");
-    settle();
+    arm_watch(&events, &[&outer, &inner]);
     watcher.unregister_client(outer_pid);
-    settle();
-    events.lock().unwrap().clear();
+    arm_watch(&events, &[&inner]);
 
     fs::write(inner.join("README.md"), b"changed content here\n").expect("edit inner file");
 
@@ -996,15 +1050,14 @@ fn nested_repo_outer_keeps_inner_subtree_after_inner_unregisters() {
     let outer_pid = std::process::id();
     let inner_pid = outer_pid + 1;
     watcher
-        .register_client(outer_pid, &outer)
+        .attach_client(outer_pid, &outer)
         .expect("register outer");
     watcher
-        .register_client(inner_pid, &inner)
+        .attach_client(inner_pid, &inner)
         .expect("register inner");
-    settle();
+    arm_watch(&events, &[&outer, &inner]);
     watcher.unregister_client(inner_pid);
-    settle();
-    events.lock().unwrap().clear();
+    arm_watch(&events, &[&outer]);
 
     fs::write(inner.join("newfile.txt"), b"x\n").expect("create file in inner subtree");
 
@@ -1034,15 +1087,15 @@ fn linked_worktree_registered_first_keeps_admin_events_after_main_unregisters() 
     let linked_pid = std::process::id();
     let main_pid = linked_pid + 1;
     watcher
-        .register_client(linked_pid, &linked)
+        .attach_client(linked_pid, &linked)
         .expect("register worktree client");
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
-    settle();
+    let canonical_main = fs::canonicalize(&fixture.main).expect("canonicalize main checkout");
+    arm_watch(&events, &[&linked, &canonical_main]);
     watcher.unregister_client(main_pid);
-    settle();
-    events.lock().unwrap().clear();
+    arm_watch(&events, &[&linked]);
 
     // Writes `<main>/.git/worktrees/<name>/HEAD`.
     git(&linked, &["symbolic-ref", "HEAD", "refs/heads/other"]);
@@ -1074,9 +1127,9 @@ fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
     let linked_pid = std::process::id();
     let main_pid = linked_pid + 1;
     watcher
-        .register_client(linked_pid, &linked)
+        .attach_client(linked_pid, &linked)
         .expect("register worktree client");
-    settle();
+    arm_watch_by_config(&events, &fixture.main, &linked);
 
     git(
         &fixture.main,
@@ -1089,13 +1142,13 @@ fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
     );
 
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
-    settle();
+    let canonical_main = fs::canonicalize(&fixture.main).expect("canonicalize main checkout");
+    arm_watch_by_config(&events, &fixture.main, &canonical_main);
     watcher.unregister_client(main_pid);
-    // Releasing main's watch rebuilds the FSEvents stream; nothing to poll for.
-    thread::sleep(Duration::from_millis(1500));
-    events.lock().unwrap().clear();
+    // Releasing main's watch rebuilds the FSEvents stream.
+    arm_watch_by_config(&events, &fixture.main, &linked);
 
     // Writes `<common>/config`.
     git(
@@ -1127,10 +1180,10 @@ fn worktree_commit_wakes_only_the_linked_worktree() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
-    let_watch_arm();
+    arm_watch(&events, &[&linked]);
 
     fs::write(linked.join("wt.txt"), b"worktree file").expect("write worktree file");
     git(&linked, &["add", "wt.txt"]);
@@ -1140,7 +1193,7 @@ fn worktree_commit_wakes_only_the_linked_worktree() {
         wait_for_repo(&events, &linked, Duration::from_secs(20)),
         "a commit in the linked worktree must refresh the linked worktree"
     );
-    thread::sleep(Duration::from_secs(3));
+    thread::sleep(ABSENCE_WINDOW);
     assert_eq!(
         wake_count(&events, &canonical_main),
         0,
@@ -1164,13 +1217,13 @@ fn registered_main_checkout_still_wakes_on_its_own_gitdir_write() {
     let (watcher, events) = recording_watcher();
     let main_pid = std::process::id();
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
     watcher
-        .register_client(main_pid + 1, &linked)
+        .attach_client(main_pid + 1, &linked)
         .expect("register worktree client");
 
-    drain_fixture_events(&events);
+    arm_watch(&events, &[&canonical_main, &linked]);
 
     // Direct write: `git add` would also touch the worktree and wake main
     // regardless of `.git` handling.
@@ -1196,8 +1249,7 @@ fn bare_superproject_common_dir_fans_out_without_waking_the_bare_repo() {
     let root = temp.path();
 
     let bare = root.join("bare_super.git");
-    fs::create_dir_all(&bare).expect("create bare dir");
-    git(&bare, &["-c", "init.defaultBranch=main", "init", "--bare"]);
+    git_bare(&bare);
     git(&bare, &["config", "core.fsmonitor", "false"]);
 
     let seed = root.join("seed");
@@ -1225,14 +1277,13 @@ fn bare_superproject_common_dir_fans_out_without_waking_the_bare_repo() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &canonical_wt)
+        .attach_client(std::process::id(), &canonical_wt)
         .expect("register worktree client");
-    let_watch_arm();
+    arm_watch(&events, &[&canonical_wt]);
 
     // Per-checkout state in the unregistered bare repo: must wake nobody.
     fs::write(canonical_bare.join("ORIG_HEAD"), format!("{seed_sha}\n")).expect("write ORIG_HEAD");
-    // Absence: wait past debounce and a poll cycle.
-    thread::sleep(Duration::from_secs(3));
+    thread::sleep(ABSENCE_WINDOW);
     assert_eq!(
         wake_count(&events, &canonical_bare),
         0,
@@ -1318,10 +1369,10 @@ fn ref_only_submodule_checkout_refreshes_unregistered_parent() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.super_root)
+        .attach_client(std::process::id(), &fixture.super_root)
         .expect("register superproject client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&fixture.super_root]);
 
     // Rewrites `<super>/.git/modules/sub/HEAD` only; no working-tree file.
     git(&fixture.sub_dir, &["checkout", &fixture.identical_tree_sha]);
@@ -1341,13 +1392,13 @@ fn submodule_branch_switch_refreshes_both_registered_parent_and_child() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.super_root)
+        .attach_client(std::process::id(), &fixture.super_root)
         .expect("register superproject client");
     watcher
-        .register_client(std::process::id() + 1, &fixture.sub_root)
+        .attach_client(std::process::id() + 1, &fixture.sub_root)
         .expect("register submodule client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&fixture.super_root, &fixture.sub_root]);
 
     git(&fixture.sub_dir, &["checkout", "-b", "other"]);
 
@@ -1371,10 +1422,10 @@ fn submodule_branch_switch_wakes_zero_unregistered_parents() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.sub_root)
+        .attach_client(std::process::id(), &fixture.sub_root)
         .expect("register submodule client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&fixture.sub_root]);
 
     git(&fixture.sub_dir, &["checkout", "-b", "other"]);
 
@@ -1407,13 +1458,13 @@ fn ordinary_nested_repo_metadata_change_wakes_zero_parents() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &outer)
+        .attach_client(std::process::id(), &outer)
         .expect("register outer client");
     watcher
-        .register_client(std::process::id() + 1, &inner)
+        .attach_client(std::process::id() + 1, &inner)
         .expect("register inner client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&canonical_outer, &canonical_inner]);
 
     git(&inner, &["checkout", "-b", "innerbranch"]);
 
@@ -1445,13 +1496,13 @@ fn linked_worktree_admin_write_wakes_zero_parent_repos() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.main)
+        .attach_client(std::process::id(), &fixture.main)
         .expect("register main checkout client");
     watcher
-        .register_client(std::process::id() + 1, &linked)
+        .attach_client(std::process::id() + 1, &linked)
         .expect("register worktree client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&canonical_main, &linked]);
 
     let admin_dir = fixture
         .common
@@ -1509,19 +1560,14 @@ fn rebase_msgnum_progress_is_metadata_only_and_refreshes_repository() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&canonical_repo]);
 
-    let rebase_start_status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "rebase", "-i", "--root"])
+    let rebase_start_status = git_command(&repo)
+        .args(["rebase", "-i", "--root"])
         .env("GIT_SEQUENCE_EDITOR", &editor)
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&repo)
         .status()
         .expect("start interactive rebase, paused at the first break");
     assert!(
@@ -1564,10 +1610,10 @@ fn rebase_operation_state_transitions_refresh_repository() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&canonical_repo]);
 
     let rebase_apply = repo.join(".git").join("rebase-apply");
     fs::create_dir_all(&rebase_apply).expect("create rebase-apply dir");
@@ -1598,10 +1644,10 @@ fn rebase_high_churn_file_wakes_zero_times() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(&events, &[&canonical_repo]);
 
     let rebase_merge = repo.join(".git").join("rebase-merge");
     fs::create_dir_all(&rebase_merge).expect("create rebase-merge dir");
@@ -1647,25 +1693,23 @@ fn submodule_rebase_msgnum_progress_refreshes_both_registered_parent_and_child()
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.super_root)
+        .attach_client(std::process::id(), &fixture.super_root)
         .expect("register superproject client");
     watcher
-        .register_client(std::process::id() + 1, &fixture.sub_root)
+        .attach_client(std::process::id() + 1, &fixture.sub_root)
         .expect("register submodule client");
     watcher
-        .register_client(std::process::id() + 2, &unrelated_root)
+        .attach_client(std::process::id() + 2, &unrelated_root)
         .expect("register unrelated client");
 
-    let_watch_arm_then_drain(&events);
+    arm_watch(
+        &events,
+        &[&fixture.super_root, &fixture.sub_root, &unrelated_root],
+    );
 
-    let rebase_start_status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "rebase", "-i", "--root"])
+    let rebase_start_status = git_command(&fixture.sub_dir)
+        .args(["rebase", "-i", "--root"])
         .env("GIT_SEQUENCE_EDITOR", &editor)
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&fixture.sub_dir)
         .status()
         .expect("start interactive rebase inside the submodule, paused at the first break");
     assert!(
@@ -1751,12 +1795,20 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
     }
     let _locked = UnreadableDir::create(repo.join("locked"));
 
+    // Stays registered throughout: once its probe lands after the unregister,
+    // every event queued for `repo` before it has flushed.
+    let sentinel =
+        fs::canonicalize(create_git_repo(temp.path(), "sentinel")).expect("canonical sentinel");
+
     let (watcher, events) = recording_watcher();
     let pid = std::process::id();
     watcher
-        .register_client(pid, &repo)
+        .attach_client(pid, &repo)
         .expect("register degraded repo");
-    settle();
+    watcher
+        .attach_client(pid + 1, &sentinel)
+        .expect("register sentinel repo");
+    arm_watch(&events, &[&sentinel]);
 
     git(&repo, &["checkout", "-q", "-b", "feature"]);
     assert!(
@@ -1765,18 +1817,17 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
     );
 
     watcher.unregister_client(pid);
-    settle();
-    events.lock().unwrap().clear();
+    arm_watch(&events, &[&sentinel]);
 
     fs::write(repo.join("README.md"), b"after unregister\n").expect("edit root file");
     fs::write(repo.join("dir0").join("x.txt"), b"x\n").expect("create nested file");
-    thread::sleep(Duration::from_secs(3));
+    thread::sleep(ABSENCE_WINDOW);
 
-    let delivered = events.lock().unwrap().clone();
     assert_eq!(
-        delivered,
-        Vec::<PathBuf>::new(),
-        "no watch may outlive the repository's last client"
+        wake_count(&events, &repo),
+        0,
+        "no watch may outlive the repository's last client, got: {:?}",
+        events.lock().unwrap()
     );
 }
 
@@ -1798,20 +1849,19 @@ fn failed_recursive_watch_rollback_keeps_nested_repo_events() {
     let inner_pid = std::process::id();
     let outer_pid = inner_pid + 1;
     watcher
-        .register_client(inner_pid, &inner)
+        .attach_client(inner_pid, &inner)
         .expect("register inner");
     watcher
-        .register_client(outer_pid, &outer)
+        .attach_client(outer_pid, &outer)
         .expect("register degraded outer");
-    settle();
+    arm_watch(&events, &[&inner]);
     watcher.unregister_client(outer_pid);
-    settle();
-    events.lock().unwrap().clear();
+    arm_watch(&events, &[&inner]);
 
     fs::write(outer.join("README.md"), b"after unregister\n").expect("edit outer file");
     fs::write(inner.join("README.md"), b"changed content here\n").expect("edit inner file");
     let inner_heard = wait_for_repo(&events, &inner, Duration::from_secs(20));
-    thread::sleep(Duration::from_secs(3));
+    thread::sleep(ABSENCE_WINDOW);
 
     let delivered = events.lock().unwrap().clone();
     assert!(

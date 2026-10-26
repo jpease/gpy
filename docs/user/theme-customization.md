@@ -31,18 +31,7 @@ gpy config wizard
 
 A full-screen TUI with three pickers — Theme, Palette, Segments — plus a live preview of the resulting prompt that updates as you move the cursor. Nothing is written to disk until you save.
 
-**Keys** (verified against `gpy-agent/src/commands/wizard/keys.rs`):
-
-| Key | Action |
-|---|---|
-| `Tab` | Move to the next section (Theme → Palette → Segments → Theme …) |
-| `Shift+Tab` | Move to the previous section |
-| `Up` / `Down` | Move the cursor within the focused section |
-| `Space` / `Enter` | Toggle or select the highlighted item |
-| `s` | Save the current selection and exit |
-| `q` / `Esc` | Quit — prompts to confirm discarding changes if anything is unsaved |
-
-> `docs/user/cli-reference.md`'s prose for `gpy config wizard` only mentions `Tab`, `Space`/`Enter`, `s`, and `q` — it omits `Shift+Tab` and `Up`/`Down`. Both exist and work; this table reflects the actual key handler.
+`Tab` moves between the three pickers, the arrow keys move the cursor, `Space`/`Enter` selects or toggles, `s` saves and `q` quits. Highlighting the `clock`, `duration`, `language`, `directory` or `git` segment enables keys for its options, and `?` lists every key that applies. The full key map is in the [CLI Reference](cli-reference.md#gpy-config-wizard).
 
 This is the fastest way to try combinations — pick a theme, cycle palettes over it, toggle segments on/off, and watch the preview — before touching any TOML.
 
@@ -117,8 +106,6 @@ If you already have a color scheme from the [tinted-theming](https://github.com/
 gpy palette import <scheme.yaml> [--name <name>] [--force]
 ```
 
-Verified against `gpy-agent/src/commands/palette.rs` and `gpy-agent/src/import/base16/`:
-
 - `<scheme.yaml>` — a base16 or base24 scheme file. GPY's parser accepts both the modern nested layout (`system:`, `name:`, `variant:`, then a `palette:` block of `baseNN: "hex"` entries) and the legacy flat layout (`scheme:`/`name:` plus top-level `baseNN:` keys). `base00`–`base0F` cover base16; base24 adds `base10`–`base17`.
 - `--name <name>` — overrides the palette name. If omitted, GPY uses the scheme's `slug` field when present, else its `name`/`scheme` field (falling back to `imported` if the scheme declares none). The result is lowercased and runs of characters that are not letters or digits become a single `-`; non-ASCII letters are kept (`Rosé Pine` without a slug becomes `rosé-pine`).
 - `--force` — overwrite an existing palette of the same name; without it, the import errors if the destination already exists.
@@ -180,6 +167,16 @@ text_color = "black"
 [segments.directory]
 bg_color = "#1d3557"
 text_color = "#f1faee"
+```
+
+**Change the read-only marker:**
+
+A directory format's `$read_only` shows when the working directory is not writable. It is the theme's `read_only_icon`, or 🔒 when unset; with `ui.show_icons = false` it is `ro`, and a Nerd Font `read_only_icon` gives way to `ro` too.
+
+```toml
+[segments.directory]
+format = "[$path]($style)[ $read_only](red)"
+read_only_icon = "RO"
 ```
 
 **Toggle icon display globally:**

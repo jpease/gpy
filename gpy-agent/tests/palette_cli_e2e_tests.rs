@@ -2,12 +2,10 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(missing_docs)]
 
 mod common;
 
-use common::{CliCommandResult, CliTestEnv};
+use common::cli_harness::{CliCommandResult, CliTestEnv};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -282,7 +280,7 @@ fn import_rejects_a_traversal_name() {
         result.exit_code, 1_i32,
         "traversal name must fail: {result:?}"
     );
-    assert!(result.stderr.contains("Invalid palette name"), "{result:?}");
+    assert!(result.stderr.contains("invalid palette name"), "{result:?}");
     assert!(
         !env.config_dir().join("etc").exists() && !env.root().join("etc").exists(),
         "nothing is written outside the palettes directory"

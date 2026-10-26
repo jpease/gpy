@@ -4,19 +4,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 
-#[path = "support/git_repo.rs"]
-mod git_repo;
+#[path = "support/git.rs"]
+mod git;
+#[path = "support/ipc.rs"]
+mod ipc;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::git::status::load_repository_state;
-use gpy_agent::ipc::server::{EndpointDeps, EndpointHandle};
-use gpy_agent::security::GuardSettings;
 use std::hint::black_box;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use tokio::runtime::Runtime;
 
 /// Read `name` from the environment, falling back to `default` when unset or unparsable.
@@ -41,80 +38,22 @@ fn canary_config() -> Criterion {
         )))
 }
 
-fn build_ipc_server(socket_path: &std::path::Path) -> EndpointHandle {
-    let security_config = GuardSettings {
-        max_connections_per_second: 100_000,
-        max_concurrent_connections: 1000,
-        ..Default::default()
-    };
-
-    EndpointHandle::builder(EndpointDeps {
-        client_registry: Arc::new(gpy_agent::ipc::ClientDirectory::new()),
-        git_cache: Arc::new(gpy_agent::git::cache::GitStatusCache::new()),
-        config_manager: Arc::new(
-            gpy_agent::config::manager::ConfigManager::with_defaults().unwrap(),
-        ),
-        theme_manager: Arc::new(gpy_agent::theme::ThemeManager::new("default").unwrap()),
-        instant_cache: Arc::new(gpy_agent::cache::InstantPromptCache::new().unwrap()),
-        language_cache: gpy_agent::language::DetectionCache::new(),
-    })
-    .socket_path(socket_path.to_path_buf())
-    .security_config(security_config)
-    .build()
-    .unwrap()
-}
-
-fn wait_for_socket(rt: &Runtime, socket_path: &std::path::Path) {
-    rt.block_on(async {
-        while tokio::net::UnixStream::connect(socket_path).await.is_err() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    });
-}
-
-fn setup_ipc_server(rt: &Runtime) -> std::path::PathBuf {
+fn bench_perf_canary(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     let temp_dir = tempfile::Builder::new()
         .prefix("gpy-perf-canary-ipc")
         .tempdir()
-        .unwrap();
+        .expect("tempdir");
     let socket_path = temp_dir.path().join("gpy.sock");
-    let mut server = build_ipc_server(&socket_path);
+    ipc::start_and_wait(&rt, &socket_path);
+    let repo = git::committed_repo(100);
+    let repo_path = repo.path().to_str().expect("repo path to str");
 
-    let socket_path_clone = socket_path.clone();
-    rt.spawn(async move {
-        let _temp_dir = temp_dir;
-        server.start().await.unwrap();
-    });
-
-    wait_for_socket(rt, &socket_path_clone);
-
-    socket_path
-}
-
-fn bench_ipc_roundtrip(c: &mut Criterion, rt: &Runtime, socket_path: &std::path::Path) {
-    c.bench_function("ipc_roundtrip", |b| {
-        b.to_async(rt).iter(|| async {
-            let mut stream = UnixStream::connect(socket_path).await.unwrap();
-            stream.write_all(b"{\"op\":\"ping\"}\n").await.unwrap();
-            let mut buf = [0u8; 1024];
-            let n = stream.read(&mut buf).await.unwrap();
-            assert!(n > 0);
-        });
-    });
-}
-
-fn bench_perf_canary(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let socket_path = setup_ipc_server(&rt);
-    let repo = git_repo::committed_repo(100);
-    let repo_path = repo.path().to_str().unwrap();
-
-    bench_ipc_roundtrip(c, &rt, &socket_path);
-
+    ipc::bench_ipc_roundtrip(c, &rt, &socket_path);
     c.bench_function("git_status_cold", |b| {
         b.iter(|| {
             let result = load_repository_state(repo_path, None, 0, true);
-            black_box(result).unwrap();
+            black_box(result).expect("load repository state");
         });
     });
 }

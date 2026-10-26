@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING)
 
+- Script plugin segments (`entry_type = "script"`): the contract is defined and
+  validated, but no shell executes script segments yet. It is documented in
+  `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
+- `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` now follow one rule
+  in Bash, Zsh and Fish: a flag is off only when set to `0` or `false`.
+  `false` now disables the agent in Fish (it stayed on before), and values
+  other than `0`/`1` (for example `2`) now leave the flag on in Bash and Zsh.
+  An unset `GPY_AGENT_SUPERVISOR_ENABLED` now enables restarts in Bash.
+  The undocumented Bash/Zsh supervisor overrides for the check rate limit
+  and maximum attempts are removed; use
+  `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` and
+  `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS`. The Fish-only
+  `GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS` and
+  `GPY_SUPERVISOR_LONG_BACKOFF_SECONDS` are now documented.
 - Script plugin segments (`entry_type = "script"`): a public, documented
   contract in `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
   typed settings, enforced `min_gpy_version`, published JSON schemas, and
@@ -20,7 +34,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__gpy_segment_<token>_variant_<variant>_bg_color`/`_text_color` so
   variant `open`/`close` cannot overwrite the cap colours.
 
+### Changed
+
+- Numeric tuning variables (`GPY_RECONCILE_INTERVAL_SECS`, the hot-reload poll
+  interval) now ignore surrounding whitespace like the watcher ones, and the
+  language and font lookups find the home directory the way the rest of gpy
+  does: through the passwd database when `HOME` is unset, never from a
+  relative `HOME`.
+- Library API: removed `MultiRepoWatcher::find_git_root` (use `git::find_git_dir_only`),
+  `register_client` and `update_client` (merged as `attach_client`),
+  `RepositoryState`'s `FromStr`, `ThemeManager::list_available_themes` and
+  `default_theme_template`, `PaletteManager::default_palette_template`,
+  `validate_config_key`, `validate_icon`, `get_language_color_from_theme`,
+  and the `ThemeValidationResult`/`PaletteValidationResult` types
+  (`commands::{theme,palette}::validate_*` return `ValidationReport`).
+- Conflicting `--socket` and `GPY_AGENT_SOCKET_PATH` overrides now return an
+  error instead of being silently accepted.
+- Config validation errors name the exact field and the real rule.
+  `gpy config set` reports a non-integer value as `Invalid whole number: <value>`
+  instead of naming a Rust type (`u64 value`). A `git.skip_paths` entry such as
+  `~root/x`, which was accepted but never matched, is now rejected, and
+  `git.skip_paths[i]` / `ui.enabled_segments[i]` errors carry the full dotted
+  path. A malformed `ui.theme` or `ui.palette` in `config.toml` now reads
+  `invalid theme name '<name>': must not contain path separators, '..', or control characters`.
+- A theme now renders the same on every load path. Without its own colours,
+  a git state (`clean_*`, `dirty_*`, `ahead_behind_*`, `conflicts_*`,
+  `untracked_only_*`, `in_progress_*`) takes the segment's `bg_color` and
+  `text_color`, and a language takes `[segments.language]` `bg_color` and
+  `text_color`. Before, a theme with no `[segments.git]` or
+  `[segments.language]` table at all got built-in per-state and per-language
+  colours, and one without `[segments.directory]` got a blue directory
+  background (now black, as with an empty table). The shipped themes set
+  these tables explicitly and look the same as before.
+- `gpy-agent oneshot` falls back to the `default` theme when the configured
+  theme fails to load, as the agent does. Before, it used a bare built-in
+  theme with no segment formats and rendered the git, directory and language
+  segments empty.
+- `config/config.example.toml` is the one config template, shipped in the
+  release archive and installed by `install-dev.fish`. It lists every
+  setting, commented out at its built-in default, so a copy changes nothing
+  and pins no key (before, `config/config.toml` and the archive's example each
+  covered a different subset, with different git icons, and the dev install
+  pinned the keys it listed). `[language.icons]` examples are
+  commented too, so a fresh dev install shows language names until you enable
+  them. The `text` theme no longer sets a Nerd Font duration icon, and
+  `ui.show_icons` is described as also switching git icons and powerline
+  caps.
+
 ### Fixed
+
+- A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME` or `HOME` that is not valid UTF-8 is
+  no longer rewritten with replacement characters, so the config file under it
+  is found, loaded and saved.
+- `gpy status` and the agent's own status query now read the agent's whole
+  reply line; a status report longer than 4 KiB, or one split across reads,
+  no longer fails to parse.
+- `gpy restart` and `gpy doctor` no longer depend on the wording of
+  `gpy-agent` output: restart learns whether an agent was running by pinging
+  it, and doctor pings the agent itself. A failing `gpy start`, `stop` or
+  `restart` now reports `command 'gpy-agent <subcommand>'` with its exit
+  status.
+- Bash and Zsh now fall back to a 100 ms duration threshold, as Fish and the
+  exported theme do, instead of 2000 ms before a theme export runs.
+- Fish hostname and username segments no longer print a `test` error on every
+  prompt when the theme export has not set `show_always`.
+- Fish and Zsh refuse an implausible `id -un` result (leading `-` or `.`,
+  spaces, symbols) when resolving a blank `$HOME`, as Bash does.
+- Fish completion offers theme, palette and segment names only in the
+  argument's own position, as Bash and Zsh do.
+- A client-supplied `virtual_env` is now validated like other paths: control
+  characters, paths over 4096 bytes, and `..` components are rejected.
+- `gpy theme new`, `gpy theme save`, `gpy palette import` and `gpy plugin new`
+  create files exclusively, so a file created between the existence check and
+  the write is reported as already existing instead of being overwritten.
+  `gpy setup --shell fish` now fails when `gpy-dynamic.fish` is missing from
+  the script tree instead of installing broken completions, `gpy setup`
+  warns when it cannot ask about icons on `/dev/tty`, and `gpy doctor`
+  reports config read and agent errors, inspects the segment file or script
+  of every plugin entry type, and no longer flags comments or identifiers
+  such as `node_count` as slow patterns.
 
 - A theme whose plugin segment sections would set the same shell variable
   is now rejected, naming both fields. Segment names and variants both allow
@@ -66,6 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/bin/bash` on macOS. With default shell options the output is the same
   byte for byte; the Zsh escape also no longer garbles text when `ksh_arrays`
   or `glob_subst` is set.
+- With `ui.show_icons = false`, the directory's read-only marker
+  (`$read_only`) is `ro` instead of the 🔒 emoji.
 
 ### Added
 
@@ -87,15 +181,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subcommand`. A test now fails when `docs/user/cli-reference.md` names a
   `gpy` command the CLI does not have, and another when
   `docs/user/configuration-reference.md` and the config key registry disagree.
+- Theme key `[segments.directory] read_only_icon` sets the directory
+  format's `$read_only` marker (default 🔒).
 
 ### Changed
 
+- `gpy plugin list` no longer prints a placeholder `root:` line for the
+  built-in `gpy-core` plugin, which has no directory.
 - `./install-dev.fish` now exits when a gpy outside `$HOME` (for example
   Homebrew's) is on `PATH`, since it would shadow that install and replace
   the Fish files `gpy setup` manages. Pass `--allow-shadow` to install anyway.
 - `./install-dev.fish` no longer removes `conf.d/gpy_init.fish` or warns about
   `~/.config/gpy/core`, and the Fish integration no longer looks for
   `gpy-agent` in `~/.config/gpy/bin`; no installer writes those paths.
+- CLI reports share one layout: underlined headings, details indented three
+  spaces (`theme list`, `palette list`, `plugin list`, `config list`,
+  `doctor`, `init`), and `theme list` and `palette list` print each entry's
+  source. Error messages start lowercase and name invalid theme and palette
+  names the same way. `gpy doctor` no longer says "this is fine", and the
+  rc-file block that `gpy setup` writes is headed `GPY shell integration`
+  (uninstall matches the marker lines, not the heading).
+- The installers and `scripts/uninstall.sh` share one message style: plain
+  `ok:`, `warn:` and `error:` prefixes, no glyphs or colour. `install.sh` now
+  stages and tests a new binary before replacing the old one, as
+  `install-oneline.sh` does, and its failure message names the step that
+  failed instead of always blaming `~/.local/bin` permissions.
+  `install-oneline.sh` also requires `fish/core/flags.fish` in the shell
+  archive. `./install-dev.fish` stops the agent through `gpy-agent` and no
+  longer deletes sockets from fixed paths.
+- `gpy theme validate` and `gpy palette validate` choose their remediation
+  hints from the kind of failure, so rewording an error no longer drops its
+  hint. A palette file with a bad TOML value now reports
+  `TOML parsing failed: ...` for named palettes too.
+- `gpy config wizard`: the `?` help lists the browsing and filter keys plus
+  only the highlighted segment's option keys, and the footers, detail-panel
+  hints, help and `docs/user/cli-reference.md` key map now come from one key
+  table, so they always name the keys the wizard handles. The reference now
+  documents `/`, `?`, `[`/`]`, `v`, `:`, `m`, `b`, `a` and `t`.
+- Fish: the debug helper is one function, `prompt-debug` (`prompt_debug` is
+  gone), the segment-detect trace gated on `GPY_DEBUG_SEGMENTS` is removed
+  (use `GPY_DEBUG=1`), and the agent supervisor lives in `core/supervisor.fish`.
+- `theme export` no longer emits `__gpy_ui_prompt_icon`,
+  `__gpy_ui_root_prompt_icon` or their `_icon_color` variants; no shell read
+  them. `__icon_prompt`, `__icon_root_prompt`, `__prompt_color` and
+  `__root_prompt_color` are unchanged.
 
 ## [0.6.0] - 2026-10-22
 

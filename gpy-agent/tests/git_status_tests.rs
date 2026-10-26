@@ -4,7 +4,6 @@
 
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::types::GitTimeout;
 use gpy_agent::git::{
@@ -13,7 +12,6 @@ use gpy_agent::git::{
 use serial_test::serial;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -74,27 +72,7 @@ fn test_git_status_created_repo() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let init_output = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()
-        .expect("git command should be available for testing");
-
-    assert!(
-        init_output.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&init_output.stderr)
-    );
-
-    let _ = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output();
-
-    let _ = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output();
+    git::git_init(temp_path);
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
     let status = result
@@ -114,45 +92,10 @@ fn test_git_status_with_untracked_files() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let init_output = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()
-        .expect("git command should be available for testing");
+    git::git_init(temp_path);
 
-    assert!(
-        init_output.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&init_output.stderr)
-    );
-
-    assert!(
-        Command::new("git")
-            .args(["config", "user.email", "test@example.com"])
-            .current_dir(temp_path)
-            .status()
-            .expect("configure email")
-            .success()
-    );
-    assert!(
-        Command::new("git")
-            .args(["config", "user.name", "Test User"])
-            .current_dir(temp_path)
-            .status()
-            .expect("configure name")
-            .success()
-    );
-    assert!(
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(temp_path)
-            .status()
-            .expect("disable gpg signing")
-            .success()
-    );
-
-    let _ = fs::write(temp_path.join("untracked1.txt"), "content");
-    let _ = fs::write(temp_path.join("untracked2.txt"), "content");
+    fs::write(temp_path.join("untracked1.txt"), "content").expect("write untracked1.txt");
+    fs::write(temp_path.join("untracked2.txt"), "content").expect("write untracked2.txt");
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
     let status = result
@@ -169,32 +112,10 @@ fn test_git_status_with_staged_files() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let init_output = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()
-        .expect("git command should be available for testing");
+    git::git_init(temp_path);
 
-    assert!(
-        init_output.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&init_output.stderr)
-    );
-
-    let _ = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output();
-    let _ = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output();
-
-    let _ = fs::write(temp_path.join("staged.txt"), "content");
-    let _ = Command::new("git")
-        .args(["add", "staged.txt"])
-        .current_dir(temp_path)
-        .output();
+    fs::write(temp_path.join("staged.txt"), "content").expect("write staged.txt");
+    git::git(temp_path, &["add", "staged.txt"]);
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
     let status = result
@@ -274,54 +195,13 @@ fn test_non_utf8_staged_paths_are_counted() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    assert!(
-        Command::new("git")
-            .arg("init")
-            .current_dir(temp_path)
-            .status()
-            .expect("git init should succeed")
-            .success()
-    );
-
-    assert!(
-        Command::new("git")
-            .args(["config", "user.email", "gpy@example.com"])
-            .current_dir(temp_path)
-            .status()
-            .expect("git config email should succeed")
-            .success()
-    );
-
-    assert!(
-        Command::new("git")
-            .args(["config", "user.name", "GPY Test"])
-            .current_dir(temp_path)
-            .status()
-            .expect("git config name should succeed")
-            .success()
-    );
-
-    assert!(
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(temp_path)
-            .status()
-            .expect("disable gpg signing")
-            .success()
-    );
+    git::git_init(temp_path);
 
     let filename = std::ffi::OsStr::from_bytes(b"non_utf8_\xFF");
     let file_path = temp_path.join(filename);
     fs::write(&file_path, b"content").expect("write file");
 
-    assert!(
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(temp_path)
-            .status()
-            .expect("git add should succeed")
-            .success()
-    );
+    git::git(temp_path, &["add", "."]);
 
     let complete = NativeGitBackend::get_complete_status(
         temp_path,
@@ -341,34 +221,27 @@ fn test_merge_conflicts_are_counted() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let repo_path = temp_dir.path();
 
-    let run = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .current_dir(repo_path)
-            .status()
-            .expect("git command should execute")
-    };
+    let run = |args: &[&str]| git::git(repo_path, args);
 
-    assert!(run(&["init"]).success());
-    assert!(run(&["config", "user.email", "gpy@example.com"]).success());
-    assert!(run(&["config", "user.name", "GPY Test"]).success());
-    assert!(run(&["config", "commit.gpgsign", "false"]).success());
+    git::git_init(repo_path);
 
     fs::write(repo_path.join("file.txt"), b"base").unwrap();
-    assert!(run(&["add", "."]).success());
-    assert!(run(&["commit", "--no-gpg-sign", "-m", "base"]).success());
-    assert!(run(&["branch", "-M", "main"]).success());
+    run(&["add", "."]);
+    run(&["commit", "-m", "base"]);
 
-    assert!(run(&["checkout", "-b", "feature"]).success());
+    run(&["checkout", "-b", "feature"]);
     fs::write(repo_path.join("file.txt"), b"feature change").unwrap();
-    assert!(run(&["commit", "--no-gpg-sign", "-am", "feature work"]).success());
+    run(&["commit", "-am", "feature work"]);
 
-    assert!(run(&["checkout", "main"]).success());
+    run(&["checkout", "main"]);
     fs::write(repo_path.join("file.txt"), b"main change").unwrap();
-    assert!(run(&["commit", "--no-gpg-sign", "-am", "main work"]).success());
+    run(&["commit", "-am", "main work"]);
 
-    // Merge will result in conflict; ignore non-success outcome.
-    let _ = run(&["merge", "feature"]);
+    let merge = git::git_output(repo_path, &["merge", "feature"]);
+    assert!(
+        !merge.status.success(),
+        "merging `feature` should stop on the conflict"
+    );
 
     let complete = NativeGitBackend::get_complete_status(
         repo_path,
@@ -392,47 +265,13 @@ fn test_git_status_ignores_gitignored_files() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let init_output = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()
-        .expect("git command should be available for testing");
+    git::git_init(temp_path);
 
-    assert!(
-        init_output.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&init_output.stderr)
-    );
+    fs::write(temp_path.join(".gitignore"), ".DS_Store\n").expect("write .gitignore");
+    git::git(temp_path, &["add", ".gitignore"]);
+    git::git(temp_path, &["commit", "-m", "Add gitignore"]);
 
-    let _ = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output();
-    let _ = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output();
-
-    let _ = fs::write(temp_path.join(".gitignore"), ".DS_Store\n");
-
-    assert!(
-        Command::new("git")
-            .args(["add", ".gitignore"])
-            .current_dir(temp_path)
-            .status()
-            .expect("git add")
-            .success()
-    );
-    assert!(
-        Command::new("git")
-            .args(["commit", "--no-gpg-sign", "-m", "Add gitignore"])
-            .current_dir(temp_path)
-            .status()
-            .expect("git commit")
-            .success()
-    );
-
-    let _ = fs::write(temp_path.join(".DS_Store"), "macOS metadata");
+    fs::write(temp_path.join(".DS_Store"), "macOS metadata").expect("write .DS_Store");
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
     let status = result
@@ -455,49 +294,15 @@ fn test_git_status_counts_non_ignored_files_with_ignored_present() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let init_output = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()
-        .expect("git command should be available for testing");
+    git::git_init(temp_path);
 
-    assert!(
-        init_output.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&init_output.stderr)
-    );
+    fs::write(temp_path.join(".gitignore"), ".DS_Store\n").expect("write .gitignore");
+    git::git(temp_path, &["add", ".gitignore"]);
+    git::git(temp_path, &["commit", "-m", "Add gitignore"]);
 
-    let _ = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output();
-    let _ = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output();
+    fs::write(temp_path.join(".DS_Store"), "macOS metadata").expect("write .DS_Store");
 
-    let _ = fs::write(temp_path.join(".gitignore"), ".DS_Store\n");
-
-    assert!(
-        Command::new("git")
-            .args(["add", ".gitignore"])
-            .current_dir(temp_path)
-            .status()
-            .expect("git add")
-            .success()
-    );
-    assert!(
-        Command::new("git")
-            .args(["commit", "--no-gpg-sign", "-m", "Add gitignore"])
-            .current_dir(temp_path)
-            .status()
-            .expect("git commit")
-            .success()
-    );
-
-    let _ = fs::write(temp_path.join(".DS_Store"), "macOS metadata");
-
-    let _ = fs::write(temp_path.join("foo.txt"), "real content");
+    fs::write(temp_path.join("foo.txt"), "real content").expect("write foo.txt");
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
     let status = result
@@ -519,18 +324,9 @@ fn test_git_status_staged_deletion() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let run = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .current_dir(temp_path)
-            .output()
-            .expect("git command failed")
-    };
+    let run = |args: &[&str]| git::git(temp_path, args);
 
-    run(&["init", "--initial-branch=main"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "Test User"]);
-    run(&["config", "commit.gpgsign", "false"]);
+    git::git_init(temp_path);
 
     fs::write(temp_path.join("file.txt"), "content").unwrap();
     run(&["add", "file.txt"]);
@@ -557,18 +353,9 @@ fn test_git_status_rebase_state_precedence() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let run = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .current_dir(temp_path)
-            .output()
-            .expect("git command failed")
-    };
+    let run = |args: &[&str]| git::git(temp_path, args);
 
-    run(&["init", "--initial-branch=main"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "Test User"]);
-    run(&["config", "commit.gpgsign", "false"]);
+    git::git_init(temp_path);
 
     fs::write(temp_path.join("file.txt"), "base").unwrap();
     run(&["add", "file.txt"]);
@@ -585,7 +372,11 @@ fn test_git_status_rebase_state_precedence() {
     run(&["commit", "-m", "main"]);
 
     run(&["checkout", "feature"]);
-    let _rebase_output = run(&["rebase", "main"]);
+    let rebase = git::git_output(temp_path, &["rebase", "main"]);
+    assert!(
+        !rebase.status.success(),
+        "rebasing `feature` onto `main` should stop on the conflict"
+    );
 
     fs::write(temp_path.join("file.txt"), "resolved").unwrap();
     run(&["add", "file.txt"]);
@@ -611,30 +402,21 @@ fn test_ahead_only_commits() {
     let temp_path = temp_dir.path();
 
     let bare_repo = temp_dir.path().join("bare.git");
-    fs::create_dir_all(&bare_repo).unwrap();
-    Command::new("git")
-        .args(["init", "--bare", "--initial-branch=main"])
-        .current_dir(&bare_repo)
-        .output()
-        .expect("git init --bare failed");
+    git::git_bare(&bare_repo);
 
     let work_repo = temp_dir.path().join("work");
-    Command::new("git")
-        .args([
+    git::git(
+        temp_path,
+        &[
             "clone",
+            "-q",
             bare_repo.to_str().unwrap(),
             work_repo.to_str().unwrap(),
-        ])
-        .current_dir(temp_path)
-        .output()
-        .expect("git clone failed");
+        ],
+    );
 
     let work_path = work_repo.to_str().unwrap();
     let repo_path = Path::new(work_path);
-
-    git::git(repo_path, &["config", "user.email", "test@example.com"]);
-    git::git(repo_path, &["config", "user.name", "Test User"]);
-    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
     git::git(repo_path, &["add", "file1.txt"]);
@@ -665,8 +447,7 @@ fn test_ahead_only_commits() {
 fn test_ahead_with_non_origin_remote() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let bare_repo = temp_dir.path().join("bare.git");
-    fs::create_dir_all(&bare_repo).unwrap();
-    git::git(&bare_repo, &["init", "--bare", "--initial-branch=main"]);
+    git::git_bare(&bare_repo);
 
     let work_repo = temp_dir.path().join("work");
     let bare_repo_str = bare_repo.to_str().unwrap().to_owned();
@@ -675,9 +456,6 @@ fn test_ahead_with_non_origin_remote() {
     git::git(temp_dir.path(), &clone_args);
 
     let repo_path = work_repo.as_path();
-    git::git(repo_path, &["config", "user.email", "test@example.com"]);
-    git::git(repo_path, &["config", "user.name", "Test User"]);
-    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Rename the default remote so the branch tracks a non-origin remote.
     git::git(repo_path, &["remote", "rename", "origin", "upstream"]);
@@ -709,8 +487,7 @@ fn test_ahead_with_non_origin_remote() {
 fn test_ahead_with_packed_refs_only() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let bare_repo = temp_dir.path().join("bare.git");
-    fs::create_dir_all(&bare_repo).unwrap();
-    git::git(&bare_repo, &["init", "--bare", "--initial-branch=main"]);
+    git::git_bare(&bare_repo);
 
     let work_repo = temp_dir.path().join("work");
     let bare_repo_str = bare_repo.to_str().unwrap().to_owned();
@@ -719,9 +496,6 @@ fn test_ahead_with_packed_refs_only() {
     git::git(temp_dir.path(), &clone_args);
 
     let repo_path = work_repo.as_path();
-    git::git(repo_path, &["config", "user.email", "test@example.com"]);
-    git::git(repo_path, &["config", "user.name", "Test User"]);
-    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
     git::git(repo_path, &["add", "file1.txt"]);
@@ -756,30 +530,21 @@ fn test_behind_only_commits() {
     let temp_path = temp_dir.path();
 
     let bare_repo = temp_dir.path().join("bare.git");
-    fs::create_dir_all(&bare_repo).unwrap();
-    Command::new("git")
-        .args(["init", "--bare", "--initial-branch=main"])
-        .current_dir(&bare_repo)
-        .output()
-        .expect("git init --bare failed");
+    git::git_bare(&bare_repo);
 
     let work_repo = temp_dir.path().join("work");
-    Command::new("git")
-        .args([
+    git::git(
+        temp_path,
+        &[
             "clone",
+            "-q",
             bare_repo.to_str().unwrap(),
             work_repo.to_str().unwrap(),
-        ])
-        .current_dir(temp_path)
-        .output()
-        .expect("git clone failed");
+        ],
+    );
 
     let work_path = work_repo.to_str().unwrap();
     let repo_path = Path::new(work_path);
-
-    git::git(repo_path, &["config", "user.email", "test@example.com"]);
-    git::git(repo_path, &["config", "user.name", "Test User"]);
-    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
     git::git(repo_path, &["add", "file1.txt"]);
@@ -788,24 +553,17 @@ fn test_behind_only_commits() {
 
     // Push new commits from a second clone to simulate remote progress.
     let other_repo = temp_dir.path().join("other");
-    Command::new("git")
-        .args([
+    git::git(
+        repo_path,
+        &[
             "clone",
+            "-q",
             bare_repo.to_str().unwrap(),
             other_repo.to_str().unwrap(),
-        ])
-        .current_dir(work_path)
-        .output()
-        .expect("git clone failed");
+        ],
+    );
 
     let other_repo_path = other_repo.as_path();
-
-    git::git(
-        other_repo_path,
-        &["config", "user.email", "test@example.com"],
-    );
-    git::git(other_repo_path, &["config", "user.name", "Test User"]);
-    git::git(other_repo_path, &["config", "commit.gpgsign", "false"]);
 
     for i in 1_u32..=2 {
         fs::write(
@@ -839,30 +597,21 @@ fn test_ahead_and_behind_commits() {
     let temp_path = temp_dir.path();
 
     let bare_repo = temp_dir.path().join("bare.git");
-    fs::create_dir_all(&bare_repo).unwrap();
-    Command::new("git")
-        .args(["init", "--bare", "--initial-branch=main"])
-        .current_dir(&bare_repo)
-        .output()
-        .expect("git init --bare failed");
+    git::git_bare(&bare_repo);
 
     let work_repo = temp_dir.path().join("work");
-    Command::new("git")
-        .args([
+    git::git(
+        temp_path,
+        &[
             "clone",
+            "-q",
             bare_repo.to_str().unwrap(),
             work_repo.to_str().unwrap(),
-        ])
-        .current_dir(temp_path)
-        .output()
-        .expect("git clone failed");
+        ],
+    );
 
     let work_path = work_repo.to_str().unwrap();
     let repo_path = Path::new(work_path);
-
-    git::git(repo_path, &["config", "user.email", "test@example.com"]);
-    git::git(repo_path, &["config", "user.name", "Test User"]);
-    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     fs::write(repo_path.join("base.txt"), "base").unwrap();
     git::git(repo_path, &["add", "base.txt"]);
@@ -880,24 +629,17 @@ fn test_ahead_and_behind_commits() {
     }
 
     let other_repo = temp_dir.path().join("other");
-    Command::new("git")
-        .args([
+    git::git(
+        repo_path,
+        &[
             "clone",
+            "-q",
             bare_repo.to_str().unwrap(),
             other_repo.to_str().unwrap(),
-        ])
-        .current_dir(work_path)
-        .output()
-        .expect("git clone failed");
+        ],
+    );
 
     let other_repo_path = other_repo.as_path();
-
-    git::git(
-        other_repo_path,
-        &["config", "user.email", "test@example.com"],
-    );
-    git::git(other_repo_path, &["config", "user.name", "Test User"]);
-    git::git(other_repo_path, &["config", "commit.gpgsign", "false"]);
 
     for i in 1_u32..=3 {
         fs::write(
@@ -930,18 +672,9 @@ fn test_no_upstream_configured() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let run = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .current_dir(temp_path)
-            .output()
-            .expect("git command failed")
-    };
+    let run = |args: &[&str]| git::git(temp_path, args);
 
-    run(&["init"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "Test User"]);
-    run(&["config", "commit.gpgsign", "false"]);
+    git::git_init(temp_path);
 
     fs::write(temp_path.join("file.txt"), "content").unwrap();
     run(&["add", "file.txt"]);
@@ -961,10 +694,7 @@ fn test_git_status_respects_gitignore() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    git::git(temp_path, &["init"]);
-    git::git(temp_path, &["config", "user.email", "test@example.com"]);
-    git::git(temp_path, &["config", "user.name", "Test User"]);
-    git::git(temp_path, &["config", "commit.gpgsign", "false"]);
+    git::git_init(temp_path);
 
     fs::write(temp_path.join("README.md"), "# Test Repo").unwrap();
     git::git(temp_path, &["add", "README.md"]);
@@ -979,12 +709,7 @@ fn test_git_status_respects_gitignore() {
     fs::create_dir_all(temp_path.join("build")).unwrap();
     fs::write(temp_path.join("build/output.bin"), "binary").unwrap();
 
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(temp_path)
-        .output()
-        .expect("git status should run");
-    let git_output = String::from_utf8_lossy(&output.stdout);
+    let git_output = git::git_stdout(temp_path, &["status", "--porcelain"]);
     assert!(
         git_output.trim().is_empty(),
         "git status should report clean, but got: {git_output}"
@@ -1040,10 +765,7 @@ fn test_git_status_staged_rename_with_spaces_keys_by_destination() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    git::git(temp_path, &["init"]);
-    git::git(temp_path, &["config", "user.email", "test@example.com"]);
-    git::git(temp_path, &["config", "user.name", "Test User"]);
-    git::git(temp_path, &["config", "commit.gpgsign", "false"]);
+    git::git_init(temp_path);
 
     fs::write(temp_path.join("old name.txt"), "content").expect("write source file");
     git::git(temp_path, &["add", "old name.txt"]);

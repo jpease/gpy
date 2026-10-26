@@ -1,11 +1,44 @@
 //! Git command execution and status detection against fixtures.
 
-#![allow(clippy::missing_panics_doc)]
+#[path = "common/git.rs"]
+mod git;
 
-mod fixtures;
-
-use fixtures::TestRepo;
+use git::{TestRepo, git_stdout};
 use gpy_agent::git::status::load_repository_state;
+
+#[test]
+fn test_repo_fixture_is_an_initialized_repository() {
+    let repo = TestRepo::new();
+    assert!(repo.path().join(".git").is_dir());
+    assert_eq!(
+        git_stdout(repo.path(), &["symbolic-ref", "--short", "HEAD"]).trim(),
+        "main"
+    );
+}
+
+#[test]
+fn test_repo_fixture_with_initial_commit() {
+    let repo = TestRepo::new().with_initial_commit();
+    assert!(repo.path().join("README.md").exists());
+    let log = git_stdout(repo.path(), &["log", "--oneline"]);
+    assert!(log.contains("Initial commit"));
+}
+
+#[test]
+fn test_repo_fixture_with_untracked_file() {
+    let repo = TestRepo::new().with_initial_commit().with_untracked_file();
+    let status = git_stdout(repo.path(), &["status", "--porcelain"]);
+    assert!(status.contains("?? untracked.txt"));
+}
+
+#[test]
+fn test_repo_fixture_with_staged_file() {
+    let repo = TestRepo::new()
+        .with_initial_commit()
+        .with_staged_file("new.txt", "content");
+    let status = git_stdout(repo.path(), &["status", "--porcelain"]);
+    assert!(status.contains("A  new.txt"));
+}
 
 #[test]
 fn test_load_repository_state_with_clean_repo() {

@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::config::types::{DirectoryDisplay, LanguageDisplay};
 use crate::palette::manager::PaletteManager;
+use crate::plugin::BuiltinSegment;
 use crate::theme::{ThemeConfig, ThemeManager};
 use std::collections::BTreeSet;
 
@@ -33,6 +34,40 @@ impl Section {
     }
 }
 
+/// An edit to one builtin segment's option, made while that segment is
+/// highlighted; `language`/`directory` options live in `config.toml`, the
+/// rest in the active theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SegmentEdit {
+    PrevDirectoryDisplay,
+    NextDirectoryDisplay,
+    ToggleLanguageDisplay,
+    ToggleLanguageShowVersions,
+    ToggleClockTimeFormat,
+    ToggleClockShowSeconds,
+    ToggleDurationShowMilliseconds,
+    ToggleGitShowBranch,
+    ToggleGitShowAheadBehind,
+    ToggleGitShowStash,
+}
+
+impl SegmentEdit {
+    /// The segment this edit belongs to.
+    pub(crate) const fn segment(self) -> BuiltinSegment {
+        match self {
+            Self::PrevDirectoryDisplay | Self::NextDirectoryDisplay => BuiltinSegment::Directory,
+            Self::ToggleLanguageDisplay | Self::ToggleLanguageShowVersions => {
+                BuiltinSegment::Language
+            }
+            Self::ToggleClockTimeFormat | Self::ToggleClockShowSeconds => BuiltinSegment::Clock,
+            Self::ToggleDurationShowMilliseconds => BuiltinSegment::Duration,
+            Self::ToggleGitShowBranch
+            | Self::ToggleGitShowAheadBehind
+            | Self::ToggleGitShowStash => BuiltinSegment::Git,
+        }
+    }
+}
+
 pub struct WizardState {
     /// Startup config, never mutated: save base and `dirty()` baseline.
     initial_config: Config,
@@ -44,11 +79,11 @@ pub struct WizardState {
     selected_theme: String,
     selected_palette: String,
     selected_segments: BTreeSet<String>,
-    /// `ui.directory.display`; cycled with `[`/`]` on the "directory" segment.
+    /// `ui.directory.display`.
     selected_directory_display: DirectoryDisplay,
-    /// `language.display`; cycled with `[`/`]` on the "language" segment.
+    /// `language.display`.
     selected_language_display: LanguageDisplay,
-    /// `language.show_versions`; toggled with `v` on the "language" segment.
+    /// `language.show_versions`.
     selected_language_show_versions: bool,
 
     focus: Section,
@@ -172,15 +207,15 @@ impl WizardState {
         self.initial_config.ui.directory.display
     }
 
-    /// Builtin segment under the Segments cursor, if Segments has focus.
-    /// Every per-segment picker guards on this.
-    pub(crate) fn focused_builtin(&self) -> Option<crate::plugin::BuiltinSegment> {
+    /// Builtin segment under the Segments cursor, if Segments has focus; the
+    /// only segment whose [`SegmentEdit`]s the keys apply.
+    pub(crate) fn focused_builtin(&self) -> Option<BuiltinSegment> {
         if self.focus != Section::Segments {
             return None;
         }
         self.available_segments
             .get(self.segment_cursor)
-            .and_then(|name| crate::plugin::BuiltinSegment::try_from(name.as_str()).ok())
+            .and_then(|name| BuiltinSegment::try_from(name.as_str()).ok())
     }
 
     pub(crate) const fn language_display(&self) -> LanguageDisplay {
@@ -199,68 +234,9 @@ impl WizardState {
         self.initial_config.language.show_versions
     }
 
-    /// Pending clock time format, else `base`'s; unset means `"12"`.
-    pub(crate) fn clock_time_format<'a>(&'a self, base: &'a ThemeConfig) -> &'a str {
-        self.pending_theme
-            .as_ref()
-            .unwrap_or(base)
-            .segments
-            .clock
-            .time_format
-            .as_deref()
-            .unwrap_or("12")
-    }
-
-    /// Pending show-seconds, else `base`'s; unset means `false`.
-    pub(crate) fn clock_show_seconds(&self, base: &ThemeConfig) -> bool {
-        self.pending_theme
-            .as_ref()
-            .unwrap_or(base)
-            .segments
-            .clock
-            .show_seconds
-            .unwrap_or(false)
-    }
-
-    /// Pending show-milliseconds, else `base`'s.
-    pub(crate) fn duration_show_milliseconds(&self, base: &ThemeConfig) -> bool {
-        self.pending_theme
-            .as_ref()
-            .unwrap_or(base)
-            .segments
-            .duration
-            .show_milliseconds
-    }
-
-    /// Pending git show-branch, else `base`'s; unset means `true`.
-    pub(crate) fn git_show_branch(&self, base: &ThemeConfig) -> bool {
-        self.pending_theme
-            .as_ref()
-            .unwrap_or(base)
-            .segments
-            .git
-            .show_branch
-            .unwrap_or(true)
-    }
-
-    pub(crate) fn git_show_ahead_behind(&self, base: &ThemeConfig) -> bool {
-        self.pending_theme
-            .as_ref()
-            .unwrap_or(base)
-            .segments
-            .git
-            .show_ahead_behind
-            .unwrap_or(true)
-    }
-
-    pub(crate) fn git_show_stash(&self, base: &ThemeConfig) -> bool {
-        self.pending_theme
-            .as_ref()
-            .unwrap_or(base)
-            .segments
-            .git
-            .show_stash
-            .unwrap_or(true)
+    /// The active theme for reads: pending edits, else `base`.
+    pub(crate) fn active_theme<'a>(&'a self, base: &'a ThemeConfig) -> &'a ThemeConfig {
+        self.pending_theme.as_ref().unwrap_or(base)
     }
 
     pub(crate) const fn focus(&self) -> Section {
@@ -338,94 +314,55 @@ impl WizardState {
         }
     }
 
-    /// Cycle directory display; no-op unless "directory" is focused.
-    pub(crate) fn cycle_directory_display(&mut self, forward: bool) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Directory) {
-            return;
+    /// Apply `edit` whatever is focused; theme edits accumulate in the pending
+    /// theme, seeded from `base`.
+    pub(crate) fn apply_edit(&mut self, edit: SegmentEdit, base: &ThemeConfig) {
+        match edit {
+            SegmentEdit::PrevDirectoryDisplay => {
+                self.selected_directory_display =
+                    prev_directory_display(self.selected_directory_display);
+            }
+            SegmentEdit::NextDirectoryDisplay => {
+                self.selected_directory_display =
+                    next_directory_display(self.selected_directory_display);
+            }
+            SegmentEdit::ToggleLanguageDisplay => {
+                self.selected_language_display =
+                    toggled_language_display(self.selected_language_display);
+            }
+            SegmentEdit::ToggleLanguageShowVersions => {
+                self.selected_language_show_versions = !self.selected_language_show_versions;
+            }
+            SegmentEdit::ToggleClockTimeFormat => self.patch_active_theme(base, |theme| {
+                let clock = &mut theme.segments.clock;
+                let next = if clock.time_format() == "24" {
+                    "12"
+                } else {
+                    "24"
+                };
+                clock.time_format = Some(next.to_owned());
+            }),
+            SegmentEdit::ToggleClockShowSeconds => self.patch_active_theme(base, |theme| {
+                let clock = &mut theme.segments.clock;
+                clock.show_seconds = Some(!clock.show_seconds());
+            }),
+            SegmentEdit::ToggleDurationShowMilliseconds => self.patch_active_theme(base, |theme| {
+                let duration = &mut theme.segments.duration;
+                duration.show_milliseconds = !duration.show_milliseconds;
+            }),
+            SegmentEdit::ToggleGitShowBranch => self.patch_active_theme(base, |theme| {
+                let git = &mut theme.segments.git;
+                git.show_branch = Some(!git.show_branch());
+            }),
+            SegmentEdit::ToggleGitShowAheadBehind => self.patch_active_theme(base, |theme| {
+                let git = &mut theme.segments.git;
+                git.show_ahead_behind = Some(!git.show_ahead_behind());
+            }),
+            SegmentEdit::ToggleGitShowStash => self.patch_active_theme(base, |theme| {
+                let git = &mut theme.segments.git;
+                git.show_stash = Some(!git.show_stash());
+            }),
         }
-        self.selected_directory_display = if forward {
-            next_directory_display(self.selected_directory_display)
-        } else {
-            prev_directory_display(self.selected_directory_display)
-        };
-    }
-
-    /// Toggle language icon/text; no-op unless "language" is focused.
-    pub(crate) fn cycle_language_display(&mut self, forward: bool) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Language) {
-            return;
-        }
-        self.selected_language_display = if forward {
-            next_language_display(self.selected_language_display)
-        } else {
-            prev_language_display(self.selected_language_display)
-        };
-    }
-
-    /// No-op unless "language" is focused.
-    pub(crate) fn toggle_language_show_versions(&mut self) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Language) {
-            return;
-        }
-        self.selected_language_show_versions = !self.selected_language_show_versions;
-    }
-
-    fn patch_focused_segment_theme(
-        &mut self,
-        segment: crate::plugin::BuiltinSegment,
-        base: &ThemeConfig,
-        patch: impl FnOnce(&mut ThemeConfig),
-    ) {
-        if self.focused_builtin() == Some(segment) {
-            self.patch_active_theme(base, patch);
-        }
-    }
-
-    pub(crate) fn cycle_clock_time_format(&mut self, base: &ThemeConfig) {
-        let next = if self.clock_time_format(base) == "24" {
-            "12"
-        } else {
-            "24"
-        };
-        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Clock, base, |theme| {
-            theme.segments.clock.time_format = Some(next.to_owned());
-        });
-    }
-
-    pub(crate) fn toggle_clock_show_seconds(&mut self, base: &ThemeConfig) {
-        let next = !self.clock_show_seconds(base);
-        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Clock, base, |theme| {
-            theme.segments.clock.show_seconds = Some(next);
-        });
-    }
-
-    /// Toggle `2.500s` vs `2s` duration precision.
-    pub(crate) fn toggle_duration_show_milliseconds(&mut self, base: &ThemeConfig) {
-        let next = !self.duration_show_milliseconds(base);
-        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Duration, base, |theme| {
-            theme.segments.duration.show_milliseconds = next;
-        });
-    }
-
-    pub(crate) fn toggle_git_show_branch(&mut self, base: &ThemeConfig) {
-        let next = !self.git_show_branch(base);
-        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Git, base, |theme| {
-            theme.segments.git.show_branch = Some(next);
-        });
-    }
-
-    pub(crate) fn toggle_git_show_ahead_behind(&mut self, base: &ThemeConfig) {
-        let next = !self.git_show_ahead_behind(base);
-        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Git, base, |theme| {
-            theme.segments.git.show_ahead_behind = Some(next);
-        });
-    }
-
-    pub(crate) fn toggle_git_show_stash(&mut self, base: &ThemeConfig) {
-        let next = !self.git_show_stash(base);
-        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Git, base, |theme| {
-            theme.segments.git.show_stash = Some(next);
-        });
     }
 
     pub(crate) const fn next_section(&mut self) {
@@ -550,11 +487,20 @@ impl WizardState {
             || self.pending_theme.is_some()
     }
 
+    /// [`apply_to`](Self::apply_to) onto a config it was applied to before:
+    /// the startup segment order is restored first, so a segment toggled off
+    /// and back on keeps its place.
+    pub(crate) fn reapply_to(&self, config: &mut Config) {
+        config
+            .ui
+            .enabled_segments
+            .clone_from(&self.initial_config.ui.enabled_segments);
+        self.apply_to(config);
+    }
+
     /// Apply the selection onto `config`, editing the segment list in place
     /// like `gpy enable`/`gpy disable`.
     pub(crate) fn apply_to(&self, config: &mut Config) {
-        use crate::plugin::BuiltinSegment;
-
         if let Some(theme) = crate::config::types::ThemeName::new(self.selected_theme.clone()) {
             config.ui.theme = theme;
         }
@@ -605,15 +551,11 @@ const fn prev_directory_display(current: DirectoryDisplay) -> DirectoryDisplay {
     }
 }
 
-const fn next_language_display(current: LanguageDisplay) -> LanguageDisplay {
+const fn toggled_language_display(current: LanguageDisplay) -> LanguageDisplay {
     match current {
         LanguageDisplay::Icon => LanguageDisplay::Text,
         LanguageDisplay::Text => LanguageDisplay::Icon,
     }
-}
-
-const fn prev_language_display(current: LanguageDisplay) -> LanguageDisplay {
-    next_language_display(current)
 }
 
 /// Starting segment set, using the same rule as the prompt export.

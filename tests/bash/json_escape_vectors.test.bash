@@ -2,7 +2,7 @@
 # tests/bash/json_escape_vectors.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# __gpy_escape_json must escape control chars like Fish does, per the shared
+# __gpy_escape_json_into must escape control chars like Fish does, per the shared
 # tests/fixtures/json_escape_vectors.tsv.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -31,7 +31,8 @@ while IFS=$'\t' read -r input_col expected_col; do
 
     CASE_COUNT=$((CASE_COUNT + 1))
     real_input="$(unescape_input "$input_col")"
-    actual="$(__gpy_escape_json "$real_input")"
+    actual=""
+    __gpy_escape_json_into actual "$real_input"
     if [[ "$actual" == "$expected_col" ]]; then
         echo "PASS: case $CASE_COUNT ($input_col)"
     else

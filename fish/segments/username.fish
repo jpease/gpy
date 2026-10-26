@@ -3,7 +3,7 @@
 # Root (euid 0) draws the theme's root colours; everyone else the user colours.
 
 function __gpy_username_should_show --argument-names is_root is_sudo is_ssh show_always
-    test "$show_always" -eq 1; or test "$is_root" -eq 1; or test "$is_sudo" -eq 1; or test "$is_ssh" -eq 1
+    test "$show_always" = 1; or test "$is_root" = 1; or test "$is_sudo" = 1; or test "$is_ssh" = 1
 end
 
 function segment_username_detect

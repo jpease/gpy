@@ -1,5 +1,7 @@
 //! Config load/save, agent binary lookup and agent reload helpers shared by CLI commands.
 
+use crate::commands::output;
+use crate::config::discovery::Discovered;
 use crate::{Error, Result, config};
 use std::path::{Path, PathBuf};
 
@@ -9,24 +11,17 @@ use std::path::{Path, PathBuf};
 ///
 /// # Errors
 /// Returns an error if no candidate path can be constructed.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "into_string's error is the OsString itself, which is not an Error and cannot be a source"
-)]
-pub fn active_config_path() -> Result<String> {
+pub fn active_config_path() -> Result<PathBuf> {
     let paths = config::schema::get_config_paths();
 
-    let (write_path, _existing) =
-        config::schema::resolve_active_config(&paths).ok_or_else(|| {
+    config::schema::resolve_active_config(&paths)
+        .map(|(write_path, _existing)| write_path)
+        .ok_or_else(|| {
             Error::config(
                 "Unable to determine a config path from GPY_CONFIG_PATH, XDG_CONFIG_HOME, or HOME"
                     .to_owned(),
             )
-        })?;
-    write_path
-        .into_os_string()
-        .into_string()
-        .map_err(|_| Error::config("Config path contains invalid UTF-8".to_owned()))
+        })
 }
 
 /// Load the config at `path`; a missing file yields defaults, but an invalid
@@ -34,26 +29,15 @@ pub fn active_config_path() -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if the file exists but cannot be read, parsed, or validated.
-pub fn load_active_config(path: &str) -> Result<config::Config> {
-    if Path::new(path).exists() {
-        config::loader::load_config_from_file(path)
-    } else {
-        Ok(config::Config::default())
+pub fn load_active_config(path: &Path) -> Result<config::Config> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => config::loader::parse_config_toml(&contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(config::Config::default()),
+        Err(e) => Err(Error::config(format!(
+            "Failed to read config file {}: {e}",
+            path.display()
+        ))),
     }
-}
-
-/// Save the difference between `original` and `updated` to `path`, preserving
-/// everything else in the file.
-///
-/// # Errors
-/// Returns an error if validation or the write fails.
-pub fn save_config_to(
-    path: &str,
-    original: &config::Config,
-    updated: &config::Config,
-    explicit_keys: &[&str],
-) -> Result<()> {
-    config::loader::save_config(path, original, updated, explicit_keys)
 }
 
 /// Load the active configuration; an existing-but-invalid config is an error.
@@ -63,6 +47,26 @@ pub fn save_config_to(
 pub fn read_config() -> Result<config::Config> {
     let path = active_config_path()?;
     load_active_config(&path)
+}
+
+/// One `name [source]` line per discovered theme or palette, with ` *` after
+/// the `active` one.
+fn discovered_lines(active: &str, items: &[Discovered]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| {
+            let marker = if item.name == active { " *" } else { "" };
+            format!("{}{marker} [{}]", item.name, item.source)
+        })
+        .collect()
+}
+
+/// Print `items` under `title`, marking the `active` one.
+pub fn print_discovered(title: &str, active: &str, items: &[Discovered]) {
+    output::heading(title);
+    for line in discovered_lines(active, items) {
+        output::detail(line);
+    }
 }
 
 /// The `gpy-agent` installed beside this `gpy`, else `gpy-agent` from `PATH`
@@ -93,7 +97,7 @@ pub fn reload_agent_and_notify() {
     use crate::agent::lifecycle::ConfigReload;
 
     let outcome = tokio::runtime::Runtime::new()
-        .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))
+        .map_err(|e| Error::process("runtime", e.to_string()))
         .and_then(|runtime| {
             runtime.block_on(crate::agent::lifecycle::send_config_reload_command())
         });
@@ -116,8 +120,38 @@ pub fn reload_agent_and_notify() {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::config::discovery::Source;
+
+    fn discovered(name: &str, source: Source) -> Discovered {
+        Discovered {
+            name: name.to_owned(),
+            source,
+            path: None,
+        }
+    }
+
+    #[test]
+    fn discovered_lines_mark_only_the_active_entry_and_label_each_source() {
+        let items = [
+            discovered("default", Source::Builtin),
+            discovered("mine", Source::User),
+            discovered(
+                "from-plugin",
+                Source::Plugin {
+                    plugin_id: "acme".to_owned(),
+                },
+            ),
+        ];
+        assert_eq!(
+            discovered_lines("mine", &items),
+            [
+                "default [builtin]",
+                "mine * [user]",
+                "from-plugin [plugin:acme]"
+            ]
+        );
+    }
 
     #[test]
     fn agent_binary_falls_back_to_path_without_a_sibling() {

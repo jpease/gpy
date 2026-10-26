@@ -34,14 +34,6 @@ abs() {
     esac
 }
 
-check() {
-    if [[ "$3" == "$2" ]]; then
-        pass "$1"
-    else
-        fail "$1: expected [$2], got [$3]"
-    fi
-}
-
 vector_count=0
 while IFS=$'\t' read -r kind c2 c3 c4 _rest; do
     [[ -z "$kind" || "$kind" == \#* ]] && continue

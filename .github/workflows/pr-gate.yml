@@ -57,10 +57,11 @@ jobs:
         with:
           workspaces: gpy-agent
 
-      - name: Install Rust tooling (nextest, audit, deny)
+      # quality-check.sh fails under CI when any of these is missing.
+      - name: Install Rust tooling (nextest, audit, deny, machete)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,just
+          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just
 
       # Some Rust integration targets drive real shells.
       - name: Install shells and shell-suite prerequisites
@@ -78,7 +79,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         # Two shards of `quality-check.sh --shell-only` per OS, balanced on
-        # measured wall time (jpease/gpy-archive#977): the Bash suite alone,
+        # measured wall time: the Bash suite alone,
         # and everything else. Together they must cover every part
         # (tests/bash/ci_gate_shape).
         parts: [bash, "checks,fish,zsh"]
@@ -263,7 +264,7 @@ jobs:
         run: |
           set -euo pipefail
           base="${BASE_SHA:-$(git merge-base origin/main HEAD)}"
-          python3 scripts/check_new_allows.py "$base"
+          python3 scripts/check-new-allows.py "$base"
 
   gate-result:
     # `always()` so a failed or cancelled leg turns this red instead of

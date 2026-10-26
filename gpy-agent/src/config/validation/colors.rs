@@ -60,31 +60,11 @@ pub fn validate_color(value: &str, field: &str, source: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate an icon string.
-///
-/// # Errors
-/// Returns a configuration error if the icon contains control characters.
-pub fn validate_icon(value: &str, field: &str, source: &str) -> Result<()> {
-    if value.chars().any(char::is_control) {
-        return Err(ValidationError {
-            field_path: field.to_owned(),
-            kind: ValidationErrorKind::IconControlChars {
-                theme: source.to_owned(),
-            },
-        }
-        .into());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
     use super::{canonical_color, is_valid_color};
-    use crate::template::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, canonical_ansi_name};
+    use crate::template::canonical_ansi_name;
+    use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES};
 
     #[test]
     fn accepts_orange_and_brown_role_names() {

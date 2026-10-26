@@ -1,24 +1,23 @@
 //! Output formatting layer: renders agent responses as JSON or ANSI prompt text.
 
 pub(crate) mod character_resolver;
+pub(crate) mod chrome;
 pub(crate) mod clock_resolver;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
-mod fish_ansi;
 pub(crate) mod git_resolver;
 pub(crate) mod hostname_resolver;
 mod json;
 pub(crate) mod language_resolver;
+mod prompt;
 pub(crate) mod separator;
 pub(crate) mod status_resolver;
 mod style_encoder;
 pub(crate) mod username_resolver;
 
-// The ANSI format is shell-agnostic, so it is a re-export of `FishAnsiFormatter`.
-pub use fish_ansi::FishAnsiFormatter as AnsiFormatter;
-pub use fish_ansi::FishAnsiFormatter;
-pub(crate) use fish_ansi::{get_language_display, select_languages};
+pub use directory_resolver::DirectoryEnv;
 pub use json::JsonFormatter;
+pub use prompt::PromptFormatter;
 pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
 
 use crate::Result;
@@ -105,14 +104,6 @@ pub(crate) enum IsLast {
     No,
 }
 
-impl IsLast {
-    /// `Yes` → `true`.
-    #[must_use]
-    pub(crate) const fn as_bool(self) -> bool {
-        matches!(self, Self::Yes)
-    }
-}
-
 impl From<bool> for IsLast {
     fn from(b: bool) -> Self {
         if b { Self::Yes } else { Self::No }
@@ -127,14 +118,6 @@ pub(crate) enum IsFirst {
     /// Render the opening cap.
     #[default]
     No,
-}
-
-impl IsFirst {
-    /// `Yes` → `true`.
-    #[must_use]
-    pub(crate) const fn as_bool(self) -> bool {
-        matches!(self, Self::Yes)
-    }
 }
 
 impl From<bool> for IsFirst {
@@ -185,10 +168,13 @@ pub struct RenderContext<'a> {
     pub prev_bg: Option<crate::template::Color>,
     /// Active color palette, supplied to the template engine for color resolution.
     pub palette: crate::template::Palette,
+    /// What the caller gathered about a directory response's `cwd`.
+    pub directory: &'a DirectoryEnv,
 }
 
 impl<'a> RenderContext<'a> {
-    /// Create new render context with no previous-segment colors and an empty palette.
+    /// Create new render context with no previous-segment colors, an empty
+    /// palette and an unprobed directory.
     #[must_use]
     pub fn new(config: &'a Config, theme: &'a ThemeConfig, position: SegmentPosition) -> Self {
         Self {
@@ -198,6 +184,7 @@ impl<'a> RenderContext<'a> {
             prev_fg: None,
             prev_bg: None,
             palette: crate::template::Palette::default(),
+            directory: DirectoryEnv::unprobed(),
         }
     }
 
@@ -219,6 +206,14 @@ impl<'a> RenderContext<'a> {
         self.palette = palette;
         self
     }
+
+    /// Attach what the caller probed about a directory response's `cwd`
+    /// (see [`DirectoryEnv::for_response`]).
+    #[must_use]
+    pub const fn with_directory(mut self, env: &'a DirectoryEnv) -> Self {
+        self.directory = env;
+        self
+    }
 }
 
 /// Common interface for all output formatters
@@ -235,9 +230,9 @@ pub trait Formatter {
 pub fn create_formatter(format: Format) -> Box<dyn Formatter> {
     match format {
         Format::Json => Box::new(JsonFormatter),
-        Format::Ansi => Box::new(AnsiFormatter::new(PromptDialect::Ansi)),
-        Format::BashPrompt => Box::new(AnsiFormatter::new(PromptDialect::BashPrompt)),
-        Format::ZshPrompt => Box::new(AnsiFormatter::new(PromptDialect::ZshPrompt)),
+        Format::Ansi => Box::new(PromptFormatter::new(PromptDialect::Ansi)),
+        Format::BashPrompt => Box::new(PromptFormatter::new(PromptDialect::BashPrompt)),
+        Format::ZshPrompt => Box::new(PromptFormatter::new(PromptDialect::ZshPrompt)),
     }
 }
 
@@ -320,13 +315,11 @@ mod tests {
 
     #[test]
     fn render_context_defaults_palette_to_empty() {
-        use crate::template::Palette;
         let config = Config::default();
         let theme = ThemeConfig::default();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         // Empty palette: any name lookup misses.
         assert!(ctx.palette.get("anything").is_none());
-        let _ = Palette::default(); // type is reachable
     }
 
     #[test]

@@ -1,19 +1,18 @@
 //! Instant-prompt cache population through the IPC handlers: `GitHandler`
 //! writes it on every status request, and `ClientHandler` scans on register.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
 use gpy_agent::cache::InstantPromptCache;
 use gpy_agent::config::manager::ConfigManager;
-use gpy_agent::formatter::{Format, PromptDialect};
+use gpy_agent::formatter::PromptDialect;
 use gpy_agent::git::cache::GitStatusCache;
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
-use gpy_agent::ipc::Message;
 use gpy_agent::ipc::handlers::{GitHandler, RenderDeps, RequestHandler};
 use gpy_agent::ipc::registry::ClientDirectory;
+use gpy_agent::ipc::{Message, Segment};
 use gpy_agent::security::SafePath;
 use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
@@ -136,10 +135,7 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
 
     let message = Message::RepositoryStatus {
         path: SafePath::new(repo_path).unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
     };
 
     let response = handler.handle(&message);
@@ -205,10 +201,7 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
 
     let message = Message::RepositoryStatus {
         path: SafePath::new(repo_path).unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
     };
 
     let response = handler.handle(&message);
@@ -261,9 +254,9 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     assert!(!cache_file.exists(), "Cache should not exist yet");
 
     let message = Message::RegisterClient {
-        pid: gpy_agent::config::types::ClientPid::new(std::process::id()).unwrap(),
+        pid: gpy_agent::ipc::ClientPid::new(std::process::id()).unwrap(),
         cwd: Some(SafePath::new(repo_path).unwrap()),
-        shell: Some(gpy_agent::config::types::ShellVariant::Fish),
+        shell: Some(gpy_agent::shell::Shell::Fish),
         shell_version: Some("3.0.0".to_owned()),
     };
 
@@ -312,10 +305,7 @@ fn test_instant_cache_updates_on_status_change() {
 
     let message = Message::RepositoryStatus {
         path: SafePath::new(repo_path).unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
     };
     assert!(handler.handle(&message).is_ok());
     assert!(wait_for_content(&cache_file), "initial cache not written");

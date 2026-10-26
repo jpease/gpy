@@ -1,6 +1,8 @@
 #!/usr/bin/env fish
 # Test: segment_language_detect walks upward to find project markers
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/constants.fish"
@@ -17,22 +19,13 @@ source "$repo_root/fish/segments/language.fish"
 # covered by language_marker_prefilter.test.fish.
 set -g __gpy_lang_marker_files Cargo.toml
 
-set -g pass_count 0
-set -g fail_count 0
-
 function assert_detect --argument-names label expected_status dir
     set -l old_pwd $PWD
     cd $dir
     segment_language_detect
     set -l got $status
     cd $old_pwd
-    if test $got -eq $expected_status
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected $expected_status, got $got)"
-    end
+    check "$label" $expected_status $got
 end
 
 # --- Setup: project with Cargo.toml ---
@@ -61,8 +54,4 @@ assert_detect "detects via .git in subdir" 0 "$git_proj/lib/sub"
 # Cleanup
 rm -rf "$proj" "$empty_dir" "$git_proj"
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count language_detect subdir tests passed"
+test_finish "language_detect subdir tests"

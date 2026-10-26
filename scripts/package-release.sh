@@ -149,7 +149,7 @@ for shell_dir in fish bash zsh; do
     cp -R "$REPO_ROOT/$shell_dir" "$STAGE/$shell_dir"
 done
 
-# Built-in themes/palettes are compiled in via include_str!; only the example ships.
+# Built-in themes/palettes are compiled in via include_str!; only the config template ships.
 cp "$REPO_ROOT/config/config.example.toml" "$STAGE/config/config.example.toml"
 
 for doc in README.md CHANGELOG.md LICENSE SECURITY.md CONTRIBUTING.md CODE_OF_CONDUCT.md; do
@@ -263,7 +263,7 @@ missing=0
 require_entry() {
     local listing="$1" archive="$2" entry="$3"
     if ! grep -qxF "$entry" <<<"$listing"; then
-        echo "✗ $archive is missing $entry" >&2
+        echo "FAIL: $archive is missing $entry" >&2
         missing=$((missing + 1))
     fi
 }

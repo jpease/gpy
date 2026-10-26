@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+source (path dirname (status filename))/flags.fish
+
 function __gpy_config_root
     if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"
         echo "$XDG_CONFIG_HOME/fish"
@@ -196,7 +198,7 @@ set -g __gpy_agent_backoff_until 0
 
 # Ping with a circuit breaker; forks `date` only while the breaker may be open.
 function __gpy_agent_available
-    if test "$GPY_AGENT_ENABLED" = 0
+    if not __gpy_agent_enabled
         return 1
     end
 

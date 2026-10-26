@@ -18,21 +18,12 @@
 # PATH, mirroring the stub-with-counter pattern used in
 # tests/fish/character_directory_memoization.test.fish.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l test_root (status dirname)/../..
 set -g repo_root (path resolve $test_root)
 
 source $repo_root/fish/completions/gpy-dynamic.fish
-
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$expected" = "$actual"
-        echo "✓ $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        set -g fail_count (math $fail_count + 1)
-    end
-end
 
 function reset_cache_state
     set -e __gpy_complete_cache_theme
@@ -113,8 +104,4 @@ set -l recovered_again (__gpy_complete_cached theme)
 check "post-recovery call hits cache" nord "$recovered_again"
 check "post-recovery call does not re-fork gpy" 3 $gpy_call_count
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed"
-    exit 1
-end
-echo "PASS: all completion cache tests passed"
+test_finish "completion cache tests"

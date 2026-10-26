@@ -43,15 +43,15 @@ function test_agent_down_oneshot_fallback
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
 
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -60,15 +60,15 @@ function test_agent_down_oneshot_fallback
     # instant cache (same warm-up path as e2e_git_live_content).
     set -l client (register_test_client 20 $repo)
     if test -z "$client"
-        print_test_result "Register client" FAIL "Failed to spawn test client"
+        fail "Register client" "Failed to spawn test client"
         cleanup_test_files
         return 1
     end
 
     if poll_until 8 __gpy_git_cache_file_present
-        print_test_result "Instant cache created (clean state)" PASS
+        pass "Instant cache created (clean state)"
     else
-        print_test_result "Instant cache created (clean state)" FAIL "no git cache written after registration"
+        fail "Instant cache created (clean state)" "no git cache written after registration"
         cleanup_test_files
         return 1
     end
@@ -82,19 +82,19 @@ function test_agent_down_oneshot_fallback
     # Snapshot the stale clean value the serve-stale path returns (agent up).
     set -l before (segment_git_render)
     if test -z "$before"
-        print_test_result "Stale clean render is non-empty" FAIL "segment_git_render produced no output"
+        fail "Stale clean render is non-empty" "segment_git_render produced no output"
         cleanup_test_files
         return 1
     end
-    print_test_result "Stale clean render is non-empty" PASS
+    pass "Stale clean render is non-empty"
 
     # Bring the agent down; confirm the socket is actually gone so the render's
     # cheap `test -S` agent-down probe fails (matches __gpy_ipc_send's gate).
     stop_test_agent >/dev/null
     if poll_until 4 __gpy_socket_absent
-        print_test_result "Agent socket removed after stop" PASS
+        pass "Agent socket removed after stop"
     else
-        print_test_result "Agent socket removed after stop" FAIL "socket lingered; cannot exercise agent-down path"
+        fail "Agent socket removed after stop" "socket lingered; cannot exercise agent-down path"
         cleanup_test_files
         return 1
     end
@@ -109,15 +109,15 @@ function test_agent_down_oneshot_fallback
     set -l after (segment_git_render)
 
     if test -z "$after"
-        print_test_result "Agent-down render reflects new state" FAIL "segment_git_render produced no output"
+        fail "Agent-down render reflects new state" "segment_git_render produced no output"
         cleanup_test_files
         return 1
     end
 
     if test "$after" != "$before"
-        print_test_result "Agent-down render reflects new state (oneshot fallback)" PASS
+        pass "Agent-down render reflects new state (oneshot fallback)"
     else
-        print_test_result "Agent-down render reflects new state (oneshot fallback)" FAIL "render served the STALE clean value instead of the fresh dirty one"
+        fail "Agent-down render reflects new state (oneshot fallback)" "render served the STALE clean value instead of the fresh dirty one"
         cleanup_test_files
         return 1
     end
@@ -126,8 +126,5 @@ function test_agent_down_oneshot_fallback
     return 0
 end
 
-if not test_agent_down_oneshot_fallback
-    exit 1
-end
-
-exit 0
+test_agent_down_oneshot_fallback; or exit 1
+test_finish "agent down oneshot fallback"

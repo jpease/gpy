@@ -7,10 +7,7 @@ use super::{
 use crate::ipc::{LanguageInfo, Message, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
-use crate::language::display::{
-    build_language_display_info_at, cached_language_display_info_at,
-    settled_language_display_info_at,
-};
+use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::language::venv::PythonVenv;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,7 +96,7 @@ impl LanguageHandler {
             if let Some((cached, age)) = self.language_cache.get_with_age(&repo_root) {
                 // Never wait here: the stale value is served now and the job's
                 // result reaches the shell through the repaint doorbell.
-                drop(self.revalidate_stale_hit(&repo_root, in_git_repo, age));
+                self.revalidate_stale_hit(&repo_root, in_git_repo, age);
                 cached
             } else {
                 let job = self.language_detection_job(&repo_root);
@@ -113,16 +110,11 @@ impl LanguageHandler {
 
         // Versions come from the caches; a cold one is probed by a background
         // job, waited on only for what is left of the budget.
-        let cached = || {
-            cached_language_display_info_at(
-                &detected_languages,
-                &theme,
-                &config.language,
-                Some(&repo_root),
-                python_venv.as_ref(),
-            )
-        };
-        let (languages, published) = if let Some(languages) = cached() {
+        let request = DisplayRequest::new(&detected_languages, &theme, &config.language)
+            .with_cwd(Some(&repo_root))
+            .with_venv(python_venv.as_ref());
+        let (languages, published) = if let Ok(languages) = display_info(&request, Versions::Cached)
+        {
             (languages, false)
         } else {
             let (probe, started_here) = self.version_probe_job(
@@ -139,15 +131,7 @@ impl LanguageHandler {
             // as none rather than failing a request that is in budget.
             let languages = probe
                 .wait_timeout(remaining(deadline))
-                .map(|()| {
-                    settled_language_display_info_at(
-                        &detected_languages,
-                        &theme,
-                        &config.language,
-                        Some(&repo_root),
-                        python_venv.as_ref(),
-                    )
-                })
+                .map(|()| display_info(&request, Versions::Settled).unwrap_or_default())
                 .ok_or(HandlerError::TimedOut("Language version probe"))?;
             // A job this request started already published its inputs.
             (languages, started_here)
@@ -187,13 +171,10 @@ impl LanguageHandler {
                 spawn_detached(move || {
                     let config = render.config_manager.get();
                     let theme = render.theme_manager.get();
-                    let languages = build_language_display_info_at(
-                        &detected_owned,
-                        &theme,
-                        &config.language,
-                        Some(&repo_root_owned),
-                        python_venv_owned.as_ref(),
-                    );
+                    let request = DisplayRequest::new(&detected_owned, &theme, &config.language)
+                        .with_cwd(Some(&repo_root_owned))
+                        .with_venv(python_venv_owned.as_ref());
+                    let languages = display_info(&request, Versions::Probe).unwrap_or_default();
                     Self::publish_languages(
                         &render,
                         &cache_path_owned,
@@ -208,18 +189,11 @@ impl LanguageHandler {
 
     /// Start a background re-detection for a non-git cache hit older than
     /// [`LANGUAGE_REFRESH_INTERVAL`]; non-git directories aren't watched.
-    /// Returns the job handle (for tests), or `None`; never awaited.
-    #[must_use]
-    fn revalidate_stale_hit(
-        &self,
-        repo_root: &Path,
-        in_git_repo: bool,
-        age: Duration,
-    ) -> Option<Arc<LanguageJob>> {
-        if in_git_repo || age < LANGUAGE_REFRESH_INTERVAL {
-            return None;
+    /// Never awaited.
+    fn revalidate_stale_hit(&self, repo_root: &Path, in_git_repo: bool, age: Duration) {
+        if !in_git_repo && age >= LANGUAGE_REFRESH_INTERVAL {
+            drop(self.language_detection_job(repo_root));
         }
-        Some(self.language_detection_job(repo_root))
     }
 
     fn language_detection_job(&self, repo_root: &Path) -> Arc<LanguageJob> {
@@ -265,13 +239,10 @@ impl LanguageHandler {
         // A background job, so a cold version is probed here. No request
         // context, so prev_bg is None; reuse the stashed venv.
         let stashed_venv = crate::language::venv::stashed_project_venv(repo_root);
-        let languages = build_language_display_info_at(
-            detected,
-            &theme,
-            &config.language,
-            Some(repo_root),
-            stashed_venv.as_ref(),
-        );
+        let request = DisplayRequest::new(detected, &theme, &config.language)
+            .with_cwd(Some(repo_root))
+            .with_venv(stashed_venv.as_ref());
+        let languages = display_info(&request, Versions::Probe).unwrap_or_default();
         Self::publish_languages(deps, repo_root, &languages, None);
     }
 
@@ -303,14 +274,12 @@ impl RequestHandler for LanguageHandler {
         match message {
             Message::LanguageDetect {
                 path,
-                is_last,
-                prev_bg,
+                segment,
                 virtual_env,
-                ..
             } => self.handle_language_detection(
                 path,
-                *is_last,
-                prev_bg.as_deref(),
+                segment.is_last,
+                segment.prev_bg.as_deref(),
                 virtual_env.as_deref(),
             ),
             _ => Err(HandlerError::UnexpectedMessage {
@@ -320,45 +289,38 @@ impl RequestHandler for LanguageHandler {
             }),
         }
     }
-
-    fn name(&self) -> &'static str {
-        "LanguageHandler"
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
     use super::*;
     use crate::cache::InstantPromptCache;
+    use crate::config::Config;
     use crate::config::manager::ConfigManager;
-    use crate::formatter::Format;
-    use crate::ipc::ClientDirectory;
+    use crate::ipc::fixtures::render_deps;
+    use crate::ipc::{ClientDirectory, Segment};
     use crate::language::DetectedLanguage;
-    use crate::palette::PaletteCache;
-    use crate::theme::ThemeManager;
+    #[cfg(unix)]
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn make_handler() -> (LanguageHandler, Arc<ClientDirectory>) {
-        make_handler_with_cache(InstantPromptCache::new_for_test())
+        make_handler_with(InstantPromptCache::new_for_test(), Config::default())
     }
 
-    fn make_handler_with_cache(
+    fn make_handler_with(
         instant_cache: InstantPromptCache,
+        config: Config,
     ) -> (LanguageHandler, Arc<ClientDirectory>) {
-        let registry = ClientDirectory::new().shared();
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
         let render = RenderDeps {
-            config_manager: Arc::clone(&config_manager),
-            // Builtin theme keeps the test hermetic against on-disk themes.
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
-            palette_cache,
             instant_cache: Arc::new(instant_cache),
-            client_registry: Arc::clone(&registry),
+            ..render_deps(config_manager)
         };
-        let handler = LanguageHandler::new(render, DetectionCache::new());
-        (handler, registry)
+        let registry = Arc::clone(&render.client_registry);
+        (
+            LanguageHandler::new(render, DetectionCache::new()),
+            registry,
+        )
     }
 
     /// Build a synchronous `LanguageDetect` request for `repo_root`.
@@ -366,10 +328,7 @@ mod tests {
         Message::LanguageDetect {
             path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
                 .expect("safe path"),
-            format: Format::default(),
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
             virtual_env: None,
         }
     }
@@ -379,10 +338,7 @@ mod tests {
         Message::LanguageDetect {
             path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
                 .expect("safe path"),
-            format: Format::default(),
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
             virtual_env: venv.map(|v| v.to_str().expect("utf8 path").to_owned()),
         }
     }
@@ -528,11 +484,11 @@ mod tests {
     fn slow_version_probe_is_published_after_the_request_gives_up() {
         use std::os::unix::fs::PermissionsExt;
 
-        let (handler, registry) = make_handler();
-        let mut config = (*handler.render.config_manager.get()).clone();
+        let mut config = Config::default();
         config.agent.timeout_seconds =
             crate::config::types::AgentTimeout::new(1).expect("1 s timeout");
-        handler.render.config_manager.overwrite_for_tests(config);
+        let (base, _registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
+        let (handler, rings) = with_counting_rings(&base);
 
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let repo_dir = temp_dir.path().join("repo");
@@ -556,7 +512,7 @@ mod tests {
             }],
         );
         let request = language_detect_request_with_venv(&repo_root, Some(&forwarded));
-        let notified_before = registry.notify_invocations();
+        let notified_before = rings.load(Ordering::SeqCst);
 
         let started = std::time::Instant::now();
         let result = handler.handle(&request);
@@ -571,13 +527,13 @@ mod tests {
         );
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while registry.notify_invocations() == notified_before
+        while rings.load(Ordering::SeqCst) == notified_before
             && std::time::Instant::now() < deadline
         {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(
-            registry.notify_invocations() > notified_before,
+            rings.load(Ordering::SeqCst) > notified_before,
             "the probe's result must be published and rung"
         );
 
@@ -591,9 +547,11 @@ mod tests {
     }
 
     /// A synchronous request repaints other live shells only on change.
+    #[cfg(unix)]
     #[test]
     fn handle_language_detection_notifies_only_on_content_change() {
-        let (handler, registry) = make_handler();
+        let (base, _registry) = make_handler();
+        let (handler, rings) = with_counting_rings(&base);
         // Unique temp path so the first write is always a change.
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let repo_dir = temp_dir.path().join("repo");
@@ -615,17 +573,31 @@ mod tests {
 
         handler.handle(&message).expect("first request");
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "a synchronous request that changes the cached output should repaint live shells"
         );
 
         handler.handle(&message).expect("second request");
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "an unchanged refresh must not wake terminals"
         );
+    }
+
+    /// `handler` ringing a counted doorbell for one live client in every repo.
+    #[cfg(unix)]
+    fn with_counting_rings(handler: &LanguageHandler) -> (LanguageHandler, Arc<AtomicU64>) {
+        let (registry, rings) = ClientDirectory::counting_rings();
+        let render = RenderDeps {
+            client_registry: registry.shared(),
+            ..handler.render.clone()
+        };
+        (
+            LanguageHandler::new(render, handler.language_cache.clone()),
+            rings,
+        )
     }
 
     /// Seed an empty cache entry for `root`, aged past the refresh interval.
@@ -696,12 +668,8 @@ mod tests {
             .handle(&language_detect_request(&root))
             .expect("stale hit request");
 
-        assert!(
-            handler
-                .revalidate_stale_hit(&root, true, LANGUAGE_REFRESH_INTERVAL)
-                .is_none(),
-            "a git root must not start a detection job from a stale hit"
-        );
+        // Absence window: a detection job started by the request above would
+        // have replaced the empty entry by now.
         std::thread::sleep(Duration::from_millis(300));
         assert!(
             handler
@@ -717,8 +685,9 @@ mod tests {
     #[test]
     fn non_git_subdirectory_detects_at_marker_ancestor() {
         let cache_dir = tempfile::TempDir::new().expect("cache dir");
-        let (handler, _registry) = make_handler_with_cache(
+        let (handler, _registry) = make_handler_with(
             InstantPromptCache::new_in_dir(cache_dir.path().to_path_buf()).expect("cache"),
+            Config::default(),
         );
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let root = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");
@@ -782,7 +751,7 @@ mod tests {
                 .expect("docs request")
         };
         let go_stale = || {
-            crate::language::age_non_git_root_for_test(&docs, LANGUAGE_REFRESH_INTERVAL);
+            crate::language::ProjectRoot::backdate_non_git_memo(&docs, LANGUAGE_REFRESH_INTERVAL);
             handler.language_cache.age_entry_for_test(
                 &docs,
                 LANGUAGE_REFRESH_INTERVAL.saturating_add(Duration::from_secs(1)),

@@ -36,20 +36,18 @@ calls="$SANDBOX/refresh-calls"
 : >"$calls"
 __gpy_trigger_data_refresh() { printf '%s\n' "$1 $2" >>"$calls"; }
 __gpy_register_with_agent() { :; }
-count() { wc -l <"$calls" | tr -d ' '; }
-count_is() { [ "$(count)" -eq "$1" ]; }
 # A fixed clock: back-to-back calls are always inside the 500 ms window.
 fake_ms=1000000
 __gpy_now_ms() { printf -v "$1" '%s' "$fake_ms"; }
 
 # expect_dispatches LABEL N: N refreshes so far, and no more land in the window.
 expect_dispatches() {
-    shell_e2e_poll 2 count_is "$2" || true
+    shell_e2e_poll 2 shell_e2e_has_lines "$calls" "$2" || true
     sleep 0.3 # window in which an extra (throttle-violating) dispatch would land
-    if count_is "$2"; then
+    if shell_e2e_has_lines "$calls" "$2"; then
         pass "$1"
     else
-        fail "$1: $(count) dispatches, want $2"
+        fail "$1: $(shell_e2e_count_lines "$calls") dispatches, want $2"
     fi
 }
 

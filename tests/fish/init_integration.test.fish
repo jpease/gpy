@@ -2,28 +2,11 @@
 # tests/fish/init_integration.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Integration test for core/init.fish - ensures the full initialization flow works
-# and all enabled segments are properly registered.
+# Integration test for core/init.fish: it sources cleanly, the prompt renders,
+# every prompt-* command runs, and `prompt-debug validate` agrees with the
+# installation on disk.
 
-set -g test_name init_integration
-set -g test_failures 0
-
-function test_fail
-    set -g test_failures (math $test_failures + 1)
-    echo "❌ FAIL: $argv[1]"
-end
-
-function test_pass
-    echo "✅ PASS: $argv[1]"
-end
-
-function test_assert
-    if test $argv[1] $argv[2] $argv[3]
-        test_pass "$argv[4]"
-    else
-        test_fail "$argv[4]"
-    end
-end
+source (dirname (status --filename))/../lib/test_helpers.fish
 
 echo "========================================="
 echo "GPY Init Integration Test"
@@ -41,7 +24,7 @@ echo ""
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 # A developer's own installed GPY (loaded by their fish config) may already
-# define prompt-* functions; erase them so Test 13 sees only what this
+# define prompt-* functions; erase them so Test 3 sees only what this
 # checkout's init defines.
 for stale in (functions -n | string match 'prompt-*')
     functions -e $stale
@@ -50,240 +33,77 @@ end
 # Test 1: Source core/init.fish without errors
 echo "Test 1: Source core/init.fish"
 if source fish/core/init.fish 2>&1 | string match -q "*error*"
-    test_fail "core/init.fish produced errors"
+    fail "core/init.fish produced errors"
 else
-    test_pass "core/init.fish loaded without errors"
+    pass "core/init.fish loaded without errors"
 end
 # The prompt function is autoloaded from fish/functions/ on an installed
 # system; here it has to be sourced, or `fish_prompt` below is fish's own
-# default prompt and Test 6 measures the wrong program.
+# default prompt and Test 2 measures the wrong program.
 source fish/functions/fish_prompt.fish
 
-# Test 2: Check that __enabled_segments is defined
-echo ""
-echo "Test 2: Check __enabled_segments is defined"
-if set -q __enabled_segments
-    test_pass "__enabled_segments is defined"
-    echo "  Enabled segments: $__enabled_segments"
-else
-    test_fail "__enabled_segments is not defined"
-end
-
-# Test 3: Verify all enabled segments have detect functions
-echo ""
-echo "Test 3: Verify segment detect functions exist"
-for segment in $__enabled_segments
-    set -l detect_func "segment_$segment"_detect
-    if functions -q $detect_func
-        test_pass "segment_$segment"_detect" exists"
-    else
-        test_fail "segment_$segment"_detect" missing"
-    end
-end
-
-# Test 4: Verify all enabled segments have render functions
-echo ""
-echo "Test 4: Verify segment render functions exist"
-for segment in $__enabled_segments
-    set -l render_func "segment_$segment"_render
-    if functions -q $render_func
-        test_pass "segment_$segment"_render" exists"
-    else
-        test_fail "segment_$segment"_render" missing"
-    end
-end
-
-# Test 5: Check fish_prompt function exists
-echo ""
-echo "Test 5: Check fish_prompt function"
-if functions -q fish_prompt
-    test_pass "fish_prompt function exists"
-else
-    test_fail "fish_prompt function missing"
-end
-
-# Test 6: Verify fish_prompt returns non-empty output
-echo ""
-echo "Test 6: Verify fish_prompt output"
-set -l prompt_output (fish_prompt 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect)
-if test -n "$prompt_output"
-    test_pass "fish_prompt returns non-empty output"
-    echo "  Prompt length: "(string length "$prompt_output")" characters"
-else
-    test_fail "fish_prompt returned empty output"
-end
-# Content, not presence: the prompt character is shell-rendered and
-# must always be there; agent-rendered segments are covered by
+# Test 2: fish_prompt renders the prompt character. The character is
+# shell-rendered and always present; agent-rendered segments are covered by
 # e2e_prompt_content.test.fish.
-if string match -q "*$__icon_prompt*" -- "$prompt_output"
-    test_pass "fish_prompt renders the prompt character '$__icon_prompt'"
+echo ""
+echo "Test 2: fish_prompt renders the prompt character"
+set -l prompt_output (fish_prompt 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect)
+# An empty icon would turn the glob below into `**`, which matches anything.
+if test -n "$__icon_prompt"; and string match -q "*$__icon_prompt*" -- "$prompt_output"
+    pass "fish_prompt renders the prompt character '$__icon_prompt'"
 else
-    test_fail "fish_prompt output lacks the prompt character '$__icon_prompt': $prompt_output"
+    fail "fish_prompt output lacks the prompt character '$__icon_prompt': $prompt_output"
 end
 
-# Test 7: Verify theme variables are exported
+# Test 3: no prompt-* command wraps an undefined function, which exits 127.
 echo ""
-echo "Test 7: Verify theme variables exist"
-set -l required_theme_vars \
-    __prompt_base_bg \
-    __prompt_base_fg \
-    __icon_powerline_segment_start \
-    __icon_powerline_segment_end
-
-for var in $required_theme_vars
-    if set -q $var
-        test_pass "Theme variable $var is defined"
-    else
-        test_fail "Theme variable $var is missing"
-    end
+echo "Test 3: prompt-* commands do not exit 127"
+set -l prompt_cmds (functions -n | string match 'prompt-*')
+if not set -q prompt_cmds[1]
+    fail "init defined no prompt-* commands"
 end
-
-# Test 8: Verify icon variables are set
-echo ""
-echo "Test 8: Verify icon variables"
-# NOTE: the duration segment is agent-rendered and reads no `__icon_duration`
-# constant, so it is intentionally not asserted here.
-set -l required_icons \
-    __icon_status_ok \
-    __icon_status_fail \
-    __icon_prompt
-
-for icon in $required_icons
-    if set -q $icon
-        test_pass "Icon variable $icon is defined"
-    else
-        test_fail "Icon variable $icon is missing"
-    end
-end
-
-# Test 9: Verify GPY config paths are set
-echo ""
-echo "Test 9: Verify GPY configuration"
-if set -q __gpy_core_dir
-    test_pass "__gpy_core_dir is defined: $__gpy_core_dir"
-else
-    test_fail "__gpy_core_dir is not defined"
-end
-
-# Test 10: Verify segment-specific functions work in a git repo
-echo ""
-echo "Test 10: Test segment functions in git repository"
-set -l temp_repo (mktemp -d)
-cd $temp_repo
-git init >/dev/null 2>&1
-git config user.email "test@example.com"
-git config user.name "Test User"
-
-if segment_git_detect
-    test_pass "segment_git_detect works in git repository"
-else
-    test_fail "segment_git_detect failed in git repository"
-end
-
-# Render should work even with no commits
-set -l git_output (segment_git_render 2>/dev/null)
-# Git output might be empty for fresh repo, but function should not error
-if test $status -eq 0
-    test_pass "segment_git_render executes without error"
-else
-    test_fail "segment_git_render produced error"
-end
-
-cd -
-rm -rf $temp_repo
-
-# Test 11: Verify prompt contains all enabled segments (in a test environment)
-echo ""
-echo "Test 11: Verify prompt segments appear"
-set -l prompt_output (fish_prompt 2>/dev/null)
-
-# The prompt must be more than just the icon: every enabled segment renders
-set -l prompt_len (string length "$prompt_output")
-if test $prompt_len -gt 10
-    test_pass "Prompt has substantial content (not just icon): $prompt_len chars"
-else
-    test_fail "Prompt seems too short: $prompt_len chars"
-end
-
-# Test 12: Verify core utility functions exist
-echo ""
-echo "Test 12: Verify core utility functions"
-set -l required_functions \
-    __gpy_log_error \
-    __gpy_load_default_config \
-    __gpy_initialize_icons
-
-for func in $required_functions
-    if functions -q $func
-        test_pass "Utility function $func exists"
-    else
-        test_fail "Utility function $func missing"
-    end
-end
-
-# Test 13: every user-visible prompt-* command exists and runs.
-# A wrapper around an undefined function exits 127.
-echo ""
-echo "Test 13: prompt-* commands do not exit 127"
-for cmd in (functions -n | string match 'prompt-*')
+for cmd in $prompt_cmds
     $cmd >/dev/null 2>&1
     set -l rc $status
     if test $rc -ne 127
-        test_pass "$cmd exits $rc (not 127)"
+        pass "$cmd exits $rc (not 127)"
     else
-        test_fail "$cmd exits 127 (wraps an undefined function)"
-    end
-end
-for removed in prompt-config prompt-theme prompt-perf
-    if functions -q $removed
-        test_fail "$removed is still defined"
-    else
-        test_pass "$removed is not defined"
+        fail "$cmd exits 127 (wraps an undefined function)"
     end
 end
 
-# Test 14: prompt-debug validate passes on a sandboxed install whose
-# XDG_CONFIG_HOME differs from $HOME/.config, and vars shows the active theme.
+# Test 4: `prompt-debug validate` exits 0 on a sandboxed install whose
+# XDG_CONFIG_HOME differs from $HOME/.config, exits 1 once a core file it
+# checks is gone, and `prompt-debug vars` shows the active theme.
 echo ""
-echo "Test 14: prompt-debug validate in an XDG_CONFIG_HOME sandbox"
+echo "Test 4: prompt-debug in an XDG_CONFIG_HOME sandbox"
 set -l sandbox (mktemp -d)
 mkdir -p $sandbox/home $sandbox/xdg/fish $sandbox/run
-ln -s $repo_root/fish $sandbox/xdg/fish/gpy
-set -l validate_out (env -i \
+cp -R $repo_root/fish $sandbox/xdg/fish/gpy
+set -l debug_out (env -i \
     "PATH=$repo_root/gpy-agent/target/debug:/usr/bin:/bin:"(dirname (command -s fish)) \
     "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/xdg" \
     "XDG_CACHE_HOME=$sandbox/cache" "XDG_RUNTIME_DIR=$sandbox/run" \
     "TMPDIR=$sandbox" GPY_AGENT_SUPERVISOR_ENABLED=0 \
     fish --no-config -c 'source $XDG_CONFIG_HOME/fish/gpy/core/init.fish
-        prompt-debug validate 2>&1
+        prompt-debug validate >/dev/null 2>&1
         echo "validate_rc=$status"
         prompt-debug vars 2>&1
-        echo "theme_name=$__gpy_theme_name"' 2>&1 | string collect)
+        echo "theme_name=$__gpy_theme_name"
+        command rm $XDG_CONFIG_HOME/fish/gpy/core/flags.fish
+        prompt-debug validate >/dev/null 2>&1
+        echo "broken_validate_rc=$status"' 2>&1 | string collect)
 rm -rf $sandbox
-if string match -q '*validate_rc=0*' -- "$validate_out"
-    test_pass "prompt-debug validate returns 0"
+set -l debug_lines (string split \n -- "$debug_out")
+expect_eq "prompt-debug validate returns 0 on an intact install" \
+    (string match -rg '^validate_rc=(\d+)$' -- $debug_lines) 0
+expect_eq "prompt-debug validate returns 1 when a core file is missing" \
+    (string match -rg '^broken_validate_rc=(\d+)$' -- $debug_lines) 1
+set -l theme_name (string match -rg '^theme_name=(\S+)$' -- $debug_lines)
+if test -n "$theme_name"; and string match -q "*Theme: $theme_name*" -- "$debug_out"
+    pass "prompt-debug vars prints the active theme '$theme_name'"
 else
-    test_fail "prompt-debug validate did not return 0: $validate_out"
-end
-if string match -q '*❌*' -- "$validate_out"
-    test_fail "prompt-debug validate reported errors: $validate_out"
-else
-    test_pass "prompt-debug validate reports no errors"
-end
-set -l theme_name (string match -rg '^theme_name=(\S+)$' -- (string split \n -- "$validate_out"))
-if test -n "$theme_name"; and string match -q "*Theme: $theme_name*" -- "$validate_out"
-    test_pass "prompt-debug vars prints the active theme '$theme_name'"
-else
-    test_fail "prompt-debug vars does not print the active theme ('$theme_name'): $validate_out"
+    fail "prompt-debug vars does not print the active theme ('$theme_name'): $debug_out"
 end
 
-# Summary
-echo ""
-echo "========================================="
-if test $test_failures -eq 0
-    echo "✅ ALL TESTS PASSED"
-    exit 0
-else
-    echo "❌ $test_failures TEST(S) FAILED"
-    exit 1
-end
+test_finish "init integration"

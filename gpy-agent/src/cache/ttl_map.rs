@@ -93,8 +93,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let ttl = self.ttl();
-        let now = SystemTime::now();
         let mut map = self.map().lock_or_recover();
+        let now = SystemTime::now();
         let entry = map.get(key)?;
         let (value, inserted_at) = (entry.0.clone(), entry.1);
         if is_fresh(inserted_at, now, ttl) {
@@ -112,6 +112,27 @@ where
             *inserted_at
         });
         drop(map);
+    }
+
+    /// Insert `value` only if `key` has no fresh entry, as one atomic step.
+    /// Returns whether this call inserted it, so exactly one of several
+    /// concurrent callers wins the right to do the work the entry records.
+    pub fn insert_if_absent(&self, key: K, value: V) -> bool {
+        let ttl = self.ttl();
+        let mut map = self.map().lock_or_recover();
+        let now = SystemTime::now();
+        if map
+            .get(&key)
+            .is_some_and(|(_value, inserted_at)| is_fresh(*inserted_at, now, ttl))
+        {
+            return false;
+        }
+        map.insert(key, (value, now));
+        evict_to_capacity(&mut map, self.capacity, |(_value, inserted_at)| {
+            *inserted_at
+        });
+        drop(map);
+        true
     }
 
     /// Remove `key` unconditionally, regardless of freshness.
@@ -135,40 +156,36 @@ where
 }
 
 #[cfg(test)]
-impl<K, V> TtlMap<K, V>
-where
-    K: Eq + Hash + Clone,
-    V: Clone,
-{
-    /// Remove every entry.
-    pub fn clear(&self) {
-        self.map().lock_or_recover().clear();
-    }
-
-    /// Current entry count, ignoring freshness.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.map().lock_or_recover().len()
-    }
-
-    /// Like [`TtlMap::insert`] but with an explicit timestamp.
-    pub fn insert_at(&self, key: K, value: V, inserted_at: SystemTime) {
-        let mut map = self.map().lock_or_recover();
-        map.insert(key, (value, inserted_at));
-        evict_to_capacity(&mut map, self.capacity, |(_value, entry_inserted_at)| {
-            *entry_inserted_at
-        });
-        drop(map);
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
+
+    impl<K, V> TtlMap<K, V>
+    where
+        K: Eq + Hash + Clone,
+        V: Clone,
+    {
+        /// Remove every entry.
+        pub(crate) fn clear(&self) {
+            self.map().lock_or_recover().clear();
+        }
+
+        /// Current entry count, ignoring freshness.
+        #[must_use]
+        pub(crate) fn len(&self) -> usize {
+            self.map().lock_or_recover().len()
+        }
+
+        /// Like [`TtlMap::insert`] but with an explicit timestamp.
+        pub(crate) fn insert_at(&self, key: K, value: V, inserted_at: SystemTime) {
+            let mut map = self.map().lock_or_recover();
+            map.insert(key, (value, inserted_at));
+            evict_to_capacity(&mut map, self.capacity, |(_value, entry_inserted_at)| {
+                *entry_inserted_at
+            });
+            drop(map);
+        }
+    }
 
     #[test]
     fn fresh_entry_within_ttl_is_fresh() {
@@ -285,5 +302,48 @@ mod tests {
 
         assert_eq!(map.get("a"), None);
         assert_eq!(map.get("b"), Some(2));
+    }
+
+    #[test]
+    fn insert_if_absent_inserts_once_while_fresh() {
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+
+        assert!(map.insert_if_absent("k", 1));
+        assert!(!map.insert_if_absent("k", 2));
+        assert_eq!(map.get("k"), Some(1), "the losing call must not overwrite");
+    }
+
+    #[test]
+    fn insert_if_absent_replaces_a_stale_entry() {
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        map.insert_at("k", 1, SystemTime::now() - Duration::from_secs(61));
+
+        assert!(map.insert_if_absent("k", 2));
+        assert_eq!(map.get("k"), Some(2));
+    }
+
+    #[test]
+    fn insert_if_absent_has_exactly_one_winner_across_threads() {
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        let winners: usize = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16_u8)
+                .map(|_| scope.spawn(|| map.insert_if_absent("k", 0)))
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|handle| handle.join().ok())
+                .filter(|won| *won)
+                .count()
+        });
+        assert_eq!(winners, 1);
+    }
+
+    #[test]
+    fn insert_if_absent_evicts_down_to_capacity() {
+        let map: TtlMap<u32, u32> = TtlMap::with_ttl(4, Duration::from_secs(60));
+        for key in 0..10_u32 {
+            assert!(map.insert_if_absent(key, key));
+        }
+        assert!(map.len() <= 4, "has {} entries", map.len());
     }
 }

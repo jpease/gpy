@@ -99,6 +99,24 @@ impl WatcherBackend {
         }
     }
 
+    fn release_os_target(os: &mut WatchSet, target: &Path, target_mode: WatchMode) -> Vec<OsOp> {
+        os.release(target, target_mode).unwrap_or_else(|| {
+            debug_assert!(
+                false,
+                "WatchSet divergence: release called on unheld ({}, {target_mode:?})",
+                target.display()
+            );
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!(
+                    "WatchSet divergence: release called on unheld ({}, {target_mode:?})",
+                    target.display()
+                ),
+            );
+            Vec::new()
+        })
+    }
+
     /// Add one owner of `(path, mode)`, arming any newly required OS watches.
     ///
     /// # Errors
@@ -130,7 +148,7 @@ impl WatcherBackend {
         if let Some((_, error)) = own_failure {
             let mut rollback = Vec::new();
             for (target, target_mode) in &targets {
-                rollback.extend(self.os.release(target, *target_mode).unwrap_or_default());
+                rollback.extend(Self::release_os_target(&mut self.os, target, *target_mode));
             }
             self.apply(rollback);
             return Err(Error::watcher(format!("Failed to watch path: {error}")));
@@ -165,7 +183,7 @@ impl WatcherBackend {
         };
         let mut ops = Vec::new();
         for (target, target_mode) in &released.targets {
-            ops.extend(self.os.release(target, *target_mode).unwrap_or_default());
+            ops.extend(Self::release_os_target(&mut self.os, target, *target_mode));
         }
         self.apply(ops);
         Ok(())
@@ -186,9 +204,10 @@ impl WatcherBackend {
             match op {
                 OsOp::Add(path, mode) => {
                     if let Err(error) = batch.add(&path, mode.recursive_mode()) {
-                        crate::debug::write_debug_log(
+                        crate::debug_log!(
                             "watcher",
-                            &format!("failed to watch {} ({mode:?}): {error}", path.display()),
+                            "failed to watch {} ({mode:?}): {error}",
+                            path.display()
                         );
                         self.os.record_failed_add(&path, mode);
                         failures.push((path, error));
@@ -196,19 +215,17 @@ impl WatcherBackend {
                 }
                 OsOp::Remove(path) => {
                     if let Err(error) = batch.remove(&path) {
-                        crate::debug::write_debug_log(
+                        crate::debug_log!(
                             "watcher",
-                            &format!("failed to unwatch {}: {error}", path.display()),
+                            "failed to unwatch {}: {error}",
+                            path.display()
                         );
                     }
                 }
             }
         }
         if let Err(error) = batch.commit() {
-            crate::debug::write_debug_log(
-                "watcher",
-                &format!("failed to commit watch changes: {error}"),
-            );
+            crate::debug_log!("watcher", "failed to commit watch changes: {error}");
         }
         failures
     }
@@ -266,9 +283,10 @@ impl WatcherBackend {
         }
         // Kept in the expansion on failure; the parent's scan reports removal.
         for (path, error) in self.apply(ops) {
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "watcher",
-                &format!("poll backend could not arm new {}: {error}", path.display()),
+                "poll backend could not arm new {}: {error}",
+                path.display()
             );
         }
     }
@@ -295,7 +313,7 @@ impl WatcherBackend {
             for gone_target in &gone {
                 registration.targets.remove(gone_target);
                 let (target, target_mode) = gone_target;
-                ops.extend(self.os.release(target, *target_mode).unwrap_or_default());
+                ops.extend(Self::release_os_target(&mut self.os, target, *target_mode));
             }
         }
         self.apply(ops);

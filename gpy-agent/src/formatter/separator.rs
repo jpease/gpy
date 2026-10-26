@@ -147,7 +147,6 @@ mod tests {
         clippy::panic,
         clippy::missing_panics_doc
     )]
-    #![allow(clippy::missing_errors_doc)]
 
     use super::{
         CLOSE_LAST, CLOSE_NOT_LAST, GAP, Glyphs, OPEN_NOT_FIRST, SeparatorStyle, resolve_separator,

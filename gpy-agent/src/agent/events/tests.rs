@@ -1,5 +1,6 @@
-#![allow(clippy::missing_panics_doc)]
-
+use super::refresh::{
+    agent_refresh_required, git_refresh_required, language_refresh_required, ui_refresh_required,
+};
 use super::*;
 use crate::config::Config;
 use crate::git::{FileStatus, RepositoryState, StatusAggregate};
@@ -56,8 +57,24 @@ fn make_agent_context() -> AgentContext {
     }
 }
 
+/// Swap `ctx`'s registry for one that counts doorbell rings (this process is
+/// its one client, subscribed to every repository).
+#[cfg(unix)]
+fn count_rings(ctx: &mut AgentContext) -> Arc<std::sync::atomic::AtomicU64> {
+    let (registry, rings) = ClientDirectory::counting_rings();
+    ctx.registry = registry.shared();
+    rings
+}
+
+/// Doorbell rings counted so far.
+#[cfg(unix)]
+fn rung(rings: &std::sync::atomic::AtomicU64) -> u64 {
+    rings.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Supervisor settings render nothing (no refresh) but change the theme
 /// export, so each rings the reload doorbell; an unchanged reload rings nothing.
+#[cfg(unix)]
 #[test]
 #[serial_test::serial(global_ttl)]
 fn supervisor_only_changes_ring_the_reload_doorbell() {
@@ -65,11 +82,12 @@ fn supervisor_only_changes_ring_the_reload_doorbell() {
 
     let original = Config::default();
     let mut ctx = make_agent_context();
+    let counted = count_rings(&mut ctx);
     // Resolved the way `reload` re-resolves it, so re-reading it changes nothing.
     ctx.theme_manager = Arc::new(ThemeManager::new(original.ui.theme.as_str()).expect("theme"));
     let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
     let rings = |old: &Config, new: &Config| {
-        let before = ctx.registry.notify_invocations();
+        let before = rung(&counted);
         handle_config_reload(
             &ctx,
             &watcher_slot,
@@ -79,7 +97,7 @@ fn supervisor_only_changes_ring_the_reload_doorbell() {
             new,
         )
         .expect("config reload should succeed");
-        ctx.registry.notify_invocations() > before
+        rung(&counted) > before
     };
 
     rings(&original, &original); // Writes the first export.
@@ -108,11 +126,13 @@ fn supervisor_only_changes_ring_the_reload_doorbell() {
 
 /// A theme reload and a config reload racing on one stale export ring once
 /// between them: the gate makes the later one see the earlier one's export.
+#[cfg(unix)]
 #[test]
 #[serial_test::serial(global_ttl)]
 fn racing_theme_and_config_reloads_ring_once() {
     let config = Config::default();
     let mut ctx = make_agent_context();
+    let rings = count_rings(&mut ctx);
     // Resolved the way `reload` re-resolves it, so re-reading it changes nothing.
     ctx.theme_manager = Arc::new(ThemeManager::new(config.ui.theme.as_str()).expect("theme"));
     let racer = Mutex::new(None);
@@ -147,11 +167,7 @@ fn racing_theme_and_config_reloads_ring_once() {
         .join()
         .expect("config reload thread");
 
-    assert_eq!(
-        ctx.registry.notify_invocations(),
-        1,
-        "one theme change must ring once"
-    );
+    assert_eq!(rung(&rings), 1, "one theme change must ring once");
 }
 
 /// `path` as a `git` URL argument; `git` rejects Windows `\\?\` paths.
@@ -669,70 +685,48 @@ fn incremental_and_full_scan_share_one_backend() {
     );
 }
 
-/// Mirrors `create_watcher`'s `has_subscriber` gate; production has no backend seam.
-fn simulate_gated_git_event<B: GitBackend>(
-    backend: &B,
-    ctx: &AgentContext,
-    repo: &Path,
-    config: &Config,
-) {
-    if ctx.registry.has_subscriber(repo) {
-        refresh_repo_status_with(backend, ctx, repo, config, None);
-    }
+/// Whether the watcher callback skips a git event for `repo`.
+fn git_event_skipped(ctx: &AgentContext, repo: &Path) -> bool {
+    git_event_lacks_subscriber(ctx, &whole_repo_event(repo))
 }
 
 #[test]
-fn unregistered_repo_git_event_costs_zero_capture_rounds() {
+fn unregistered_repo_git_event_is_skipped() {
     let (_tmp, repo) = create_temp_repo();
     let ctx = make_agent_context();
-    let config = Config::default();
-    let backend = CountingGitBackend::new();
 
-    simulate_gated_git_event(&backend, &ctx, &repo, &config);
-
-    assert_eq!(
-        backend.call_count(),
-        0,
-        "a repository with no registered client must not run a capture round"
+    assert!(
+        git_event_skipped(&ctx, &repo),
+        "a repository with no registered client must not be refreshed"
     );
 }
 
 #[test]
-fn client_registered_at_repo_root_still_gets_one_capture_round() {
+fn client_registered_at_repo_root_keeps_its_git_events() {
     let (_tmp, repo) = create_temp_repo();
     let ctx = make_agent_context();
-    let config = Config::default();
-    let backend = CountingGitBackend::new();
     ctx.registry.register(4242, Some(repo.clone()));
 
-    simulate_gated_git_event(&backend, &ctx, &repo, &config);
-
-    assert_eq!(
-        backend.call_count(),
-        1,
-        "a repository with a registered client must still refresh exactly once"
+    assert!(
+        !git_event_skipped(&ctx, &repo),
+        "a repository with a registered client must still refresh"
     );
 }
 
 #[test]
-fn client_registered_inside_repo_subdirectory_still_gets_one_capture_round() {
+fn client_registered_inside_repo_subdirectory_keeps_its_git_events() {
     let (_tmp, repo) = create_temp_repo();
     let ctx = make_agent_context();
-    let config = Config::default();
-    let backend = CountingGitBackend::new();
     ctx.registry.register(4242, Some(repo.join("src")));
 
-    simulate_gated_git_event(&backend, &ctx, &repo, &config);
-
-    assert_eq!(
-        backend.call_count(),
-        1,
+    assert!(
+        !git_event_skipped(&ctx, &repo),
         "a client cwd'd inside the repo must still be a subscriber"
     );
 }
 
 #[test]
-fn client_registered_in_ancestor_directory_still_gets_one_capture_round() {
+fn client_registered_in_ancestor_directory_keeps_its_git_events() {
     let parent = tempdir().expect("create parent temp dir");
     let repo_dir = parent.path().join("proj");
     fs::create_dir_all(&repo_dir).expect("create repo dir");
@@ -745,33 +739,23 @@ fn client_registered_in_ancestor_directory_still_gets_one_capture_round() {
     let ancestor = fs::canonicalize(parent.path()).expect("canonical ancestor");
 
     let ctx = make_agent_context();
-    let config = Config::default();
-    let backend = CountingGitBackend::new();
     ctx.registry.register(4242, Some(ancestor));
 
-    simulate_gated_git_event(&backend, &ctx, &repo, &config);
-
-    assert_eq!(
-        backend.call_count(),
-        1,
+    assert!(
+        !git_event_skipped(&ctx, &repo),
         "a client registered in an ancestor directory must still be a subscriber"
     );
 }
 
 #[test]
 /// `cwd: None` subscribes to every repo, matching `notify_with_signal`.
-fn client_with_no_workspace_still_gets_one_capture_round() {
+fn client_with_no_workspace_keeps_every_git_event() {
     let (_tmp, repo) = create_temp_repo();
     let ctx = make_agent_context();
-    let config = Config::default();
-    let backend = CountingGitBackend::new();
     ctx.registry.register(4242, None);
 
-    simulate_gated_git_event(&backend, &ctx, &repo, &config);
-
-    assert_eq!(
-        backend.call_count(),
-        1,
+    assert!(
+        !git_event_skipped(&ctx, &repo),
         "a client with no workspace must be treated as a subscriber for every repo"
     );
 }
@@ -781,15 +765,10 @@ fn client_registered_for_a_different_repo_does_not_count_as_a_subscriber() {
     let (_tmp_a, repo_a) = create_temp_repo();
     let (_tmp_b, repo_b) = create_temp_repo();
     let ctx = make_agent_context();
-    let config = Config::default();
-    let backend = CountingGitBackend::new();
     ctx.registry.register(4242, Some(repo_a));
 
-    simulate_gated_git_event(&backend, &ctx, &repo_b, &config);
-
-    assert_eq!(
-        backend.call_count(),
-        0,
+    assert!(
+        git_event_skipped(&ctx, &repo_b),
         "a client registered for a different, unrelated repo must not count"
     );
 }
@@ -799,26 +778,50 @@ fn client_registered_for_a_different_repo_does_not_count_as_a_subscriber() {
 /// Drives the real `create_watcher` gate, observed via `ctx.cache`.
 /// `file_serial`: concurrent `FSEvents` bootstraps are flaky.
 fn create_watcher_skips_refresh_for_unregistered_repo_and_refreshes_registered_one() {
+    /// Absence window: long enough for a gated refresh that was coming to land.
+    const REFRESH_ABSENCE_WINDOW: Duration = Duration::from_secs(3);
+
     let (_tmp, repo) = create_temp_repo();
-    std::process::Command::new("git")
-        .args(["config", "core.fsmonitor", "false"])
-        .current_dir(&repo)
-        .output()
-        .expect("disable fsmonitor");
+    // A repo with a shell registered, whose refresh proves the watch live.
+    let (_sentinel_tmp, sentinel) = create_temp_repo();
+    for dir in [&repo, &sentinel] {
+        std::process::Command::new("git")
+            .args(["config", "core.fsmonitor", "false"])
+            .current_dir(dir)
+            .output()
+            .expect("disable fsmonitor");
+    }
 
     let ctx = make_agent_context();
     let watcher = create_watcher(WatcherConfig::default(), &ctx).expect("create real watcher");
     // The watch registry is independent of `ctx.registry`, as in production.
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register with watcher");
-
-    thread::sleep(Duration::from_millis(100));
+    watcher
+        .attach_client(std::process::id() + 1, &sentinel)
+        .expect("register sentinel with watcher");
+    // Nonexistent PID: `notify_repaint_force` prunes it via ESRCH, so the
+    // sentinel is rewritten until its first refresh lands.
+    let sentinel_pid = 999_998_u32;
+    let sentinel_deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut probed_at: Option<std::time::Instant> = None;
+    while ctx.cache.get(&sentinel).is_none() && std::time::Instant::now() < sentinel_deadline {
+        if probed_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1)) {
+            ctx.registry.register(sentinel_pid, Some(sentinel.clone()));
+            fs::write(sentinel.join("probe.txt"), "probe\n").expect("write sentinel probe");
+            probed_at = Some(std::time::Instant::now());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        ctx.cache.get(&sentinel).is_some(),
+        "the watch never delivered the sentinel repo's write"
+    );
 
     fs::write(repo.join("a.txt"), "one\n").expect("write a.txt");
 
-    // Negative assertion: the full settle budget is spent on success.
-    let settle_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let settle_deadline = std::time::Instant::now() + REFRESH_ABSENCE_WINDOW;
     while std::time::Instant::now() < settle_deadline {
         assert!(
             ctx.cache.get(&repo).is_none(),
@@ -1095,10 +1098,12 @@ fn status_changed_detects_transitions() {
     assert!(status_changed(Some(&clean), Some(&dirty)));
 }
 
+#[cfg(unix)]
 #[test]
 fn reconcile_full_scan_picks_up_untracked_changes() {
     let (_tmp, repo) = create_temp_repo();
-    let ctx = make_agent_context();
+    let mut ctx = make_agent_context();
+    let rings = count_rings(&mut ctx);
     let config = Config::default();
 
     refresh_and_notify_if_changed(&ctx, &repo, &config, None);
@@ -1110,9 +1115,9 @@ fn reconcile_full_scan_picks_up_untracked_changes() {
 
     fs::write(repo.join("dropped.txt"), "x").expect("write file");
 
-    let before = ctx.registry.notify_invocations();
+    let before = rung(&rings);
     refresh_and_notify_if_changed(&ctx, &repo, &config, None);
-    let after = ctx.registry.notify_invocations();
+    let after = rung(&rings);
 
     let updated = ctx.cache.get(&repo).expect("status cached");
     assert!(
@@ -1196,10 +1201,12 @@ fn config_reload_disables_and_reenables_watcher() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 #[serial_test::serial(global_ttl)]
 fn config_reload_notifies_on_language_toggles() {
-    let ctx = make_agent_context();
+    let mut ctx = make_agent_context();
+    let rings = count_rings(&mut ctx);
     let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
     let watcher_config = WatcherConfig::default();
 
@@ -1207,7 +1214,7 @@ fn config_reload_notifies_on_language_toggles() {
     let mut toggled = original.clone();
     toggled.language.show_versions = !original.language.show_versions;
 
-    let before = ctx.registry.notify_invocations();
+    let before = rung(&rings);
     handle_config_reload(
         &ctx,
         &watcher_slot,
@@ -1217,7 +1224,7 @@ fn config_reload_notifies_on_language_toggles() {
         &toggled,
     )
     .expect("config reload should succeed");
-    let after = ctx.registry.notify_invocations();
+    let after = rung(&rings);
     assert!(
         after > before,
         "toggling show_versions should trigger notification"
@@ -1225,7 +1232,7 @@ fn config_reload_notifies_on_language_toggles() {
 
     let mut toggled_enabled = toggled.clone();
     toggled_enabled.language.enabled = !toggled.language.enabled;
-    let before_enabled = ctx.registry.notify_invocations();
+    let before_enabled = rung(&rings);
     handle_config_reload(
         &ctx,
         &watcher_slot,
@@ -1235,7 +1242,7 @@ fn config_reload_notifies_on_language_toggles() {
         &toggled_enabled,
     )
     .expect("config reload should succeed");
-    let after_enabled = ctx.registry.notify_invocations();
+    let after_enabled = rung(&rings);
     assert!(
         after_enabled > before_enabled,
         "toggling language.enabled should trigger notification"
@@ -1245,7 +1252,7 @@ fn config_reload_notifies_on_language_toggles() {
     let mut theme_changed = toggled_enabled.clone();
     theme_changed.ui.theme =
         crate::config::types::ThemeName::new("text".to_owned()).expect("valid theme name");
-    let before_theme = ctx.registry.notify_invocations();
+    let before_theme = rung(&rings);
     handle_config_reload(
         &ctx,
         &watcher_slot,
@@ -1255,7 +1262,7 @@ fn config_reload_notifies_on_language_toggles() {
         &theme_changed,
     )
     .expect("config reload should succeed");
-    let after_theme = ctx.registry.notify_invocations();
+    let after_theme = rung(&rings);
     assert!(
         after_theme > before_theme,
         "changing ui.theme should trigger notification"
@@ -1306,14 +1313,15 @@ fn expect_watcher_state(watcher_slot: &SharedWatcherSlot, expect_some: bool, mes
 #[test]
 #[serial_test::serial(global_ttl)]
 fn config_reload_updates_language_ttl() {
-    use crate::language::version::{set_version_cache_ttl, version_cache_ttl_seconds_for_tests};
+    use crate::cache::ttl_map::shared_cache_ttl_seconds;
+    use crate::language::version::set_version_cache_ttl;
 
     let ctx = make_agent_context();
     let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
     let watcher_config = WatcherConfig::default();
 
     std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
-    let before = version_cache_ttl_seconds_for_tests();
+    let before = shared_cache_ttl_seconds();
     let initial_hours = before / 3600;
 
     let mut old_config = Config::default();
@@ -1334,7 +1342,7 @@ fn config_reload_updates_language_ttl() {
     )
     .expect("config reload should succeed");
 
-    let after = version_cache_ttl_seconds_for_tests();
+    let after = shared_cache_ttl_seconds();
     assert_eq!(
         after,
         36 * 3600,
@@ -1709,13 +1717,15 @@ fn language_regen_skips_cold_path() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
     use crate::language::DetectedLanguage;
 
     let (_tmp, repo) = create_temp_repo();
     let cache_tmp = tempdir().expect("cache dir");
-    let ctx = make_hermetic_ctx(cache_tmp.path());
+    let mut ctx = make_hermetic_ctx(cache_tmp.path());
+    let rings = count_rings(&mut ctx);
     let config = Config::default();
     let theme = ctx.theme_manager.get();
 
@@ -1729,7 +1739,7 @@ fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
         }],
     );
 
-    let before_first = ctx.registry.notify_invocations();
+    let before_first = rung(&rings);
     let wrote_first = refresh_language_for(
         &ctx,
         &repo,
@@ -1738,7 +1748,7 @@ fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
         &theme,
         None,
     );
-    let after_first = ctx.registry.notify_invocations();
+    let after_first = rung(&rings);
 
     assert!(
         wrote_first,
@@ -1757,7 +1767,7 @@ fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
         &theme,
         None,
     );
-    let after_second = ctx.registry.notify_invocations();
+    let after_second = rung(&rings);
 
     assert!(
         !wrote_second,
@@ -1794,12 +1804,13 @@ fn instant_cache_recovery_write_triggers_repaint_on_unchanged_status() {
 
     let (_tmp, repo) = create_temp_repo();
     let cache_tmp = tempdir().expect("cache dir");
-    let ctx = make_hermetic_ctx(cache_tmp.path());
+    let mut ctx = make_hermetic_ctx(cache_tmp.path());
+    let rings = count_rings(&mut ctx);
     let mut config = Config::default();
     // The language side channel notifies on its own thread; it would race the counts.
     config.language.enabled = false;
 
-    let baseline_notifications = ctx.registry.notify_invocations();
+    let baseline_notifications = rung(&rings);
     assert_eq!(baseline_notifications, 0, "no refresh has run yet");
 
     let cache_dir = cache_tmp.path();
@@ -1811,13 +1822,13 @@ fn instant_cache_recovery_write_triggers_repaint_on_unchanged_status() {
 
     // The write fails: no notify, since a repaint could only serve a stale file.
     refresh_and_notify_if_changed(&ctx, &repo, &config, None);
-    let after_failed_write = ctx.registry.notify_invocations();
+    let after_failed_write = rung(&rings);
 
     fs::set_permissions(cache_dir, writable_perms).expect("restore cache dir permissions");
 
     // The failed write never updated the memo, so this write reports a change.
     refresh_and_notify_if_changed(&ctx, &repo, &config, None);
-    let after_recovery_write = ctx.registry.notify_invocations();
+    let after_recovery_write = rung(&rings);
 
     assert_eq!(
         after_failed_write, baseline_notifications,
@@ -2417,8 +2428,9 @@ fn language_event_does_not_wait_on_a_version_probe() {
     crate::language::venv::stash_project_venv(&repo, &venv);
 
     let cache_tmp = tempdir().expect("cache dir");
-    let ctx = make_hermetic_ctx(cache_tmp.path());
-    let notified_before = ctx.registry.notify_invocations();
+    let mut ctx = make_hermetic_ctx(cache_tmp.path());
+    let rings = count_rings(&mut ctx);
+    let notified_before = rung(&rings);
     let event = DebouncedEvent {
         event: FileEvent::Language {
             path: repo.join("main.py"),
@@ -2444,7 +2456,7 @@ fn language_event_does_not_wait_on_a_version_probe() {
     // The job writes the instant cache first and rings the doorbell after, so
     // a cache that already holds the version says nothing about the ring yet:
     // wait for both, not the ring right after the cache.
-    let rung = || ctx.registry.notify_invocations() > notified_before;
+    let rung = || rung(&rings) > notified_before;
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !(published() && rung()) && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));

@@ -10,19 +10,23 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// Returns an error if the config file cannot be read or parsed.
 pub fn load_config() -> Result<Config> {
-    schema::get_config_paths()
-        .iter()
-        .find(|path| Path::new(path).exists())
-        .map_or_else(|| Ok(Config::default()), |path| load_config_from_file(path))
+    match schema::resolve_active_config(&schema::get_config_paths()) {
+        Some((_, Some(existing))) => load_config_from_file(&existing),
+        _ => Ok(Config::default()),
+    }
 }
 
 /// Load configuration from a specific TOML file.
 ///
 /// # Errors
 /// Returns an error if the file cannot be read or parsed.
-pub fn load_config_from_file(path: &str) -> Result<Config> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| Error::config(format!("Failed to read config file {path}: {e}")))?;
+pub fn load_config_from_file(path: &Path) -> Result<Config> {
+    let contents = std::fs::read_to_string(path).map_err(|e| {
+        Error::config(format!(
+            "Failed to read config file {}: {e}",
+            path.display()
+        ))
+    })?;
 
     parse_config_toml(&contents)
 }
@@ -40,14 +44,6 @@ pub fn parse_config_toml(toml_content: &str) -> Result<Config> {
     Ok(config)
 }
 
-/// Create the config file with literal `contents`.
-///
-/// # Errors
-/// Returns an error if the file cannot be written.
-pub fn write_new_config(path: &str, contents: &str) -> Result<()> {
-    write_atomically(Path::new(path), contents)
-}
-
 /// Write only changed leaves (plus `explicit_keys`) into the file in place,
 /// preserving comments and layout; symlinks are written through. `updated` is
 /// normalized first, so the file holds what the next load would produce.
@@ -55,7 +51,7 @@ pub fn write_new_config(path: &str, contents: &str) -> Result<()> {
 /// # Errors
 /// Returns an error if `updated` is invalid or the file can't be read, parsed, or written.
 pub fn save_config(
-    path: &str,
+    path: &Path,
     original: &Config,
     updated: &Config,
     explicit_keys: &[&str],
@@ -66,14 +62,17 @@ pub fn save_config(
     let original_leaves = config_leaves(original)?;
     let updated_leaves = config_leaves(&normalized)?;
 
-    let target = resolve_write_target(Path::new(path))?;
+    let target = resolve_write_target(path)?;
     // Held through the rename: a second writer must read this one's result.
     let _lock = lock_for_save(&target)?;
     let existing = read_existing(&target)?;
     let mut document: toml_edit::DocumentMut = match existing.as_deref() {
-        Some(text) => text
-            .parse()
-            .map_err(|e| Error::config(format!("Failed to parse existing config {path}: {e}")))?,
+        Some(text) => text.parse().map_err(|e| {
+            Error::config(format!(
+                "Failed to parse existing config {}: {e}",
+                path.display()
+            ))
+        })?,
         None => toml_edit::DocumentMut::new(),
     };
 
@@ -331,35 +330,32 @@ pub fn load_theme(theme_name: &str) -> Result<crate::theme::ThemeConfig> {
         ))
     })?;
 
-    load_theme_from_path(&theme_path.display().to_string())
+    load_theme_from_path(&theme_path)
 }
 
 /// Load a theme from a path, falling back to the builtin with that stem.
 ///
 /// # Errors
 /// Returns an error if the file can't be read or parsed, or matches no builtin.
-pub fn load_theme_from_path(path: &str) -> Result<crate::theme::ThemeConfig> {
+pub fn load_theme_from_path(path: &Path) -> Result<crate::theme::ThemeConfig> {
     use crate::theme::manager::BUILTIN_THEMES;
 
-    let contents = if Path::new(path).exists() {
-        std::fs::read_to_string(path)
-            .map_err(|e| Error::config(format!("Failed to read theme file {path}: {e}")))?
-    } else if let Some((_, content)) = BUILTIN_THEMES.iter().find(|(name, _)| {
-        // `file_stem`, not a `/` suffix match: Windows paths use `\`.
-        Path::new(path).file_stem().and_then(|s| s.to_str()) == Some(*name)
-    }) {
+    // `file_stem`, not a `/` suffix match: Windows paths use `\`.
+    let stem = path.file_stem().and_then(|s| s.to_str());
+    let contents = if path.exists() {
+        std::fs::read_to_string(path).map_err(|e| {
+            Error::config(format!("Failed to read theme file {}: {e}", path.display()))
+        })?
+    } else if let Some((_, content)) = BUILTIN_THEMES.iter().find(|(name, _)| stem == Some(*name)) {
         (*content).to_owned()
     } else {
-        let theme_name = Path::new(path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(path);
+        let theme_name = stem.map_or_else(|| path.display().to_string(), str::to_owned);
         return Err(Error::config(format!(
             "theme '{theme_name}' not found (no user theme, plugin theme, or builtin matches this name)"
         )));
     };
 
-    crate::theme::parse(&contents, path)
+    crate::theme::parse(&contents, &path.display().to_string())
 }
 
 #[cfg(test)]
@@ -379,14 +375,15 @@ mod unknown_config_keys_tests {
 #[cfg(test)]
 mod load_theme_from_path_tests {
     use super::load_theme_from_path;
+    use std::path::Path;
 
     #[test]
     fn nonexistent_user_theme_path_falls_back_to_embedded_builtin() {
         let sep = std::path::MAIN_SEPARATOR;
         let fake_user_theme_path = format!("nonexistent-dir{sep}gpy{sep}themes{sep}default.toml");
 
-        let theme =
-            load_theme_from_path(&fake_user_theme_path).expect("embedded fallback must succeed");
+        let theme = load_theme_from_path(Path::new(&fake_user_theme_path))
+            .expect("embedded fallback must succeed");
 
         // The bare default stub's `prompt_close` is empty; the builtin's is U+E0B4.
         assert_eq!(
@@ -399,7 +396,7 @@ mod load_theme_from_path_tests {
 
     #[test]
     fn path_matching_no_builtin_theme_name_returns_an_error() {
-        let err = load_theme_from_path("nonexistent-dir/not-a-real-theme.toml")
+        let err = load_theme_from_path(Path::new("nonexistent-dir/not-a-real-theme.toml"))
             .expect_err("a path matching no builtin theme name must error, not silently succeed");
 
         let message = err.to_string();

@@ -1,9 +1,16 @@
 //! Theme-export cache files, sourced by shells at startup and on reload so they
 //! never spawn the binary on the hot path.
 
-use super::instant_prompt::{get_gpy_cache_dir, write_atomic};
+use super::instant_prompt::files::{get_gpy_cache_dir, write_atomic};
 use crate::Result;
 use std::path::PathBuf;
+
+/// Export file per shell; the fish entry is the one `get_theme_export_cache_path` names.
+const EXPORT_FILES: [(crate::shell::Shell, &str); 3] = [
+    (crate::shell::Shell::Fish, "theme-export.fish"),
+    (crate::shell::Shell::Bash, "theme-export.bash"),
+    (crate::shell::Shell::Zsh, "theme-export.zsh"),
+];
 
 /// Return the directory the theme exports are cached in.
 ///
@@ -20,7 +27,7 @@ pub fn theme_export_dir() -> Result<PathBuf> {
 ///
 /// Returns an error if neither `XDG_CACHE_HOME` nor `HOME` is set.
 pub fn get_theme_export_cache_path() -> Result<PathBuf> {
-    theme_export_dir().map(|d| d.join("theme-export.fish"))
+    theme_export_dir().map(|d| d.join(EXPORT_FILES[0].1))
 }
 
 /// Write the theme exports atomically (temp-file + rename); returns whether any file changed.
@@ -54,11 +61,7 @@ pub fn write_theme_export_to_dir(
     std::fs::create_dir_all(cache_dir)?;
 
     let mut changed = false;
-    for (shell, file_name) in [
-        (crate::shell::Shell::Fish, "theme-export.fish"),
-        (crate::shell::Shell::Bash, "theme-export.bash"),
-        (crate::shell::Shell::Zsh, "theme-export.zsh"),
-    ] {
+    for (shell, file_name) in EXPORT_FILES {
         let content = theme_manager.export(shell, config, palette);
         // Any read failure (typically: no file yet) means "write it".
         if std::fs::read(cache_dir.join(file_name))
@@ -74,63 +77,12 @@ pub fn write_theme_export_to_dir(
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_write_theme_export_cache_creates_file() {
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let cache_dir = temp_dir.path().join("gpy");
-
-        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
-        let config = crate::config::Config::default();
-
-        write_theme_export_to_dir(
-            &cache_dir,
-            &theme_manager,
-            &config,
-            &crate::template::Palette::default(),
-        )
-        .expect("write theme export cache");
-
-        let cache_path = cache_dir.join("theme-export.fish");
-        assert!(cache_path.exists(), "theme-export.fish must be created");
-
-        let content = std::fs::read_to_string(&cache_path).expect("read cache");
-        assert!(
-            content.contains("set -g"),
-            "cache must contain Fish set assignments"
-        );
-    }
-
-    #[test]
-    fn test_write_theme_export_cache_is_atomic_no_temp_leftovers() {
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let cache_dir = temp_dir.path().join("gpy");
-
-        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
-        let config = crate::config::Config::default();
-
-        write_theme_export_to_dir(
-            &cache_dir,
-            &theme_manager,
-            &config,
-            &crate::template::Palette::default(),
-        )
-        .expect("write");
-
-        let leftovers: Vec<_> = std::fs::read_dir(&cache_dir)
-            .expect("read dir")
-            .filter_map(std::result::Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
-            .collect();
-        assert!(leftovers.is_empty(), "no .tmp- files should be left behind");
-    }
-
     /// Bash and zsh get their own atomically written cache files beside `theme-export.fish`.
     #[test]
-    fn test_write_theme_export_to_dir_writes_all_three_shell_files() {
+    fn writes_all_three_shell_files_without_temp_leftovers() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache_dir = temp_dir.path().join("gpy");
 
@@ -173,7 +125,7 @@ mod tests {
 
     /// An identical export reports "unchanged" and keeps mtimes; a different one lands on disk.
     #[test]
-    fn test_write_theme_export_to_dir_reports_whether_the_export_changed() {
+    fn reports_whether_the_export_changed() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache_dir = temp_dir.path().join("gpy");
         let config = crate::config::Config::default();

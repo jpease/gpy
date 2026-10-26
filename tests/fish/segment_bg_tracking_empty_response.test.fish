@@ -9,21 +9,10 @@
 # so this sources each segment file directly and drives it with stubbed
 # globals, mirroring hostname_segment.test.fish / username_segment.test.fish.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
 
 function gpy_section_standalone --argument-names bg fg content is_last
     set -g __test_pill_bg "$bg"
@@ -67,24 +56,24 @@ end
 
 function __test_assert_local --argument-names label
     if test "$__test_host_out" = LOCAL_PILL; and test "$__test_host_content" = " $hostname"
-        check "$label: hostname draws the local pill with one leading space" pass
+        check "$label: hostname draws the local pill with one leading space" pass pass
     else
-        check "$label: hostname draws the local pill with one leading space (got: '$__test_host_out' / '$__test_host_content')" fail
+        check "$label: hostname draws the local pill with one leading space (got: '$__test_host_out' / '$__test_host_content')" pass fail
     end
     if test "$__test_host_bg" = blue
-        check "$label: hostname advances __gpy_last_segment_bg to its pill" pass
+        check "$label: hostname advances __gpy_last_segment_bg to its pill" pass pass
     else
-        check "$label: hostname advances __gpy_last_segment_bg to its pill (got: '$__test_host_bg')" fail
+        check "$label: hostname advances __gpy_last_segment_bg to its pill (got: '$__test_host_bg')" pass fail
     end
     if test "$__test_user_out" = LOCAL_PILL; and test "$__test_user_content" = " root"
-        check "$label: username draws the local pill with one leading space" pass
+        check "$label: username draws the local pill with one leading space" pass pass
     else
-        check "$label: username draws the local pill with one leading space (got: '$__test_user_out' / '$__test_user_content')" fail
+        check "$label: username draws the local pill with one leading space (got: '$__test_user_out' / '$__test_user_content')" pass fail
     end
     if test "$__test_user_bg" = red
-        check "$label: username advances __gpy_last_segment_bg to its pill" pass
+        check "$label: username advances __gpy_last_segment_bg to its pill" pass pass
     else
-        check "$label: username advances __gpy_last_segment_bg to its pill (got: '$__test_user_bg')" fail
+        check "$label: username advances __gpy_last_segment_bg to its pill (got: '$__test_user_bg')" pass fail
     end
 end
 
@@ -115,14 +104,14 @@ __test_render_pair
 __test_assert_local "error reply"
 
 if not __gpy_request_hostname box "" "" 0 "" >/dev/null
-    check "__gpy_request_hostname: an error reply returns nonzero" pass
+    check "__gpy_request_hostname: an error reply returns nonzero" pass pass
 else
-    check "__gpy_request_hostname: an error reply returns nonzero" fail
+    check "__gpy_request_hostname: an error reply returns nonzero" pass fail
 end
 if not __gpy_request_username root "" "" 1 "" >/dev/null
-    check "__gpy_request_username: an error reply returns nonzero" pass
+    check "__gpy_request_username: an error reply returns nonzero" pass pass
 else
-    check "__gpy_request_username: an error reply returns nonzero" fail
+    check "__gpy_request_username: an error reply returns nonzero" pass fail
 end
 
 # --- a rendered reply is still emitted verbatim and tracked ---
@@ -133,22 +122,18 @@ end
 
 __test_render_pair
 if test "$__test_host_out" = SENTINEL; and test -z "$__test_host_content"; and test "$__test_host_bg" = blue
-    check "rendered reply: hostname emits the agent pill and tracks its bg" pass
+    check "rendered reply: hostname emits the agent pill and tracks its bg" pass pass
 else
-    check "rendered reply: hostname emits the agent pill and tracks its bg (got: '$__test_host_out' / '$__test_host_content' / '$__test_host_bg')" fail
+    check "rendered reply: hostname emits the agent pill and tracks its bg (got: '$__test_host_out' / '$__test_host_content' / '$__test_host_bg')" pass fail
 end
 if test "$__test_user_out" = SENTINEL; and test -z "$__test_user_content"; and test "$__test_user_bg" = red
-    check "rendered reply: username emits the agent pill and tracks its bg" pass
+    check "rendered reply: username emits the agent pill and tracks its bg" pass pass
 else
-    check "rendered reply: username emits the agent pill and tracks its bg (got: '$__test_user_out' / '$__test_user_content' / '$__test_user_bg')" fail
+    check "rendered reply: username emits the agent pill and tracks its bg (got: '$__test_user_out' / '$__test_user_content' / '$__test_user_bg')" pass fail
 end
 
 functions -e __gpy_ipc_send gpy_section_standalone
 set -e __hostname_format
 set -e __username_format
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count segment bg tracking (empty response) tests passed"
+test_finish "segment bg tracking (empty response) tests"

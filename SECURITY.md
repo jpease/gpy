@@ -4,10 +4,9 @@
 
 GPY is a personal project with one release line. Security fixes land on the latest release; there is no long-term-support branch and no backporting to older versions.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.6.x   | :white_check_mark: |
-
+| Version | Supported |
+| ------- | --------- |
+| 0.6.x   | Yes       |
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues.**
@@ -352,8 +351,7 @@ Dev-dependencies (test harnesses, benchmark crates) are excluded because they
 are not linked into a shipped binary. The document does not cover the Fish,
 Bash, and Zsh integration scripts, which have no third-party dependencies; they
 ship checksummed in `gpy-shell-files.tar.gz`.
-
-## Best Practices for Users
+## Best Practices
 
 1. **Keep GPY updated** — install security updates promptly.
 2. **Install from the release assets**, and let the installer do the checksum
@@ -361,25 +359,11 @@ ship checksummed in `gpy-shell-files.tar.gz`.
 3. **Guard `gpy-agent` the way you guard your shell startup files.** Whatever
    can overwrite the binary on your `PATH`, or the theme-export cache under
    `~/.cache/gpy/`, can run code in every shell you open.
-4. **Report unexpected behavior** through the private advisory form above.
 
-## Security Audit History
+## Security Audits
 
 - No third-party security audit has been performed.
 - Dependency auditing is automated: `cargo audit` and `cargo deny` run in the
   quality gate on every change.
 - Accepted advisories and their per-crate assessments are recorded in
   [Security Audit Notes](docs/dev/security-audit.md).
-
-## Published Advisories
-
-Advisories are published at
-<https://github.com/jpease/gpy/security/advisories>.
-
-*(None to date.)*
-
-## Contact
-
-Security reports go through
-[private vulnerability reporting](https://github.com/jpease/gpy/security/advisories/new),
-never through a public issue. Everything else: open a GitHub issue.

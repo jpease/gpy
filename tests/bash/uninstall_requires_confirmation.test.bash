@@ -6,16 +6,12 @@
 # an unknown argument is refused before anything is touched.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
-
-failures=0
-fail() {
-    echo "FAIL: $1"
-    failures=$((failures + 1))
-}
 
 # A sandboxed install holding user-authored files; prints the sandbox root.
 make_sandbox() {
@@ -71,6 +67,5 @@ if [[ $failures -ne 0 ]]; then
         echo "--- $log ---"
         cat "$log"
     done
-    exit 1
 fi
-echo "PASS"
+test_finish "uninstall requires confirmation"

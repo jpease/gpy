@@ -24,8 +24,8 @@ Required fields:
   - `file`: one Fish file per segment, loaded by Fish only (see
     [Segment Runtime Contract](#segment-runtime-contract)).
   - `script`: one POSIX `sh` script per segment, declared in
-    `segments/<segment>.toml` and run by every shell (see
-    [Script Segments](#script-segments)).
+    `segments/<segment>.toml`. The contract is defined and validated; no shell
+    executes script segments yet (see [Script Segments](#script-segments)).
   - `command` is reserved and is rejected by `gpy plugin validate` and plugin
     discovery (reported as an "unsupported entry_type" diagnostic).
 - `provided_segments` (array)
@@ -108,9 +108,12 @@ That export variable naming is an implementation detail, not a plugin-author API
 
 A plugin with `entry_type = "script"` provides, for each segment in
 `provided_segments`, a manifest at `<plugin-root>/segments/<segment>.toml` and
-a POSIX `sh` script it names. No `.fish` file is needed. Bash, Zsh and Fish
-run the same script; the shell adapters that do so are tracked separately, so
-this section is the contract they implement. JSON schema:
+a POSIX `sh` script it names. No `.fish` file is needed.
+
+The contract is defined and validated (`gpy plugin validate`, `gpy config`, the
+JSON schema below); no shell executes script segments yet. A script plugin is
+discovered and checked, but its segments do not render. This section is the
+contract the shell adapters will implement. JSON schema:
 [`gpy-agent/schemas/script-segment-manifest.json`](../../gpy-agent/schemas/script-segment-manifest.json).
 Implementation: `gpy-agent/src/plugin/script.rs` and `settings.rs`.
 

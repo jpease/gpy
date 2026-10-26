@@ -4,19 +4,19 @@
 
 // The agent's IPC is Unix-socket only; native Windows is CLI-only.
 #![cfg(unix)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::uninlined_format_args)]
 
-mod fixtures;
-#[path = "common/integration_harness.rs"]
-mod integration_harness;
+mod common;
 
-use fixtures::TestRepo;
-use gpy_agent::ipc::{Format, Message, Response};
+use common::fixtures::TempSocket;
+use common::git::TestRepo;
+use common::integration_harness::{GitChange, GitStatus, IntegrationTestServer, TestConfig};
+use common::skip::skip_test;
+use gpy_agent::ipc::{ClientPid, Message, Response, Segment};
 use gpy_agent::security::SafePath;
-use integration_harness::IntegrationTestServer;
+use std::time::Duration;
 
 /// Test: Git change → Cache → Response flow
 #[tokio::test]
@@ -33,10 +33,7 @@ async fn test_git_status_integration() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request failed");
@@ -56,7 +53,7 @@ async fn test_git_status_integration() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_config_hot_reload_disables_git() {
-    let config = integration_harness::config_helpers::TestConfig::new().with_git_disabled();
+    let config = TestConfig::new().with_git_disabled();
     let server = IntegrationTestServer::with_config(config)
         .await
         .expect("Server failed to start");
@@ -65,10 +62,7 @@ async fn test_config_hot_reload_disables_git() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request failed");
@@ -89,7 +83,7 @@ async fn test_client_registration_flow() {
 
     // Register client
     let pid_u32 = std::process::id();
-    let pid = gpy_agent::config::types::ClientPid::new(pid_u32).unwrap();
+    let pid = gpy_agent::ipc::ClientPid::new(pid_u32).unwrap();
     let response = server
         .send_request(Message::RegisterClient {
             pid,
@@ -154,10 +148,7 @@ async fn test_concurrent_git_status_requests() {
             server_clone
                 .send_request(Message::RepositoryStatus {
                     path: path_clone,
-                    format: Format::Json,
-                    is_last: false,
-                    is_first: false,
-                    prev_bg: None,
+                    segment: Segment::default(),
                 })
                 .await
         }));
@@ -186,10 +177,7 @@ async fn test_git_status_invalid_path() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new("/nonexistent/path/12345").unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request failed");
@@ -225,10 +213,7 @@ async fn test_socket_serves_requests_before_theme_export_warmup() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request should succeed the instant the socket accepts");
@@ -260,10 +245,7 @@ async fn test_language_detection_integration() {
     let response = server
         .send_request(Message::LanguageDetect {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
             virtual_env: None,
         })
         .await
@@ -278,4 +260,214 @@ async fn test_language_detection_integration() {
         }
         other => panic!("Expected Language or Error response, got {other:?}"),
     }
+}
+
+#[test]
+fn test_config_writes_its_settings() {
+    let test_config = TestConfig::new().with_git_disabled();
+    assert!(!test_config.config().git.enabled);
+    test_config.write();
+
+    let contents = std::fs::read_to_string(test_config.path()).unwrap();
+    assert!(contents.contains("[git]"));
+    assert!(contents.contains("enabled = false"));
+}
+
+#[test]
+fn test_temp_socket() {
+    let socket = TempSocket::new().unwrap();
+    assert!(!socket.path().to_string_lossy().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_harness_starts_and_stops() {
+    let result = IntegrationTestServer::new().await;
+
+    match result {
+        Ok(server) => {
+            assert!(
+                server.socket_path().exists(),
+                "Socket path should exist after server starts"
+            );
+            assert!(
+                server.repo_path().exists(),
+                "Repository path should exist after server starts"
+            );
+            assert!(
+                server.assert_agent_alive().await.is_ok(),
+                "Agent process should be alive after startup"
+            );
+        }
+        Err(e) => {
+            skip_test(&format!("agent failed to start: {e}"));
+            return;
+        }
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_harness_sends_ping() {
+    let result = IntegrationTestServer::new().await;
+
+    let server = match result {
+        Ok(s) => s,
+        Err(e) => {
+            skip_test(&format!("agent failed to start: {e}"));
+            return;
+        }
+    };
+
+    let response = server.ping().await;
+    assert!(
+        response.is_ok(),
+        "Ping request should succeed, got error: {:?}",
+        response.err()
+    );
+
+    match response {
+        Ok(Response::Ack) => {}
+        Ok(other) => {
+            panic!("Expected Ack response to Ping message, got: {:?}", other);
+        }
+        Err(error) => {
+            panic!("Ping request should succeed, got error: {error}");
+        }
+    }
+}
+
+fn expect_test_safe_path(path: &str) -> SafePath {
+    SafePath::new(path).expect("valid test path")
+}
+
+fn expect_test_client_pid(pid: u32) -> ClientPid {
+    ClientPid::new(pid).expect("valid test pid")
+}
+
+async fn expect_git_status(server: &IntegrationTestServer, context: &str) -> GitStatus {
+    server.get_git_status().await.expect(context)
+}
+
+async fn expect_registration(server: &IntegrationTestServer, message: Message, context: &str) {
+    let response = server.send_request(message).await.expect(context);
+    assert!(
+        matches!(response, Response::Ack),
+        "{context}: expected Ack, got {response:?}"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_harness_git_status() {
+    let result = IntegrationTestServer::new().await;
+
+    let server = match result {
+        Ok(s) => s,
+        Err(e) => {
+            skip_test(&format!("agent failed to start: {e}"));
+            return;
+        }
+    };
+
+    let status = expect_git_status(&server, "Git status request should succeed").await;
+    assert!(
+        !status.branch.is_empty(),
+        "Git status should include non-empty branch name, got: {:?}",
+        status.branch
+    );
+    assert_eq!(
+        status.staged, 0,
+        "New repository should have 0 staged files"
+    );
+    assert_eq!(
+        status.untracked, 0,
+        "New repository should have 0 untracked files"
+    );
+}
+
+/// Watcher-driven status updates reach a registered client end to end.
+/// Serialized in `watcher_fsevents_bootstrap`: `FSEventStream` bootstraps must
+/// not run concurrently across nextest processes.
+#[tokio::test]
+#[serial_test::serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+async fn test_harness_git_changes() {
+    let result = IntegrationTestServer::new().await;
+
+    let mut server = match result {
+        Ok(s) => s,
+        Err(e) => {
+            skip_test(&format!("agent failed to start: {e}"));
+            return;
+        }
+    };
+
+    let pid = std::process::id();
+    let repo_path = server.repo_path().to_string_lossy().to_string();
+    let safe_path = expect_test_safe_path(&repo_path);
+
+    expect_registration(
+        &server,
+        Message::RegisterClient {
+            pid: expect_test_client_pid(pid),
+            cwd: Some(safe_path),
+            shell: None,
+            shell_version: None,
+        },
+        "Registration failed",
+    )
+    .await;
+
+    let initial = expect_git_status(&server, "Initial git status should succeed").await;
+    assert_eq!(
+        initial.untracked, 0,
+        "Initial repository should have 0 untracked files"
+    );
+
+    server
+        .trigger_git_change(GitChange::AddUntracked("test.txt".to_owned()))
+        .expect("Adding untracked file should succeed");
+
+    // Poll up to 6s for the watcher-driven update.
+    let mut status = expect_git_status(&server, "Git status after adding file").await;
+    for _ in 0_u32..30 {
+        if status.untracked == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        status = expect_git_status(&server, "Polling git status for untracked file").await;
+    }
+
+    assert_eq!(
+        status.untracked, 1,
+        "After adding untracked file, should have 1 untracked file"
+    );
+
+    server
+        .trigger_git_change(GitChange::StageFile("test.txt".to_owned()))
+        .expect("Staging file should succeed");
+
+    status = expect_git_status(&server, "Git status after staging file").await;
+    for _ in 0_u32..30 {
+        if status.staged == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        status = expect_git_status(&server, "Polling git status for staged file").await;
+    }
+
+    assert_eq!(
+        status.staged, 1,
+        "After staging file, should have 1 staged file"
+    );
+    assert_eq!(
+        status.untracked, 0,
+        "After staging file, should have 0 untracked files"
+    );
+
+    assert!(
+        server.assert_agent_alive().await.is_ok(),
+        "Agent should remain alive after git operations"
+    );
 }

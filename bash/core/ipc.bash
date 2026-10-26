@@ -1,6 +1,13 @@
+# A flag is off only when set to `0` or `false`; unset, empty and any other
+# value leave it on. Fish and Zsh apply the same rule.
 # False in agent-free mode. Rendering never checks it, so oneshot still works.
 __gpy_agent_enabled() {
-    [[ -z "${GPY_AGENT_ENABLED:-}" || "${GPY_AGENT_ENABLED:-}" == "1" ]]
+    [[ "${GPY_AGENT_ENABLED:-}" != 0 && "${GPY_AGENT_ENABLED:-}" != false ]]
+}
+
+# Governs restarts only; agent start and registration use __gpy_agent_enabled.
+__gpy_supervisor_enabled() {
+    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != 0 && "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != false ]]
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes
@@ -14,13 +21,6 @@ __gpy_escape_json_into() {
     __gpy_ej_s="${__gpy_ej_s//$'\r'/\\r}"
     __gpy_ej_s="${__gpy_ej_s//$'\t'/\\t}"
     printf -v "$1" '%s' "$__gpy_ej_s"
-}
-
-# Printing form, kept for the vector tests.
-__gpy_escape_json() {
-    local __gpy_ej_out
-    __gpy_escape_json_into __gpy_ej_out "$1"
-    printf '%s\n' "$__gpy_ej_out"
 }
 
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`, into
@@ -366,8 +366,8 @@ __gpy_prev_bg_token() {
     fi
 }
 
-# Suffix for base $1, is_last $2, is_first $3 into variable $4. MUST match
-# `variant_suffix` in the agent, e.g. git true false -> "git_last".
+# Suffix for base $1, is_last $2, is_first $3 into variable $4. MUST match the
+# agent's cache variant names (`CacheFileName`), e.g. git true false -> "git_last".
 __gpy_cache_variant_suffix() {
     local __gpy_cvs_suffix="$1"
     [[ "$3" == "true" ]] && __gpy_cvs_suffix+="_first"

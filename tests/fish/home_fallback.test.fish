@@ -16,16 +16,6 @@ source "$repo_root/tests/lib/test_helpers.fish"
 
 print_test_header "Fish empty-HOME fallback"
 
-set -g failures 0
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        print_test_result "$label" PASS
-    else
-        print_test_result "$label" FAIL "$detail"
-        set -g failures (math $failures + 1)
-    end
-end
-
 set -l pwhome (env -u HOME fish --no-config -c 'echo $HOME')
 if test -z "$pwhome"
     test_skip "cannot determine the passwd home"
@@ -46,13 +36,9 @@ function resolve --argument-names state fn
 end
 
 for state in empty unset
-    check "HOME $state: the runtime root is the passwd home's cache" (test (resolve $state __gpy_runtime_root) = "$pwhome/.cache/gpy"; and echo 1; or echo 0) "got "(resolve $state __gpy_runtime_root)
-    check "HOME $state: the socket is under it" (test (resolve $state __gpy_ipc_endpoint) = "$pwhome/.cache/gpy/gpy.sock"; and echo 1; or echo 0) "got "(resolve $state __gpy_ipc_endpoint)
-    check "HOME $state: the instant-cache dir is under it" (test (resolve $state __gpy_instant_cache_dir) = "$pwhome/.cache/gpy/instant-prompts"; and echo 1; or echo 0) "got "(resolve $state __gpy_instant_cache_dir)
+    check "HOME $state: the runtime root is the passwd home's cache" "$pwhome/.cache/gpy" (resolve $state __gpy_runtime_root)
+    check "HOME $state: the socket is under it" "$pwhome/.cache/gpy/gpy.sock" (resolve $state __gpy_ipc_endpoint)
+    check "HOME $state: the instant-cache dir is under it" "$pwhome/.cache/gpy/instant-prompts" (resolve $state __gpy_instant_cache_dir)
 end
 
-if test $failures -gt 0
-    print_test_footer "Fish empty-HOME fallback" FAIL
-    exit 1
-end
-print_test_footer "Fish empty-HOME fallback" PASS
+test_finish "Fish empty-HOME fallback"

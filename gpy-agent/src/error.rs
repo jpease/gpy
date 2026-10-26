@@ -10,9 +10,6 @@ pub enum Error {
     Git {
         /// A description of the error.
         message: String,
-        /// The underlying error source, if any.
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     /// Language detection failed
@@ -20,9 +17,6 @@ pub enum Error {
     Language {
         /// A description of the error.
         message: String,
-        /// The underlying error source, if any.
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     /// IPC communication failed
@@ -30,9 +24,6 @@ pub enum Error {
     Ipc {
         /// A description of the error.
         message: String,
-        /// The underlying error source, if any.
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     /// File watching failed
@@ -40,9 +31,6 @@ pub enum Error {
     Watcher {
         /// A description of the error.
         message: String,
-        /// The underlying error source, if any.
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     /// Configuration loading/validation failed
@@ -79,9 +67,13 @@ pub enum Error {
         source: Option<serde_json::Error>,
     },
 
-    /// UTF-8 processing failed
-    #[error("UTF-8 processing failed")]
-    Utf8(#[from] std::str::Utf8Error),
+    /// Starship importer translation failed
+    #[error(transparent)]
+    StarshipImport(#[from] crate::import::starship::ImportError),
+
+    /// base16/base24 importer failed
+    #[error(transparent)]
+    Base16Import(#[from] crate::import::base16::ImportError),
 
     /// Process execution failed
     #[error("Process execution failed: command '{command}' {message}")]
@@ -91,6 +83,10 @@ pub enum Error {
         /// A description of the error.
         message: String,
     },
+
+    /// `gpy doctor` found at least one problem (details already printed)
+    #[error("Health check failed")]
+    HealthCheckFailed,
 
     /// Invalid input or state
     #[error("Invalid operation: {message}")]
@@ -105,7 +101,6 @@ impl Error {
     pub fn git<S: Into<String>>(message: S) -> Self {
         Self::Git {
             message: message.into(),
-            source: None,
         }
     }
 
@@ -113,7 +108,6 @@ impl Error {
     pub fn language<S: Into<String>>(message: S) -> Self {
         Self::Language {
             message: message.into(),
-            source: None,
         }
     }
 
@@ -121,7 +115,6 @@ impl Error {
     pub fn ipc<S: Into<String>>(message: S) -> Self {
         Self::Ipc {
             message: message.into(),
-            source: None,
         }
     }
 
@@ -129,7 +122,6 @@ impl Error {
     pub fn watcher<S: Into<String>>(message: S) -> Self {
         Self::Watcher {
             message: message.into(),
-            source: None,
         }
     }
 
@@ -149,8 +141,17 @@ impl Error {
         }
     }
 
+    /// Create an I/O error whose message names the failed action (`context`),
+    /// keeping the original [`std::io::ErrorKind`].
+    pub fn io_context(context: impl std::fmt::Display, source: &std::io::Error) -> Self {
+        Self::Io(std::io::Error::new(
+            source.kind(),
+            format!("{context}: {source}"),
+        ))
+    }
+
     /// Create a Process error
-    pub fn process<S: Into<String>>(command: S, message: S) -> Self {
+    pub fn process(command: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Process {
             command: command.into(),
             message: message.into(),
@@ -189,6 +190,46 @@ pub fn user_message(err: &(dyn std::error::Error + 'static)) -> String {
 #[must_use]
 pub fn is_broken_pipe(err: &Error) -> bool {
     matches!(err, Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::BrokenPipe)
+}
+
+/// Turn a command's result into its process exit code: a broken stdout pipe is
+/// success, any other error prints one `Error: ...` line and exits
+/// [`CLI_FAILURE_EXIT_CODE`].
+#[must_use]
+pub fn report(result: Result<std::process::ExitCode>) -> std::process::ExitCode {
+    match result {
+        Ok(code) => code,
+        Err(err) if is_broken_pipe(&err) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {}", user_message(&err));
+            std::process::ExitCode::from(CLI_FAILURE_EXIT_CODE)
+        }
+    }
+}
+
+/// Install a panic hook that exits 0 when a CLI pipeline closes stdout early
+/// (`gpy segments | head -1`) and hands every other panic to `report`.
+/// `unsafe` is forbidden, so `SIGPIPE` cannot be reset to its default.
+#[allow(
+    clippy::exit,
+    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
+)]
+pub fn install_broken_pipe_hook<F>(report: F)
+where
+    F: Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync + 'static,
+{
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if message.contains("failed printing to stdout") && message.contains("Broken pipe") {
+            std::process::exit(0);
+        }
+        report(info);
+    }));
 }
 
 impl From<serde_json::Error> for Error {

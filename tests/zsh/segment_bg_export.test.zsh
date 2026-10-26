@@ -17,17 +17,6 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
 
-FAILED=0
-check() {
-    local label=$1 expected=$2 actual=$3
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
-
 AGENT_BIN="$ROOT/gpy-agent/target/debug/gpy-agent"
 if [[ ! -x "$AGENT_BIN" ]]; then
     test_skip "$AGENT_BIN not built (run \`cargo build\` in gpy-agent first)"
@@ -58,8 +47,4 @@ check "unknown segment returns empty" "" "$(__gpy_segment_bg not-a-real-segment)
 hit_count=$(grep -rl 'case "\$seg" in' zsh 2>/dev/null | wc -l | tr -d ' ')
 check "no 'case \"\$seg\" in' table left under zsh/" 0 "$hit_count"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== segment_bg export test passed ==="
+test_finish "segment_bg export test"

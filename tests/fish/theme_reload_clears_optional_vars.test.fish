@@ -2,6 +2,8 @@
 # Verifies that switching themes in an open shell does not leak the previous
 # theme's optional variables: __time_format and the status icons.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l temp_root (mktemp -d)
 set -l config_dir "$temp_root/gpy"
 set -l theme_dir "$config_dir/themes"
@@ -29,19 +31,16 @@ source fish/core/init.fish
 
 __gpy_reload_theme 0
 if test "$__time_format" != 24; or test "$__icon_status_ok" != OK
-    echo "❌ precondition: a24 theme not applied (time_format='$__time_format' ok='$__icon_status_ok')"
+    fail "precondition: a24 theme not applied (time_format='$__time_format' ok='$__icon_status_ok')"
     rm -rf $temp_root
     exit 1
 end
 
 _write_config bplain $config_path
 __gpy_reload_theme 0
-
-set -l failed 0
 set -l fmt (__gpy_clock_date_format)
 if test "$fmt" != "%-I:%M %p"
-    echo "❌ expected 12-hour clock format '%-I:%M %p' after switch, got '$fmt'"
-    set failed 1
+    fail "expected 12-hour clock format '%-I:%M %p' after switch, got '$fmt'"
 end
 
 if test "$__prompt_icons" = nerd
@@ -52,16 +51,11 @@ else
     set expected_fail $__gpy_icon_ascii_status_fail
 end
 if test "$__icon_status_ok" != "$expected_ok"
-    echo "❌ __icon_status_ok='$__icon_status_ok', expected fallback '$expected_ok'"
-    set failed 1
+    fail "__icon_status_ok='$__icon_status_ok', expected fallback '$expected_ok'"
 end
 if test "$__icon_status_fail" != "$expected_fail"
-    echo "❌ __icon_status_fail='$__icon_status_fail', expected fallback '$expected_fail'"
-    set failed 1
+    fail "__icon_status_fail='$__icon_status_fail', expected fallback '$expected_fail'"
 end
 
 rm -rf $temp_root
-if test $failed -ne 0
-    exit 1
-end
-echo "✅ Theme reload clears optional theme variables"
+test_finish "Theme reload clears optional theme variables"

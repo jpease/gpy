@@ -79,11 +79,12 @@ run() {
     echo "==> $*"
     "$@" || failed+=("$*")
 }
-run cargo clippy --all-targets --all-features
+run cargo clippy --all-targets
+run cargo clippy --lib --bins
 win=(cargo check --target x86_64-pc-windows-gnu)
 run "${win[@]}" --lib
 run "${win[@]}" --locked
-run "${win[@]}" --profile test --tests --features test-support
+run "${win[@]}" --profile test --tests
 if ((${#failed[@]})); then
     echo "check-platforms: FAILED:"
     printf "  %s\n" "${failed[@]}"

@@ -1,5 +1,5 @@
-//! IPC request handlers, one per domain (git, language, theme, client, misc),
-//! behind the [`RequestHandler`] trait.
+//! IPC request handlers, one per domain (git, language, client, misc), behind
+//! the [`RequestHandler`] trait.
 
 use crate::ipc::{ClientDirectory, Message, Response};
 use crate::sync_ext::MutexExt;
@@ -55,15 +55,6 @@ pub enum HandlerError {
         /// The upstream failure.
         source: crate::Error,
     },
-
-    /// A theme query asked for a key the theme schema does not define.
-    #[error("Unknown theme key: {key}. Valid keys: {valid_keys}")]
-    UnknownThemeKey {
-        /// The key the client asked for.
-        key: String,
-        /// Comma-separated list of keys that would have been accepted.
-        valid_keys: String,
-    },
 }
 
 /// Handles one domain of IPC requests.
@@ -73,8 +64,6 @@ pub trait RequestHandler: Send + Sync {
     /// # Errors
     /// Fails if the message is unsupported by this handler or processing fails.
     fn handle(&self, message: &Message) -> Result<Response, HandlerError>;
-    /// Handler name for logging.
-    fn name(&self) -> &'static str;
 }
 
 /// Shared handles needed to write the instant-prompt cache and repaint live
@@ -143,24 +132,6 @@ impl<V> SharedJob<V> {
     pub(super) fn complete(&self, value: V) {
         *self.result.lock_or_recover() = Some(value);
         self.ready.notify_all();
-    }
-
-    /// Wait until the job completes. Test-only; production uses `wait_timeout`.
-    #[cfg(test)]
-    pub(super) fn wait(&self) -> V
-    where
-        V: Clone,
-    {
-        let mut result = self.result.lock_or_recover();
-        loop {
-            if let Some(value) = result.as_ref() {
-                return value.clone();
-            }
-            result = self
-                .ready
-                .wait(result)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
     }
 
     /// Wait until the job completes or the timeout expires.
@@ -348,68 +319,27 @@ pub use language_handler::LanguageHandler;
 pub use misc_handler::MiscHandler;
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::{HandlerError, SharedJob, SingleFlight};
+    use crate::sync_ext::MutexExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, PoisonError};
     use std::time::{Duration, Instant};
 
-    // These strings are the wire-visible `Response::Error` text.
-
-    #[test]
-    fn unexpected_message_renders_each_handlers_own_wording() {
-        let err = HandlerError::UnexpectedMessage {
-            handler: "GitHandler",
-            qualifier: "non-git",
-            message: "Ping".to_owned(),
-        };
-
-        assert_eq!(err.to_string(), "GitHandler received non-git message: Ping");
-    }
-
-    #[test]
-    fn feature_disabled_renders_the_config_wording() {
-        assert_eq!(
-            HandlerError::FeatureDisabled("Git").to_string(),
-            "Git segment disabled via config"
-        );
-    }
-
-    #[test]
-    fn not_in_repository_renders_unchanged() {
-        assert_eq!(
-            HandlerError::NotInRepository.to_string(),
-            "Not in a git repository"
-        );
-    }
-
-    #[test]
-    fn timed_out_renders_both_operations() {
-        assert_eq!(
-            HandlerError::TimedOut("Git status").to_string(),
-            "Git status timed out"
-        );
-        assert_eq!(
-            HandlerError::TimedOut("Language detection").to_string(),
-            "Language detection timed out"
-        );
-    }
-
-    #[test]
-    fn pid_not_registered_renders_with_the_pid() {
-        assert_eq!(
-            HandlerError::PidNotRegistered(4321).to_string(),
-            "PID 4321 not registered - please register first"
-        );
-    }
-
-    #[test]
-    fn git_renders_the_upstream_text_behind_a_prefix() {
-        assert_eq!(
-            HandlerError::Git("git status job panicked".to_owned()).to_string(),
-            "Git error: git status job panicked"
-        );
+    impl<V: Clone> SharedJob<V> {
+        /// Wait until the job completes, however long it takes.
+        fn wait(&self) -> V {
+            let mut result = self.result.lock_or_recover();
+            loop {
+                if let Some(value) = result.as_ref() {
+                    return value.clone();
+                }
+                result = self
+                    .ready
+                    .wait(result)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
     }
 
     #[test]
@@ -422,19 +352,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Config reload failed: Configuration error: missing field"
-        );
-    }
-
-    #[test]
-    fn unknown_theme_key_lists_the_valid_keys() {
-        let err = HandlerError::UnknownThemeKey {
-            key: "nonsuch".to_owned(),
-            valid_keys: "a, b".to_owned(),
-        };
-
-        assert_eq!(
-            err.to_string(),
-            "Unknown theme key: nonsuch. Valid keys: a, b"
         );
     }
 

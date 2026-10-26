@@ -12,17 +12,6 @@
 set -g repo_root (path resolve (status dirname)/../..)
 source $repo_root/tests/lib/test_helpers.fish
 
-set -g failed 0
-
-function fail --argument-names msg
-    echo "❌ $msg"
-    set -g failed 1
-end
-
-function pass --argument-names msg
-    echo "✅ $msg"
-end
-
 set -g scratch (mktemp -d)
 test_track_dir $scratch
 
@@ -157,7 +146,4 @@ for kind in sh
     end
 end
 
-if test $failed -ne 0
-    exit 1
-end
-echo "✅ uninstall.sh removes only GPY's own fish_prompt.fish"
+test_finish "uninstall.sh removes only GPY's own fish_prompt.fish"

@@ -59,25 +59,21 @@ summarize() {
     printf '%s\n' $docs | jq -s --argjson min_rounds 5 -f "$DIR/summarize.jq" | jq -r "$field"
 }
 
-check() { # LABEL GOT WANT
-    if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1: got '$2', want '$3'"; fi
-}
-
 for schema in v1 v2; do
     d1=$(doc "$schema" 10 12)
     d2=$(doc "$schema" 12 10)
     six_faster="$d1 $d1 $d1 $d1 $d1 $d1"
-    check "$schema: GPY lower in all 6 rounds is a GPY verdict" "$(summarize "$six_faster" .verdict)" gpy
-    check "$schema: ratio is GPY median / Starship median" "$(summarize "$six_faster" '.ratio * 1000 | round')" 833
-    check "$schema: Starship lower in all 6 rounds is a Starship verdict" "$(summarize "$d2 $d2 $d2 $d2 $d2 $d2" .verdict)" starship
-    check "$schema: one reversed round makes the verdict inconclusive" "$(summarize "$d1 $d1 $d1 $d1 $d1 $d2" .verdict)" inconclusive
-    check "$schema: reversed rounds are counted" "$(summarize "$d1 $d1 $d1 $d1 $d1 $d2" .rounds_gpy_faster)" 5
-    check "$schema: fewer than 5 rounds never gives a verdict" "$(summarize "$d1 $d1 $d1 $d1" .verdict)" inconclusive
+    expect_eq "$schema: GPY lower in all 6 rounds is a GPY verdict" "$(summarize "$six_faster" .verdict)" gpy
+    expect_eq "$schema: ratio is GPY median / Starship median" "$(summarize "$six_faster" '.ratio * 1000 | round')" 833
+    expect_eq "$schema: Starship lower in all 6 rounds is a Starship verdict" "$(summarize "$d2 $d2 $d2 $d2 $d2 $d2" .verdict)" starship
+    expect_eq "$schema: one reversed round makes the verdict inconclusive" "$(summarize "$d1 $d1 $d1 $d1 $d1 $d2" .verdict)" inconclusive
+    expect_eq "$schema: reversed rounds are counted" "$(summarize "$d1 $d1 $d1 $d1 $d1 $d2" .rounds_gpy_faster)" 5
+    expect_eq "$schema: fewer than 5 rounds never gives a verdict" "$(summarize "$d1 $d1 $d1 $d1" .verdict)" inconclusive
 done
 
-check "pooled sample count is rounds x runs" "$(summarize "$(doc v2 10 12) $(doc v2 10 12)" .gpy.n)" 20
-check "a 20% round-to-round drift is flagged noisy" "$(summarize "$(doc v2 10 12) $(doc v2 12 12) $(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12)" .noisy)" true
-check "stable rounds are not flagged noisy" "$(summarize "$(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12)" .noisy)" false
+expect_eq "pooled sample count is rounds x runs" "$(summarize "$(doc v2 10 12) $(doc v2 10 12)" .gpy.n)" 20
+expect_eq "a 20% round-to-round drift is flagged noisy" "$(summarize "$(doc v2 10 12) $(doc v2 12 12) $(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12)" .noisy)" true
+expect_eq "stable rounds are not flagged noisy" "$(summarize "$(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12) $(doc v2 10 12)" .noisy)" false
 
 
 # One CPU spike at t=102. Sourcing run.sh defines functions only.
@@ -88,14 +84,14 @@ got=$(
     SAMPLES="$TMP/samples"
     window_busy 101 103
 )
-check "window_busy covers exactly the requested seconds" "$got" "34.33 90.00 3"
+expect_eq "window_busy covers exactly the requested seconds" "$got" "34.33 90.00 3"
 got=$(
     # shellcheck source=benchmarks/compare-starship/run.sh
     . "$DIR/run.sh"
     SAMPLES="$TMP/samples"
     window_busy 100 101
 )
-check "window_busy excludes samples outside the window" "$got" "6.00 7.00 2"
+expect_eq "window_busy excludes samples outside the window" "$got" "6.00 7.00 2"
 
 reason() { # MEAN MAX SAMPLES SWAP0 SWAP1 THERMAL: mean limit 25, peak limit 45
     (
@@ -104,17 +100,17 @@ reason() { # MEAN MAX SAMPLES SWAP0 SWAP1 THERMAL: mean limit 25, peak limit 45
         contention_reason "$@" 25.0 45.0
     )
 }
-check "a quiet block has no contention reason" "$(reason 8 12 10 5 5 '')" ""
+expect_eq "a quiet block has no contention reason" "$(reason 8 12 10 5 5 '')" ""
 flagged() { # LABEL MEAN MAX SAMPLES SWAP0 SWAP1 THERMAL: must have a reason
     if [[ -n "$(reason "${@:2}")" ]]; then pass "$1"; else fail "$1: no contention reason given"; fi
 }
 flagged "a mean above the limit is contention" 40 50 10 5 5 ''
 flagged "a single spike far above the limit is contention" 10 60 10 5 5 ''
-check "a modest spike inside limit + 20 is tolerated" "$(reason 10 40 10 5 5 '')" ""
+expect_eq "a modest spike inside limit + 20 is tolerated" "$(reason 10 40 10 5 5 '')" ""
 flagged "swap growth is contention" 10 12 10 5 200 ''
 flagged "thermal throttling is contention" 10 12 10 5 5 80
-check "an unthrottled CPU (limit 100) is not contention" "$(reason 10 12 10 5 5 100)" ""
-check "CPU is not judged from fewer than 2 samples" "$(reason 99 99 1 5 5 '')" ""
+expect_eq "an unthrottled CPU (limit 100) is not contention" "$(reason 10 12 10 5 5 100)" ""
+expect_eq "CPU is not judged from fewer than 2 samples" "$(reason 99 99 1 5 5 '')" ""
 
 # own_busy: the tools' own CPU, as "MEAN PEAK" percent of all CPUs, from either
 own() { # FILE
@@ -131,10 +127,10 @@ cat >"$TMP/own-v2.json" <<'JSON'
  {"name":"gpy","summary":{"time_cpu":{"count":100,"mean":0.6},"time_wall_clock":{"mean":0.1}}},
  {"name":"starship","summary":{"time_cpu":{"count":100,"mean":0.2},"time_wall_clock":{"mean":0.1}}}]}
 JSON
-check "own_busy reads hyperfine v2 (mean, busiest tool)" "$(own "$TMP/own-v2.json")" "40 60"
+expect_eq "own_busy reads hyperfine v2 (mean, busiest tool)" "$(own "$TMP/own-v2.json")" "40 60"
 jq -n '{results: [
   {command: "gpy", mean: 0.1, user: 0.1, system: 0.5, times: [range(100) | 0.1]},
   {command: "starship", mean: 0.1, user: 0.1, system: 0.1, times: [range(100) | 0.1]}]}' >"$TMP/own-v1.json"
-check "own_busy reads hyperfine v1 (mean, busiest tool)" "$(own "$TMP/own-v1.json")" "40 60"
+expect_eq "own_busy reads hyperfine v1 (mean, busiest tool)" "$(own "$TMP/own-v1.json")" "40 60"
 
 test_finish "compare-starship inputs, verdict rule and contention checks"

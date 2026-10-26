@@ -13,6 +13,7 @@ source "$repo_root/tests/lib/test_helpers.fish"
 source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
+source "$repo_root/fish/core/supervisor.fish"
 
 print_test_header "Supervisor tolerates a briefly unresponsive agent"
 
@@ -25,56 +26,27 @@ end
 
 set -g tmp (mktemp -d)
 test_track_dir $tmp
-set -g failures 0
-
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        print_test_result "$label" PASS
-    else
-        print_test_result "$label" FAIL "$detail"
-        set -g failures (math $failures + 1)
-    end
-end
-
 # --- __gpy_agent_is_healthy against real sockets ---
 
 set -gx GPY_AGENT_SOCKET_PATH $tmp/agent.sock
 
 __gpy_agent_is_healthy
 set -l rc $status
-check "no socket is unreachable (1)" (test $rc -eq 1; and echo 1; or echo 0) "status $rc"
+check "no socket is unreachable (1)" 1 $rc
 
 # A socket file nobody listens on: what a crashed agent leaves behind.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' $tmp/agent.sock
+test_stub_listener $tmp/agent.sock bind-only
 __gpy_agent_is_healthy
 set rc $status
-check "a socket nobody listens on is unreachable (1)" (test $rc -eq 1; and echo 1; or echo 0) "status $rc"
+check "a socket nobody listens on is unreachable (1)" 1 $rc
 rm -f $tmp/agent.sock
 
 # A listener that accepts and never answers: a stalled agent.
-python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1]); s.listen(5)
-held = []
-end = time.time() + 15
-while time.time() < end:
-    s.settimeout(end - time.time())
-    try:
-        c, _ = s.accept()
-    except socket.timeout:
-        break
-    held.append(c)
-' $tmp/agent.sock &
-set -l listener_pid $last_pid
-test_track_pid $listener_pid
-if not poll_until 3 test -S $tmp/agent.sock
-    test_skip "could not create test Unix socket listener"
-end
+test_stub_listener $tmp/agent.sock silent --lifetime 15
 __gpy_agent_is_healthy
 set rc $status
-kill -9 $listener_pid 2>/dev/null
-check "a connected agent that never answers is unresponsive (2)" (test $rc -eq 2; and echo 1; or echo 0) "status $rc"
+test_stop_pids $test_stub_pid
+check "a connected agent that never answers is unresponsive (2)" 2 $rc
 
 # --- loop decisions over a scripted sequence of health results ---
 
@@ -113,16 +85,12 @@ function run_loop
 end
 
 set -l got (run_loop 2 0 2 0)
-check "one silent check at a time never restarts" (test -z "$got"; and echo 1; or echo 0) "restarted at check(s) $got"
+check "one silent check at a time never restarts" 1 (test -z "$got"; and echo 1; or echo 0)
 
 set got (run_loop 0 2 2)
-check "two silent checks in a row restart on the second" (test "$got" = 3; and echo 1; or echo 0) "restarted at check(s) '$got', want 3"
+check "two silent checks in a row restart on the second" 3 "$got"
 
 set got (run_loop 0 1)
-check "an unreachable agent restarts on the first failed check" (test "$got" = 2; and echo 1; or echo 0) "restarted at check(s) '$got', want 2"
+check "an unreachable agent restarts on the first failed check" 2 "$got"
 
-if test $failures -gt 0
-    print_test_footer "Supervisor tolerates a briefly unresponsive agent" FAIL
-    exit 1
-end
-print_test_footer "Supervisor tolerates a briefly unresponsive agent" PASS
+test_finish "Supervisor tolerates a briefly unresponsive agent"

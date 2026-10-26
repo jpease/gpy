@@ -1,6 +1,6 @@
 //! Permissive deserialization of a `starship.toml` document.
 
-use crate::import::starship::{ImportError, Result};
+use crate::import::starship::error::{ImportError, Result};
 use std::collections::HashMap;
 
 /// A permissively-parsed Starship configuration.
@@ -45,11 +45,6 @@ impl StarshipConfig {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::parse;
 

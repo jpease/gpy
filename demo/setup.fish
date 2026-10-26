@@ -4,10 +4,9 @@
 # Builds an isolated fixture $HOME, installs the current build into it, seeds
 # a small tour repo, and records demo/demo.tape with VHS into assets/demo.gif.
 #
-# Never touches your real ~/.config/gpy, ~/.local/bin, or default tmux
-# server: HOME/XDG_*/PATH are all repointed at demo/.fixture-home (wiped and
-# rebuilt on every run) before anything is installed or recorded, and the
-# recording's tmux session runs on its own `-L gpydemo` socket.
+# Never touches the real ~/.config/gpy, ~/.local/bin or default tmux server:
+# HOME/XDG_*/PATH point at demo/.fixture-home (rebuilt on every run) and tmux
+# runs on its own `-L gpydemo` socket.
 #
 # Usage:
 #   just demo                     # from the repo root
@@ -27,12 +26,8 @@ end
 
 cd $repo_root
 
-# Captured before HOME is overridden below: some toolchains here (cargo,
-# rustc, node -- whichever a given machine has under mise) are reached via
-# `mise` shims that resolve the OS-level home directory rather than $HOME,
-# so they ignore our fixture isolation and hit mise's own interactive
-# config-trust prompt once HOME changes. Resolve what mise would actually
-# run and prioritize those directories instead, bypassing the shims.
+# mise shims resolve the OS-level home, not $HOME, and prompt for config trust
+# once HOME changes; resolve the real toolchain directories before overriding it.
 set -l real_toolchain_dirs
 if command -q mise
     for tool in cargo rustc node python3
@@ -45,7 +40,6 @@ echo "Preparing isolated demo fixture at $fixture_home"
 rm -rf $fixture_home
 mkdir -p $fixture_home
 
-# Isolate the recording from the real environment
 set -gx HOME $fixture_home
 set -gx XDG_CONFIG_HOME "$fixture_home/.config"
 set -gx XDG_CACHE_HOME "$fixture_home/.cache"
@@ -54,40 +48,24 @@ set -gx XDG_RUNTIME_DIR "$fixture_home/.run"
 set -gx SHELL (command -v fish)
 mkdir -p $XDG_RUNTIME_DIR
 
-# Homebrew's mise install ships a fish *vendor* conf.d snippet
-# (opt/homebrew/share/fish/vendor_conf.d/mise-activate.fish) that
-# unconditionally runs `mise activate fish` on every fish session --
-# vendor confdirs aren't under $XDG_CONFIG_HOME, so HOME isolation alone
-# doesn't stop it, and its prompt/PWD hooks fight with GPY's. Opt out.
+# Homebrew's mise ships a vendor conf.d snippet that runs `mise activate fish`
+# outside $XDG_CONFIG_HOME; its prompt hooks fight with GPY's, so opt out.
 set -gx MISE_FISH_AUTO_ACTIVATE 0
 
-# Fixture binaries take priority, then the real (non-mise-shim) toolchain
-# dirs resolved above, then the rest of the real PATH as a fallback so
-# fish, tmux, git, and anything else still resolve.
+# Fixture binaries first, then the real toolchain dirs, then the rest of PATH.
 set -gx PATH "$fixture_home/.local/bin" $real_toolchain_dirs $PATH
 
-# Install the current build into the fixture
-# install-dev.fish already honors HOME/XDG_* for every install path, so
-# reusing it here gets us a real, up-to-date install without duplicating its
-# logic -- it never touches the real ~/.config/gpy or ~/.local/bin.
-# --allow-shadow: the real PATH tail may hold a packaged gpy, which the fixture's
-# own ~/.local/bin already precedes.
+# --allow-shadow: the real PATH tail may hold a packaged gpy, which the
+# fixture's ~/.local/bin already precedes.
 ./install-dev.fish --allow-shadow $argv; or exit 1
 
-# Demo-only config tweaks
-# Show only the language judged primary for a repo. The default (`all`) puts up
-# to three language pills on every prompt, which crowds the frame and competes
-# with the beat headers for attention.
+# The default `all` puts up to three language pills on every prompt; show only
+# the primary one so the frame stays uncrowded.
 gpy config set language.filter primary >/dev/null; or exit 1
 
-# Seed a small multi-language tour workspace
-# node-app/python-app/rust-app are three INDEPENDENT git repos, not sub-dirs
-# of one shared repo: GPY's default language detection scans a whole project
-# (repo root down), so nesting them under one repo would show every
-# sub-project's language at once in each dir instead of demonstrating
-# detection actually changing as you move around. Named after the language
-# each one demonstrates rather than a generic role (api/service/engine) so
-# what's being shown is obvious without narration.
+# node-app/python-app/rust-app are independent git repos: language detection
+# scans from the repo root down, so nesting them in one repo would show every
+# language everywhere instead of changing as you move around.
 echo "Seeding tour workspace at $workspace"
 mkdir -p $workspace/node-app $workspace/python-app $workspace/rust-app/src
 
@@ -126,18 +104,14 @@ for dir in node-app python-app rust-app
         commit -q -m "Initial $dir project"
 end
 
-# Reuse real importer fixtures from the test suite
 cp gpy-agent/tests/fixtures/starship/preset_gruvbox_rainbow.toml \
     $workspace/starship-preset.toml
 cp gpy-agent/tests/fixtures/base16/tokyo-night-dark.yaml \
     $workspace/tokyo-night.yaml
 
-# The workspace root itself isn't a project repo -- give it its own clean
-# git repo (rather than leaving it bare) so GPY's git segment stops here
-# instead of walking up and picking up this real gpy checkout's own status
-# (the fixture lives under demo/.fixture-home/, inside this very repo).
-# node-app/python-app/rust-app are their own repos (gitlinks), so they're
-# ignored here rather than tracked.
+# The fixture sits inside this checkout; a repo at the workspace root stops the
+# git segment from walking up to the checkout's own status. The three app repos
+# are ignored rather than tracked as gitlinks.
 printf '%s\n' node-app/ python-app/ rust-app/ >$workspace/.gitignore
 git -C $workspace init -q
 git -C $workspace add -A

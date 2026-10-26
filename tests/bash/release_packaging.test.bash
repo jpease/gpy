@@ -16,18 +16,15 @@
 # Single quotes are load-bearing: assertions grep for literal `$VAR` text.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
-if ! command -v zip >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
-    echo "SKIP: zip/unzip not available; release packaging test needs both"
-    exit 0
-fi
+test_require_command zip "zip/unzip not available; release packaging test needs both"
+test_require_command unzip "zip/unzip not available; release packaging test needs both"
 
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
-
-# shellcheck source=tests/lib/shell_e2e.sh
-. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Must match release.yml's matrix; case (c) relies on the packager failing on absent ones.
 ASSETS=(

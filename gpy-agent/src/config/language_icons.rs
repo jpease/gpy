@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use super::DelimiterConfig;
-use super::defaults::{default_color_black, default_color_white};
+use super::defaults::literal;
 
 /// Language icons configuration (Nerd Fonts icons); unset entries use built-ins.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -20,19 +20,14 @@ pub struct LanguageIcons {
 pub struct LanguageTheme {
     /// Starship-style template controlling how this segment renders.
     /// The language segment is always agent-rendered, so `None` renders nothing.
-    #[serde(default)]
     pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub open: Option<DelimiterConfig>,
     /// Close delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub close: Option<DelimiterConfig>,
-    /// Background color (fallback for unknown languages)
-    #[serde(default = "default_color_black")]
+    /// Background color (fallback for languages without a `<lang>_bg_color`)
     pub bg_color: super::types::ColorSpec,
-    /// Text color (fallback for unknown languages)
-    #[serde(default = "default_color_white")]
+    /// Text color (fallback for languages without a `<lang>_text_color`)
     pub text_color: super::types::ColorSpec,
 
     /// Per-language color overrides (e.g. `rust_bg_color`, `rust_text_color`).
@@ -42,16 +37,16 @@ pub struct LanguageTheme {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub symbols: HashMap<String, String>,
     /// Per-language style attributes (e.g. `java_style = "dimmed"`); default `"bold"`.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub styles: HashMap<String, String>,
 
     /// Show a language's symbol even when no version resolves (Starship behavior).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_symbol_without_version: Option<bool>,
 
     /// Theme-owned allow-list of languages (case-insensitive); `None` defers to
     /// `config.language.enabled_languages`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled_languages: Option<Vec<String>>,
 }
 
@@ -76,98 +71,59 @@ impl<'de> serde::de::Visitor<'de> for LanguageThemeVisitor {
         self,
         mut map: A,
     ) -> Result<LanguageTheme, A::Error> {
-        let mut format: Option<String> = None;
-        let mut open: Option<DelimiterConfig> = None;
-        let mut close: Option<DelimiterConfig> = None;
-        let mut bg_color: Option<super::types::ColorSpec> = None;
-        let mut text_color: Option<super::types::ColorSpec> = None;
-        let mut overrides: HashMap<String, super::types::ColorSpec> = HashMap::new();
-        let mut symbols: HashMap<String, String> = HashMap::new();
-        let mut styles: HashMap<String, String> = HashMap::new();
-        let mut show_symbol_without_version: Option<bool> = None;
-        let mut enabled_languages: Option<Vec<String>> = None;
+        let mut theme = LanguageTheme::default();
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
-                "format" => format = map.next_value()?,
-                "open" => open = map.next_value()?,
-                "close" => close = map.next_value()?,
-                "bg_color" => bg_color = Some(map.next_value()?),
-                "text_color" => text_color = Some(map.next_value()?),
-                "show_symbol_without_version" => show_symbol_without_version = map.next_value()?,
-                "enabled_languages" => enabled_languages = map.next_value()?,
+                "format" => theme.format = map.next_value()?,
+                "open" => theme.open = map.next_value()?,
+                "close" => theme.close = map.next_value()?,
+                "bg_color" => theme.bg_color = map.next_value()?,
+                "text_color" => theme.text_color = map.next_value()?,
+                "show_symbol_without_version" => {
+                    theme.show_symbol_without_version = map.next_value()?;
+                }
+                "enabled_languages" => theme.enabled_languages = map.next_value()?,
                 // Flat keys (rust_bg_color = "red") or a nested [..overrides] subtable.
                 "overrides" => {
                     let nested: HashMap<String, super::types::ColorSpec> = map.next_value()?;
-                    overrides.extend(nested);
+                    theme.overrides.extend(nested);
                 }
                 // Nested [..symbols] subtable or flat keys like rust_symbol = "🦀".
                 "symbols" => {
                     let nested: HashMap<String, String> = map.next_value()?;
-                    symbols.extend(nested);
+                    theme.symbols.extend(nested);
                 }
                 k if k.ends_with("_symbol") => {
-                    symbols.insert(key, map.next_value()?);
+                    theme.symbols.insert(key, map.next_value()?);
                 }
                 // Nested [..styles] subtable or flat keys like java_style = "dimmed".
                 "styles" => {
                     let nested: HashMap<String, String> = map.next_value()?;
-                    styles.extend(nested);
+                    theme.styles.extend(nested);
                 }
                 k if k.ends_with("_style") => {
-                    styles.insert(key, map.next_value()?);
+                    theme.styles.insert(key, map.next_value()?);
                 }
                 _ => {
-                    overrides.insert(key, map.next_value()?);
+                    theme.overrides.insert(key, map.next_value()?);
                 }
             }
         }
 
-        Ok(LanguageTheme {
-            format,
-            open,
-            close,
-            bg_color: bg_color.unwrap_or_else(default_color_black),
-            text_color: text_color.unwrap_or_else(default_color_white),
-            overrides,
-            symbols,
-            styles,
-            show_symbol_without_version,
-            enabled_languages,
-        })
+        Ok(theme)
     }
 }
 
 impl Default for LanguageTheme {
     fn default() -> Self {
-        let mut overrides = HashMap::new();
-
-        #[expect(
-            clippy::expect_used,
-            reason = "colors come from the static LANGUAGES metadata table; a color string baked into the binary is infallible to parse in practice"
-        )]
-        for lang in crate::language::metadata::LANGUAGES {
-            if let Some(color) = lang.default_color {
-                overrides.insert(
-                    format!("{}_bg_color", lang.canonical),
-                    super::types::ColorSpec::new(color)
-                        .expect("Metadata default color must be valid"),
-                );
-                overrides.insert(
-                    format!("{}_text_color", lang.canonical),
-                    super::types::ColorSpec::new("white")
-                        .expect("Metadata default color must be valid"),
-                );
-            }
-        }
-
         Self {
             format: None,
             open: None,
             close: None,
-            bg_color: default_color_black(),
-            text_color: default_color_white(),
-            overrides,
+            bg_color: literal("black"),
+            text_color: literal("white"),
+            overrides: HashMap::new(),
             symbols: HashMap::new(),
             styles: HashMap::new(),
             show_symbol_without_version: None,
@@ -181,9 +137,7 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_bg_color(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_bg_color");
-        self.overrides
-            .get(&key)
+        lookup(&self.overrides, canonical, "_bg_color")
             .map_or_else(|| self.bg_color.as_str(), |c| c.as_str())
     }
 
@@ -191,9 +145,7 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_text_color(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_text_color");
-        self.overrides
-            .get(&key)
+        lookup(&self.overrides, canonical, "_text_color")
             .map_or_else(|| self.text_color.as_str(), |c| c.as_str())
     }
 
@@ -203,8 +155,7 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_symbol(&self, language: &str) -> Option<&str> {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_symbol");
-        self.symbols.get(&key).map(String::as_str)
+        lookup(&self.symbols, canonical, "_symbol").map(String::as_str)
     }
 
     /// Get a theme-declared style-attribute string for a language.
@@ -213,15 +164,37 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_style(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_style");
-        self.styles.get(&key).map_or("bold", String::as_str)
+        lookup(&self.styles, canonical, "_style").map_or("bold", String::as_str)
     }
+}
+
+/// Longest `<canonical><suffix>` key assembled on the stack; longer keys take the heap path.
+const STACK_KEY_BYTES: usize = 64;
+
+/// Look up `<canonical><suffix>` in a flat per-language map without allocating
+/// for ordinary language names.
+fn lookup<'map, V>(
+    map: &'map HashMap<String, V>,
+    canonical: &str,
+    suffix: &str,
+) -> Option<&'map V> {
+    let split = canonical.len();
+    let total = split.saturating_add(suffix.len());
+    let mut buf = [0_u8; STACK_KEY_BYTES];
+    let stack_key = buf.get_mut(..total).and_then(|key| {
+        let (head, tail) = key.split_at_mut_checked(split)?;
+        head.copy_from_slice(canonical.as_bytes());
+        tail.copy_from_slice(suffix.as_bytes());
+        std::str::from_utf8(key).ok()
+    });
+    stack_key.map_or_else(
+        || map.get(&format!("{canonical}{suffix}")),
+        |key| map.get(key),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]

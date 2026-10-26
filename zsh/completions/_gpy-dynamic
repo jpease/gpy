@@ -1,80 +1,12 @@
 #compdef gpy
 #
-# Dynamic-value completion glue for the `gpy` CLI.
-#
-# `gpy completions zsh` (clap_complete) is regenerated at install time into
-# `completions/_gpy` and covers the STRUCTURAL surface: subcommand/flag
-# dispatch built on `_arguments`, driven entirely by clap's own definitions.
-# It has no way to know the live set of themes, palettes, or segments
-# installed on this machine -- value positions for those args fall back to
-# `_default` (plain file completion). The `gpy __complete <kind>` command
-# supplies the live names; this file wires them into the six
-# positions that need them.
-#
-# This file is hand-authored and checked into the repo (unlike `_gpy`, which
-# is generated fresh from the installed CLI binary), so it ships and loads
-# unchanged regardless of `gpy`'s clap definitions.
-#
-# Naming: the function is named `_gpy-dynamic`, matching this file's
-# basename exactly. Zsh's `autoload` locates a function's definition by
-# searching `fpath` for a file with the SAME NAME as the function being
-# loaded; keeping them identical (zsh function names may contain hyphens,
-# unlike bash) avoids an extra rename/wrapper layer. It is registered as
-# gpy's active completer via `compdef _gpy-dynamic gpy` from `zsh/gpy.zsh`.
-#
-# Coexistence with the generated file: zsh allows only one function to be
-# registered per command via `compdef` (like bash's `complete -F`, unlike
-# fish which merges `complete -c` rules from every sourced file). So this
-# function re-implements nothing structural -- for any position that isn't
-# one of the six dynamic value slots, it DELEGATES to the generated `_gpy`
-# function (autoloaded from fpath) directly. If `_gpy` isn't available (the
-# structural completions failed to generate/install, or the `gpy` CLI itself
-# was never installed), delegation degrades to no candidates instead
-# of erroring.
-#
-# When invoked as the registered completer, zsh provides $words (all words
-# on the command line, $words[1] == "gpy") and $CURRENT (1-based index of
-# the word being completed) as globals -- no explicit arguments are passed.
-# The six dynamic positions this file recognizes:
-#   gpy theme use <TAB>      / gpy theme validate <TAB>    -> `gpy __complete theme`
-#   gpy palette use <TAB>    / gpy palette validate <TAB>  -> `gpy __complete palette`
-#   gpy enable <TAB>         / gpy disable <TAB>           -> `gpy __complete segment`
-#
+# Dynamic-value completion glue for the `gpy` CLI: live theme, palette and
+# segment names via `gpy __complete <kind>`; every other position delegates to
+# the generated `_gpy`. Design notes: docs/dev/completions.md.
 _gpy-dynamic() {
-    # Per-session caching: forking `gpy __complete <kind>` on every
-    # single TAB press is wasted work once the answer is already known for
-    # this shell session, so `__gpy_complete_cached` memoizes each kind's
-    # result in a session-global variable (`__gpy_complete_cache_<kind>`) the
-    # first time it's asked for and just replays it after that -- warm reads
-    # never fork `gpy`. Like the bash glue, this uses one plain variable per
-    # kind plus zsh's `(P)` indirect-expansion flag rather than an
-    # associative array keyed by kind.
-    #
-    # Only a NON-EMPTY result is cached: if `gpy __complete <kind>` fails or
-    # prints nothing (e.g. `gpy` missing from PATH), the cache variable is
-    # left unset so the next TAB retries instead of permanently caching the
-    # failure.
-    #
-    # Accepted staleness: a theme/palette/plugin installed mid-session will
-    # not show up in completions until a new shell is started (matches the
-    # general shell-session-cache tradeoff -- refresh by opening a new
-    # shell).
-    #
-    # IMPORTANT: this must be called as a plain statement below, never via
-    # `$(...)` -- command substitution always forks a subshell, and
-    # `typeset -g "$cache_var=..."` inside a subshell can't write back to
-    # this function's caller, so the cache would silently never stick.
-    # Callers read the result back from `__gpy_complete_result` (set here,
-    # in the shared function scope) instead.
-    #
-    # NOTE: defined INSIDE `_gpy-dynamic` rather than as a second top-level
-    # function in this file. Zsh's `-Uz` autoload only auto-invokes a
-    # freshly loaded function on its first call when the file contains
-    # nothing but that one function's definition; a second top-level
-    # function here would make zsh fall back to treating the whole file as
-    # the function body, so `_gpy-dynamic` would silently no-op (only
-    # define itself) on the very first TAB press of a session and only work
-    # from the second press onward.
+    # Defined inside this function: a second top-level function would make zsh's
+    # autoload treat the file as the body and no-op on the first TAB. Call it as
+    # a plain statement (never `$(...)`) and read `__gpy_complete_result`.
     __gpy_complete_cached() {
         local kind="$1"
         local cache_var="__gpy_complete_cache_$kind"

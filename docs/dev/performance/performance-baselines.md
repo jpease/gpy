@@ -23,7 +23,7 @@ The agent and shell integration run on every prompt render. Budgets live in
 
 1. **Formatter hot paths** - Git status and language formatting
 2. **IPC roundtrip** - Agent communication latency (`ipc_latency`: 1 ms target, 1.5 ms max)
-3. **Git operations** - Repository status (`git_status_warm`: 50 ms target; `git_status_cold`: 500 ms target)
+3. **Git operations** - Repository status (`git_status_cold`: 500 ms target)
 
 ## Running Benchmarks
 
@@ -103,7 +103,7 @@ in-process benchmarks for that reason.
 
 ### IPC and Integration Benchmarks
 
-`./scripts/bench.sh --ci` runs `cargo bench` and enforces the budgets below.
+`./scripts/bench.sh --ci` rebuilds the release agent, runs `cargo bench` and enforces the budgets below.
 `./scripts/ci-bench.sh` measures the end-to-end shell path (see
 [benchmarking.md](benchmarking.md)).
 
@@ -153,9 +153,10 @@ Rules:
 - Verify benchmark repos are clean before publishing or saving baseline results.
 - Prefer `/tmp` or another known-writable local path if `~/.cache` behavior differs across environments.
 
-## Establishing Baselines
+## Updating Budgets
 
-When adding new features or making significant changes, establish new baselines:
+When adding new features or making significant changes, measure first, then
+update the budget file.
 
 ### 1. Run benchmarks in clean state
 
@@ -169,66 +170,38 @@ cargo build --release
 cargo bench --bench formatter_bench
 ```
 
-### 2. Record baseline results
+### 2. Record the budget
 
-Create or update `tests/performance-baselines.json` in the project root:
+`tests/performance-baselines.json` holds only what a script reads:
 
 ```json
 {
-  "timestamp": "2026-05-15T00:00:00Z",
-  "commit": "8e29d83",
-  "benchmarks": {
-    "formatter": {
-      "git_status_ansi_short_branch": {
-        "mean_ns": 562,
-        "std_dev_ns": 10
-      },
-      "git_status_ansi_long_branch": {
-        "mean_ns": 595,
-        "std_dev_ns": 12
-      },
-      "git_status_ansi_truncated_branch": {
-        "mean_ns": 645,
-        "std_dev_ns": 12
-      },
-      "language_ansi_single": {
-        "mean_ns": 394,
-        "std_dev_ns": 8
-      }
-    },
-    "ipc": {
-      "roundtrip_latency_ms": 0.037,
-      "std_dev_ms": 0.001
-    },
-    "git": {
-      "status_cold_ms": 17.2,
-      "status_cached_ms": 0.04
-    }
-  },
   "budgets": {
     "ipc_latency": {
-        "max_ms": 1.5,
-        "description": "IPC roundtrip must complete within 1.5ms"
-    },
-    "git_status_cold": {
-      "max_ms": 750,
-      "description": "Cold git status within 750ms (CI tolerance)"
-    },
-    "cache_write": {
-      "max_ms": 25,
-      "description": "Cache operations within 25ms"
+      "target_ms": 1.0,
+      "max_ms": 1.5,
+      "description": "IPC roundtrip latency budget"
     },
     "memory_usage": {
-      "max_mb": 50,
-      "description": "Agent memory footprint under 50MB"
+      "target_mb": 15.0,
+      "max_mb": 50.0,
+      "description": "Agent memory usage budget (RSS)"
     }
   },
   "regression_thresholds": {
-    "major_regression_percent": 50,
-    "measurement_variance_percent": 15
+    "measurement_variance_percent": 15.0
   }
 }
 ```
+
+`max_ms` (or `max_mb`) is the enforced limit; `target_ms` is the goal and is
+documentation only. `measurement_variance_percent` is the tolerance both
+scripts add on top of every `max_*`. `scripts/bench.sh --ci` and
+`scripts/ci-bench.sh` read every key they use in one `jq` call
+(`scripts/lib/bench-common.sh`) and exit 2, naming the problem, when `jq`, the
+file or a key is missing; they never substitute a default. Set `BASELINE_FILE`
+to point either script at another file. Add a budget only together with the
+benchmark that measures it.
 
 ### 3. Validate baselines
 
@@ -252,20 +225,24 @@ Results should be within ±15% variance. If not, investigate:
 
 ## Performance Budgets
 
-The `scripts/bench.sh --ci` mode enforces these budgets (with 15% tolerance):
+`scripts/bench.sh --ci` enforces these budgets (plus the tolerance above), each
+against the matching Criterion benchmark:
 
-| Metric | Budget | Notes |
-|--------|--------|-------|
-| IPC Latency | 1.5ms | Full roundtrip including socket overhead |
-| Git Status (cold) | 750ms | Includes filesystem operations |
-| Cache Operations | 25ms | Write + invalidation |
-| Formatter (git short) | 1ms | Fast path for common case |
-| Formatter (git long) | 2ms | With truncation overhead |
-| Memory Usage | 50MB | Agent resident memory |
-| Config Load | 100ms | `config_load_from_file` |
-| Theme Manager Load | 20ms | `theme_manager_load` |
-| Theme Export Write | 30ms | `theme_export_write` |
-| Version Command Spawn | 50ms | `version_command_spawn`, stub command |
+| Metric | Budget key | Benchmark |
+|--------|------------|-----------|
+| IPC Latency | `ipc_latency` | `ipc_roundtrip` |
+| Git Status (cold) | `git_status_cold` | `git_status_cold` |
+| Cache Write | `cache_write` | `cache_write_new_entry` |
+| Cache Read | `cache_read` | `cache_read_hit` |
+| Config Load | `config_validation` | `config_load_from_file` |
+| Theme Manager Load | `theme_manager_load` | `theme_manager_load` |
+| Theme Export Write | `theme_export_write` | `theme_export_write` |
+| Version Command Spawn | `version_command_spawn` | `version_command_spawn`, stub command |
+| Language Detection | `language_detection` | `lang_detect_5k` |
+
+`scripts/ci-bench.sh` enforces the prompt-render budgets (`prompt_render*`),
+`git_status_cold` on a synthetic repository, and the agent's resident memory
+(`memory_usage`, `memory_long_running`); see [benchmarking.md](benchmarking.md).
 
 ## Detecting Regressions
 
@@ -280,7 +257,8 @@ You can also run benchmarks with budget enforcement locally:
 ```bash
 ./scripts/bench.sh --ci
 # Exit code 0: All benchmarks within budget
-# Exit code 1: One or more budgets exceeded
+# Exit code 1: One or more budgets exceeded, or cargo bench failed
+# Exit code 2: jq, the baseline file or a budget key is missing
 ```
 
 ### Manual Comparison
@@ -291,8 +269,8 @@ Compare current results to baseline for deeper analysis:
 # Run current benchmarks
 cargo bench --bench formatter_bench > current-results.txt
 
-# Or manually inspect the baseline file
-jq '.baselines' tests/performance-baselines.json
+# Or read the budgets
+jq '.budgets' tests/performance-baselines.json
 ```
 
 **Red flags:**

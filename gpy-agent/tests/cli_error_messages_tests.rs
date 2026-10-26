@@ -3,12 +3,11 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(missing_docs)]
 
 mod common;
 
-use common::{CliTestEnv, KillOnDrop};
+use common::child_guard::KillOnDrop;
+use common::cli_harness::CliTestEnv;
 use std::io::Read;
 use std::process::{Command, Stdio};
 

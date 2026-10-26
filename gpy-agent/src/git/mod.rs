@@ -14,13 +14,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
+/// Repository-root lookups, cheapest first:
+/// - [`find_git_dir_only`]: one stat per level, `.git` entries only; the
+///   watcher's `MultiRepoWatcher::find_git_root` is this function.
+/// - [`find_repo_root`]: that walk, then a fallback that also finds bare
+///   repos and resolves relative paths; for request handling and the CLI.
+///
 /// Walk up from `path` to the canonical directory containing a `.git` entry
 /// (directory or pointer file). One stat per level; ignores bare repos and
 /// does not absolutize relative paths (see [`find_repo_root`]).
 #[must_use]
-pub(crate) fn find_git_dir_only(path: &Path) -> Option<PathBuf> {
+pub fn find_git_dir_only(path: &Path) -> Option<PathBuf> {
     let mut current = path;
     loop {
         let git_dir = current.join(".git");
@@ -100,6 +105,25 @@ pub(crate) fn gitdir_pointer_target(contents: &str) -> Option<&str> {
     }
 }
 
+/// Read cap for single-line pointer files (`.git` and `commondir`).
+pub(crate) const POINTER_READ_CAP: usize = 4_096;
+
+/// The git directory of `repo_root`: `<root>/.git`, or the target of its
+/// `gitdir:` pointer file (worktrees, submodules). Not canonicalized; `None`
+/// when there is no `.git` or the pointer is unreadable or malformed.
+#[must_use]
+pub(crate) fn resolve_gitdir(repo_root: &Path) -> Option<PathBuf> {
+    let git_entry = repo_root.join(".git");
+    if git_entry.is_dir() {
+        return Some(git_entry);
+    }
+    if git_entry.is_file() {
+        let contents = crate::fs_util::read_small_file(&git_entry, POINTER_READ_CAP).ok()?;
+        return parse_gitdir_link(&contents, repo_root);
+    }
+    None
+}
+
 /// Resolve `gitdir:` pointer contents against `base`, without canonicalizing.
 #[must_use]
 pub(crate) fn parse_gitdir_link(content: &str, base: &Path) -> Option<PathBuf> {
@@ -158,38 +182,6 @@ impl RepositoryState {
         match self {
             Self::Clean | Self::Dirty | Self::Conflicts => None,
             special => Some(special),
-        }
-    }
-}
-
-/// Error returned when parsing an unrecognized `RepositoryState` string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseRepositoryStateError(String);
-
-impl std::fmt::Display for ParseRepositoryStateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unrecognized repository state: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseRepositoryStateError {}
-
-impl FromStr for RepositoryState {
-    type Err = ParseRepositoryStateError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "clean" => Ok(Self::Clean),
-            "dirty" => Ok(Self::Dirty),
-            "conflicts" => Ok(Self::Conflicts),
-            "merging" => Ok(Self::Merging),
-            "rebasing" => Ok(Self::Rebasing),
-            "cherry-picking" => Ok(Self::CherryPicking),
-            "reverting" => Ok(Self::Reverting),
-            "bisecting" => Ok(Self::Bisecting),
-            "applying" => Ok(Self::Applying),
-            "in-progress" => Ok(Self::InProgress),
-            other => Err(ParseRepositoryStateError(other.to_owned())),
         }
     }
 }
@@ -328,9 +320,6 @@ impl StatusAggregate {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

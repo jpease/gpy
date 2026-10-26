@@ -8,22 +8,11 @@
 # Sources the segment file directly and stubs gpy_section_standalone, mirroring
 # hostname_segment.test.fish / username_segment.test.fish.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/segments/status.fish"
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
 
 function gpy_section_standalone --argument-names bg fg content is_last
     set -g __test_status_bg "$bg"
@@ -42,15 +31,15 @@ set -g __gpy_last_segment_bg magenta
 segment_status_render last
 
 if test "$__gpy_last_segment_bg" = cyan
-    check "ok path: tracks __gpy_last_segment_bg to the configured ok background" pass
+    check "ok path: tracks __gpy_last_segment_bg to the configured ok background" pass pass
 else
-    check "ok path: tracks __gpy_last_segment_bg to the configured ok background (got: '$__gpy_last_segment_bg')" fail
+    check "ok path: tracks __gpy_last_segment_bg to the configured ok background (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 if test "$__gpy_last_segment_bg" = "$__test_status_bg"
-    check "ok path: tracker matches the bg actually passed to gpy_section_standalone" pass
+    check "ok path: tracker matches the bg actually passed to gpy_section_standalone" pass pass
 else
-    check "ok path: tracker matches the bg actually passed to gpy_section_standalone (got: '$__gpy_last_segment_bg' vs '$__test_status_bg')" fail
+    check "ok path: tracker matches the bg actually passed to gpy_section_standalone (got: '$__gpy_last_segment_bg' vs '$__test_status_bg')" pass fail
 end
 
 # --- failed (non-zero status) path, theme colors configured ---
@@ -64,9 +53,9 @@ set -g __gpy_last_segment_bg cyan
 segment_status_render last
 
 if test "$__gpy_last_segment_bg" = magenta
-    check "fail path: tracks __gpy_last_segment_bg to the configured fail background" pass
+    check "fail path: tracks __gpy_last_segment_bg to the configured fail background" pass pass
 else
-    check "fail path: tracks __gpy_last_segment_bg to the configured fail background (got: '$__gpy_last_segment_bg')" fail
+    check "fail path: tracks __gpy_last_segment_bg to the configured fail background (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # --- successful path, theme color UNSET: must track the resolved literal
@@ -81,9 +70,9 @@ set -g __gpy_last_segment_bg sentinel
 segment_status_render last
 
 if test "$__gpy_last_segment_bg" = green
-    check "ok path (theme color unset): tracks the resolved literal fallback 'green'" pass
+    check "ok path (theme color unset): tracks the resolved literal fallback 'green'" pass pass
 else
-    check "ok path (theme color unset): tracks the resolved literal fallback 'green' (got: '$__gpy_last_segment_bg')" fail
+    check "ok path (theme color unset): tracks the resolved literal fallback 'green' (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # --- failed path, theme color UNSET: must track the resolved literal
@@ -97,9 +86,9 @@ set -g __gpy_last_segment_bg sentinel
 segment_status_render last
 
 if test "$__gpy_last_segment_bg" = red
-    check "fail path (theme color unset): tracks the resolved literal fallback 'red'" pass
+    check "fail path (theme color unset): tracks the resolved literal fallback 'red'" pass pass
 else
-    check "fail path (theme color unset): tracks the resolved literal fallback 'red' (got: '$__gpy_last_segment_bg')" fail
+    check "fail path (theme color unset): tracks the resolved literal fallback 'red' (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # --- the local pill leads with one space, like every other pill ---
@@ -112,9 +101,9 @@ set -g __gpy_last_segment_bg magenta
 set -e __status_format
 segment_status_render last
 if test "$__test_status_content" = " OK"
-    check "local ok pill: one leading space before the icon" pass
+    check "local ok pill: one leading space before the icon" pass pass
 else
-    check "local ok pill: one leading space before the icon (got: '$__test_status_content')" fail
+    check "local ok pill: one leading space before the icon (got: '$__test_status_content')" pass fail
 end
 
 set -g __gpy_last_status 1
@@ -122,9 +111,9 @@ set -g __color_status_fail_bg magenta
 set -g __icon_status_fail FAIL
 segment_status_render last
 if test "$__test_status_content" = " FAIL"
-    check "local fail pill: one leading space before the icon" pass
+    check "local fail pill: one leading space before the icon" pass pass
 else
-    check "local fail pill: one leading space before the icon (got: '$__test_status_content')" fail
+    check "local fail pill: one leading space before the icon (got: '$__test_status_content')" pass fail
 end
 
 # --- agent path: a non-empty __status_format routes to __gpy_request_exit_status ---
@@ -148,30 +137,30 @@ set -g __gpy_last_segment_bg magenta
 set -g __test_status_content ""
 set -l agent_output (segment_status_render true true | string collect)
 if test "$agent_output" = AGENT_SENTINEL
-    check "agent path: non-empty __status_format routes to __gpy_request_exit_status" pass
+    check "agent path: non-empty __status_format routes to __gpy_request_exit_status" pass pass
 else
-    check "agent path: non-empty __status_format routes to __gpy_request_exit_status (got: '$agent_output')" fail
+    check "agent path: non-empty __status_format routes to __gpy_request_exit_status (got: '$agent_output')" pass fail
 end
 
 if test -z "$__test_status_content"
-    check "agent path: does not fall through to the local pill" pass
+    check "agent path: does not fall through to the local pill" pass pass
 else
-    check "agent path: does not fall through to the local pill" fail
+    check "agent path: does not fall through to the local pill" pass fail
 end
 
 # The tracker is set in this shell, not the command-substitution subshell above.
 set -g __gpy_last_segment_bg magenta
 segment_status_render true true >/dev/null
 if test "$__gpy_last_segment_bg" = cyan
-    check "agent path: tracks __gpy_last_segment_bg to the ok background" pass
+    check "agent path: tracks __gpy_last_segment_bg to the ok background" pass pass
 else
-    check "agent path: tracks __gpy_last_segment_bg to the ok background (got: '$__gpy_last_segment_bg')" fail
+    check "agent path: tracks __gpy_last_segment_bg to the ok background (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 if test "$__test_status_arg_success" = 1; and test "$__test_status_arg_is_last" = true; and test "$__test_status_arg_is_first" = true; and test "$__test_status_arg_prev_bg" = magenta
-    check "agent path: success/is_last/is_first/prev_bg land in their own slots" pass
+    check "agent path: success/is_last/is_first/prev_bg land in their own slots" pass pass
 else
-    check "agent path: success/is_last/is_first/prev_bg land in their own slots (got: '$__test_status_arg_success' '$__test_status_arg_is_last' '$__test_status_arg_is_first' '$__test_status_arg_prev_bg')" fail
+    check "agent path: success/is_last/is_first/prev_bg land in their own slots (got: '$__test_status_arg_success' '$__test_status_arg_is_last' '$__test_status_arg_is_first' '$__test_status_arg_prev_bg')" pass fail
 end
 
 set -g __gpy_last_status 3
@@ -179,9 +168,9 @@ set -g __color_status_fail_bg red
 set -g __gpy_last_segment_bg magenta
 segment_status_render >/dev/null
 if test "$__test_status_arg_success" = 0; and test -z "$__test_status_arg_is_last"; and test -z "$__test_status_arg_is_first"; and test "$__test_status_arg_prev_bg" = magenta; and test "$__gpy_last_segment_bg" = red
-    check "agent path (fail, not first/last): success=0, empty flags stay in place, fail bg tracked" pass
+    check "agent path (fail, not first/last): success=0, empty flags stay in place, fail bg tracked" pass pass
 else
-    check "agent path (fail, not first/last): success=0, empty flags stay in place, fail bg tracked (got: '$__test_status_arg_success' '$__test_status_arg_is_last' '$__test_status_arg_is_first' '$__test_status_arg_prev_bg' / '$__gpy_last_segment_bg')" fail
+    check "agent path (fail, not first/last): success=0, empty flags stay in place, fail bg tracked (got: '$__test_status_arg_success' '$__test_status_arg_is_last' '$__test_status_arg_is_first' '$__test_status_arg_prev_bg' / '$__gpy_last_segment_bg')" pass fail
 end
 
 # An empty agent reply (no agent) falls back to the local pill.
@@ -193,18 +182,18 @@ set -g __gpy_last_segment_bg magenta
 set -g __test_status_content ""
 segment_status_render last >/dev/null
 if test "$__test_status_content" = " OK"; and test "$__gpy_last_segment_bg" = cyan
-    check "agent path: empty reply falls back to the local pill and tracks its bg" pass
+    check "agent path: empty reply falls back to the local pill and tracks its bg" pass pass
 else
-    check "agent path: empty reply falls back to the local pill and tracks its bg (got: '$__test_status_content' / '$__gpy_last_segment_bg')" fail
+    check "agent path: empty reply falls back to the local pill and tracks its bg (got: '$__test_status_content' / '$__gpy_last_segment_bg')" pass fail
 end
 
 functions -e __gpy_request_exit_status
 set -g __test_status_content ""
 segment_status_render last >/dev/null
 if test "$__test_status_content" = " OK"
-    check "agent path: without ipc.fish (disabled mode) the local pill is drawn" pass
+    check "agent path: without ipc.fish (disabled mode) the local pill is drawn" pass pass
 else
-    check "agent path: without ipc.fish (disabled mode) the local pill is drawn (got: '$__test_status_content')" fail
+    check "agent path: without ipc.fish (disabled mode) the local pill is drawn (got: '$__test_status_content')" pass fail
 end
 set -e __status_format
 
@@ -223,28 +212,28 @@ end
 
 set -l rendered (__gpy_request_exit_status 1 true true prevbg)
 if test "$rendered" = RENDERED
-    check "__gpy_request_exit_status: returns the IPC result on success" pass
+    check "__gpy_request_exit_status: returns the IPC result on success" pass pass
 else
-    check "__gpy_request_exit_status: returns the IPC result on success (got: '$rendered')" fail
+    check "__gpy_request_exit_status: returns the IPC result on success (got: '$rendered')" pass fail
 end
 
 if string match -q '{"op":"exit_status","success":true,"format":"ansi"*' -- "$__test_status_payload"
-    check "__gpy_request_exit_status: success=1 emits the exit_status op with success true (not the health-check status op)" pass
+    check "__gpy_request_exit_status: success=1 emits the exit_status op with success true (not the health-check status op)" pass pass
 else
-    check "__gpy_request_exit_status: success=1 emits the exit_status op with success true (got: $__test_status_payload)" fail
+    check "__gpy_request_exit_status: success=1 emits the exit_status op with success true (got: $__test_status_payload)" pass fail
 end
 
 if string match -q '*"is_last":true,"is_first":true,"prev_bg":"prevbg"}' -- "$__test_status_payload"
-    check "__gpy_request_exit_status: is_last, is_first and prev_bg ride in the flags tail" pass
+    check "__gpy_request_exit_status: is_last, is_first and prev_bg ride in the flags tail" pass pass
 else
-    check "__gpy_request_exit_status: is_last, is_first and prev_bg ride in the flags tail (got: $__test_status_payload)" fail
+    check "__gpy_request_exit_status: is_last, is_first and prev_bg ride in the flags tail (got: $__test_status_payload)" pass fail
 end
 
 __gpy_request_exit_status 0 "" "" "" >/dev/null
 if string match -q '*"success":false*' -- "$__test_status_payload"; and not string match -q '*is_last*' -- "$__test_status_payload"; and not string match -q '*is_first*' -- "$__test_status_payload"; and not string match -q '*prev_bg*' -- "$__test_status_payload"
-    check "__gpy_request_exit_status: success=0 emits success false and omits empty flags" pass
+    check "__gpy_request_exit_status: success=0 emits success false and omits empty flags" pass pass
 else
-    check "__gpy_request_exit_status: success=0 emits success false and omits empty flags (got: $__test_status_payload)" fail
+    check "__gpy_request_exit_status: success=0 emits success false and omits empty flags (got: $__test_status_payload)" pass fail
 end
 
 functions -e __gpy_ipc_send
@@ -252,9 +241,9 @@ function __gpy_ipc_send --argument-names payload timeout_ms
 end
 
 if not __gpy_request_exit_status 1 true "" ""
-    check "__gpy_request_exit_status: returns nonzero when IPC is unavailable" pass
+    check "__gpy_request_exit_status: returns nonzero when IPC is unavailable" pass pass
 else
-    check "__gpy_request_exit_status: returns nonzero when IPC is unavailable" fail
+    check "__gpy_request_exit_status: returns nonzero when IPC is unavailable" pass fail
 end
 
 # An older agent answers the unknown op with JSON: no reply, so the local pill.
@@ -264,9 +253,9 @@ end
 
 set -l error_reply (__gpy_request_exit_status 1 true "" "" | string collect)
 if not __gpy_request_exit_status 1 true "" "" >/dev/null; and test -z "$error_reply"
-    check "__gpy_request_exit_status: an error reply prints nothing and returns nonzero" pass
+    check "__gpy_request_exit_status: an error reply prints nothing and returns nonzero" pass pass
 else
-    check "__gpy_request_exit_status: an error reply prints nothing and returns nonzero (got: '$error_reply')" fail
+    check "__gpy_request_exit_status: an error reply prints nothing and returns nonzero (got: '$error_reply')" pass fail
 end
 
 function gpy_section_standalone --argument-names bg fg content is_last
@@ -279,17 +268,13 @@ set -g __icon_status_fail FAIL
 set -g __test_status_content ""
 set -l error_output (segment_status_render last | string collect)
 if test "$error_output" = LOCAL_PILL; and test "$__test_status_content" = " FAIL"
-    check "agent path: an error reply draws the local pill, not the JSON" pass
+    check "agent path: an error reply draws the local pill, not the JSON" pass pass
 else
-    check "agent path: an error reply draws the local pill, not the JSON (got: '$error_output' / '$__test_status_content')" fail
+    check "agent path: an error reply draws the local pill, not the JSON (got: '$error_output' / '$__test_status_content')" pass fail
 end
 set -e __status_format
 functions -e gpy_section_standalone
 
 functions -e __gpy_ipc_send
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count status segment tests passed"
+test_finish "status segment tests"

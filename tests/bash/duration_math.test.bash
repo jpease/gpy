@@ -14,11 +14,6 @@ export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 source bash/gpy.bash
 
-if ! declare -f __gpy_epoch_diff_ms &>/dev/null; then
-    echo "FAIL: __gpy_epoch_diff_ms not defined"
-    exit 1
-fi
-
 FAILED=0
 
 # old_awk_ms START END -- the awk reference formula (float subtract, round).

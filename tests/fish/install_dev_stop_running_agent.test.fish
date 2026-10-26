@@ -24,22 +24,13 @@
 # defined _stop_running_agent can be called directly against the two
 # real agents started below.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
-set -g failed 0
-
-function __gpy_test_fail --argument-names msg
-    echo "❌ $msg"
-    set -g failed 1
-end
-
-function __gpy_test_pass --argument-names msg
-    echo "✅ $msg"
-end
-
-# Resolve a real gpy-agent binary. Prefer the debug build test_fish.sh
+# Resolve a real gpy-agent binary. Prefer the debug build test-fish.sh
 # ensures exists (matches how other Fish tests get a known-fresh binary
 # rather than trusting whatever is on the developer's PATH); fall back to
 # PATH for a direct `fish tests/fish/...` invocation.
@@ -48,7 +39,7 @@ if not test -x "$agent_path"
     set agent_path (command -v gpy-agent)
 end
 if test -z "$agent_path"
-    __gpy_test_fail "gpy-agent not found (build it: cd gpy-agent && cargo build)"
+    fail "gpy-agent not found (build it: cd gpy-agent && cargo build)"
     exit 1
 end
 set -l agent_dir (path dirname "$agent_path")
@@ -133,31 +124,31 @@ set -l out (env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_CACHE_HOM
 set -l out_status $status
 
 if test $out_status -ne 0
-    __gpy_test_fail "_stop_running_agent driver exited $out_status: $out"
+    fail "_stop_running_agent driver exited $out_status: $out"
 else
     if string match -q '*OWN_START_FAILED*' -- $out
-        __gpy_test_fail "own agent failed to start: $out"
+        fail "own agent failed to start: $out"
     else if string match -q '*DECOY_START_FAILED*' -- $out
-        __gpy_test_fail "decoy agent failed to start: $out"
+        fail "decoy agent failed to start: $out"
     else if string match -q '*AGENTS_NOT_READY*' -- $out
-        __gpy_test_fail "own/decoy agents never became ready: $out"
+        fail "own/decoy agents never became ready: $out"
     else
         if string match -q '*OWN_STOPPED*' -- $out
-            __gpy_test_pass "_stop_running_agent: own agent (default socket) is stopped"
+            pass "_stop_running_agent: own agent (default socket) is stopped"
         else
-            __gpy_test_fail "_stop_running_agent: own agent is still running and responding: $out"
+            fail "_stop_running_agent: own agent is still running and responding: $out"
         end
 
         if string match -q '*DECOY_SURVIVED*' -- $out
-            __gpy_test_pass "_stop_running_agent: decoy agent (distinct socket) survives untouched"
+            pass "_stop_running_agent: decoy agent (distinct socket) survives untouched"
         else
-            __gpy_test_fail "_stop_running_agent: decoy agent was killed: $out"
+            fail "_stop_running_agent: decoy agent was killed: $out"
         end
 
         if string match -q '*PKILL_NOT_CALLED*' -- $out
-            __gpy_test_pass "_stop_running_agent: pkill is never invoked"
+            pass "_stop_running_agent: pkill is never invoked"
         else
-            __gpy_test_fail "_stop_running_agent: pkill was invoked (matching by process name): "(cat $pkill_log)
+            fail "_stop_running_agent: pkill was invoked (matching by process name): "(cat $pkill_log)
         end
     end
 end
@@ -167,8 +158,4 @@ end
 env GPY_AGENT_SOCKET_PATH=$decoy_socket "$agent_path" stop >/dev/null 2>&1
 rm -rf "$home_dir" "$stub_dir"
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ install-dev.fish's _stop_running_agent stops only its own agent, never by process name"
+test_finish "install-dev.fish's _stop_running_agent stops only its own agent, never by process name"

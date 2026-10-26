@@ -3,6 +3,8 @@
 use super::super::WatchRegistry;
 use super::super::watch_set::{WatchMode, WatchSet};
 use super::backend::{BackendKind, WatcherBackend, build_poll_watcher, poll_watch_targets};
+use crate::deadline::Deadline;
+use crate::env_config::{env_string, parse_flag, parse_u64, parse_u64_positive};
 use crate::sync_ext::MutexExt;
 use notify::event::{EventKind, Flag};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -12,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Health-probe timeout: well above healthy latency (<250ms), far below reconcile.
 pub(super) const DEFAULT_WATCH_PROBE_MS: u64 = 2_000;
@@ -55,9 +57,9 @@ impl FallbackPolicy {
     /// Resolve from `GPY_WATCH_FORCE_POLL`, `GPY_WATCH_PROBE_MS` (`0` = native only),
     /// and `GPY_WATCH_POLL_MS`.
     pub(super) fn from_env() -> Self {
-        let force_raw = std::env::var("GPY_WATCH_FORCE_POLL").ok();
-        let probe_raw = std::env::var("GPY_WATCH_PROBE_MS").ok();
-        let poll_raw = std::env::var("GPY_WATCH_POLL_MS").ok();
+        let force_raw = env_string("GPY_WATCH_FORCE_POLL");
+        let probe_raw = env_string("GPY_WATCH_PROBE_MS");
+        let poll_raw = env_string("GPY_WATCH_POLL_MS");
         Self::resolve(
             force_raw.as_deref(),
             probe_raw.as_deref(),
@@ -71,17 +73,14 @@ impl FallbackPolicy {
         probe_raw: Option<&str>,
         poll_raw: Option<&str>,
     ) -> Self {
-        let poll_interval = Duration::from_millis(
-            parse_millis(poll_raw)
-                .filter(|value| *value > 0_u64)
-                .unwrap_or(DEFAULT_WATCH_POLL_MS),
-        );
+        let poll_interval =
+            Duration::from_millis(parse_u64_positive(poll_raw).unwrap_or(DEFAULT_WATCH_POLL_MS));
 
-        if matches!(force_raw.map(str::trim), Some("1" | "true" | "yes" | "on")) {
+        if parse_flag(force_raw, false) {
             return Self::ForcePoll { poll_interval };
         }
 
-        let probe_ms = parse_millis(probe_raw).unwrap_or(DEFAULT_WATCH_PROBE_MS);
+        let probe_ms = parse_u64(probe_raw).unwrap_or(DEFAULT_WATCH_PROBE_MS);
         if probe_ms == 0_u64 {
             return Self::NativeOnly;
         }
@@ -91,11 +90,6 @@ impl FallbackPolicy {
             poll_interval,
         }
     }
-}
-
-/// Parse a raw millisecond env value; `None` when unset or non-numeric.
-pub(super) fn parse_millis(raw: Option<&str>) -> Option<u64> {
-    raw?.trim().parse::<u64>().ok()
 }
 
 /// Spawn the one-shot background health probe.
@@ -116,16 +110,16 @@ pub(super) fn spawn_health_probe(
     let registry_for_probe = Arc::clone(registry);
     thread::spawn(move || {
         if native_backend_delivers_events(timing.probe_timeout, &stop_for_probe) {
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "watcher",
-                "native backend health probe passed; staying on native",
+                "native backend health probe passed; staying on native"
             );
             return;
         }
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "watcher",
             "native backend accepted the watch but delivered no events \
-             within the probe window; falling back to polling",
+             within the probe window; falling back to polling"
         );
         engage_poll_fallback(
             &backend_for_probe,
@@ -183,13 +177,11 @@ pub(super) fn apply_poll_swap(
 
     let paths = rearm_poll_paths(&mut backend_guard, registry, precomputed);
     drop(backend_guard);
-    crate::debug::write_debug_log(
+    crate::debug_log!(
         "watcher",
-        &format!(
-            "backend swapped: native -> poll ({}ms interval), {} path(s) re-armed",
-            armed.poll_interval.as_millis(),
-            paths.len()
-        ),
+        "backend swapped: native -> poll ({}ms interval), {} path(s) re-armed",
+        armed.poll_interval.as_millis(),
+        paths.len()
     );
     Some(paths)
 }
@@ -215,12 +207,10 @@ pub(super) fn engage_poll_fallback(
         Ok(watcher) => watcher,
         Err(error) => {
             // Keep the silent native backend; the reconcile remains the backstop.
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "watcher",
-                &format!(
-                    "poll fallback unavailable ({error}); staying on the native \
-                     backend and relying on the periodic reconcile"
-                ),
+                "poll fallback unavailable ({error}); staying on the native \
+                 backend and relying on the periodic reconcile"
             );
             return;
         }
@@ -284,9 +274,10 @@ pub(super) fn rearm_poll_paths(
     }
     paths.dedup();
     for (path, error) in state.apply(ops) {
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "watcher",
-            &format!("poll fallback could not re-arm {}: {error}", path.display()),
+            "poll fallback could not re-arm {}: {error}",
+            path.display()
         );
     }
     paths
@@ -339,11 +330,9 @@ pub(super) fn probe_sentinel_event(
     }
 
     let sentinel = probe_dir.join("sentinel");
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .unwrap_or_else(Instant::now);
+    let deadline = Deadline::after(timeout);
     let mut touch = 0_u64;
-    while Instant::now() < deadline {
+    while !deadline.expired() {
         if stop_flag.load(Ordering::Relaxed) {
             return true;
         }

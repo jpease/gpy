@@ -6,8 +6,8 @@
 
 use crate::cache::CachePolicy;
 use crate::cache::bounded::{
-    GIT_STATUS_CACHE_CAPACITY, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES, drop_file_details_to_budget,
-    evict_to_capacity,
+    FILE_DETAIL_BYTES_PER_FILE, GIT_STATUS_CACHE_CAPACITY, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES,
+    drop_file_details_to_budget, evict_to_capacity,
 };
 use crate::debug_log;
 use crate::git::native::resolve_overall_state;
@@ -43,7 +43,10 @@ impl CacheEntry {
         if !self.files_complete {
             return 0;
         }
-        self.data.files.len().saturating_mul(80)
+        self.data
+            .files
+            .len()
+            .saturating_mul(FILE_DETAIL_BYTES_PER_FILE)
     }
 }
 
@@ -372,23 +375,6 @@ impl GitStatusCache {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    /// Backdate an entry's `cached_at` by `age`.
-    #[cfg(test)]
-    pub(crate) fn age_entry_for_test(&self, key: &Path, age: std::time::Duration) {
-        if let Some(entry) = self.entries.lock_or_recover().get_mut(key) {
-            entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
-        }
-    }
-
-    /// The cached per-file map for `key`.
-    #[cfg(test)]
-    pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
-        self.entries
-            .lock_or_recover()
-            .get(key)
-            .map(|entry| entry.data.files.clone())
-    }
 }
 
 impl Default for GitStatusCache {
@@ -398,14 +384,31 @@ impl Default for GitStatusCache {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::GitStatusCache;
     use crate::cache::CachePolicy;
     use crate::git::{FileStatus, RepositoryState, RepositoryStatus};
+    use crate::sync_ext::MutexExt;
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    impl GitStatusCache {
+        /// Backdate an entry's `cached_at` by `age`.
+        pub(crate) fn age_entry_for_test(&self, key: &Path, age: Duration) {
+            if let Some(entry) = self.entries.lock_or_recover().get_mut(key) {
+                entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+            }
+        }
+
+        /// The cached per-file map for `key`.
+        pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
+            self.entries
+                .lock_or_recover()
+                .get(key)
+                .map(|entry| entry.data.files.clone())
+        }
+    }
 
     fn dummy_status() -> RepositoryStatus {
         RepositoryStatus {
@@ -544,12 +547,16 @@ mod tests {
 
     #[test]
     fn aggregate_preserved_when_file_details_exceed_byte_budget() {
-        use crate::cache::bounded::GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES;
+        use crate::cache::bounded::{
+            FILE_DETAIL_BYTES_PER_FILE, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES,
+        };
 
         let cache = GitStatusCache::new();
 
         let files_per_repo = 2_000_usize;
-        let repo_count = (GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES / (files_per_repo * 80)) + 10;
+        let repo_count = (GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES
+            / (files_per_repo * FILE_DETAIL_BYTES_PER_FILE))
+            + 10;
 
         for i in 0..repo_count {
             let mut status = dummy_status();
@@ -572,12 +579,15 @@ mod tests {
 
     #[test]
     fn incremental_update_falls_back_when_details_dropped() {
-        use crate::cache::bounded::GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES;
+        use crate::cache::bounded::{
+            FILE_DETAIL_BYTES_PER_FILE, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES,
+        };
 
         let cache = GitStatusCache::new();
 
         // One entry alone exceeds the byte budget, so the older repo_a loses details.
-        let files_per_repo = GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES / 80 + 1;
+        let files_per_repo =
+            GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES / FILE_DETAIL_BYTES_PER_FILE + 1;
         let repo_a = PathBuf::from("/repo/a");
         let repo_b = PathBuf::from("/repo/b");
 
@@ -901,10 +911,13 @@ mod tests {
 
     #[test]
     fn multi_path_update_falls_back_when_details_dropped() {
-        use crate::cache::bounded::GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES;
+        use crate::cache::bounded::{
+            FILE_DETAIL_BYTES_PER_FILE, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES,
+        };
 
         let cache = GitStatusCache::new();
-        let files_per_repo = GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES / 80 + 1;
+        let files_per_repo =
+            GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES / FILE_DETAIL_BYTES_PER_FILE + 1;
         let repo_a = PathBuf::from("/repo/budget-a");
         let repo_b = PathBuf::from("/repo/budget-b");
         cache.set(&repo_a, dummy_status(), dirty_files(10));

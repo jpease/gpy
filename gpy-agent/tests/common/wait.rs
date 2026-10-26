@@ -1,6 +1,9 @@
 //! Polling helpers that replace fixed sleeps with a bounded wait on a condition.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "included by several test binaries, each using a subset"
+)]
 
 use std::time::{Duration, Instant};
 
@@ -11,7 +14,7 @@ use std::time::{Duration, Instant};
 pub fn wait_until(
     timeout: Duration,
     poll_interval: Duration,
-    predicate: impl Fn() -> bool,
+    mut predicate: impl FnMut() -> bool,
 ) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -29,7 +32,7 @@ pub fn wait_until(
 pub async fn wait_until_async(
     timeout: Duration,
     poll_interval: Duration,
-    predicate: impl Fn() -> bool,
+    mut predicate: impl FnMut() -> bool,
 ) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {

@@ -12,6 +12,8 @@
 # filesystem access, no globals. This file sources ONLY constants.fish and
 # util.fish -- no socket, no clock, no filesystem.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
@@ -19,27 +21,8 @@ cd "$repo_root"
 source fish/core/constants.fish
 source fish/core/util.fish
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
-
 function check_status --argument-names label expected_status actual_status
-    if test "$actual_status" -eq "$expected_status"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected status $expected_status, got $actual_status)"
-    end
+    check "$label" $expected_status $actual_status
 end
 
 # --- __gpy_breaker_gate backoff_until now -> allow|deny ---
@@ -171,8 +154,4 @@ check "uint_or_default: negative value falls back to default" \
 check "uint_or_default: whitespace-padded value falls back to default" \
     5 (__gpy_uint_or_default " 3" 5)
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count policy helper tests passed"
+test_finish "policy helper tests"

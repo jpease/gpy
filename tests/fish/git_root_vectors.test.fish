@@ -7,30 +7,14 @@
 # tests/fixtures/git_root_vectors.tsv (also read by the Bash and Zsh tests).
 # See the fixture's header for the format.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 source fish/core/constants.fish
 source fish/core/ipc.fish
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
-
-function fail_with --argument-names message
-    set -g fail_count (math $fail_count + 1)
-    echo "FAIL: $message"
-end
 
 set -l fixture "$repo_root/tests/fixtures/git_root_vectors.tsv"
 if not test -r "$fixture"
@@ -73,18 +57,18 @@ while read -d \t -la cols
             set -l expected (abs $cols[3])
             set -l actual (__gpy_find_git_root "$S/$cols[2]")
             set -l git_status $status
-            test -n "$expected" -o $git_status -ne 0; or fail_with "root $cols[2]: found nothing but returned 0"
+            test -n "$expected" -o $git_status -ne 0; or fail "root $cols[2]: found nothing but returned 0"
             check "root vector $vector_count ($cols[2])" "$expected" "$actual"
         case key
             set vector_count (math $vector_count + 1)
             set -l expected (abs $cols[4])
             set -l actual (__gpy_instant_cache_key_path $cols[2] "$S/$cols[3]")
             set -l git_status $status
-            test -n "$expected" -o $git_status -ne 0; or fail_with "key $cols[2] $cols[3]: found nothing but returned 0"
-            test -z "$expected" -o $git_status -eq 0; or fail_with "key $cols[2] $cols[3]: found a key but returned $git_status"
+            test -n "$expected" -o $git_status -ne 0; or fail "key $cols[2] $cols[3]: found nothing but returned 0"
+            test -z "$expected" -o $git_status -eq 0; or fail "key $cols[2] $cols[3]: found a key but returned $git_status"
             check "key vector $vector_count ($cols[2] $cols[3])" "$expected" "$actual"
         case '*'
-            fail_with "unknown row kind [$cols[1]]"
+            fail "unknown row kind [$cols[1]]"
     end
 end <"$fixture"
 
@@ -93,8 +77,4 @@ if test $vector_count -eq 0
     exit 1
 end
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count git-root vector tests passed"
+test_finish "git-root vector tests"

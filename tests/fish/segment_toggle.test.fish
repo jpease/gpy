@@ -1,6 +1,8 @@
 #!/usr/bin/env fish
 # Test segment override toggles (GPY_MINIMAL_SEGMENTS and GPY_TEST_SEGMENTS)
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 echo "Testing segment override toggles..."
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
@@ -42,16 +44,16 @@ function test_minimal_segments_loads_only_directory
 
     # Verify only directory segment is enabled
     if test (count $__enabled_segments) -eq 1
-        echo "✅ Minimal segments contains only 1 segment"
+        pass "Minimal segments contains only 1 segment"
     else
-        echo "❌ Expected 1 segment, got "(count $__enabled_segments)
+        fail "Expected 1 segment, got "(count $__enabled_segments)
         return 1
     end
 
     if test "$__enabled_segments[1]" = directory
-        echo "✅ First segment is directory"
+        pass "First segment is directory"
     else
-        echo "❌ Expected directory, got $__enabled_segments[1]"
+        fail "Expected directory, got $__enabled_segments[1]"
         return 1
     end
 
@@ -89,23 +91,23 @@ function test_gpy_test_segments_splits_correctly
 
     # Verify segments match GPY_TEST_SEGMENTS
     if test (count $__enabled_segments) -eq 2
-        echo "✅ Test segments count is 2"
+        pass "Test segments count is 2"
     else
-        echo "❌ Expected 2 segments, got "(count $__enabled_segments)
+        fail "Expected 2 segments, got "(count $__enabled_segments)
         return 1
     end
 
     if test "$__enabled_segments[1]" = clock
-        echo "✅ First segment is clock"
+        pass "First segment is clock"
     else
-        echo "❌ Expected clock, got $__enabled_segments[1]"
+        fail "Expected clock, got $__enabled_segments[1]"
         return 1
     end
 
     if test "$__enabled_segments[2]" = git
-        echo "✅ Second segment is git"
+        pass "Second segment is git"
     else
-        echo "❌ Expected git, got $__enabled_segments[2]"
+        fail "Expected git, got $__enabled_segments[2]"
         return 1
     end
 
@@ -143,17 +145,17 @@ function test_gpy_show_languages_zero_removes_language
 
     # Verify language is not in the list
     if test (count $__enabled_segments) -eq 4
-        echo "✅ GPY_SHOW_LANGUAGES=0 results in 4 segments"
+        pass "GPY_SHOW_LANGUAGES=0 results in 4 segments"
     else
-        echo "❌ Expected 4 segments, got "(count $__enabled_segments)
+        fail "Expected 4 segments, got "(count $__enabled_segments)
         return 1
     end
 
     if string match -q language $__enabled_segments
-        echo "❌ Language segment should not be present"
+        fail "Language segment should not be present"
         return 1
     else
-        echo "✅ Language not in segments"
+        pass "Language not in segments"
     end
 
     # Clean up
@@ -190,16 +192,16 @@ function test_minimal_overrides_show_languages
 
     # Verify GPY_MINIMAL_SEGMENTS takes precedence
     if test (count $__enabled_segments) -eq 1
-        echo "✅ Minimal overrides SHOW_LANGUAGES (1 segment)"
+        pass "Minimal overrides SHOW_LANGUAGES (1 segment)"
     else
-        echo "❌ Expected 1 segment, got "(count $__enabled_segments)
+        fail "Expected 1 segment, got "(count $__enabled_segments)
         return 1
     end
 
     if test "$__enabled_segments[1]" = directory
-        echo "✅ Only directory segment present"
+        pass "Only directory segment present"
     else
-        echo "❌ Expected directory, got $__enabled_segments[1]"
+        fail "Expected directory, got $__enabled_segments[1]"
         return 1
     end
 
@@ -222,4 +224,4 @@ test_minimal_overrides_show_languages
 or exit 1
 
 echo ""
-echo "🎉 All segment toggle tests passed!"
+test_finish "segment toggle tests"

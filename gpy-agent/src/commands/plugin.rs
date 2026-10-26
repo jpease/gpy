@@ -1,5 +1,6 @@
 //! `gpy plugin` command handlers.
 
+use crate::commands::output;
 use crate::plugin::{
     DiscoveredPlugin, EntryType, GpyVersion, PluginApiVersion, PluginManifest, PluginSource,
     ScriptSegmentManifest, SegmentName, discover_plugins, script_segment_manifest_path,
@@ -12,14 +13,6 @@ use std::{fs, path::PathBuf};
 
 /// Validated segment manifests of a script plugin, keyed by segment.
 type ScriptSegments = BTreeMap<SegmentName, ScriptSegmentManifest>;
-
-pub(crate) const fn render_source(source: PluginSource) -> &'static str {
-    match source {
-        PluginSource::FirstParty => "first-party",
-        PluginSource::Bundled => "bundled",
-        PluginSource::User => "user",
-    }
-}
 
 const PUBLIC_PLUGIN_HELPERS: &[&str] = &[
     "gpy_section_start",
@@ -40,7 +33,7 @@ fn plugin_segment_file(root: &Path, segment: &crate::plugin::SegmentName) -> Pat
 /// Error for a manifest whose `entry_type` this runtime cannot load.
 fn unsupported_entry_type(entry_type: &EntryType) -> Error {
     Error::invalid(format!(
-        "Unsupported entry_type '{}': only 'file' and 'script' plugins are loadable by this runtime",
+        "unsupported entry_type '{}': only 'file' and 'script' plugins are loadable by this runtime",
         entry_type.as_str()
     ))
 }
@@ -56,7 +49,7 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<Script
 
     if !root.is_dir() {
         return Err(Error::invalid(format!(
-            "Plugin root '{}' is not a directory",
+            "plugin root '{}' is not a directory",
             root.display()
         )));
     }
@@ -64,7 +57,7 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<Script
     let manifest_path = root.join("plugin.toml");
     if !manifest_path.exists() {
         return Err(Error::invalid(format!(
-            "Missing plugin manifest: {}",
+            "missing plugin manifest: {}",
             manifest_path.display()
         )));
     }
@@ -75,7 +68,7 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<Script
                 let segment_file = plugin_segment_file(root, segment);
                 if !segment_file.is_file() {
                     return Err(Error::invalid(format!(
-                        "Missing segment file for '{segment}': {}",
+                        "missing segment file for '{segment}': {}",
                         segment_file.display()
                     )));
                 }
@@ -86,7 +79,7 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<Script
                 let segment_manifest = script_segment_manifest_path(root, segment);
                 if !segment_manifest.is_file() {
                     return Err(Error::invalid(format!(
-                        "Missing script segment manifest for '{segment}': {}",
+                        "missing script segment manifest for '{segment}': {}",
                         segment_manifest.display()
                     )));
                 }
@@ -105,7 +98,7 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
     } else {
         let parent = path
             .parent()
-            .ok_or_else(|| Error::invalid("Path has no parent directory"))?;
+            .ok_or_else(|| Error::invalid("path has no parent directory"))?;
         // A bare filename like `plugin.toml` has an empty parent; it means the cwd.
         if parent.as_os_str().is_empty() {
             PathBuf::from(".")
@@ -120,7 +113,7 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
     };
     let root = manifest_path
         .parent()
-        .ok_or_else(|| Error::invalid("Plugin manifest has no parent directory"))?
+        .ok_or_else(|| Error::invalid("plugin manifest has no parent directory"))?
         .to_path_buf();
     Ok((manifest_path, root))
 }
@@ -129,10 +122,10 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
 fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, ScriptSegments)> {
     let (manifest_path, root) = resolve_manifest_target(path)?;
     let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
-        Error::invalid(format!(
-            "Failed to read plugin manifest {}: {e}",
-            manifest_path.display()
-        ))
+        Error::io_context(
+            format_args!("failed to read plugin manifest {}", manifest_path.display()),
+            &e,
+        )
     })?;
     let manifest = crate::plugin::PluginManifest::parse(&content)?;
     let script_segments = validate_plugin_root(&root, &manifest)?;
@@ -141,7 +134,7 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, Scri
 
 /// One-line scope note printed by `gpy plugin new`, `validate` and `list`.
 ///
-/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins run in every shell.
+/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins are not run by any shell yet.
 pub(crate) const FISH_ONLY_NOTE: &str =
     "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
 
@@ -154,31 +147,39 @@ const fn is_fish_only_plugin(plugin: &DiscoveredPlugin) -> bool {
 /// Print the Fish-only note when `entry_type` is a v1 `.fish` file plugin.
 fn print_fish_only_note(entry_type: &EntryType) {
     if matches!(entry_type, EntryType::File) {
-        println!("   note: {FISH_ONLY_NOTE}");
+        output::detail(format_args!("note: {FISH_ONLY_NOTE}"));
+    }
+}
+
+/// Comma-separated segment names, or `(none)`.
+fn segment_list(segments: &[SegmentName]) -> String {
+    if segments.is_empty() {
+        "(none)".to_owned()
+    } else {
+        segments
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
 fn print_manifest_validation(manifest: &PluginManifest, root: &Path, segments: &ScriptSegments) {
-    crate::commands::output::ok(format_args!(
+    output::ok(format_args!(
         "Valid plugin: {} {} (api {})",
         manifest.id, manifest.version, manifest.api_version
     ));
-    println!("   root: {}", root.display());
-    println!("   entry: {}", manifest.entry_type.as_str());
-    println!("   segments: {}", {
-        let list = manifest
-            .provided_segments
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-        if list.is_empty() {
-            "(none)".to_owned()
-        } else {
-            list.join(", ")
-        }
-    });
+    output::detail(format_args!("root: {}", root.display()));
+    output::detail(format_args!("entry: {}", manifest.entry_type.as_str()));
+    output::detail(format_args!(
+        "segments: {}",
+        segment_list(&manifest.provided_segments)
+    ));
     if matches!(manifest.entry_type, EntryType::File) {
-        println!("   public helpers: {}", PUBLIC_PLUGIN_HELPERS.join(", "));
+        output::detail(format_args!(
+            "public helpers: {}",
+            PUBLIC_PLUGIN_HELPERS.join(", ")
+        ));
     }
     print_min_version(manifest.compatibility_constraints.as_ref());
     print_fish_only_note(&manifest.entry_type);
@@ -206,29 +207,38 @@ fn script_segments_report(segments: &ScriptSegments) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
-    // Writing to a String cannot fail.
+    let mut line = |depth: usize, text: &dyn std::fmt::Display| {
+        // Writing to a String cannot fail.
+        let _ = writeln!(out, "{}{text}", output::indent(depth));
+    };
     for (name, segment) in segments {
-        let _ = writeln!(out, "   segment {name}:");
+        line(1, &format_args!("segment {name}:"));
         if let Some(description) = &segment.description {
-            let _ = writeln!(
-                out,
-                "     description: {}",
-                crate::template::sanitize_control_chars(description)
+            line(
+                2,
+                &format_args!(
+                    "description: {}",
+                    crate::template::sanitize_control_chars(description)
+                ),
             );
         }
-        let _ = writeln!(out, "     command: {}", segment.command.as_str());
-        let _ = writeln!(
-            out,
-            "     inputs: {}",
-            joined(&segment.inputs, |i| i.as_str())
+        line(2, &format_args!("command: {}", segment.command.as_str()));
+        line(
+            2,
+            &format_args!("inputs: {}", joined(&segment.inputs, |i| i.as_str())),
         );
-        let _ = writeln!(out, "     env: {}", joined(&segment.env, |n| n.as_str()));
-        let _ = writeln!(
-            out,
-            "     cache: {} scope, ttl_secs {}, timeout_ms {}",
-            segment.cache_scope().as_str(),
-            segment.ttl_secs,
-            segment.timeout_ms
+        line(
+            2,
+            &format_args!("env: {}", joined(&segment.env, |n| n.as_str())),
+        );
+        line(
+            2,
+            &format_args!(
+                "cache: {} scope, ttl_secs {}, timeout_ms {}",
+                segment.cache_scope().as_str(),
+                segment.ttl_secs,
+                segment.timeout_ms
+            ),
         );
         for (key, value) in [
             (
@@ -246,34 +256,29 @@ fn script_segments_report(segments: &ScriptSegments) -> String {
             ("require_env", joined(&segment.require_env, |n| n.as_str())),
         ] {
             if value != "-" {
-                let _ = writeln!(out, "     {key}: {value}");
+                line(2, &format_args!("{key}: {value}"));
             }
         }
         if let Some(require_command) = &segment.require_command {
-            let _ = writeln!(out, "     require_command: {}", require_command.as_str());
+            line(
+                2,
+                &format_args!("require_command: {}", require_command.as_str()),
+            );
         }
     }
     out
 }
 
-fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) {
-    crate::commands::output::ok(format_args!(
+fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin, root: &Path) {
+    output::ok(format_args!(
         "Valid discovered plugin: {} {} [{}]",
-        plugin.manifest.id,
-        plugin.manifest.version,
-        render_source(plugin.source)
+        plugin.manifest.id, plugin.manifest.version, plugin.source
     ));
-    println!("   root: {}", plugin.root.display());
-    println!(
-        "   segments: {}",
-        plugin
-            .manifest
-            .provided_segments
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    output::detail(format_args!("root: {}", root.display()));
+    output::detail(format_args!(
+        "segments: {}",
+        segment_list(&plugin.manifest.provided_segments)
+    ));
     print_min_version(plugin.manifest.compatibility_constraints.as_ref());
     print_fish_only_note(&plugin.manifest.entry_type);
     print_script_segments(&plugin.script_segments);
@@ -284,7 +289,7 @@ fn print_min_version(compatibility_constraints: Option<&crate::plugin::Compatibi
     if let Some(min_version) =
         compatibility_constraints.and_then(|constraints| constraints.min_gpy_version.as_ref())
     {
-        println!("   min gpy version: {min_version}");
+        output::detail(format_args!("min gpy version: {min_version}"));
     }
 }
 
@@ -332,8 +337,7 @@ pub fn list() {
     let discovery = discover_plugins();
     let user_root = user_plugins_dir();
 
-    println!("Plugins:");
-    println!("========\n");
+    output::heading("Plugins:");
     println!("User plugin root: {}", user_root.display());
     if discovery.plugins.iter().any(is_fish_only_plugin) {
         println!("{FISH_ONLY_NOTE}");
@@ -345,23 +349,20 @@ pub fn list() {
         for plugin in discovery.plugins {
             println!(
                 "\n- {} {} [{}] (ready)",
-                plugin.manifest.id,
-                plugin.manifest.version,
-                render_source(plugin.source)
+                plugin.manifest.id, plugin.manifest.version, plugin.source
             );
-            println!("  api: {}", plugin.manifest.api_version);
-            println!("  entry: {}", plugin.manifest.entry_type.as_str());
-            println!("  root: {}", plugin.root.display());
-            println!(
-                "  segments: {}",
-                plugin
-                    .manifest
-                    .provided_segments
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+            output::detail(format_args!("api: {}", plugin.manifest.api_version));
+            output::detail(format_args!(
+                "entry: {}",
+                plugin.manifest.entry_type.as_str()
+            ));
+            if let Some(root) = &plugin.root {
+                output::detail(format_args!("root: {}", root.display()));
+            }
+            output::detail(format_args!(
+                "segments: {}",
+                segment_list(&plugin.manifest.provided_segments)
+            ));
         }
     }
 
@@ -370,7 +371,7 @@ pub fn list() {
         for diagnostic in discovery.diagnostics {
             println!(
                 "- [{}] {}: {}",
-                render_source(diagnostic.source),
+                diagnostic.source,
                 diagnostic.plugin_dir.display(),
                 diagnostic.message
             );
@@ -397,19 +398,18 @@ pub fn validate(path_or_id: &str) -> Result<()> {
         .iter()
         .find(|plugin| plugin.manifest.id.as_str() == path_or_id)
     {
-        if matches!(plugin.source, PluginSource::FirstParty) {
-            // First-party metadata has no filesystem root; never show `<first-party>` as one.
+        if let Some(root) = &plugin.root {
+            validate_plugin_root(root, &plugin.manifest)?;
+            print_discovered_plugin_validation(plugin, root);
+        } else {
             validate_first_party_metadata(&plugin.manifest)?;
             print_first_party_validation(plugin);
-        } else {
-            validate_plugin_root(&plugin.root, &plugin.manifest)?;
-            print_discovered_plugin_validation(plugin);
         }
         return Ok(());
     }
 
     Err(Error::invalid(format!(
-        "No discovered plugin with id '{path_or_id}', and path does not exist"
+        "no discovered plugin with id '{path_or_id}', and path does not exist"
     )))
 }
 
@@ -420,28 +420,22 @@ fn validate_first_party_metadata(manifest: &PluginManifest) -> Result<()> {
     }
     if manifest.provided_segments.is_empty() {
         return Err(Error::invalid(
-            "First-party plugin declares no segments".to_owned(),
+            "first-party plugin declares no segments".to_owned(),
         ));
     }
     Ok(())
 }
 
 fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
-    crate::commands::output::ok(format_args!(
+    output::ok(format_args!(
         "Valid built-in plugin: {} {} (api {})",
         plugin.manifest.id, plugin.manifest.version, plugin.manifest.api_version
     ));
-    println!("   source: first-party (built-in, no filesystem root)");
-    println!(
-        "   segments: {}",
-        plugin
-            .manifest
-            .provided_segments
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    output::detail("source: first-party (built-in, no filesystem root)");
+    output::detail(format_args!(
+        "segments: {}",
+        segment_list(&plugin.manifest.provided_segments)
+    ));
     print_min_version(plugin.manifest.compatibility_constraints.as_ref());
 }
 
@@ -449,56 +443,79 @@ fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
 ///
 /// # Errors
 /// Returns an error if the ID is invalid, the target exists, or writing fails.
+#[allow(
+    clippy::create_dir,
+    reason = "create_dir fails with AlreadyExists, which is how a concurrent or repeated `plugin new` is refused"
+)]
 pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     let plugin_id = crate::plugin::PluginId::new(id)?;
     let segment = SegmentName::new(segment_name.unwrap_or(plugin_id.as_str()))?;
     let plugin_root = user_plugins_dir().join(plugin_id.as_str());
 
-    if plugin_root.exists() {
-        return Err(Error::invalid(format!(
-            "Plugin directory already exists: {}",
-            plugin_root.display()
-        )));
-    }
-
-    fs::create_dir_all(plugin_root.join("segments")).map_err(|e| {
+    let already_exists = || {
         Error::invalid(format!(
-            "Failed to create plugin directory {}: {e}",
+            "plugin directory already exists: {}",
             plugin_root.display()
         ))
-    })?;
+    };
+    let create_failed = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            already_exists()
+        } else {
+            Error::io_context(
+                format_args!(
+                    "failed to create plugin directory {}",
+                    plugin_root.display()
+                ),
+                &e,
+            )
+        }
+    };
+    if let Some(parent) = plugin_root.parent() {
+        fs::create_dir_all(parent).map_err(create_failed)?;
+    }
+    fs::create_dir(&plugin_root).map_err(create_failed)?;
+    fs::create_dir_all(plugin_root.join("segments")).map_err(create_failed)?;
 
     let manifest_path = plugin_root.join("plugin.toml");
     let segment_path = plugin_segment_file(&plugin_root, &segment);
 
-    fs::write(&manifest_path, scaffold_manifest(&plugin_id, &segment)).map_err(|e| {
-        Error::invalid(format!(
-            "Failed to write plugin manifest {}: {e}",
-            manifest_path.display()
-        ))
-    })?;
-    fs::write(&segment_path, scaffold_segment(&segment)).map_err(|e| {
-        Error::invalid(format!(
-            "Failed to write plugin segment {}: {e}",
-            segment_path.display()
-        ))
-    })?;
+    let write_new = |path: &Path, contents: String, what: &str| {
+        crate::fs_util::create_new(path, contents.as_bytes()).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                already_exists()
+            } else {
+                Error::io_context(
+                    format_args!("failed to write plugin {what} {}", path.display()),
+                    &e,
+                )
+            }
+        })
+    };
+    write_new(
+        &manifest_path,
+        scaffold_manifest(&plugin_id, &segment),
+        "manifest",
+    )?;
+    write_new(&segment_path, scaffold_segment(&segment), "segment")?;
 
     println!("Created plugin scaffold");
-    println!("   plugin: {}", plugin_id.as_str());
-    println!("   root: {}", plugin_root.display());
-    println!("   manifest: {}", manifest_path.display());
-    println!("   segment file: {}", segment_path.display());
+    output::detail(format_args!("plugin: {}", plugin_id.as_str()));
+    output::detail(format_args!("root: {}", plugin_root.display()));
+    output::detail(format_args!("manifest: {}", manifest_path.display()));
+    output::detail(format_args!("segment file: {}", segment_path.display()));
     println!("\nNext steps:");
-    println!("  1. Edit the generated files");
-    println!("  2. Run `gpy plugin validate {}`", plugin_root.display());
-    println!("  3. Run `gpy enable {segment}`");
+    output::detail("1. Edit the generated files");
+    output::detail(format_args!(
+        "2. Run `gpy plugin validate {}`",
+        plugin_root.display()
+    ));
+    output::detail(format_args!("3. Run `gpy enable {segment}`"));
     println!("\nNote: {FISH_ONLY_NOTE}");
     Ok(())
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
     use std::fs;
@@ -520,14 +537,15 @@ entry_type = "command"
         let err = validate(temp.path().to_str().expect("utf8 path"))
             .expect_err("command plugin must fail validation");
         assert!(
-            err.to_string().contains("Unsupported entry_type"),
+            err.to_string().contains("unsupported entry_type"),
             "unexpected error: {err}"
         );
     }
 
     #[test]
     fn validate_first_party_gpy_core_succeeds() {
-        validate("gpy-core").expect("first-party gpy-core should validate");
+        validate(crate::plugin::registry::FIRST_PARTY_ID)
+            .expect("first-party plugin should validate");
     }
 
     fn write_script_plugin(root: &Path, min_version: &str) {
@@ -559,7 +577,7 @@ min_gpy_version = "{min_version}"
         let err = validate(path).expect_err("segment manifest is required");
         assert!(
             err.to_string()
-                .contains("Missing script segment manifest for 'demo'"),
+                .contains("missing script segment manifest for 'demo'"),
             "unexpected error: {err}"
         );
 
@@ -601,7 +619,7 @@ min_gpy_version = "{min_version}"
             "{report:?}"
         );
         assert!(
-            report.contains("     description: Shows ]0;pwned31mdemo\n"),
+            report.contains("      description: Shows ]0;pwned31mdemo\n"),
             "{report}"
         );
     }

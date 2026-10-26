@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::missing_panics_doc,
+    reason = "benchmarks panic on fixture and setup failures"
+)]
+
 //! Cache read/write benchmarks. Run: cargo bench --bench `cache_bench`
 
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -124,12 +131,11 @@ fn bench_cache_invalidate(c: &mut Criterion) {
 /// Warm cache hit on a real canonical path: `cache_read_hit_canonicalizing`
 /// pays a redundant `fs::canonicalize`; `cache_read_hit_fast_path` skips it.
 fn bench_cache_read_canonical_hotpath(c: &mut Criterion) {
-    let Ok(temp_dir) = TempDir::new() else {
-        return;
-    };
-    let Ok(canonical_path) = temp_dir.path().canonicalize() else {
-        return;
-    };
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let canonical_path = temp_dir
+        .path()
+        .canonicalize()
+        .expect("canonicalize temp dir");
 
     let cache = Arc::new(GitStatusCache::new());
     cache.set_canonical(&canonical_path, sample_status(), HashMap::new());

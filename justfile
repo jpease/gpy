@@ -9,7 +9,7 @@ import? 'private.just'
 default:
     @just --list
 
-# Run comprehensive quality checks
+# Run the full quality checks
 check:
     ./{{scripts_dir}}/quality-check.sh
 
@@ -60,14 +60,13 @@ audit:
     fi
     exit 0
 
-# Run clippy over every target and feature (policy: gpy-agent/Cargo.toml [lints])
+# Run clippy exactly as the gate does (policy: gpy-agent/Cargo.toml [lints])
 lint:
-    ./{{scripts_dir}}/check-active-toolchain.sh
-    cd {{agent_dir}} && cargo clippy --all-targets --all-features
+    ./{{scripts_dir}}/quality-check.sh --clippy
 
 # Line coverage for gpy-agent (lcov.info + summary); needs cargo-llvm-cov
 coverage:
-    cd {{agent_dir}} && RUSTC_WRAPPER="" cargo llvm-cov nextest --features test-support --lcov --output-path lcov.info
+    cd {{agent_dir}} && RUSTC_WRAPPER="" cargo llvm-cov nextest --lcov --output-path lcov.info
     cd {{agent_dir}} && RUSTC_WRAPPER="" cargo llvm-cov report --summary-only
 
 # Format the codebase (Rust)
@@ -83,11 +82,11 @@ test: test-rust test-fish
 
 # Run Rust unit and integration tests
 test-rust:
-    cd {{agent_dir}} && cargo nextest run --features test-support
+    cd {{agent_dir}} && cargo nextest run
 
 # Run Fish integration tests
 test-fish:
-    ./{{scripts_dir}}/test_fish.sh
+    ./{{scripts_dir}}/test-fish.sh
 
 # Enforce performance budgets: Rust micro-benchmarks, then prompt latency and agent memory
 bench-ci:

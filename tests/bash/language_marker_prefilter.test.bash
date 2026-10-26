@@ -15,19 +15,8 @@ if [[ ! -x "$AGENT_BIN" ]]; then
     test_skip "$AGENT_BIN not built (run \`cargo build\` in gpy-agent first)"
 fi
 
-FAILED=0
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 detect_in() {
     (cd "$1" && __gpy_segment_language_detect)
@@ -66,4 +55,4 @@ done
 mkdir -p "$tmp/m_setup.py/sub/deep"
 check "marker found from a subdir" 0 "$(detect_in "$tmp/m_setup.py/sub/deep")"
 
-exit "$FAILED"
+test_finish "language marker prefilter"

@@ -1,4 +1,4 @@
-//! Theme loading, Fish export, and hot-reload behind an `Arc<RwLock<ThemeConfig>>`.
+//! Theme loading, shell export, and hot-reload behind an `Arc<RwLock<Arc<ThemeState>>>`.
 
 pub mod export;
 pub mod manager;

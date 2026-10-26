@@ -1,9 +1,9 @@
 //! End-to-end plugin tests: discovery, theme export, and Fish runtime loading.
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::missing_panics_doc)]
 #![allow(
-    unsafe_code,
-    reason = "edition 2024 makes env::set_var/remove_var unsafe; plugin discovery reads XDG_CONFIG_HOME from the process env"
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] fns panic on failure"
 )]
 
 use gpy_agent::config::Config;
@@ -15,8 +15,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
 #[path = "common/skip.rs"]
 mod skip;
+
+use env_guard::EnvGuard;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -174,7 +178,7 @@ fn verify_theme_export_contains_plugin_file_var(
 }
 
 fn verify_plugin_segment_loads_in_fish(repo: &std::path::Path, path: &str, xdg: &std::path::Path) {
-    let fish_script = "source fish/core/init.fish; gpy-agent theme export --format fish 2>/dev/null | source; if set -q __gpy_plugin_segment_file_k8s_tools; echo FILE_VAR_OK; else echo FILE_VAR_MISSING; end; __gpy_load_segments fish/core k8s_tools; if functions -q segment_k8s_tools_render; echo SEGMENT_OK; segment_k8s_tools_render 1; echo; else echo SEGMENT_MISSING; end";
+    let fish_script = "source fish/core/init.fish; gpy-agent theme export --format fish 2>/dev/null | source; if set -q __gpy_plugin_segment_file_k8s_tools; echo FILE_VAR_OK; else echo FILE_VAR_MISSING; end; __gpy_load_segments k8s_tools; if functions -q segment_k8s_tools_render; echo SEGMENT_OK; segment_k8s_tools_render 1; echo; else echo SEGMENT_MISSING; end";
 
     let output = Command::new("fish")
         .args(["-c", fish_script])
@@ -231,12 +235,8 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
     install_plugin(xdg.path(), true);
     write_config(xdg.path(), "community", &["clock", "k8s_tools"]);
 
-    // SAFETY: every test in this binary is `#[serial]`, so no other thread reads the
-    // environment (directly or by spawning a process) while it is mutated.
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", xdg.path());
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
+    let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", xdg.path());
+    env.remove("GPY_BUNDLED_PLUGIN_DIR");
 
     let themes = ThemeManager::discover_available_themes();
     let community = themes
@@ -257,11 +257,6 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
     assert!(fish_export.contains("set -g __enabled_segments clock k8s_tools"));
     assert!(fish_export.contains("set -g __gpy_segment_k8s_tools_bg_color \"#073642\""));
     assert!(fish_export.contains("set -g __gpy_plugin_segment_file_k8s_tools"));
-
-    // SAFETY: as above, the `#[serial]` tests leave no other thread using the environment.
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]

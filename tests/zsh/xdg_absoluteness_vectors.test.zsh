@@ -7,18 +7,18 @@
 # by the Rust, Bash and Fish tests). See the fixture's header for the format.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
 source zsh/core/ipc.zsh
 
 FIXTURE="$ROOT/tests/fixtures/xdg_absoluteness_vectors.tsv"
 FAKE_HOME="/home/user"
-test_result=0
 vector_count=0
 
 if [[ ! -r "$FIXTURE" ]]; then
-    echo "FAIL: cannot read $FIXTURE"
-    exit 1
+    fail "cannot read $FIXTURE"
+    test_finish
 fi
 
 unescape_value() {
@@ -27,15 +27,6 @@ unescape_value() {
     s=${s//\\\\/$'\x01'}
     s=${s//$'\x01'/\\}
     printf '%s' "$s"
-}
-
-check() {
-    if [[ "$3" == "$2" ]]; then
-        print -r -- "PASS: $1"
-    else
-        print -r -- "FAIL: $1: expected [$2], got [$3]"
-        test_result=1
-    fi
 }
 
 while IFS=$'\t' read -r value_col abs_col _rest; do
@@ -48,8 +39,7 @@ while IFS=$'\t' read -r value_col abs_col _rest; do
         yes) expected_root="$value/gpy" ;;
         no) expected_root="$FAKE_HOME/.cache/gpy" ;;
         *)
-            print -r -- "FAIL: vector $vector_count ($value_col): bad absolute column [$abs_col]"
-            test_result=1
+            fail "vector $vector_count ($value_col): bad absolute column [$abs_col]"
             continue
             ;;
     esac
@@ -68,13 +58,7 @@ while IFS=$'\t' read -r value_col abs_col _rest; do
 done < "$FIXTURE"
 
 if [[ "$vector_count" -eq 0 ]]; then
-    echo "FAIL: no test vectors read from $FIXTURE"
-    exit 1
+    fail "no test vectors read from $FIXTURE"
 fi
 
-if [[ "$test_result" -eq 0 ]]; then
-    echo "PASS: all $vector_count XDG absoluteness vector tests passed"
-else
-    echo "FAIL"
-fi
-exit $test_result
+test_finish "$vector_count XDG absoluteness vector tests"

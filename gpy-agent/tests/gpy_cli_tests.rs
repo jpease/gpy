@@ -1,7 +1,5 @@
 //! Integration tests for the `gpy` CLI binary.
 
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
@@ -9,10 +7,10 @@
 use std::fs;
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
-use cli_harness::{CliTestEnv, SharedCliTestEnv};
+use cli_harness::CliTestEnv;
 
 fn run_gpy_command(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
-    let result = SharedCliTestEnv::instance().run_gpy(args)?;
+    let result = CliTestEnv::new()?.run_gpy(args)?;
     result.assert_success(&format!("gpy {}", args.join(" ")));
     Ok(result.stdout)
 }
@@ -273,7 +271,8 @@ fn test_complete_segment_emits_expected_builtins() {
 
 #[test]
 fn test_complete_rejects_invalid_kind() {
-    let result = SharedCliTestEnv::instance()
+    let result = CliTestEnv::new()
+        .expect("Failed to create CLI test environment")
         .run_gpy(&["__complete", "bogus"])
         .expect("Failed to invoke gpy __complete bogus");
     assert_ne!(
@@ -893,8 +892,8 @@ provided_segments = ["broken_seg"]
         "Validation should fail when segment file is missing"
     );
     assert!(
-        output.stderr.contains("Missing segment file")
-            || output.stdout.contains("Missing segment file"),
+        output.stderr.contains("missing segment file")
+            || output.stdout.contains("missing segment file"),
         "Output should mention the missing segment file.\nstdout:\n{}\nstderr:\n{}",
         output.stdout,
         output.stderr
@@ -1209,6 +1208,50 @@ fn test_theme_new_creates_file() {
     assert!(
         content.contains("[segments"),
         "Theme should have segments sections"
+    );
+}
+
+#[test]
+fn test_theme_new_twice_keeps_the_existing_file() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.run_gpy(&["theme", "new", "twice"])
+        .expect("Failed to run gpy theme new")
+        .assert_success("gpy theme new twice");
+    let theme_file = env.themes_dir().join("twice.toml");
+    fs::write(&theme_file, "# hand edited\n").expect("Failed to edit theme file");
+
+    let second = env
+        .run_gpy(&["theme", "new", "twice"])
+        .expect("Failed to run gpy theme new");
+
+    assert_ne!(second.exit_code, 0_i32, "{second:?}");
+    assert!(second.stderr.contains("already exists"), "{second:?}");
+    assert_eq!(
+        fs::read_to_string(&theme_file).expect("Failed to read theme file"),
+        "# hand edited\n",
+        "an existing theme must not be overwritten"
+    );
+}
+
+#[test]
+fn test_plugin_new_twice_keeps_the_existing_scaffold() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.run_gpy(&["plugin", "new", "twice-tools"])
+        .expect("Failed to run gpy plugin new")
+        .assert_success("gpy plugin new twice-tools");
+    let manifest = env.plugins_dir().join("twice-tools/plugin.toml");
+    fs::write(&manifest, "# hand edited\n").expect("Failed to edit manifest");
+
+    let second = env
+        .run_gpy(&["plugin", "new", "twice-tools"])
+        .expect("Failed to run gpy plugin new");
+
+    assert_ne!(second.exit_code, 0_i32, "{second:?}");
+    assert!(second.stderr.contains("already exists"), "{second:?}");
+    assert_eq!(
+        fs::read_to_string(&manifest).expect("Failed to read manifest"),
+        "# hand edited\n",
+        "an existing plugin must not be overwritten"
     );
 }
 

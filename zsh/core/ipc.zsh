@@ -5,9 +5,16 @@ zmodload zsh/datetime 2>/dev/null
 # zstat only: plain zsh/stat would shadow the external `stat`.
 zmodload -F zsh/stat b:zstat 2>/dev/null
 
+# A flag is off only when set to `0` or `false`; unset, empty and any other
+# value leave it on. Fish and Bash apply the same rule.
 # Gates every start/register/talk path; rendering still works via oneshot.
 function __gpy_agent_enabled() {
-    [[ "${GPY_AGENT_ENABLED:-1}" == "1" ]]
+    [[ "${GPY_AGENT_ENABLED:-}" != (0|false) ]]
+}
+
+# Governs restarts only; agent start and registration use __gpy_agent_enabled.
+function __gpy_supervisor_enabled() {
+    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != (0|false) ]]
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes
@@ -21,14 +28,6 @@ function __gpy_escape_json_into() {
     __gpy_ej_s=${__gpy_ej_s//$'\r'/\\r}
     __gpy_ej_s=${__gpy_ej_s//$'\t'/\\t}
     printf -v "$1" '%s' "$__gpy_ej_s"
-}
-
-# Printing form, kept for the vector tests.
-function __gpy_escape_json() {
-    local __gpy_ej_out
-    __gpy_escape_json_into __gpy_ej_out "$1"
-    # -r: echo-style escape handling would collapse the doubled backslashes.
-    print -r -- "$__gpy_ej_out"
 }
 
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`, into
@@ -62,10 +61,12 @@ function __gpy_lang_venv_json_into() {
 # dynamic scoping would shadow a caller's OUT_VAR of that name.
 function __gpy_home() {
     local out_var=$1 __gpy_home_value=${HOME:-} __gpy_home_user
+    local __gpy_home_user_re='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
     if [[ -z "$__gpy_home_value" ]]; then
         __gpy_home_user=${USERNAME:-}
         [[ -n "$__gpy_home_user" ]] || __gpy_home_user="$(id -un 2>/dev/null)"
-        [[ -n "$__gpy_home_user" ]] || return 1
+        # Same plausible-username rule as Bash: a leading - would make ~- expand to $OLDPWD.
+        [[ "$__gpy_home_user" =~ $__gpy_home_user_re ]] || return 1
         __gpy_home_value=~$__gpy_home_user
     fi
     [[ "$__gpy_home_value" == /* ]] || return 1
@@ -252,7 +253,7 @@ function __gpy_send_json() {
         if zsocket "$socket_path" 2>/dev/null; then
             zsocket_connected=1
             fd=$REPLY
-            # -r: escape interpretation would undo __gpy_escape_json.
+            # -r: escape interpretation would undo __gpy_escape_json_into.
             print -r -u $fd -- "$json"
             # `IFS=`: default IFS strips the trailing space after `❯`; -r keeps ANSI backslashes.
             IFS= read -r -u $fd -t $timeout_secs response
@@ -391,7 +392,7 @@ function __gpy_prev_bg_token() {
 }
 
 # Suffix for base $1, is_last $2, is_first $3 into variable $4. MUST match
-# the agent's `variant_suffix`.
+# the agent's cache variant names (`CacheFileName`).
 function __gpy_cache_variant_suffix() {
     local __gpy_cvs_suffix=$1
     [[ "$3" == "true" ]] && __gpy_cvs_suffix+="_first"

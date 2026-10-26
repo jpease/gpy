@@ -1,7 +1,6 @@
 //! Configuration structure, defaults, and validation.
 
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 use gpy_agent::config::{
     AgentSettings, Config, DirectorySettings, GitIconSet, GitIcons, GitSettings, LanguageIcons,

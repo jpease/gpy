@@ -34,7 +34,6 @@ time_format = "12"
 
 [segments.duration]
 format = "[$duration]($style)"
-icon = "󰑧"
 text_color = "white"
 bg_color = "black"
 show_if_exceeds_ms = 100

@@ -67,7 +67,7 @@ jobs:
         # Runs even when the lib step failed. Each target uses an isolated
         # HOME/XDG_* and no running agent.
         run: >-
-          cargo nextest run --locked --profile ci-windows --no-fail-fast --no-tests=fail --features test-support
+          cargo nextest run --locked --profile ci-windows --no-fail-fast --no-tests=fail
           --test gpy_cli_tests
           --test cli_config_mutation_tests
           --test config_concurrent_save_tests

@@ -8,20 +8,19 @@
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 
 mod common;
 
+use common::endpoint::{endpoint_deps_with_config, wait_for_socket};
 use common::git::{git, git_init};
-use common::{endpoint_builder_with_config, wait_for_socket};
 use gpy_agent::config::manager::ConfigManager;
+use gpy_agent::ipc::server::{EndpointDeps, EndpointHandle};
 use gpy_agent::security::GuardSettings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::{TempDir, tempdir};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
@@ -41,10 +40,10 @@ async fn start_server_with(
     let temp_dir = tempdir().expect("temp dir");
     let socket_path = temp_dir.path().join(socket_name);
 
-    let mut server = endpoint_builder_with_config(socket_path.clone(), config_manager)
-        .security_config(security_config)
-        .build()
-        .expect("server build");
+    let mut server = EndpointHandle::new(EndpointDeps {
+        security_config,
+        ..endpoint_deps_with_config(socket_path.clone(), config_manager)
+    });
     let server_handle = tokio::spawn(async move {
         server.start().await.expect("server start");
     });
@@ -217,18 +216,27 @@ async fn test_semaphore_saturation_fails_fast_without_reply() {
     )
     .await;
 
-    // Hold the only permit: a byte with no newline keeps the read loop waiting.
-    let mut holder = timeout(Duration::from_secs(5), UnixStream::connect(&socket_path))
-        .await
-        .expect("connect")
-        .expect("connect");
+    // Hold the only permit: a connection keeps it across requests, so once a
+    // ping is answered the holder's handler owns the permit and waits for more.
+    let mut holder = BufReader::new(
+        timeout(Duration::from_secs(5), UnixStream::connect(&socket_path))
+            .await
+            .expect("connect")
+            .expect("connect"),
+    );
     holder
-        .write_all(b"x")
+        .write_all(b"{\"op\":\"ping\"}\n")
         .await
-        .expect("write partial (unterminated) line");
-
-    // No client-visible signal for permit acquisition, so pause for the holder to win.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+        .expect("send holder ping");
+    let mut reply = String::new();
+    timeout(Duration::from_secs(5), holder.read_line(&mut reply))
+        .await
+        .expect("holder ping must be answered")
+        .expect("read holder reply");
+    assert!(
+        reply.contains(r#""status":"ok""#),
+        "holder ping should succeed, got: {reply}"
+    );
 
     // Must fail fast, well under the 5s request timeout. The server closes before
     // reading, so the write is best-effort and EOF or reset are both valid.

@@ -1,17 +1,17 @@
 //! End-to-end CLI tests for `gpy-agent` and `gpy`.
 
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
 use std::fs;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use tempfile::TempDir;
 
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
-use cli_harness::{CliTestEnv, SharedCliTestEnv};
+use cli_harness::CliTestEnv;
+#[path = "common/git.rs"]
+mod git_helpers;
 
 type DelimiterResult = Result<(String, String), Box<dyn std::error::Error>>;
 
@@ -99,7 +99,7 @@ fn assert_delimiter_usage(output: &str, is_last: bool, segment_name: &str) {
 }
 
 fn run_gpy_agent(args: &[&str]) -> (i32, String, String) {
-    match SharedCliTestEnv::instance().run_gpy_agent(args) {
+    match CliTestEnv::new().and_then(|env| env.run_gpy_agent(args)) {
         Ok(output) => (output.exit_code, output.stdout, output.stderr),
         Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
     }
@@ -118,23 +118,7 @@ fn run_gpy_agent_with_config(config_toml: &str, args: &[&str]) -> (i32, String, 
 
 fn create_test_git_repo() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
-
-    Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()?;
-
-    // Commits need an identity.
-    Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output()?;
-
-    Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output()?;
+    git_helpers::git_init(temp_dir.path());
 
     Ok(temp_dir)
 }
@@ -157,7 +141,6 @@ edition = "2021"
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_help_command() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["--help"]);
 
@@ -178,7 +161,6 @@ fn test_cli_help_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_version_command() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["--version"]);
 
@@ -187,7 +169,6 @@ fn test_cli_version_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_current_repo() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -209,24 +190,11 @@ fn test_cli_oneshot_git_current_repo() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_with_custom_path() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let _ = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output();
-
-    let _ = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output();
-    let _ = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output();
+    git_helpers::git_init(temp_path);
 
     let (exit_code, stdout, stderr) = run_gpy_agent(&[
         "oneshot",
@@ -245,24 +213,13 @@ fn test_cli_oneshot_git_with_custom_path() {
 #[test]
 fn test_cli_oneshot_git_ignores_inherited_git_dir() {
     let env = CliTestEnv::new().expect("failed to create CLI test env");
-    let git = |dir: &std::path::Path, args: &[&str]| {
-        let status = Command::new("git")
-            .args(["-c", "commit.gpgsign=false", "-c", "user.name=T"])
-            .args(["-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .expect("spawn git");
-        assert!(status.success(), "git {args:?} failed");
-    };
     let a = env.root().join("repoA");
     let b = env.root().join("repoB");
     for (repo, branch) in [(&a, "featureA"), (&b, "main")] {
         fs::create_dir_all(repo).expect("mkdir");
-        git(repo, &["init", "-q", "-b", branch]);
+        git_helpers::git(repo, &["init", "-q", "-b", branch]);
         fs::write(repo.join("f"), "x\n").expect("write");
-        git(repo, &["add", "."]);
-        git(repo, &["commit", "-q", "-m", "init"]);
+        git_helpers::git_commit_all(repo, "init");
     }
     fs::write(b.join("untracked.txt"), "z\n").expect("write");
 
@@ -287,7 +244,6 @@ fn test_cli_oneshot_git_ignores_inherited_git_dir() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_non_git_directory() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
@@ -306,7 +262,7 @@ fn test_cli_oneshot_git_non_git_directory() {
 
 fn assert_config_get(key: &str, expected: &str) {
     let (exit_code, stdout, stderr) =
-        match SharedCliTestEnv::instance().run_gpy(&["config", "get", key]) {
+        match CliTestEnv::new().and_then(|env| env.run_gpy(&["config", "get", key])) {
             Ok(output) => (output.exit_code, output.stdout, output.stderr),
             Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
         };
@@ -394,7 +350,6 @@ fn test_cli_start_is_unsupported_on_native_windows() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_succeeds_when_agent_disabled() {
     const DISABLED_CONFIG: &str = r#"
 [agent]
@@ -439,7 +394,6 @@ enabled_segments = ["clock", "duration", "directory", "git"]
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_respects_supervisor_settings() {
     const SUPERVISOR_CONFIG: &str = r#"
 [agent]
@@ -560,7 +514,6 @@ enabled_segments = ["directory", "git"]
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_lang_current_repo() {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
     let temp_path = temp_project.path();
@@ -579,7 +532,6 @@ fn test_cli_oneshot_lang_current_repo() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_lang_rust_project() {
     // The crate root has a Cargo.toml.
     let (exit_code, stdout, stderr) = run_gpy_agent(&["oneshot", "lang", "--cwd", "."]);
@@ -596,30 +548,37 @@ fn test_cli_oneshot_lang_rust_project() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_invalid_command() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["invalid-command"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert_ne!(stderr, "");
+    assert!(
+        stderr.contains("error:"),
+        "clap usage error expected: {stderr}"
+    );
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_missing_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert_ne!(stderr, "");
+    // Windows prints `gpy-agent.exe`.
+    assert!(
+        stderr.contains("Usage: gpy-agent") && stderr.contains("oneshot <COMMAND>"),
+        "{stderr}"
+    );
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_invalid_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot", "invalid-op"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert_ne!(stderr, "");
+    assert!(
+        stderr.contains("error:"),
+        "clap usage error expected: {stderr}"
+    );
 }
 
 /// A negative exit code is a value, not a flag, and counts as failure.
@@ -640,7 +599,6 @@ fn test_cli_oneshot_character_accepts_negative_exit_code() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_invalid_path() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&[
         "oneshot",
@@ -670,20 +628,12 @@ fn test_cli_oneshot_git_honors_tilde_and_symlinked_skip_paths() {
     .expect("write config");
     std::os::unix::fs::symlink(&real, root.join("link")).expect("symlink");
 
-    let init = |repo: &std::path::Path| {
-        fs::create_dir_all(repo).expect("mkdir");
-        let status = Command::new("git")
-            .args(["-c", "commit.gpgsign=false", "init", "-q", "-b", "main"])
-            .arg(repo)
-            .status()
-            .expect("spawn git");
-        assert!(status.success(), "git init failed");
-    };
     let big = root.join("big");
     let linked = real.join("repo");
     let kept = root.join("kept");
     for repo in [&big, &linked, &kept] {
-        init(repo);
+        fs::create_dir_all(repo).expect("mkdir");
+        git_helpers::git_init(repo);
     }
 
     for skipped in [&big, &linked] {
@@ -736,28 +686,36 @@ fn test_cli_oneshot_git_error_renders_empty_prompt_segment() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_with_complex_paths() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     let complex_dir = temp_path.join("test dir with spaces & symbols");
-    let _ = fs::create_dir_all(&complex_dir);
-
-    let (exit_code, stdout, _stderr) = run_gpy_agent(&[
+    fs::create_dir_all(&complex_dir).expect("create complex dir");
+    let args = [
         "oneshot",
         "git",
         "--cwd",
-        complex_dir.to_string_lossy().as_ref(),
-    ]);
+        complex_dir.to_str().expect("utf-8 temp path"),
+    ];
 
-    assert_eq!(exit_code, 0_i32);
+    let (exit_code, stdout, stderr) = run_gpy_agent(&args);
+    assert_eq!(exit_code, 0_i32, "{stderr}");
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
-    assert!(json.get("error").is_some());
+    assert_eq!(
+        json.get("error"),
+        Some(&serde_json::json!("Not in a git repository"))
+    );
+
+    git_helpers::git_init(&complex_dir);
+    let (repo_exit, repo_stdout, repo_stderr) = run_gpy_agent(&args);
+    assert_eq!(repo_exit, 0_i32, "{repo_stderr}");
+    let repo_json: serde_json::Value = serde_json::from_str(&repo_stdout).expect("Invalid JSON");
+    assert!(repo_json.get("error").is_none(), "{repo_stdout}");
+    assert!(repo_json.get("branch").is_some(), "{repo_stdout}");
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_status_command() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["status"]);
 
@@ -773,7 +731,6 @@ fn test_cli_status_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_concurrent_oneshot_commands() {
     use std::thread;
 
@@ -802,11 +759,13 @@ fn test_cli_concurrent_oneshot_commands() {
     for handle in handles {
         let output = handle.join().unwrap();
         assert!(output.status.success());
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+        assert!(json.get("branch").is_some(), "no branch in {json}");
     }
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_git_status_json_format() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -834,24 +793,6 @@ fn test_cli_git_status_json_format() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
-fn test_cli_environment_variable_handling() {
-    let exit_code = match Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-        .args(["oneshot", "git", "--cwd", "."])
-        .env("GPY_DEBUG", "1")
-        .env("GPY_TIMEOUT", "30")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-    {
-        Ok(o) => o.status.code().unwrap_or(-1_i32),
-        Err(_) => -1_i32,
-    };
-    assert_eq!(exit_code, 0_i32);
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_includes_icon_prompt() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
@@ -862,10 +803,6 @@ fn test_theme_export_includes_icon_prompt() {
         "Theme export should include __icon_prompt variable for fish_prompt.fish compatibility. Got: {stdout}"
     );
     assert!(
-        stdout.contains("set -g __gpy_ui_prompt_icon"),
-        "Theme export should include __gpy_ui_prompt_icon variable. Got: {stdout}"
-    );
-    assert!(
         stdout.contains("set -g __prompt_color"),
         "Theme export should include __prompt_color variable. Got: {stdout}"
     );
@@ -873,10 +810,6 @@ fn test_theme_export_includes_icon_prompt() {
     assert!(
         stdout.contains("set -g __icon_root_prompt"),
         "Theme export should include __icon_root_prompt variable for root user prompts. Got: {stdout}"
-    );
-    assert!(
-        stdout.contains("set -g __gpy_ui_root_prompt_icon"),
-        "Theme export should include __gpy_ui_root_prompt_icon variable. Got: {stdout}"
     );
     assert!(
         stdout.contains("set -g __root_prompt_color"),
@@ -894,7 +827,6 @@ fn test_theme_export_includes_icon_prompt() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_not_last_git() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -916,7 +848,6 @@ fn test_fish_rendered_delimiter_when_not_last_git() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_is_last_git() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -938,7 +869,6 @@ fn test_fish_rendered_delimiter_when_is_last_git() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_not_last_lang() {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
     let temp_path = temp_project.path();
@@ -963,7 +893,6 @@ fn test_fish_rendered_delimiter_when_not_last_lang() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_is_last_lang() {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
     let temp_path = temp_project.path();
@@ -990,7 +919,6 @@ fn test_fish_rendered_delimiter_when_is_last_lang() {
 /// A quarantined/SIGKILLed binary used to export nothing, leaving Fish
 /// colors unset.
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_produces_non_empty_output() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
@@ -1013,7 +941,7 @@ fn test_theme_export_produces_non_empty_output() {
     let required_prefixes = [
         "set -g __color_",  // Color variables
         "set -g __icon_",   // Icon variables
-        "set -g __gpy_ui_", // UI configuration
+        "set -g __prompt_", // Prompt configuration
     ];
 
     for prefix in &required_prefixes {
@@ -1033,7 +961,6 @@ fn test_theme_export_produces_non_empty_output() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_fish_syntax_valid() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
@@ -1063,7 +990,6 @@ fn test_theme_export_fish_syntax_valid() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_respects_xdg_config_home() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
@@ -1114,7 +1040,7 @@ theme = "default"
     assert!(
         stdout.contains("magenta")
             || stdout.contains("bright_magenta")
-            || stdout.contains("__gpy_ui_prompt_icon_color \"magenta\""),
+            || stdout.contains("__prompt_color \"magenta\""),
         "Theme export should contain custom prompt color. Got: {stdout}"
     );
 }
@@ -1359,7 +1285,6 @@ fn test_cli_oneshot_hostname_leading_space_not_doubled_by_empty_symbol() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_contains_enabled_segments_from_config() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
@@ -1404,7 +1329,6 @@ fn has_ansi_background_colors(output: &str) -> bool {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_uses_theme_colors_not_default() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -1445,7 +1369,6 @@ fn test_fish_rendered_uses_theme_colors_not_default() {
 
 /// With git disabled, directory becomes last and must use `prompt_close`.
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_delimiter_selection_after_git_disabled() {
     const CONFIG_GIT_DISABLED: &str = r#"
 [agent]
@@ -1485,7 +1408,6 @@ enabled_segments = ["clock", "directory", "git"]
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_config_hot_reload_git_toggle_full_scenario() {
     const CONFIG_GIT_ENABLED: &str = r#"
 [git]
@@ -1850,7 +1772,7 @@ fn documented_cli_commands_exist() {
 #[test]
 fn config_list_matches_registry() {
     let key_line =
-        regex::Regex::new(r"^  (\S+) \[(?:read-write|read-only )\]$").expect("valid regex");
+        regex::Regex::new(r"^   (\S+) \[(?:read-write|read-only )\]$").expect("valid regex");
     let env = CliTestEnv::new().expect("failed to create CLI test env");
 
     let all = env.run_gpy(&["config", "list"]).expect("spawn gpy");

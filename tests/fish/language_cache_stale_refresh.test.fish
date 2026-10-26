@@ -8,19 +8,6 @@ source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 source "$repo_root/tests/lib/test_helpers.fish"
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
-
 # --- Setup: fake cache directory and git root ---
 set -l tmp_dir (mktemp -d)
 test_track_dir $tmp_dir
@@ -54,16 +41,16 @@ set -l content_status $status
 
 # Content should still be served despite staleness
 if test -n "$content"
-    check "stale cache content is served" pass
+    check "stale cache content is served" pass pass
 else
-    check "stale cache content is served" fail
+    check "stale cache content is served" pass fail
 end
 
 # Staleness is reported through the exit-code status (2/6).
 if __gpy_cache_status_stale $content_status
-    check "stale marker is set when cache exceeds TTL" pass
+    check "stale marker is set when cache exceeds TTL" pass pass
 else
-    check "stale marker is set when cache exceeds TTL" fail
+    check "stale marker is set when cache exceeds TTL" pass fail
 end
 
 # --- Fresh cache should NOT set the stale marker ---
@@ -73,15 +60,15 @@ set -l content2 (__gpy_read_instant_cache lang "$fake_git_root")
 set -l content2_status $status
 
 if test -n "$content2"
-    check "fresh cache content is served" pass
+    check "fresh cache content is served" pass pass
 else
-    check "fresh cache content is served" fail
+    check "fresh cache content is served" pass fail
 end
 
 if not __gpy_cache_status_stale $content2_status
-    check "stale marker is NOT set for fresh cache" pass
+    check "stale marker is NOT set for fresh cache" pass pass
 else
-    check "stale marker is NOT set for fresh cache" fail
+    check "stale marker is NOT set for fresh cache" pass fail
 end
 
 # --- The stale path must actually reach the agent ---
@@ -135,16 +122,16 @@ end
 segment_language_render >/dev/null
 
 if await_ipc_send
-    check "stale cache triggers an IPC send" pass
+    check "stale cache triggers an IPC send" pass pass
 else
-    check "stale cache triggers an IPC send" fail
+    check "stale cache triggers an IPC send" pass fail
 end
 
 set -l stale_payload (cat "$__gpy_test_ipc_marker" 2>/dev/null | string collect)
 if string match -q '*"op":"lang"*' -- "$stale_payload"
-    check "stale-path payload is a lang data request" pass
+    check "stale-path payload is a lang data request" pass pass
 else
-    check "stale-path payload is a lang data request" fail
+    check "stale-path payload is a lang data request" pass fail
     echo "  payload was: [$stale_payload]"
 end
 
@@ -159,9 +146,9 @@ end
 segment_language_render >/dev/null
 
 if await_ipc_send
-    check "cold cache miss still triggers an IPC send" pass
+    check "cold cache miss still triggers an IPC send" pass pass
 else
-    check "cold cache miss still triggers an IPC send" fail
+    check "cold cache miss still triggers an IPC send" pass fail
 end
 
 # Scenario 3: the 500ms per-path/suffix throttle suppresses a second stale
@@ -176,10 +163,10 @@ segment_language_render >/dev/null
 sleep 0.3
 
 if test -s "$__gpy_test_ipc_marker"
-    check "throttled stale refresh sends nothing within 500ms" fail
+    check "throttled stale refresh sends nothing within 500ms" pass fail
     echo "  payload was: ["(cat "$__gpy_test_ipc_marker" | string collect)"]"
 else
-    check "throttled stale refresh sends nothing within 500ms" pass
+    check "throttled stale refresh sends nothing within 500ms" pass pass
 end
 
 cd "$repo_root"
@@ -187,8 +174,4 @@ cd "$repo_root"
 # Cleanup
 rm -rf "$tmp_dir"
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count language cache stale tests passed"
+test_finish "language cache stale tests"

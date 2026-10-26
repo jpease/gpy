@@ -48,9 +48,7 @@ truncate_to_repo = false
 # Agent-rendered, like every other segment. `$time` resolves to the requesting
 # shell's own live-time prompt token (`%D{…}` for zsh, `\D{…}` for bash) built
 # from time_format/show_leading_zero/show_seconds below, so the clock keeps
-# ticking between draws while the agent owns the caps and colors. Before this,
-# zsh and bash rendered the clock locally with a hardcoded 24-hour format and
-# no closing cap, which is why they disagreed with fish on both.
+# ticking between draws while the agent owns the caps and colors.
 format = "([$sep_open](fg:$bg bg:default))[ $time]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 text_color = "white"
 bg_color = "black"

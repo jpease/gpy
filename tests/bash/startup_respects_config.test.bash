@@ -4,6 +4,8 @@
 # config.toml. A stub gpy-agent logs argv and exports flags from STUB_AGENT / STUB_SUP.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-startup-config.XXXXXX")"
@@ -24,8 +26,6 @@ exit 0
 EOF
 chmod +x "$tmp/bin/gpy-agent"
 
-failed=0
-
 # Print how many times gpy.bash ran `gpy-agent start`; $1 STUB_AGENT, $2 STUB_SUP.
 starts_for() {
     : >"$tmp/calls.log"
@@ -39,19 +39,9 @@ starts_for() {
     grep -c '^start' "$tmp/calls.log"
 }
 
-check() {
-    local name=$1 want=$2 got=$3
-    if [[ "$got" == "$want" ]]; then
-        echo "PASS: $name"
-    else
-        echo "FAIL: $name: want $want start call(s), got $got"
-        failed=1
-    fi
-}
-
 check "[agent] enabled = false skips the startup start" 0 "$(starts_for 0 1)"
 check "[agent.supervisor] enabled = false still makes the startup start" 1 "$(starts_for 1 0)"
 # Control: both enabled still starts the missing agent, so the stub is wired.
 check "both enabled starts the agent once" 1 "$(starts_for 1 1)"
 
-exit $failed
+test_finish "startup respects config"

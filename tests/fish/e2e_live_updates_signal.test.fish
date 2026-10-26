@@ -1,11 +1,4 @@
 #!/usr/bin/env fish
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::create_dir)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::doc_markdown)]
-
 # SPDX-License-Identifier: GPL-3.0-or-later
 # E2E Test: Live Update Signal Flow & Agent Restart Handling
 #
@@ -30,40 +23,50 @@ function print_banner
     print_test_header "E2E Test: Live Update Signal Flow"
 end
 
+# Make git changes until the client's signal count exceeds the baseline. The
+# agent exposes no "watch ready" signal, so a change made before the watch is
+# armed is retried rather than waited out.
+function __gpy_change_rang --argument-names client_pid baseline
+    echo >>(pwd)/.gpy-test-$fish_pid
+    git -C (pwd) add (pwd)/.gpy-test-$fish_pid >/dev/null 2>&1
+    test (count_signals $client_pid) -gt $baseline
+end
+
+function ring_after_change --argument-names client_pid baseline
+    poll_until 8 __gpy_change_rang $client_pid $baseline
+end
+
 function test_signal_flow
     print_banner
     init_test_env
 
     if start_test_agent
-        print_test_result "Agent Start (initial)" PASS
+        pass "Agent Start (initial)"
     else
-        print_test_result "Agent Start (initial)" FAIL "gpy-agent failed to start"
+        fail "Agent Start (initial)" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
 
     set -l client1 (register_test_client 12)
     if test -z "$client1"
-        print_test_result "Register client (phase 1)" FAIL "Failed to spawn test client"
+        fail "Register client (phase 1)" "Failed to spawn test client"
         cleanup_test_files
         return 1
     end
-    print_test_result "Register client (phase 1)" PASS
+    pass "Register client (phase 1)"
 
-    # Let registration-time signals settle, then capture a baseline. We assert an
-    # INCREMENT caused specifically by the git change — a plain "≥1" check would be
-    # satisfied by the registration signal alone and could not detect a regression
-    # where change-driven signals stop firing. The absence of further signals
-    # cannot be polled for, so this is a fixed settle window.
-    sleep 2
+    # Wait for the registration signal, then capture a baseline. We assert an
+    # INCREMENT caused specifically by the git change: a plain "at least 1" check
+    # would be satisfied by the registration signal alone.
+    wait_for_signal $client1 1 5
     set -l baseline1 (count_signals $client1)
 
-    trigger_git_change (pwd) >/dev/null
-    if wait_for_signal $client1 (math $baseline1 + 1) 6
-        print_test_result "Watcher rings SIGURG on change" PASS
+    if ring_after_change $client1 $baseline1
+        pass "Watcher rings SIGURG on change"
     else
         set -l observed (count_signals $client1)
-        print_test_result "Watcher rings SIGURG on change" FAIL "Expected > $baseline1 signals, saw $observed"
+        fail "Watcher rings SIGURG on change" "Expected > $baseline1 signals, saw $observed"
         cleanup_test_files
         return 1
     end
@@ -74,31 +77,29 @@ function test_signal_flow
 
     stop_test_agent >/dev/null
     if start_test_agent
-        print_test_result "Agent Restart" PASS
+        pass "Agent Restart"
     else
-        print_test_result "Agent Restart" FAIL "Unable to restart gpy-agent"
+        fail "Agent Restart" "Unable to restart gpy-agent"
         cleanup_test_files
         return 1
     end
 
     set -l client2 (register_test_client 12)
     if test -z "$client2"
-        print_test_result "Register client (phase 2)" FAIL "Failed to spawn test client after restart"
+        fail "Register client (phase 2)" "Failed to spawn test client after restart"
         cleanup_test_files
         return 1
     end
-    print_test_result "Register client (phase 2)" PASS
+    pass "Register client (phase 2)"
 
-    # Same settle window as phase 1 before taking the baseline.
-    sleep 2 # elapsed time is the condition: see phase 1
+    wait_for_signal $client2 1 5
     set -l baseline2 (count_signals $client2)
 
-    trigger_git_change (pwd) >/dev/null
-    if wait_for_signal $client2 (math $baseline2 + 1) 6
-        print_test_result "Watcher recovers after restart" PASS
+    if ring_after_change $client2 $baseline2
+        pass "Watcher recovers after restart"
     else
         set -l observed2 (count_signals $client2)
-        print_test_result "Watcher recovers after restart" FAIL "Expected > $baseline2 signals after restart, saw $observed2"
+        fail "Watcher recovers after restart" "Expected > $baseline2 signals after restart, saw $observed2"
         cleanup_test_files
         return 1
     end
@@ -111,8 +112,5 @@ function test_signal_flow
     return 0
 end
 
-if not test_signal_flow
-    exit 1
-end
-
-exit 0
+test_signal_flow; or exit 1
+test_finish "live updates signal"

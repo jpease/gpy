@@ -400,17 +400,17 @@ fn apply_to_deselected_git_clears_flag_and_keeps_list_entry() {
     );
 }
 
-fn focus_directory_segment(state: &mut WizardState) {
-    state.next_section(); // Theme -> Palette
-    state.next_section(); // Palette -> Segments
-    while state
-        .available_segments()
-        .get(state.segment_cursor())
-        .map(String::as_str)
-        != Some("directory")
-    {
-        state.move_cursor_down();
-    }
+fn clean_state() -> WizardState {
+    let config = make_config(
+        "default",
+        "default",
+        GitLanguageFlags {
+            git: true,
+            language: true,
+        },
+        &["directory"],
+    );
+    test_state(config)
 }
 
 #[test]
@@ -434,132 +434,46 @@ fn directory_display_defaults_to_the_config_value() {
 }
 
 #[test]
-fn cycle_directory_display_forward_wraps_through_all_variants() {
+fn directory_display_edits_cycle_through_every_variant_both_ways() {
     use crate::config::types::DirectoryDisplay;
 
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_directory_segment(&mut state);
+    let mut state = clean_state();
+    let base = ThemeConfig::default();
     assert_eq!(state.directory_display(), DirectoryDisplay::Basename);
 
-    state.cycle_directory_display(true);
-    assert_eq!(state.directory_display(), DirectoryDisplay::Abbreviated);
-    state.cycle_directory_display(true);
-    assert_eq!(state.directory_display(), DirectoryDisplay::Truncated);
-    state.cycle_directory_display(true);
-    assert_eq!(state.directory_display(), DirectoryDisplay::Full);
-    state.cycle_directory_display(true);
-    assert_eq!(
-        state.directory_display(),
+    for expected in [
+        DirectoryDisplay::Abbreviated,
+        DirectoryDisplay::Truncated,
+        DirectoryDisplay::Full,
         DirectoryDisplay::Basename,
-        "cycling forward past Full should wrap back to Basename"
-    );
+    ] {
+        state.apply_edit(SegmentEdit::NextDirectoryDisplay, &base);
+        assert_eq!(state.directory_display(), expected);
+    }
+    for expected in [
+        DirectoryDisplay::Full,
+        DirectoryDisplay::Truncated,
+        DirectoryDisplay::Abbreviated,
+        DirectoryDisplay::Basename,
+    ] {
+        state.apply_edit(SegmentEdit::PrevDirectoryDisplay, &base);
+        assert_eq!(state.directory_display(), expected);
+    }
 }
 
 #[test]
-fn cycle_directory_display_backward_wraps_from_basename_to_full() {
-    use crate::config::types::DirectoryDisplay;
+fn directory_display_edit_marks_dirty_and_reaches_apply_to() {
+    let mut state = clean_state();
 
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_directory_segment(&mut state);
-
-    state.cycle_directory_display(false);
-
-    assert_eq!(state.directory_display(), DirectoryDisplay::Full);
-}
-
-#[test]
-fn cycle_directory_display_is_noop_unless_directory_segment_is_focused() {
-    use crate::config::types::DirectoryDisplay;
-
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    assert_eq!(state.focused_builtin(), None);
-
-    state.cycle_directory_display(true);
-
-    assert_eq!(state.directory_display(), DirectoryDisplay::Basename);
-}
-
-#[test]
-fn dirty_true_after_directory_display_cycle() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_directory_segment(&mut state);
-
-    state.cycle_directory_display(true);
+    state.apply_edit(SegmentEdit::NextDirectoryDisplay, &ThemeConfig::default());
 
     assert!(state.dirty());
-}
-
-#[test]
-fn apply_to_updates_directory_display() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_directory_segment(&mut state);
-    state.cycle_directory_display(true);
-
     let mut applied = Config::default();
     state.apply_to(&mut applied);
-
     assert_eq!(
         applied.ui.directory.display,
         crate::config::types::DirectoryDisplay::Abbreviated
     );
-}
-
-fn focus_language_segment(state: &mut WizardState) {
-    state.next_section(); // Theme -> Palette
-    state.next_section(); // Palette -> Segments
-    while state
-        .available_segments()
-        .get(state.segment_cursor())
-        .map(String::as_str)
-        != Some("language")
-    {
-        state.move_cursor_down();
-    }
 }
 
 #[test]
@@ -583,433 +497,117 @@ fn language_display_defaults_to_the_config_value() {
 }
 
 #[test]
-fn cycle_language_display_toggles_between_icon_and_text() {
+fn language_display_edit_toggles_between_icon_and_text() {
     use crate::config::types::LanguageDisplay;
 
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_language_segment(&mut state);
+    let mut state = clean_state();
+    let base = ThemeConfig::default();
     assert_eq!(state.language_display(), LanguageDisplay::Icon);
 
-    state.cycle_language_display(true);
+    state.apply_edit(SegmentEdit::ToggleLanguageDisplay, &base);
     assert_eq!(state.language_display(), LanguageDisplay::Text);
-    state.cycle_language_display(true);
-    assert_eq!(state.language_display(), LanguageDisplay::Icon);
-
-    state.cycle_language_display(false);
-    assert_eq!(state.language_display(), LanguageDisplay::Text);
-}
-
-#[test]
-fn cycle_language_display_is_noop_unless_language_segment_is_focused() {
-    use crate::config::types::LanguageDisplay;
-
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    assert_eq!(state.focused_builtin(), None);
-
-    state.cycle_language_display(true);
-
-    assert_eq!(state.language_display(), LanguageDisplay::Icon);
-}
-
-#[test]
-fn dirty_true_after_language_display_cycle() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_language_segment(&mut state);
-
-    state.cycle_language_display(true);
-
     assert!(state.dirty());
-}
-
-#[test]
-fn apply_to_updates_language_display() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_language_segment(&mut state);
-    state.cycle_language_display(true);
-
     let mut applied = Config::default();
     state.apply_to(&mut applied);
+    assert_eq!(applied.language.display, LanguageDisplay::Text);
 
-    assert_eq!(
-        applied.language.display,
-        crate::config::types::LanguageDisplay::Text
-    );
+    state.apply_edit(SegmentEdit::ToggleLanguageDisplay, &base);
+    assert_eq!(state.language_display(), LanguageDisplay::Icon);
 }
 
 #[test]
-fn toggle_language_show_versions_flips_the_flag() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_language_segment(&mut state);
+fn language_show_versions_edit_flips_the_flag() {
+    let mut state = clean_state();
+    let base = ThemeConfig::default();
     let before = state.language_show_versions();
 
-    state.toggle_language_show_versions();
+    state.apply_edit(SegmentEdit::ToggleLanguageShowVersions, &base);
     assert_eq!(state.language_show_versions(), !before);
-
-    state.toggle_language_show_versions();
-    assert_eq!(state.language_show_versions(), before);
-}
-
-#[test]
-fn toggle_language_show_versions_is_noop_unless_language_segment_is_focused() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    let before = state.language_show_versions();
-    assert_eq!(state.focused_builtin(), None);
-
-    state.toggle_language_show_versions();
-
-    assert_eq!(state.language_show_versions(), before);
-}
-
-#[test]
-fn dirty_true_after_language_show_versions_toggle() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_language_segment(&mut state);
-
-    state.toggle_language_show_versions();
-
     assert!(state.dirty());
-}
-
-#[test]
-fn apply_to_updates_language_show_versions() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
-    let mut state = test_state(config);
-    focus_language_segment(&mut state);
-    let before = state.language_show_versions();
-    state.toggle_language_show_versions();
-
     let mut applied = Config::default();
     state.apply_to(&mut applied);
-
     assert_eq!(applied.language.show_versions, !before);
+
+    state.apply_edit(SegmentEdit::ToggleLanguageShowVersions, &base);
+    assert_eq!(state.language_show_versions(), before);
 }
 
-fn focus_clock_segment(state: &mut WizardState) {
-    state.next_section(); // Theme -> Palette
-    state.next_section(); // Palette -> Segments
-    while state
-        .available_segments()
-        .get(state.segment_cursor())
-        .map(String::as_str)
-        != Some("clock")
-    {
-        state.move_cursor_down();
-    }
+/// The theme options `SegmentEdit`s toggle, as on/off flags.
+fn theme_options(theme: &ThemeConfig) -> Vec<bool> {
+    let segments = &theme.segments;
+    vec![
+        segments.clock.time_format() == "24",
+        segments.clock.show_seconds(),
+        segments.duration.show_milliseconds,
+        segments.git.show_branch(),
+        segments.git.show_ahead_behind(),
+        segments.git.show_stash(),
+    ]
 }
 
 #[test]
-fn clock_time_format_and_show_seconds_default_when_unset_in_base() {
+fn active_theme_reads_the_base_until_edited() {
     let state = clean_state();
     let base = ThemeConfig::default();
 
-    assert_eq!(state.clock_time_format(&base), "12");
-    assert!(!state.clock_show_seconds(&base));
-}
-
-#[test]
-fn cycle_clock_time_format_toggles_between_12_and_24() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_clock_segment(&mut state);
-    assert_eq!(state.clock_time_format(&base), "12");
-
-    state.cycle_clock_time_format(&base);
-    assert_eq!(state.clock_time_format(&base), "24");
-
-    state.cycle_clock_time_format(&base);
-    assert_eq!(state.clock_time_format(&base), "12");
-}
-
-#[test]
-fn cycle_clock_time_format_is_noop_unless_clock_segment_is_focused() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    assert_eq!(state.focus(), Section::Theme);
-
-    state.cycle_clock_time_format(&base);
-
-    assert_eq!(state.clock_time_format(&base), "12");
+    assert_eq!(
+        theme_options(state.active_theme(&base)),
+        [false, false, true, true, true, true]
+    );
     assert!(state.pending_theme().is_none());
 }
 
 #[test]
-fn dirty_true_after_clock_time_format_cycle() {
-    let mut state = clean_state();
+fn each_theme_edit_flips_only_its_own_option() {
     let base = ThemeConfig::default();
-    focus_clock_segment(&mut state);
-    assert!(!state.dirty());
+    let edits = [
+        SegmentEdit::ToggleClockTimeFormat,
+        SegmentEdit::ToggleClockShowSeconds,
+        SegmentEdit::ToggleDurationShowMilliseconds,
+        SegmentEdit::ToggleGitShowBranch,
+        SegmentEdit::ToggleGitShowAheadBehind,
+        SegmentEdit::ToggleGitShowStash,
+    ];
+    for (index, edit) in edits.into_iter().enumerate() {
+        let mut state = clean_state();
+        let expected: Vec<bool> = theme_options(&base)
+            .into_iter()
+            .enumerate()
+            .map(|(option, on)| on ^ (option == index))
+            .collect();
 
-    state.cycle_clock_time_format(&base);
+        state.apply_edit(edit, &base);
+        assert_eq!(
+            theme_options(state.active_theme(&base)),
+            expected,
+            "{edit:?}"
+        );
+        assert!(state.dirty(), "{edit:?} must mark the state dirty");
 
-    assert!(state.dirty());
-}
-
-#[test]
-fn toggle_clock_show_seconds_flips_the_flag() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_clock_segment(&mut state);
-    let before = state.clock_show_seconds(&base);
-
-    state.toggle_clock_show_seconds(&base);
-
-    assert_eq!(state.clock_show_seconds(&base), !before);
-}
-
-#[test]
-fn toggle_clock_show_seconds_is_noop_unless_clock_segment_is_focused() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    let before = state.clock_show_seconds(&base);
-    assert_eq!(state.focus(), Section::Theme);
-
-    state.toggle_clock_show_seconds(&base);
-
-    assert_eq!(state.clock_show_seconds(&base), before);
-    assert!(state.pending_theme().is_none());
-}
-
-#[test]
-fn dirty_true_after_clock_show_seconds_toggle() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_clock_segment(&mut state);
-    assert!(!state.dirty());
-
-    state.toggle_clock_show_seconds(&base);
-
-    assert!(state.dirty());
+        state.apply_edit(edit, &base);
+        assert_eq!(
+            theme_options(state.active_theme(&base)),
+            theme_options(&base),
+            "{edit:?} twice"
+        );
+    }
 }
 
 #[test]
 fn clock_edits_accumulate_in_pending_theme_without_clobbering_each_other() {
     let mut state = clean_state();
     let base = ThemeConfig::default();
-    focus_clock_segment(&mut state);
 
-    state.cycle_clock_time_format(&base);
-    state.toggle_clock_show_seconds(&base);
+    state.apply_edit(SegmentEdit::ToggleClockTimeFormat, &base);
+    state.apply_edit(SegmentEdit::ToggleClockShowSeconds, &base);
 
     let pending = state.pending_theme().expect("pending theme present");
     assert_eq!(pending.segments.clock.time_format.as_deref(), Some("24"));
     assert_eq!(pending.segments.clock.show_seconds, Some(true));
 }
 
-fn focus_duration_segment(state: &mut WizardState) {
-    state.next_section(); // Theme -> Palette
-    state.next_section(); // Palette -> Segments
-    while state
-        .available_segments()
-        .get(state.segment_cursor())
-        .map(String::as_str)
-        != Some("duration")
-    {
-        state.move_cursor_down();
-    }
-}
-
 #[test]
-fn duration_show_milliseconds_defaults_true_when_unset_in_base() {
-    let state = clean_state();
-    let base = ThemeConfig::default();
-
-    assert!(state.duration_show_milliseconds(&base));
-}
-
-#[test]
-fn toggle_duration_show_milliseconds_flips_the_flag() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_duration_segment(&mut state);
-    let before = state.duration_show_milliseconds(&base);
-
-    state.toggle_duration_show_milliseconds(&base);
-
-    assert_eq!(state.duration_show_milliseconds(&base), !before);
-}
-
-#[test]
-fn toggle_duration_show_milliseconds_is_noop_unless_duration_segment_is_focused() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    assert_eq!(state.focus(), Section::Theme);
-
-    state.toggle_duration_show_milliseconds(&base);
-
-    assert!(state.duration_show_milliseconds(&base));
-    assert!(state.pending_theme().is_none());
-}
-
-#[test]
-fn dirty_true_after_duration_show_milliseconds_toggle() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_duration_segment(&mut state);
-    assert!(!state.dirty());
-
-    state.toggle_duration_show_milliseconds(&base);
-
-    assert!(state.dirty());
-}
-
-fn focus_git_segment(state: &mut WizardState) {
-    state.next_section(); // Theme -> Palette
-    state.next_section(); // Palette -> Segments
-    while state
-        .available_segments()
-        .get(state.segment_cursor())
-        .map(String::as_str)
-        != Some("git")
-    {
-        state.move_cursor_down();
-    }
-}
-
-#[test]
-fn git_content_flags_default_true_when_unset_in_base() {
-    let state = clean_state();
-    let base = ThemeConfig::default();
-
-    assert!(state.git_show_branch(&base));
-    assert!(state.git_show_ahead_behind(&base));
-    assert!(state.git_show_stash(&base));
-}
-
-#[test]
-fn toggle_git_show_branch_flips_only_the_branch_flag() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_git_segment(&mut state);
-
-    state.toggle_git_show_branch(&base);
-
-    assert!(!state.git_show_branch(&base));
-    assert!(state.git_show_ahead_behind(&base));
-    assert!(state.git_show_stash(&base));
-}
-
-#[test]
-fn toggle_git_show_ahead_behind_flips_the_flag() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_git_segment(&mut state);
-
-    state.toggle_git_show_ahead_behind(&base);
-
-    assert!(!state.git_show_ahead_behind(&base));
-}
-
-#[test]
-fn toggle_git_show_stash_flips_the_flag() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_git_segment(&mut state);
-
-    state.toggle_git_show_stash(&base);
-
-    assert!(!state.git_show_stash(&base));
-}
-
-#[test]
-fn git_toggles_are_noop_unless_git_segment_is_focused() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    assert_eq!(state.focus(), Section::Theme);
-
-    state.toggle_git_show_branch(&base);
-    state.toggle_git_show_ahead_behind(&base);
-    state.toggle_git_show_stash(&base);
-
-    assert!(state.git_show_branch(&base));
-    assert!(state.git_show_ahead_behind(&base));
-    assert!(state.git_show_stash(&base));
-    assert!(state.pending_theme().is_none());
-}
-
-#[test]
-fn dirty_true_after_git_content_toggle() {
-    let mut state = clean_state();
-    let base = ThemeConfig::default();
-    focus_git_segment(&mut state);
-    assert!(!state.dirty());
-
-    state.toggle_git_show_stash(&base);
-
-    assert!(state.dirty());
-}
-
-fn clean_state() -> WizardState {
+fn reapply_to_keeps_a_segment_toggled_off_and_on_in_its_startup_place() {
     let config = make_config(
         "default",
         "default",
@@ -1017,9 +615,21 @@ fn clean_state() -> WizardState {
             git: true,
             language: true,
         },
-        &["directory"],
+        &["directory", "status", "clock"],
     );
-    test_state(config)
+    let mut preview = config.clone();
+    let mut state = test_state(config);
+
+    state.toggle_segment("status");
+    state.reapply_to(&mut preview);
+    assert_eq!(preview.ui.enabled_segments, ["directory", "clock"]);
+
+    state.toggle_segment("status");
+    state.reapply_to(&mut preview);
+    assert_eq!(
+        preview.ui.enabled_segments,
+        ["directory", "status", "clock"]
+    );
 }
 
 #[test]
@@ -1494,14 +1104,12 @@ fn move_cursor_down_steps_through_filtered_list_only() {
     let indices = state.filtered_indices(Section::Segments);
     assert!(indices.len() >= 2, "test relies on 2+ builtin segments");
 
-    let start = state.segment_cursor();
     state.move_cursor_down();
 
     assert_eq!(
         state.segment_cursor(),
         *indices.get(1).expect("indices has at least 2 entries")
     );
-    let _ = start;
 }
 
 fn segments_focused_state() -> WizardState {

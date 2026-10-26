@@ -4,16 +4,10 @@
 
 set -e
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-RESET='\033[0m'
-
-info() { printf "${BLUE}ℹ${RESET} %s\n" "$1"; }
-success() { printf "${GREEN}✓${RESET} %s\n" "$1"; }
-warn() { printf "${YELLOW}Warning:${RESET} %s\n" "$1"; }
-error() { printf "${RED}✗${RESET} %s\n" "$1"; }
+info() { printf "%s\n" "$1"; }
+success() { printf "ok: %s\n" "$1"; }
+warn() { printf "warn: %s\n" "$1"; }
+error() { printf "FAIL: %s\n" "$1"; }
 
 cd "$(dirname "$0")/../gpy-agent" || exit 1
 
@@ -177,26 +171,4 @@ ls -lh ../bin/ 2>/dev/null || true
 
 echo ""
 success "Binaries available in bin/ directory"
-echo ""
-
-info "Next steps:"
-echo "  1. Install the host platform's bundle from bin/:"
-echo "     ./install.sh"
-echo ""
-echo "  2. When ready for release, create and push a tag:"
-echo "     git tag v0.1.0"
-echo "     git push origin v0.1.0"
-echo ""
-echo "  3. GitHub Actions will automatically:"
-echo "     - Build all platform binaries"
-echo "     - Run tests"
-echo "     - Create a GitHub release"
-echo "     - Upload all binaries"
-echo ""
-
-info "Cross-compilation tips:"
-echo "  • Linux: Install zig and cargo-zigbuild (no gcc cross toolchain needed)"
-echo "  • Windows: Install mingw-w64 or use cross"
-echo "  • macOS: Requires macOS SDK and proper toolchain"
-echo "  • Easiest: Use GitHub Actions (already configured!)"
-echo ""
+info "Run ./install.sh to install the host platform bundle"

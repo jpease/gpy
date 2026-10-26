@@ -2,12 +2,12 @@
 # tests/zsh/ipc_send_preserves_escapes.test.zsh
 #
 # zsh's `print` (without -r) and `echo` interpret backslash escapes, so the
-# send path must not use them: the doubled backslashes from __gpy_escape_json
+# send path must not use them: the doubled backslashes from __gpy_escape_json_into
 # would collapse (`a\b` would reach the agent as `a<BS>b`, `notes\stuff` as
 # invalid JSON), and every reply, cache key and prompt string would lose its
 # `\c`/`\b` sequences.
 #
-# A Python listener records the exact request line it receives and replies
+# A stub listener records the exact request line it receives and replies
 # with literal backslash sequences. The test asserts that the request
 # decodes to the original value, that the reply comes back byte for byte,
 # and that __gpy_find_git_root returns a repo root containing `\` verbatim.
@@ -26,41 +26,24 @@ if ! command -v git &>/dev/null; then
 fi
 
 test_tmp_dir=$(mktemp -d)
+cleanup() {
+    shell_e2e_kill_tracked
+    rm -rf "$test_tmp_dir"
+}
+trap cleanup EXIT
 
 # --- Request and reply round-trip through __gpy_send_json ---
 
 sock="$test_tmp_dir/gpy-escape-test.sock"
 recorded="$test_tmp_dir/request.line"
-python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-s.settimeout(5)
-conn, _ = s.accept()
-data = b""
-while not data.endswith(b"\n"):
-    chunk = conn.recv(65536)
-    if not chunk:
-        break
-    data += chunk
-open(sys.argv[2], "wb").write(data)
-conn.sendall(b"dir a\\b \\c tail\n")
-conn.close()
-' "$sock" "$recorded" &
-listener_pid=$!
-disown 2>/dev/null
-
-if ! shell_e2e_poll 2 test -S "$sock"; then
-    kill -9 "$listener_pid" 2>/dev/null
-    rm -rf "$test_tmp_dir"
-    test_skip "could not create test Unix socket listener"
-fi
+expected_reply='dir a\b \c tail'
+shell_e2e_stub_listener "$sock" reply --reply "$expected_reply" --requests "$recorded"
 
 export GPY_AGENT_SOCKET_PATH="$sock"
 d='/x/a\b"q'
-reply="$(__gpy_send_json "{\"cwd\":\"$(__gpy_escape_json "$d")\"}")"
-kill -9 "$listener_pid" 2>/dev/null
+__gpy_escape_json_into escaped_d "$d"
+reply="$(__gpy_send_json "{\"cwd\":\"$escaped_d\"}")"
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 
 if python3 -c '
 import json, sys
@@ -72,7 +55,6 @@ else
     fail "request JSON decodes to the original cwd: sent $(od -c "$recorded" 2>/dev/null | head -3)"
 fi
 
-expected_reply='dir a\b \c tail'
 if [[ "$reply" == "$expected_reply" ]]; then
     pass "reply is printed byte for byte"
 else
@@ -93,5 +75,4 @@ else
     fail "__gpy_find_git_root returns the byte-exact root: got $(print -r -- "$actual_root" | od -c | tail -3)"
 fi
 
-rm -rf "$test_tmp_dir"
 test_finish "zsh IPC send and reply preserve backslashes"

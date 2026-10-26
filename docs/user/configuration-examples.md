@@ -16,7 +16,7 @@ A task-oriented cookbook: pick the goal you want, copy the snippet, adapt the va
 icon_set = "nerd_font"
 ```
 
-This requires a [patched Nerd Font](https://www.nerdfonts.com/) installed and selected in your terminal — without one, the glyphs render as boxes or blanks. The built-in `default` theme already ships some Nerd Font glyphs out of the box (e.g. `[segments.duration] icon = "󰑧"` in `config/themes/default.toml`); if your terminal font isn't patched, use `gpy theme use text` instead, which sticks to plain ASCII/Unicode throughout. To swap individual language icons for Nerd Font codepoints (instead of the default emoji), override `[language.icons]`:
+This requires a [patched Nerd Font](https://www.nerdfonts.com/) installed and selected in your terminal — without one, the glyphs render as boxes or blanks. The built-in `default` theme already ships some Nerd Font glyphs out of the box (e.g. `[segments.duration] icon = "󰑧"` in `config/themes/default.toml`); if your terminal font isn't patched, use `gpy theme use text` instead, which sticks to plain ASCII/Unicode throughout. A language shows its name until you give it an icon; to use Nerd Font codepoints, override `[language.icons]` (`config/config.example.toml` lists a set to start from):
 
 ```toml
 [language.icons]

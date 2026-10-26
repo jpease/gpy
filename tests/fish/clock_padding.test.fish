@@ -11,23 +11,12 @@
 # clock must NOT also add its own trailing pad, or non-last renders would
 # carry two spaces instead of one.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/renderer.fish"
 source "$repo_root/fish/segments/clock.fish"
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
 
 # Deterministic 12-hour clock config.
 set -g __time_format 12
@@ -54,18 +43,18 @@ set -l not_last_raw (segment_clock_render "" | string collect)
 set -l not_last_stripped (string replace -ra '\x1b\[[0-9;]*m' '' -- "$not_last_raw")
 
 if string match -qr ' $' -- "$not_last_stripped"; and not string match -qr '  $' -- "$not_last_stripped"
-    check "flat theme, not-last: exactly one trailing separator space" pass
+    check "flat theme, not-last: exactly one trailing separator space" pass pass
 else
-    check "flat theme, not-last: exactly one trailing separator space (got: '$not_last_stripped')" fail
+    check "flat theme, not-last: exactly one trailing separator space (got: '$not_last_stripped')" pass fail
 end
 
 set -l last_raw (segment_clock_render last | string collect)
 set -l last_stripped (string replace -ra '\x1b\[[0-9;]*m' '' -- "$last_raw")
 
 if string match -qr ' $' -- "$last_stripped"
-    check "flat theme, is-last: no trailing separator space (got: '$last_stripped')" fail
+    check "flat theme, is-last: no trailing separator space (got: '$last_stripped')" pass fail
 else
-    check "flat theme, is-last: no trailing separator space" pass
+    check "flat theme, is-last: no trailing separator space" pass pass
 end
 
 # --- Content shape: capture the content the clock hands to the renderer
@@ -79,21 +68,21 @@ end
 segment_clock_render last
 
 if string match -q ' *' -- "$__test_clock_content"
-    check "clock content has a leading space" pass
+    check "clock content has a leading space" pass pass
 else
-    check "clock content has a leading space (got: '$__test_clock_content')" fail
+    check "clock content has a leading space (got: '$__test_clock_content')" pass fail
 end
 
 if string match -q '* ' -- "$__test_clock_content"
-    check "clock content has no trailing space (got: '$__test_clock_content')" fail
+    check "clock content has no trailing space (got: '$__test_clock_content')" pass fail
 else
-    check "clock content has no trailing space (the renderer supplies the gap instead)" pass
+    check "clock content has no trailing space (the renderer supplies the gap instead)" pass pass
 end
 
 if string match -qr ':[0-9][0-9]' -- "$__test_clock_content"
-    check "clock content still contains the rendered time" pass
+    check "clock content still contains the rendered time" pass pass
 else
-    check "clock content still contains the rendered time (got: '$__test_clock_content')" fail
+    check "clock content still contains the rendered time (got: '$__test_clock_content')" pass fail
 end
 
 # --- Date format strings: the exact strftime spec for each clock mode.
@@ -108,9 +97,9 @@ function check_format --argument-names label time_format leading_zero seconds ex
     set -g __clock_show_seconds $seconds
     set -l actual (__gpy_clock_date_format)
     if test "$actual" = "$expected"
-        check "$label -> '$expected'" pass
+        check "$label -> '$expected'" pass pass
     else
-        check "$label -> expected '$expected', got '$actual'" fail
+        check "$label -> expected '$expected', got '$actual'" pass fail
     end
 end
 
@@ -121,8 +110,4 @@ check_format "24h, bare hour" 24 0 0 '%-H:%M'
 check_format "24h, leading zero, seconds" 24 1 1 '%H:%M:%S'
 check_format "12h, seconds keep AM/PM after the seconds" 12 0 1 '%-I:%M:%S %p'
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count clock padding tests passed"
+test_finish "clock padding tests"

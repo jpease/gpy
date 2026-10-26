@@ -1,14 +1,6 @@
 //! Theme data model loaded from `~/.config/gpy/themes/{theme}.toml`.
 
-use crate::config::defaults::{
-    default_character_error_color, default_character_error_symbol, default_character_success_color,
-    default_character_success_symbol, default_color_black, default_color_white,
-    default_duration_threshold, default_status_fail_bg, default_status_fail_text,
-    default_status_ok_bg, default_status_ok_text, default_true, default_ui_prompt,
-    default_ui_prompt_close, default_ui_prompt_open, default_ui_root_prompt,
-    default_ui_root_prompt_color, default_ui_segment_close_delimiter,
-    default_ui_segment_open_delimiter,
-};
+use crate::config::defaults::literal;
 use crate::config::language_icons::LanguageTheme;
 use crate::config::types;
 use crate::config::{
@@ -93,47 +85,38 @@ pub struct PluginSegmentTheme {
 
 /// UI-level colors (prompt, delimiters)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiTheme {
     /// Prompt icon (default: "❯")
-    #[serde(default = "default_ui_prompt")]
     pub prompt_icon: types::Icon,
 
     /// Root prompt icon shown when running as root (default: "!❯!")
-    #[serde(default = "default_ui_root_prompt")]
     pub root_prompt_icon: types::Icon,
 
     /// Prompt open delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub prompt_open: Option<DelimiterConfig>,
     /// Prompt close delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub prompt_close: Option<DelimiterConfig>,
     /// Default segment open delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub segment_open: Option<DelimiterConfig>,
     /// Default segment close delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub segment_close: Option<DelimiterConfig>,
 
-    /// Color for the prompt symbol (default: "white")
-    #[serde(default)]
+    /// Color for the prompt symbol (unset: `DEFAULT_UI_PROMPT_COLOR`)
     pub prompt_color: Option<types::ColorSpec>,
 
-    /// Color for the root prompt symbol (default: "red")
-    #[serde(default)]
+    /// Color for the root prompt symbol (unset: `DEFAULT_UI_ROOT_PROMPT_COLOR`)
     pub root_prompt_color: Option<types::ColorSpec>,
 
     /// Opt-in two-line layout (prompt char on its own line). Exported as `__gpy_two_line`.
-    #[serde(default)]
     pub two_line: bool,
 
     /// Blank line before each prompt. Exported as `__gpy_add_newline`.
-    #[serde(default = "default_true")]
     pub add_newline: bool,
 
     /// Advisory `config.ui` settings under `[ui.recommended]`; never exported.
     /// Applied only by `gpy theme use <name> --force`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended: Option<RecommendedUi>,
 }
 
@@ -177,16 +160,16 @@ pub struct RecommendedDirectory {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            prompt_icon: default_ui_prompt(),
-            root_prompt_icon: default_ui_root_prompt(),
-            prompt_open: Some(DelimiterConfig::simple(default_ui_prompt_open())),
-            prompt_close: Some(DelimiterConfig::simple(default_ui_prompt_close())),
-            segment_open: Some(DelimiterConfig::simple(default_ui_segment_open_delimiter())),
-            segment_close: Some(DelimiterConfig::simple(default_ui_segment_close_delimiter())),
+            prompt_icon: literal("❯"),
+            root_prompt_icon: literal("!❯!"),
+            prompt_open: None,
+            prompt_close: None,
+            segment_open: None,
+            segment_close: None,
             prompt_color: None,
-            root_prompt_color: Some(default_ui_root_prompt_color()),
+            root_prompt_color: None,
             two_line: false,
-            add_newline: default_true(),
+            add_newline: true,
             recommended: None,
         }
     }
@@ -228,21 +211,17 @@ impl UiTheme {
 
 /// Character segment (final `❯` symbol); `format` variables are `symbol` and `style`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CharacterTheme {
     /// Starship format template; `None` lets the shell render the character locally.
-    #[serde(default)]
     pub format: Option<String>,
     /// Symbol shown when the last command succeeded (default: `❯`)
-    #[serde(default = "default_character_success_symbol")]
     pub success_symbol: String,
     /// Symbol shown when the last command failed (default: `❯`, but in error color)
-    #[serde(default = "default_character_error_symbol")]
     pub error_symbol: String,
     /// Foreground color when the last command succeeded (default: green)
-    #[serde(default = "default_character_success_color")]
     pub success_color: types::ColorSpec,
     /// Foreground color when the last command failed (default: red)
-    #[serde(default = "default_character_error_color")]
     pub error_color: types::ColorSpec,
 }
 
@@ -250,40 +229,33 @@ impl Default for CharacterTheme {
     fn default() -> Self {
         Self {
             format: None,
-            success_symbol: default_character_success_symbol(),
-            error_symbol: default_character_error_symbol(),
-            success_color: default_character_success_color(),
-            error_color: default_character_error_color(),
+            success_symbol: "❯".to_owned(),
+            error_symbol: "❯".to_owned(),
+            success_color: literal("green"),
+            error_color: literal("red"),
         }
     }
 }
 
 /// Clock segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ClockTheme {
     /// Agent template; the reply embeds each shell's live time token. Unset: every shell draws it locally.
-    #[serde(default)]
     pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub open: Option<DelimiterConfig>,
     /// Close delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub close: Option<DelimiterConfig>,
     /// Background color
-    #[serde(default = "default_color_black")]
     pub bg_color: types::ColorSpec,
     /// Text color
-    #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
     /// Time format: "12" for 12-hour (HH:MM AM/PM), "24" for 24-hour (HH:MM) (default: "12")
-    #[serde(default)]
     pub time_format: Option<String>,
     /// Show leading zero for hours before 10 (e.g., "02:15" vs "2:15") (default: false)
-    #[serde(default)]
     pub show_leading_zero: Option<bool>,
     /// Show seconds in time display (e.g., "12:34:56" vs "12:34") (default: false)
-    #[serde(default)]
     pub show_seconds: Option<bool>,
 }
 
@@ -293,8 +265,8 @@ impl Default for ClockTheme {
             format: None,
             open: None,
             close: None,
-            bg_color: default_color_black(),
-            text_color: default_color_white(),
+            bg_color: literal("black"),
+            text_color: literal("white"),
             time_format: None,
             show_leading_zero: None,
             show_seconds: None,
@@ -302,25 +274,44 @@ impl Default for ClockTheme {
     }
 }
 
+impl ClockTheme {
+    /// `time_format`, defaulting to `"12"`.
+    #[must_use]
+    pub fn time_format(&self) -> &str {
+        self.time_format.as_deref().unwrap_or("12")
+    }
+
+    /// `show_leading_zero`, defaulting to off.
+    #[must_use]
+    pub fn show_leading_zero(&self) -> bool {
+        self.show_leading_zero.unwrap_or(false)
+    }
+
+    /// `show_seconds`, defaulting to off.
+    #[must_use]
+    pub fn show_seconds(&self) -> bool {
+        self.show_seconds.unwrap_or(false)
+    }
+}
+
 /// Directory segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DirectoryTheme {
     /// Starship-style template controlling how this segment renders.
     /// The directory is always agent-rendered, so `None` renders nothing.
-    #[serde(default)]
     pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub open: Option<DelimiterConfig>,
     /// Close delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub close: Option<DelimiterConfig>,
     /// Background color
-    #[serde(default = "default_color_black")]
     pub bg_color: types::ColorSpec,
     /// Text color
-    #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
+    /// `$read_only`, shown when the directory is not writable (default: 🔒, or
+    /// `ro` with `ui.show_icons = false`).
+    pub read_only_icon: Option<types::Icon>,
 }
 
 impl Default for DirectoryTheme {
@@ -329,32 +320,28 @@ impl Default for DirectoryTheme {
             format: None,
             open: None,
             close: None,
-            bg_color: const_color("blue"),
-            text_color: default_color_white(),
+            bg_color: literal("black"),
+            text_color: literal("white"),
+            read_only_icon: None,
         }
     }
 }
 
 /// Duration segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DurationTheme {
     /// Starship template; always agent-rendered, so `None` renders nothing.
-    #[serde(default)]
     pub format: Option<String>,
-    /// Icon shown before command duration (default: "󰑧")
-    #[serde(default)]
+    /// Optional icon shown before command duration.
     pub icon: Option<types::Icon>,
     /// Background color
-    #[serde(default = "default_color_black")]
     pub bg_color: types::ColorSpec,
     /// Text color
-    #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
     /// Show duration segment only if command execution exceeds this threshold (in milliseconds)
-    #[serde(default = "default_duration_threshold")]
     pub show_if_exceeds_ms: u64,
     /// Include millisecond precision (default true); false = whole seconds.
-    #[serde(default = "default_true")]
     pub show_milliseconds: bool,
 }
 
@@ -363,9 +350,9 @@ impl Default for DurationTheme {
         Self {
             format: None,
             icon: None,
-            bg_color: default_color_black(),
-            text_color: default_color_white(),
-            show_if_exceeds_ms: default_duration_threshold(),
+            bg_color: literal("black"),
+            text_color: literal("white"),
+            show_if_exceeds_ms: 100,
             show_milliseconds: true,
         }
     }
@@ -373,28 +360,22 @@ impl Default for DurationTheme {
 
 /// Status segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StatusTheme {
     /// Starship-style template for the exit-status pill. `None` lets the shell
     /// draw the pill locally; `Some` makes the agent render it.
-    #[serde(default)]
     pub format: Option<String>,
-    /// Icon for successful command (exit code 0) (default: "✔")
-    #[serde(default)]
+    /// Optional icon for successful command (exit code 0). Falls back by glyph set when `None`.
     pub ok_icon: Option<types::Icon>,
     /// Background color when command succeeded
-    #[serde(default = "default_status_ok_bg")]
     pub ok_bg_color: types::ColorSpec,
     /// Text color when command succeeded
-    #[serde(default = "default_status_ok_text")]
     pub ok_text_color: types::ColorSpec,
-    /// Icon for failed command (non-zero exit) (default: "✖")
-    #[serde(default)]
+    /// Optional icon for failed command (non-zero exit). Falls back by glyph set when `None`.
     pub fail_icon: Option<types::Icon>,
     /// Background color when command failed
-    #[serde(default = "default_status_fail_bg")]
     pub fail_bg_color: types::ColorSpec,
     /// Text color when command failed
-    #[serde(default = "default_status_fail_text")]
     pub fail_text_color: types::ColorSpec,
 }
 
@@ -403,137 +384,103 @@ impl Default for StatusTheme {
         Self {
             format: None,
             ok_icon: None,
-            ok_bg_color: default_status_ok_bg(),
-            ok_text_color: default_status_ok_text(),
+            ok_bg_color: literal("green"),
+            ok_text_color: literal("black"),
             fail_icon: None,
-            fail_bg_color: default_status_fail_bg(),
-            fail_text_color: default_status_fail_text(),
+            fail_bg_color: literal("red"),
+            fail_text_color: literal("black"),
         }
     }
 }
 
-/// Git segment color configuration with hierarchical fallbacks
+/// Git segment colors. Every per-state color is optional and falls back to the
+/// segment `bg_color`/`text_color` (see [`GitTheme::get_bg_color`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GitTheme {
     /// Starship-style template controlling how this segment renders.
     /// The git segment is always agent-rendered, so `None` renders nothing.
-    #[serde(default)]
     pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub open: Option<DelimiterConfig>,
     /// Close delimiter configuration (supports fg/bg colors)
-    #[serde(default)]
     pub close: Option<DelimiterConfig>,
     /// Background color (fallback for all git states)
-    #[serde(default = "default_color_black")]
     pub bg_color: types::ColorSpec,
     /// Text color (fallback for all git text)
-    #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
 
     /// Background color for clean state
-    #[serde(default)]
     pub clean_bg_color: Option<types::ColorSpec>,
     /// Text color for clean state
-    #[serde(default)]
     pub clean_text_color: Option<types::ColorSpec>,
     /// Background color for the modified state (TOML key `dirty_bg_color`).
-    #[serde(default)]
     pub dirty_bg_color: Option<types::ColorSpec>,
     /// Text color for the modified state (TOML key `dirty_text_color`).
-    #[serde(default)]
     pub dirty_text_color: Option<types::ColorSpec>,
     /// Background color for ahead/behind state
-    #[serde(default)]
     pub ahead_behind_bg_color: Option<types::ColorSpec>,
     /// Text color for ahead/behind state
-    #[serde(default)]
     pub ahead_behind_text_color: Option<types::ColorSpec>,
     /// Background color for conflicts state
-    #[serde(default)]
     pub conflicts_bg_color: Option<types::ColorSpec>,
     /// Text color for conflicts state
-    #[serde(default)]
     pub conflicts_text_color: Option<types::ColorSpec>,
     /// Background for the untracked-only state; falls back to `dirty_bg_color`.
-    #[serde(default)]
     pub untracked_only_bg_color: Option<types::ColorSpec>,
     /// Text color for the untracked-only state; falls back to `dirty_text_color`.
-    #[serde(default)]
     pub untracked_only_text_color: Option<types::ColorSpec>,
     /// Background while a git operation is in progress; falls back to `dirty_bg_color`.
-    #[serde(default)]
     pub in_progress_bg_color: Option<types::ColorSpec>,
     /// Text color while a git operation is in progress; falls back to `dirty_text_color`.
-    #[serde(default)]
     pub in_progress_text_color: Option<types::ColorSpec>,
 
     /// Text color for branch name
-    #[serde(default)]
     pub branch_text_color: Option<types::ColorSpec>,
     /// Text color for ahead/behind arrows
-    #[serde(default)]
     pub arrows_text_color: Option<types::ColorSpec>,
     /// Text color for staged indicator
-    #[serde(default)]
     pub staged_text_color: Option<types::ColorSpec>,
     /// Text color for unstaged indicator
-    #[serde(default)]
     pub unstaged_text_color: Option<types::ColorSpec>,
     /// Text color for untracked indicator
-    #[serde(default)]
     pub untracked_text_color: Option<types::ColorSpec>,
     /// Text color for conflicts indicator
-    #[serde(default)]
     pub conflicts_indicator_text_color: Option<types::ColorSpec>,
     /// Text color for state indicator (rebase/merge/etc)
-    #[serde(default)]
     pub state_text_color: Option<types::ColorSpec>,
 
     // Status overrides below fall back to `config.git.icons` when `None`.
     /// Override for the staged-files indicator (default: `config.git.icons.staged`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub staged_icon: Option<String>,
     /// Override for the unstaged-files indicator (default: `config.git.icons.unstaged`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub unstaged_icon: Option<String>,
     /// Override for the untracked-files indicator (default: `config.git.icons.untracked`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub untracked_icon: Option<String>,
     /// Override for the conflicts indicator (default: `config.git.icons.conflicts`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conflicts_icon: Option<String>,
     /// Override for the stash indicator (default: `config.git.icons.stash`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stash_icon: Option<String>,
     /// Append per-category counts after status icons (`None` = shown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_counts: Option<bool>,
     /// Render the branch name (`None` = shown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_branch: Option<bool>,
     /// Render ahead/behind arrows (`None` = shown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_ahead_behind: Option<bool>,
     /// Render the stash indicator (`None` = shown).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_stash: Option<bool>,
     /// Per-state style attributes from `[git_style]`, keyed by snake-case `GitState` name.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub git_style: HashMap<String, String>,
-}
-
-/// A hardcoded default color from a compile-time-constant name.
-///
-/// # Panics
-/// Panics if `name` is not a valid color; callers pass only known-good literals.
-#[expect(
-    clippy::expect_used,
-    reason = "only ever called with compile-time-constant color names, so this is infallible in practice"
-)]
-fn const_color(name: &'static str) -> types::ColorSpec {
-    types::ColorSpec::new(name).expect("Hardcoded default color must be valid")
 }
 
 impl Default for GitTheme {
@@ -542,20 +489,20 @@ impl Default for GitTheme {
             format: None,
             open: None,
             close: None,
-            bg_color: default_color_black(),
-            text_color: default_color_white(),
-            clean_bg_color: Some(const_color("green")),
-            clean_text_color: Some(const_color("white")),
-            dirty_bg_color: Some(const_color("red")),
-            dirty_text_color: Some(const_color("white")),
-            ahead_behind_bg_color: Some(const_color("yellow")),
-            ahead_behind_text_color: Some(const_color("black")),
-            conflicts_bg_color: Some(const_color("red")),
-            conflicts_text_color: Some(const_color("white")),
-            untracked_only_bg_color: Some(const_color("cyan")),
-            untracked_only_text_color: Some(const_color("black")),
-            in_progress_bg_color: Some(const_color("magenta")),
-            in_progress_text_color: Some(const_color("white")),
+            bg_color: literal("black"),
+            text_color: literal("white"),
+            clean_bg_color: None,
+            clean_text_color: None,
+            dirty_bg_color: None,
+            dirty_text_color: None,
+            ahead_behind_bg_color: None,
+            ahead_behind_text_color: None,
+            conflicts_bg_color: None,
+            conflicts_text_color: None,
+            untracked_only_bg_color: None,
+            untracked_only_text_color: None,
+            in_progress_bg_color: None,
+            in_progress_text_color: None,
             branch_text_color: None,
             arrows_text_color: None,
             staged_text_color: None,
@@ -630,6 +577,30 @@ const fn is_in_progress(state: crate::git::RepositoryState) -> bool {
 }
 
 impl GitTheme {
+    /// `show_counts`, defaulting to shown.
+    #[must_use]
+    pub fn show_counts(&self) -> bool {
+        self.show_counts.unwrap_or(true)
+    }
+
+    /// `show_branch`, defaulting to shown.
+    #[must_use]
+    pub fn show_branch(&self) -> bool {
+        self.show_branch.unwrap_or(true)
+    }
+
+    /// `show_ahead_behind`, defaulting to shown.
+    #[must_use]
+    pub fn show_ahead_behind(&self) -> bool {
+        self.show_ahead_behind.unwrap_or(true)
+    }
+
+    /// `show_stash`, defaulting to shown.
+    #[must_use]
+    pub fn show_stash(&self) -> bool {
+        self.show_stash.unwrap_or(true)
+    }
+
     /// Get background color for a git state with fallback.
     #[must_use]
     pub fn get_bg_color(&self, state: GitState) -> &str {
@@ -729,12 +700,8 @@ pub enum GitTextElement {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
-    use super::{GitState, GitTextElement, GitTheme, HostnameTheme, SegmentThemes};
+    use super::{GitState, GitTextElement, GitTheme, HostnameTheme, SegmentThemes, ThemeConfig};
     use crate::git::{RepositoryState, RepositoryStatus};
 
     #[test]
@@ -751,17 +718,49 @@ mod tests {
         assert_eq!(theme.format.as_deref(), Some("on [$branch](bold green)"));
     }
 
+    const ALL_STATES: [GitState; 6] = [
+        GitState::Conflicts,
+        GitState::InProgress,
+        GitState::Modified,
+        GitState::UntrackedOnly,
+        GitState::AheadBehind,
+        GitState::Clean,
+    ];
+
     #[test]
-    fn get_bg_color_untracked_only_and_in_progress_have_distinct_defaults() {
-        let theme = GitTheme::default();
-        assert_ne!(
-            theme.get_bg_color(GitState::UntrackedOnly),
-            theme.get_bg_color(GitState::Modified)
+    fn minimal_theme_toml_deserializes_to_default() {
+        let parsed: ThemeConfig = toml::from_str("[ui]\n[segments]\n").expect("parse");
+        assert_eq!(
+            toml::Value::try_from(&parsed).expect("serialize parsed"),
+            toml::Value::try_from(ThemeConfig::default()).expect("serialize default"),
         );
-        assert_ne!(
-            theme.get_bg_color(GitState::InProgress),
-            theme.get_bg_color(GitState::Conflicts)
+    }
+
+    #[test]
+    fn empty_segment_tables_deserialize_to_default() {
+        let parsed: ThemeConfig = toml::from_str(
+            "[ui]\n[segments.git]\n[segments.directory]\n[segments.language]\n[segments.clock]\n",
+        )
+        .expect("parse");
+        assert_eq!(
+            toml::Value::try_from(&parsed).expect("serialize parsed"),
+            toml::Value::try_from(ThemeConfig::default()).expect("serialize default"),
         );
+    }
+
+    #[test]
+    fn omitted_git_state_colors_inherit_segment_colors() {
+        let parsed: GitTheme =
+            toml::from_str("bg_color = \"blue\"\ntext_color = \"yellow\"\n").expect("parse");
+        for theme in [GitTheme::default(), parsed] {
+            for state in ALL_STATES {
+                assert_eq!(theme.get_bg_color(state), theme.bg_color.as_str());
+                assert_eq!(
+                    theme.get_text_color(GitTextElement::Branch, state),
+                    theme.text_color.as_str()
+                );
+            }
+        }
     }
 
     #[test]
@@ -889,17 +888,14 @@ show_stash = true
     }
 
     #[test]
-    fn get_bg_color_falls_back_to_segment_default_when_state_colors_unset() {
+    fn get_bg_color_untracked_only_and_in_progress_fall_back_to_dirty() {
         let theme = GitTheme {
-            clean_bg_color: None,
-            ahead_behind_bg_color: None,
+            dirty_bg_color: Some(crate::config::types::ColorSpec::new("red").expect("valid")),
             ..GitTheme::default()
         };
+        assert_eq!(theme.get_bg_color(GitState::UntrackedOnly), "red");
+        assert_eq!(theme.get_bg_color(GitState::InProgress), "red");
         assert_eq!(theme.get_bg_color(GitState::Clean), theme.bg_color.as_str());
-        assert_eq!(
-            theme.get_bg_color(GitState::AheadBehind),
-            theme.bg_color.as_str()
-        );
     }
 
     #[test]

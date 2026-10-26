@@ -2,8 +2,10 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::cast_precision_loss)]
+
+#[path = "common/git.rs"]
+mod git;
 
 use gpy_agent::config::types::GitTimeout;
 use gpy_agent::git::native::NativeGitBackend;
@@ -13,31 +15,7 @@ use tempfile::TempDir;
 
 fn create_git_repo() -> TempDir {
     let dir = TempDir::new().expect("create temp dir");
-    let status = std::process::Command::new("git")
-        .arg("init")
-        .current_dir(dir.path())
-        .status()
-        .expect("git init");
-    assert!(status.success());
-
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(dir.path())
-        .output()
-        .expect("config email");
-
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(dir.path())
-        .output()
-        .expect("config name");
-
-    std::process::Command::new("git")
-        .args(["config", "commit.gpgsign", "false"])
-        .current_dir(dir.path())
-        .output()
-        .expect("config gpgsign");
-
+    git::git_init(dir.path());
     dir
 }
 
@@ -52,26 +30,12 @@ fn test_sparse_checkout_doesnt_crash() {
     let init_file = repo_path.join("README.md");
     fs::write(&init_file, "initial").expect("write initial file");
 
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(repo_path)
-        .status()
-        .expect("git add");
-
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial", "--no-gpg-sign"])
-        .current_dir(repo_path)
-        .status()
-        .expect("git commit");
+    git::git_commit_all(repo_path, "Initial");
 
     let sparse_file = repo_path.join(".git/info/sparse-checkout");
     fs::write(&sparse_file, "src/\n").expect("write sparse-checkout");
 
-    std::process::Command::new("git")
-        .args(["config", "core.sparseCheckout", "true"])
-        .current_dir(repo_path)
-        .status()
-        .expect("config sparse");
+    git::git(repo_path, &["config", "core.sparseCheckout", "true"]);
 
     fs::write(repo_path.join("src/file.txt"), "src content").expect("write src file");
     fs::write(repo_path.join("test.txt"), "root content").expect("write root file");
@@ -99,17 +63,7 @@ fn test_repeated_complete_status_is_deterministic() {
     let file_path = repo_path.join("test.txt");
     fs::write(&file_path, "content").expect("write file");
 
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(repo_path)
-        .status()
-        .expect("git add");
-
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial", "--no-gpg-sign"])
-        .current_dir(repo_path)
-        .status()
-        .expect("git commit");
+    git::git_commit_all(repo_path, "Initial");
 
     let status = || {
         NativeGitBackend::get_complete_status(

@@ -8,53 +8,59 @@
 # directly and drive its functions with stubbed globals rather than exercising
 # it through fish_prompt.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/segments/username.fish"
 
-set -g pass_count 0
-set -g fail_count 0
+# --- detect without a theme export: show_always unset, nothing on stderr ---
 
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
+set -e __username_show_always
+set -g __gpy_is_root 0
+set -g __gpy_is_sudo 0
+set -g __gpy_is_ssh 0
+set -l __stderr_file (mktemp)
+segment_username_detect 2>$__stderr_file
+check "detect: an ordinary user with show_always unset hides the segment" 1 $status
+check "detect: unset show_always writes nothing to stderr" "" (cat $__stderr_file)
+set -g __gpy_is_ssh 1
+segment_username_detect 2>$__stderr_file
+check "detect: SSH shows the segment with show_always unset" 0 $status
+check "detect: SSH with show_always unset writes nothing to stderr" "" (cat $__stderr_file)
+set -e __gpy_is_root __gpy_is_sudo __gpy_is_ssh
+rm -f $__stderr_file
 
 # --- __gpy_username_should_show (pure): args are is_root is_sudo is_ssh show_always ---
 
 if __gpy_username_should_show 1 0 0 0
-    check "should_show: root shows regardless of sudo/show_always" pass
+    check "should_show: root shows regardless of sudo/show_always" pass pass
 else
-    check "should_show: root shows regardless of sudo/show_always" fail
+    check "should_show: root shows regardless of sudo/show_always" pass fail
 end
 
 if __gpy_username_should_show 0 1 0 0
-    check "should_show: sudo session shows" pass
+    check "should_show: sudo session shows" pass pass
 else
-    check "should_show: sudo session shows" fail
+    check "should_show: sudo session shows" pass fail
 end
 
 if __gpy_username_should_show 0 0 1 0
-    check "should_show: SSH session shows" pass
+    check "should_show: SSH session shows" pass pass
 else
-    check "should_show: SSH session shows" fail
+    check "should_show: SSH session shows" pass fail
 end
 
 if not __gpy_username_should_show 0 0 0 0
-    check "should_show: normal user with show_always=0 hides" pass
+    check "should_show: normal user with show_always=0 hides" pass pass
 else
-    check "should_show: normal user with show_always=0 hides" fail
+    check "should_show: normal user with show_always=0 hides" pass fail
 end
 
 if __gpy_username_should_show 0 0 0 1
-    check "should_show: normal user with show_always=1 shows" pass
+    check "should_show: normal user with show_always=1 shows" pass pass
 else
-    check "should_show: normal user with show_always=1 shows" fail
+    check "should_show: normal user with show_always=1 shows" pass fail
 end
 
 # --- segment_username_detect (edge) ---
@@ -64,34 +70,34 @@ set -g __gpy_is_root 1
 set -g __gpy_is_sudo 0
 set -g __username_show_always 0
 if segment_username_detect
-    check "detect: root session is shown" pass
+    check "detect: root session is shown" pass pass
 else
-    check "detect: root session is shown" fail
+    check "detect: root session is shown" pass fail
 end
 
 set -g __gpy_is_root 0
 set -g __gpy_is_sudo 1
 set -g __username_show_always 0
 if segment_username_detect
-    check "detect: sudo session is shown" pass
+    check "detect: sudo session is shown" pass pass
 else
-    check "detect: sudo session is shown" fail
+    check "detect: sudo session is shown" pass fail
 end
 
 set -g __gpy_is_root 0
 set -g __gpy_is_sudo 0
 set -g __username_show_always 0
 if not segment_username_detect
-    check "detect: normal user with show_always=0 is hidden" pass
+    check "detect: normal user with show_always=0 is hidden" pass pass
 else
-    check "detect: normal user with show_always=0 is hidden" fail
+    check "detect: normal user with show_always=0 is hidden" pass fail
 end
 
 set -g __gpy_is_ssh 1
 if segment_username_detect
-    check "detect: SSH session is shown" pass
+    check "detect: SSH session is shown" pass pass
 else
-    check "detect: SSH session is shown" fail
+    check "detect: SSH session is shown" pass fail
 end
 set -g __gpy_is_ssh 0
 
@@ -99,9 +105,9 @@ set -g __gpy_is_root 0
 set -g __gpy_is_sudo 0
 set -g __username_show_always 1
 if segment_username_detect
-    check "detect: normal user with show_always=1 is shown" pass
+    check "detect: normal user with show_always=1 is shown" pass pass
 else
-    check "detect: normal user with show_always=1 is shown" fail
+    check "detect: normal user with show_always=1 is shown" pass fail
 end
 
 # --- segment_username_render: pure-fish path (zero IPC, zero forks) ---
@@ -126,21 +132,21 @@ set -g __gpy_last_segment_bg black
 segment_username_render true
 
 if test "$__test_username_content" = " root"
-    check "pure-fish render: renders \$USER with one leading space and omits the icon when unset" pass
+    check "pure-fish render: renders \$USER with one leading space and omits the icon when unset" pass pass
 else
-    check "pure-fish render: renders \$USER with one leading space and omits the icon when unset (got: '$__test_username_content')" fail
+    check "pure-fish render: renders \$USER with one leading space and omits the icon when unset (got: '$__test_username_content')" pass fail
 end
 
 if test "$__test_username_bg" = red; and test "$__test_username_fg" = white
-    check "pure-fish render: applies the configured bg/fg colours" pass
+    check "pure-fish render: applies the configured bg/fg colours" pass pass
 else
-    check "pure-fish render: applies the configured bg/fg colours (got: '$__test_username_bg'/'$__test_username_fg')" fail
+    check "pure-fish render: applies the configured bg/fg colours (got: '$__test_username_bg'/'$__test_username_fg')" pass fail
 end
 
 if test "$__gpy_last_segment_bg" = red
-    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron" pass
+    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron" pass pass
 else
-    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron (got: '$__gpy_last_segment_bg')" fail
+    check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # Colour override: a different theme colour flows straight through.
@@ -149,9 +155,9 @@ set -g __color_username_fg cyan
 set -g __gpy_last_segment_bg black
 segment_username_render true
 if test "$__test_username_bg" = magenta; and test "$__test_username_fg" = cyan
-    check "pure-fish render: honours a colour override" pass
+    check "pure-fish render: honours a colour override" pass pass
 else
-    check "pure-fish render: honours a colour override (got: '$__test_username_bg'/'$__test_username_fg')" fail
+    check "pure-fish render: honours a colour override (got: '$__test_username_bg'/'$__test_username_fg')" pass fail
 end
 
 # A non-root session draws the user style (Starship style_user).
@@ -159,9 +165,9 @@ set -g __gpy_is_root 0
 set -g __gpy_last_segment_bg black
 segment_username_render true
 if test "$__test_username_bg" = yellow; and test "$__test_username_fg" = black; and test "$__gpy_last_segment_bg" = yellow
-    check "pure-fish render: a non-root session uses the user colours" pass
+    check "pure-fish render: a non-root session uses the user colours" pass pass
 else
-    check "pure-fish render: a non-root session uses the user colours (got: '$__test_username_bg'/'$__test_username_fg'/'$__gpy_last_segment_bg')" fail
+    check "pure-fish render: a non-root session uses the user colours (got: '$__test_username_bg'/'$__test_username_fg'/'$__gpy_last_segment_bg')" pass fail
 end
 set -g __gpy_is_root 1
 
@@ -172,9 +178,9 @@ set -g __gpy_last_segment_bg black
 segment_username_render true
 
 if test "$__test_username_content" = " ICON root"
-    check "pure-fish render: includes the icon when __icon_username is set" pass
+    check "pure-fish render: includes the icon when __icon_username is set" pass pass
 else
-    check "pure-fish render: includes the icon when __icon_username is set (got: '$__test_username_content')" fail
+    check "pure-fish render: includes the icon when __icon_username is set (got: '$__test_username_content')" pass fail
 end
 
 set -g __icon_username ""
@@ -182,9 +188,9 @@ set -g __gpy_last_segment_bg black
 segment_username_render true
 
 if test "$__test_username_content" = " root"
-    check "pure-fish render: omits the icon again once __icon_username is cleared" pass
+    check "pure-fish render: omits the icon again once __icon_username is cleared" pass pass
 else
-    check "pure-fish render: omits the icon again once __icon_username is cleared (got: '$__test_username_content')" fail
+    check "pure-fish render: omits the icon again once __icon_username is cleared (got: '$__test_username_content')" pass fail
 end
 
 # --- segment_username_render: dual-path branch to agent-resolved rendering ---
@@ -207,42 +213,42 @@ set -g __gpy_last_segment_bg black
 set -l agent_output (segment_username_render true | string collect)
 
 if test "$agent_output" = AGENT_SENTINEL
-    check "agent path: non-empty __username_format routes to __gpy_request_username" pass
+    check "agent path: non-empty __username_format routes to __gpy_request_username" pass pass
 else
-    check "agent path: non-empty __username_format routes to __gpy_request_username (got: '$agent_output')" fail
+    check "agent path: non-empty __username_format routes to __gpy_request_username (got: '$agent_output')" pass fail
 end
 
 if test -z "$__test_username_content"
-    check "agent path: does not fall through to the pure-fish renderer" pass
+    check "agent path: does not fall through to the pure-fish renderer" pass pass
 else
-    check "agent path: does not fall through to the pure-fish renderer" fail
+    check "agent path: does not fall through to the pure-fish renderer" pass fail
 end
 
 if test "$__test_username_arg_user" = root
-    check "agent path: forwards \$USER to __gpy_request_username" pass
+    check "agent path: forwards \$USER to __gpy_request_username" pass pass
 else
-    check "agent path: forwards \$USER to __gpy_request_username (got: '$__test_username_arg_user')" fail
+    check "agent path: forwards \$USER to __gpy_request_username (got: '$__test_username_arg_user')" pass fail
 end
 
 if test "$__gpy_last_segment_bg" = red
-    check "agent path: still tracks __gpy_last_segment_bg for the next segment" pass
+    check "agent path: still tracks __gpy_last_segment_bg for the next segment" pass pass
 else
-    check "agent path: still tracks __gpy_last_segment_bg for the next segment (got: '$__gpy_last_segment_bg')" fail
+    check "agent path: still tracks __gpy_last_segment_bg for the next segment (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 if test "$__test_username_arg_is_root" = 1
-    check "agent path: forwards __gpy_is_root=1 as the 4th arg" pass
+    check "agent path: forwards __gpy_is_root=1 as the 4th arg" pass pass
 else
-    check "agent path: forwards __gpy_is_root=1 as the 4th arg (got: '$__test_username_arg_is_root')" fail
+    check "agent path: forwards __gpy_is_root=1 as the 4th arg (got: '$__test_username_arg_is_root')" pass fail
 end
 
 set -g __gpy_is_root 0
 set -g __gpy_last_segment_bg black
 segment_username_render true >/dev/null
 if test "$__test_username_arg_is_root" = 0; and test "$__gpy_last_segment_bg" = yellow
-    check "agent path: a non-root session forwards is_root=0 and tracks the user bg" pass
+    check "agent path: a non-root session forwards is_root=0 and tracks the user bg" pass pass
 else
-    check "agent path: a non-root session forwards is_root=0 and tracks the user bg (got: '$__test_username_arg_is_root'/'$__gpy_last_segment_bg')" fail
+    check "agent path: a non-root session forwards is_root=0 and tracks the user bg (got: '$__test_username_arg_is_root'/'$__gpy_last_segment_bg')" pass fail
 end
 set -g __gpy_is_root 1
 
@@ -257,15 +263,15 @@ set -e __test_username_arg_prev_bg
 segment_username_render >/dev/null
 
 if test "$__test_username_arg_prev_bg" = green
-    check "agent path (not last): prev_bg reaches __gpy_request_username as the 3rd arg" pass
+    check "agent path (not last): prev_bg reaches __gpy_request_username as the 3rd arg" pass pass
 else
-    check "agent path (not last): prev_bg reaches __gpy_request_username as the 3rd arg (got: '$__test_username_arg_prev_bg')" fail
+    check "agent path (not last): prev_bg reaches __gpy_request_username as the 3rd arg (got: '$__test_username_arg_prev_bg')" pass fail
 end
 
 if test -z "$__test_username_arg_is_last"
-    check "agent path (not last): is_last is forwarded as empty, not shifted" pass
+    check "agent path (not last): is_last is forwarded as empty, not shifted" pass pass
 else
-    check "agent path (not last): is_last is forwarded as empty, not shifted (got: '$__test_username_arg_is_last')" fail
+    check "agent path (not last): is_last is forwarded as empty, not shifted (got: '$__test_username_arg_is_last')" pass fail
 end
 
 # is_first rides in the 5th slot: "true" when first, "" (not shifted) otherwise, so
@@ -274,17 +280,17 @@ set -g __gpy_last_segment_bg green
 set -e __test_username_arg_is_first
 segment_username_render "" true >/dev/null
 if test "$__test_username_arg_is_first" = true
-    check "agent path: is_first=true reaches __gpy_request_username as the 5th arg" pass
+    check "agent path: is_first=true reaches __gpy_request_username as the 5th arg" pass pass
 else
-    check "agent path: is_first=true reaches __gpy_request_username as the 5th arg (got: '$__test_username_arg_is_first')" fail
+    check "agent path: is_first=true reaches __gpy_request_username as the 5th arg (got: '$__test_username_arg_is_first')" pass fail
 end
 
 set -g __test_username_arg_is_first sentinel
 segment_username_render true >/dev/null
 if test -z "$__test_username_arg_is_first"
-    check "agent path: a non-first username forwards is_first as empty" pass
+    check "agent path: a non-first username forwards is_first as empty" pass pass
 else
-    check "agent path: a non-first username forwards is_first as empty (got: '$__test_username_arg_is_first')" fail
+    check "agent path: a non-first username forwards is_first as empty (got: '$__test_username_arg_is_first')" pass fail
 end
 
 functions -e __gpy_request_username
@@ -307,73 +313,73 @@ end
 
 set -l result_last (__gpy_request_username 'ro"ot' true prevbg)
 if test "$result_last" = RENDERED
-    check "__gpy_request_username: returns the IPC result on success" pass
+    check "__gpy_request_username: returns the IPC result on success" pass pass
 else
-    check "__gpy_request_username: returns the IPC result on success (got: '$result_last')" fail
+    check "__gpy_request_username: returns the IPC result on success (got: '$result_last')" pass fail
 end
 
 if string match -q '*"op":"username"*' -- "$__test_username_payload"
-    check "__gpy_request_username: emits the username op" pass
+    check "__gpy_request_username: emits the username op" pass pass
 else
-    check "__gpy_request_username: emits the username op (got: $__test_username_payload)" fail
+    check "__gpy_request_username: emits the username op (got: $__test_username_payload)" pass fail
 end
 
 if string match -q '*"is_last":true*' -- "$__test_username_payload"
-    check "__gpy_request_username: is_last=true emits \"is_last\":true" pass
+    check "__gpy_request_username: is_last=true emits \"is_last\":true" pass pass
 else
-    check "__gpy_request_username: is_last=true emits \"is_last\":true (got: $__test_username_payload)" fail
+    check "__gpy_request_username: is_last=true emits \"is_last\":true (got: $__test_username_payload)" pass fail
 end
 
 if string match -q '*"username":"ro\\"ot"*' -- "$__test_username_payload"
-    check "__gpy_request_username: JSON-escapes the username argument" pass
+    check "__gpy_request_username: JSON-escapes the username argument" pass pass
 else
-    check "__gpy_request_username: JSON-escapes the username argument (got: $__test_username_payload)" fail
+    check "__gpy_request_username: JSON-escapes the username argument (got: $__test_username_payload)" pass fail
 end
 
 if string match -q '*"prev_bg":"prevbg"*' -- "$__test_username_payload"
-    check "__gpy_request_username: includes prev_bg when non-empty" pass
+    check "__gpy_request_username: includes prev_bg when non-empty" pass pass
 else
-    check "__gpy_request_username: includes prev_bg when non-empty (got: $__test_username_payload)" fail
+    check "__gpy_request_username: includes prev_bg when non-empty (got: $__test_username_payload)" pass fail
 end
 
 __gpy_request_username user2 "" "" >/dev/null
 if not string match -q '*is_last*' -- "$__test_username_payload"
-    check "__gpy_request_username: is_last='' omits is_last" pass
+    check "__gpy_request_username: is_last='' omits is_last" pass pass
 else
-    check "__gpy_request_username: is_last='' omits is_last (got: $__test_username_payload)" fail
+    check "__gpy_request_username: is_last='' omits is_last (got: $__test_username_payload)" pass fail
 end
 
 if not string match -q '*prev_bg*' -- "$__test_username_payload"
-    check "__gpy_request_username: omits prev_bg when empty" pass
+    check "__gpy_request_username: omits prev_bg when empty" pass pass
 else
-    check "__gpy_request_username: omits prev_bg when empty (got: $__test_username_payload)" fail
+    check "__gpy_request_username: omits prev_bg when empty (got: $__test_username_payload)" pass fail
 end
 
 __gpy_request_username user4 "" "" "" true >/dev/null
 if string match -q '*"is_first":true*' -- "$__test_username_payload"
-    check "__gpy_request_username: is_first=true emits \"is_first\":true" pass
+    check "__gpy_request_username: is_first=true emits \"is_first\":true" pass pass
 else
-    check "__gpy_request_username: is_first=true emits \"is_first\":true (got: $__test_username_payload)" fail
+    check "__gpy_request_username: is_first=true emits \"is_first\":true (got: $__test_username_payload)" pass fail
 end
 
 __gpy_request_username user5 "" "" "" "" >/dev/null
 if not string match -q '*is_first*' -- "$__test_username_payload"
-    check "__gpy_request_username: is_first='' omits is_first" pass
+    check "__gpy_request_username: is_first='' omits is_first" pass pass
 else
-    check "__gpy_request_username: is_first='' omits is_first (got: $__test_username_payload)" fail
+    check "__gpy_request_username: is_first='' omits is_first (got: $__test_username_payload)" pass fail
 end
 
 if not string match -q '*is_root*' -- "$__test_username_payload"
-    check "__gpy_request_username: a non-root request omits is_root" pass
+    check "__gpy_request_username: a non-root request omits is_root" pass pass
 else
-    check "__gpy_request_username: a non-root request omits is_root (got: $__test_username_payload)" fail
+    check "__gpy_request_username: a non-root request omits is_root (got: $__test_username_payload)" pass fail
 end
 
 __gpy_request_username user6 true "" 1 true >/dev/null
 if test "$__test_username_payload" = '{"op":"username","username":"user6","format":"ansi","is_last":true,"is_first":true,"is_root":true}'
-    check "__gpy_request_username: is_root=1 appends \"is_root\":true" pass
+    check "__gpy_request_username: is_root=1 appends \"is_root\":true" pass pass
 else
-    check "__gpy_request_username: is_root=1 appends \"is_root\":true (got: $__test_username_payload)" fail
+    check "__gpy_request_username: is_root=1 appends \"is_root\":true (got: $__test_username_payload)" pass fail
 end
 
 functions -e __gpy_ipc_send
@@ -384,15 +390,11 @@ function __gpy_ipc_send --argument-names payload timeout_ms
 end
 
 if not __gpy_request_username user3 true ""
-    check "__gpy_request_username: returns nonzero when IPC is unavailable (no oneshot fallback)" pass
+    check "__gpy_request_username: returns nonzero when IPC is unavailable (no oneshot fallback)" pass pass
 else
-    check "__gpy_request_username: returns nonzero when IPC is unavailable (no oneshot fallback)" fail
+    check "__gpy_request_username: returns nonzero when IPC is unavailable (no oneshot fallback)" pass fail
 end
 
 functions -e __gpy_ipc_send
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count username segment tests passed"
+test_finish "username segment tests"

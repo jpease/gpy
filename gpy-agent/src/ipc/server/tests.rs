@@ -1,15 +1,13 @@
 //! Unit tests for IPC server construction and guard behavior.
 
-use super::handle::ServerDeps;
-use super::{EndpointDeps, EndpointHandle, EndpointHandleBuilder};
-use crate::config::Config;
+use super::EndpointHandle;
 use crate::config::manager::ConfigManager;
-use crate::formatter::Format;
-use crate::ipc::{ClientDirectory, Message, Response};
-use crate::security::GuardSettings;
-use crate::theme::ThemeManager;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+#[cfg(unix)]
+use crate::ipc::ClientDirectory;
+use crate::ipc::fixtures::{endpoint_deps, render_deps};
+use crate::ipc::{Message, Response, Segment};
+use std::path::Path;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_git_repo() -> TempDir {
@@ -29,39 +27,29 @@ fn create_language_project() -> TempDir {
     dir
 }
 
+/// A manager over `config.toml` in `dir`, which holds `toml`.
+fn config_manager_with(dir: &Path, toml: &str) -> Arc<ConfigManager> {
+    let path = dir.join("config.toml");
+    std::fs::write(&path, toml).expect("write config");
+    Arc::new(ConfigManager::from_path(&path).expect("config"))
+}
+
+/// Rewrite `config.toml` in `dir` and reload it into `manager`.
+fn reload_config(manager: &ConfigManager, dir: &Path, toml: &str) {
+    std::fs::write(dir.join("config.toml"), toml).expect("write config");
+    manager.reload_now().expect("reload config");
+}
+
 #[cfg(unix)]
 #[test]
 fn notify_clients_respects_agent_live_updates_flag() {
-    let registry = ClientDirectory::new().shared();
-    let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-    let config_manager =
-        Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
-    let watcher = Arc::new(Mutex::new(None));
-    let theme_manager =
-        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-    let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let language_cache = crate::language::DetectionCache::new();
+    use super::handle::notify_clients_for_response;
+    use std::sync::atomic::Ordering;
 
-    let initial_config = config_manager.get();
-    let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(&initial_config));
-    let handle = EndpointHandle::with_path_and_state(
-        PathBuf::from("/tmp/test.sock"),
-        ServerDeps {
-            client_registry: Arc::clone(&registry),
-            git_cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache,
-            palette_cache,
-        },
-        Arc::clone(&watcher),
-        GuardSettings::default(),
-    );
-
-    let mut disabled_config = Config::default();
-    disabled_config.agent.live_updates = false;
-    config_manager.overwrite_for_tests(disabled_config);
+    let (directory, rings) = ClientDirectory::counting_rings();
+    let registry = directory.shared();
+    let config_dir = TempDir::new().expect("config dir");
+    let config_manager = config_manager_with(config_dir.path(), "[agent]\nlive_updates = false\n");
 
     let response = Response::RepositoryStatus(crate::git::RepositoryStatus {
         branch: "main".to_owned(),
@@ -79,20 +67,22 @@ fn notify_clients_respects_agent_live_updates_flag() {
         rebase_progress: None,
     });
 
-    handle.notify_clients(&registry, &response, None);
+    notify_clients_for_response(&config_manager, &registry, &response, None);
     assert_eq!(
-        registry.notify_invocations(),
+        rings.load(Ordering::SeqCst),
         0,
         "live updates disabled should suppress notifications"
     );
 
-    let mut enabled_config = Config::default();
-    enabled_config.agent.live_updates = true;
-    config_manager.overwrite_for_tests(enabled_config);
+    reload_config(
+        &config_manager,
+        config_dir.path(),
+        "[agent]\nlive_updates = true\n",
+    );
 
-    handle.notify_clients(&registry, &response, None);
+    notify_clients_for_response(&config_manager, &registry, &response, None);
     assert_eq!(
-        registry.notify_invocations(),
+        rings.load(Ordering::SeqCst),
         1,
         "live updates enabled should allow notifications"
     );
@@ -100,38 +90,12 @@ fn notify_clients_respects_agent_live_updates_flag() {
 
 #[test]
 fn hot_reload_git_enabled_blocks_requests() {
-    let registry = ClientDirectory::new().shared();
-    let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-    let config_manager =
-        Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
-    let watcher = Arc::new(Mutex::new(None));
-    let theme_manager =
-        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-    let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let language_cache = crate::language::DetectionCache::new();
-
-    let mut cfg = Config::default();
-    cfg.git.enabled = true;
-    config_manager.overwrite_for_tests(cfg.clone());
-
-    let initial_config_for_git = config_manager.get();
-    let palette_cache_for_git = Arc::new(crate::palette::PaletteCache::from_config(
-        &initial_config_for_git,
+    let config_dir = TempDir::new().expect("config dir");
+    let config_manager = config_manager_with(config_dir.path(), "[git]\nenabled = true\n");
+    let handle = EndpointHandle::new(endpoint_deps(
+        Path::new("/tmp/hot-reload-git.sock"),
+        render_deps(Arc::clone(&config_manager)),
     ));
-    let handle = EndpointHandle::with_path_and_state(
-        PathBuf::from("/tmp/hot-reload-git.sock"),
-        ServerDeps {
-            client_registry: Arc::clone(&registry),
-            git_cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache,
-            palette_cache: palette_cache_for_git,
-        },
-        Arc::clone(&watcher),
-        GuardSettings::default(),
-    );
 
     let repo = create_git_repo();
     let path_str = repo
@@ -149,10 +113,11 @@ fn hot_reload_git_enabled_blocks_requests() {
     // A freshly `git init`ed repo has nothing pending.
     assert_eq!(status.state, crate::git::RepositoryState::Clean);
 
-    let mut disabled = cfg.clone();
-    disabled.git.enabled = false;
-    config_manager.overwrite_for_tests(disabled.clone());
-    config_manager.trigger_reload_for_tests(&cfg, &disabled);
+    reload_config(
+        &config_manager,
+        config_dir.path(),
+        "[git]\nenabled = false\n",
+    );
 
     assert!(matches!(
         handle.handler_registry.route(&git_status_message(path)),
@@ -164,51 +129,24 @@ fn hot_reload_git_enabled_blocks_requests() {
 fn git_status_message(path: crate::security::SafePath) -> Message {
     Message::RepositoryStatus {
         path,
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
     }
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn build_test_endpoint(
     sock_name: &str,
+    config_dir: &Path,
 ) -> (
     Arc<ConfigManager>,
     EndpointHandle,
     crate::security::SafePath,
     TempDir,
 ) {
-    let registry = ClientDirectory::new().shared();
-    let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-    let config_manager =
-        Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
-    let watcher = Arc::new(Mutex::new(None));
-    let theme_manager =
-        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-    let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let language_cache = crate::language::DetectionCache::new();
-    let mut cfg = Config::default();
-    cfg.language.enabled = true;
-    config_manager.overwrite_for_tests(cfg);
-    let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(
-        &config_manager.get(),
+    let config_manager = config_manager_with(config_dir, "[language]\nenabled = true\n");
+    let handle = EndpointHandle::new(endpoint_deps(
+        Path::new(sock_name),
+        render_deps(Arc::clone(&config_manager)),
     ));
-    let handle = EndpointHandle::with_path_and_state(
-        PathBuf::from(sock_name),
-        ServerDeps {
-            client_registry: Arc::clone(&registry),
-            git_cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache,
-            palette_cache,
-        },
-        Arc::clone(&watcher),
-        GuardSettings::default(),
-    );
     let project = create_language_project();
     let path_str = project.path().to_str().expect("valid UTF-8");
     let path = crate::security::SafePath::new(path_str).expect("Valid test path");
@@ -217,16 +155,13 @@ fn build_test_endpoint(
 
 #[test]
 fn hot_reload_language_enabled_updates_responses() {
-    let (config_manager, handle, path, _project) = build_test_endpoint("/tmp/hot-reload-lang.sock");
-    let mut cfg = Config::default();
-    cfg.language.enabled = true;
+    let config_dir = TempDir::new().expect("config dir");
+    let (config_manager, handle, path, _project) =
+        build_test_endpoint("/tmp/hot-reload-lang.sock", config_dir.path());
 
     let lang_msg = Message::LanguageDetect {
         path: path.clone(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
         virtual_env: None,
     };
     assert!(matches!(
@@ -234,93 +169,19 @@ fn hot_reload_language_enabled_updates_responses() {
         Ok(Response::Language { languages }) if !languages.is_empty()
     ));
 
-    let mut disabled = cfg.clone();
-    disabled.language.enabled = false;
-    config_manager.overwrite_for_tests(disabled.clone());
-    config_manager.trigger_reload_for_tests(&cfg, &disabled);
+    reload_config(
+        &config_manager,
+        config_dir.path(),
+        "[language]\nenabled = false\n",
+    );
 
     let message = Message::LanguageDetect {
         path,
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
         virtual_env: None,
     };
     assert!(matches!(
         handle.handler_registry.route(&message),
         Ok(Response::Language { languages }) if languages.is_empty()
     ));
-}
-
-/// A builder over fresh default collaborators with no optional setter applied.
-#[allow(clippy::missing_panics_doc)]
-fn default_builder() -> EndpointHandleBuilder {
-    EndpointHandle::builder(EndpointDeps {
-        client_registry: Arc::new(ClientDirectory::new()),
-        git_cache: Arc::new(crate::git::cache::GitStatusCache::new()),
-        config_manager: Arc::new(
-            crate::config::manager::ConfigManager::with_defaults()
-                .expect("default config should load"),
-        ),
-        theme_manager: Arc::new(
-            ThemeManager::builtin("default").expect("default theme should load"),
-        ),
-        instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
-        language_cache: crate::language::DetectionCache::new(),
-    })
-}
-
-#[test]
-#[allow(clippy::missing_panics_doc)]
-fn test_endpoint_handle_builder_optional_defaults() {
-    let handle = default_builder()
-        .build()
-        .expect("builder should succeed with only the required collaborators");
-
-    assert_eq!(
-        handle.socket_path,
-        crate::paths::get_socket_path().expect("default socket path"),
-        "Socket path should default to the platform path"
-    );
-    assert!(
-        handle
-            .watcher
-            .lock()
-            .expect("watcher lock poisoned")
-            .is_none(),
-        "Watcher slot should default to an empty slot"
-    );
-}
-
-#[test]
-#[allow(clippy::missing_panics_doc)]
-fn test_endpoint_handle_builder_with_socket_path() {
-    let custom_path = PathBuf::from("/tmp/custom-test.sock");
-    let handle = default_builder()
-        .socket_path(custom_path.clone())
-        .build()
-        .expect("builder should accept a custom socket path");
-
-    assert_eq!(
-        handle.socket_path, custom_path,
-        "Builder should use custom socket path"
-    );
-}
-
-#[test]
-#[allow(clippy::missing_panics_doc)]
-fn test_endpoint_handle_builder_with_watcher_slot() {
-    let watcher_slot = Arc::new(Mutex::new(None));
-
-    let handle = default_builder()
-        .watcher_slot(Arc::clone(&watcher_slot))
-        .build()
-        .expect("builder should accept a shared watcher slot");
-
-    // Must be the same slot, or live updates break.
-    assert!(
-        Arc::ptr_eq(&handle.watcher, &watcher_slot),
-        "Builder must use the exact shared watcher slot, not create a new one"
-    );
 }

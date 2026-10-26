@@ -86,10 +86,6 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
 ///
 /// # Errors
 /// Returns an error if the agent is not running or IPC fails.
-#[expect(
-    clippy::print_stdout,
-    reason = "this is an interactive CLI debug command; its whole output is timing results printed to stdout"
-)]
 #[cfg(unix)]
 #[allow(
     clippy::use_debug,
@@ -126,6 +122,9 @@ pub fn prompt() -> Result<()> {
 
         let cwd_str = std::env::current_dir()?.to_string_lossy().to_string();
         let safe_cwd = crate::security::SafePath::new(&cwd_str)?;
+        let safe_cwd_str = safe_cwd
+            .as_str()
+            .ok_or_else(|| crate::Error::invalid("Current working directory is not valid UTF-8"))?;
 
         print!("Ping (Baseline):      ");
         std::io::stdout().flush()?;
@@ -136,7 +135,7 @@ pub fn prompt() -> Result<()> {
         std::io::stdout().flush()?;
         let git_duration = send_request(
             &mut stream,
-            &serde_json::json!({"op": "git", "cwd": safe_cwd.as_str(), "format": "json"}),
+            &serde_json::json!({"op": "git", "cwd": safe_cwd_str, "format": "json"}),
         )
         .await?;
         println!("{git_duration:.2?}");
@@ -145,7 +144,7 @@ pub fn prompt() -> Result<()> {
         std::io::stdout().flush()?;
         let lang_duration = send_request(
             &mut stream,
-            &serde_json::json!({"op": "lang", "cwd": safe_cwd.as_str(), "format": "json", "is_last": true}),
+            &serde_json::json!({"op": "lang", "cwd": safe_cwd_str, "format": "json", "is_last": true}),
         )
         .await?;
         println!("{lang_duration:.2?}");
@@ -163,10 +162,6 @@ pub fn prompt() -> Result<()> {
 ///
 /// # Errors
 /// Never returns an error on this platform.
-#[expect(
-    clippy::print_stdout,
-    reason = "this is an interactive CLI stub message printed to stdout, matching the Unix variant's output channel"
-)]
 #[cfg(not(unix))]
 pub fn prompt() -> Result<()> {
     println!("Prompt timing debugger is not available on native Windows; run under WSL.");

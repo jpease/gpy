@@ -11,6 +11,9 @@ usage() {
     echo "  -y, --yes   uninstall without asking (for scripts and non-interactive shells)"
 }
 
+error() { printf 'error: %s\n' "$1" >&2; }
+warn() { printf 'warn: %s\n' "$1" >&2; }
+
 assume_yes=0
 for arg in "$@"; do
     case "$arg" in
@@ -20,7 +23,7 @@ for arg in "$@"; do
             exit 0
             ;;
         *)
-            echo "uninstall.sh: unknown argument: $arg" >&2
+            error "unknown argument: $arg"
             usage >&2
             exit 2
             ;;
@@ -164,10 +167,10 @@ clean_rc_file() {
     ' "$rc_file" > "$tmp" 2> "$diag"
 
     if grep -q "MISSING_END" "$diag"; then
-        echo "GPY block start found without a matching end marker in $rc_file. Leaving that portion untouched; remove it by hand if it is stale."
+        warn "GPY block start found without a matching end marker in $rc_file. Leaving that portion untouched; remove it by hand if it is stale."
     fi
     if grep -q "MISSING_START" "$diag"; then
-        echo "GPY block end marker found without a start marker in $rc_file. Leaving it untouched; remove it by hand if it is stale."
+        warn "GPY block end marker found without a start marker in $rc_file. Leaving it untouched; remove it by hand if it is stale."
     fi
     if grep -q "REMOVED" "$diag"; then
         # Write through the path: keeps a symlinked rc file's link and its mode.
@@ -210,7 +213,7 @@ else
     # EOF (closed or exhausted stdin) is not consent: nothing has been removed yet.
     if ! read -r _gpy_uninstall_confirm; then
         echo ""
-        echo "No confirmation received; nothing was removed. Re-run with --yes to uninstall without a prompt." >&2
+        error "no confirmation received; nothing was removed. Re-run with --yes to uninstall without a prompt."
         exit 1
     fi
 fi
@@ -363,12 +366,12 @@ if [ "$runtime_root" != "$gpy_cache_dir" ]; then
 fi
 
 echo ""
-echo "Uninstall complete!"
+echo "ok: GPY uninstalled"
 echo "Restart your shell to see changes."
 echo ""
 echo "Removed:"
-echo "  • Shell integration files and completions (bash, zsh, fish)"
-echo "  • Agent and CLI binaries (and their backups)"
-echo "  • Configuration files"
-echo "  • Cache and runtime files"
-echo "  • Running agent and supervisor processes"
+echo "  - Shell integration files and completions (bash, zsh, fish)"
+echo "  - Agent and CLI binaries (and their backups)"
+echo "  - Configuration files"
+echo "  - Cache and runtime files"
+echo "  - Running agent and supervisor processes"

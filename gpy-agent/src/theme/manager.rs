@@ -3,7 +3,6 @@
 use crate::config::Config;
 use crate::config::defaults::{DEFAULT_THEME_CONTENT, STARSHIP_THEME_CONTENT, TEXT_THEME_CONTENT};
 use crate::config::discovery::{self, Discovered, Source};
-use crate::config::types::is_safe_config_name;
 use crate::debug_log;
 use crate::plugin::discover_plugins;
 use crate::shell::Shell;
@@ -177,11 +176,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the theme file cannot be loaded or parsed.
     pub fn new(theme_name: &str) -> Result<Self> {
-        if !is_safe_config_name(theme_name) {
-            return Err(Error::config(format!(
-                "invalid theme name '{theme_name}': must not contain path separators, '..', or control characters"
-            )));
-        }
+        discovery::validate_config_name("theme", theme_name)?;
         let location = ThemeLocation::resolve(theme_name);
         let (theme, fingerprint) = Self::load_source(&location)?;
         Ok(Self::with_state(theme_name, location, fingerprint, theme))
@@ -523,27 +518,18 @@ impl ThemeManager {
             {
                 continue;
             }
+            let Some(root) = &plugin.root else {
+                continue;
+            };
             for provided_segment in plugin.manifest.provided_segments {
                 let segment_name = provided_segment.to_string();
-                let segment_file = plugin
-                    .root
-                    .join("segments")
-                    .join(format!("{segment_name}.fish"));
+                let segment_file = root.join("segments").join(format!("{segment_name}.fish"));
                 files
                     .entry(segment_name)
                     .or_insert_with(|| segment_file.to_string_lossy().into_owned());
             }
         }
         files
-    }
-
-    /// List all available themes.
-    #[must_use]
-    pub fn list_available_themes() -> Vec<String> {
-        Self::discover_available_themes()
-            .into_iter()
-            .map(|theme| theme.name)
-            .collect()
     }
 
     /// List available themes with source metadata and resolved path (if file-backed).
@@ -558,22 +544,12 @@ impl ThemeManager {
         merged.into_values().collect()
     }
 
-    /// Get the default theme template.
-    #[must_use]
-    pub const fn default_theme_template() -> &'static str {
-        DEFAULT_THEME_CONTENT
-    }
-
     /// Raw TOML source of a discovered theme, verbatim, for use as a clone base.
     ///
     /// # Errors
     /// Returns an error if the theme isn't discoverable or its file can't be read.
     pub fn theme_source_content(theme_name: &str) -> Result<String> {
-        if !is_safe_config_name(theme_name) {
-            return Err(Error::config(format!(
-                "invalid theme name '{theme_name}': must not contain path separators, '..', or control characters"
-            )));
-        }
+        discovery::validate_config_name("theme", theme_name)?;
 
         let Some(discovered) = Self::discover_available_themes()
             .into_iter()
@@ -627,11 +603,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error on an unsafe name, serialization failure, or I/O failure.
     pub fn save_user_theme(theme_name: &str, theme: &ThemeConfig) -> Result<PathBuf> {
-        if !is_safe_config_name(theme_name) {
-            return Err(Error::config(format!(
-                "invalid theme name '{theme_name}': must not contain path separators, '..', or control characters"
-            )));
-        }
+        discovery::validate_config_name("theme", theme_name)?;
 
         let toml_content = toml::to_string_pretty(theme)
             .map_err(|e| Error::config(format!("Failed to serialize theme to TOML: {e}")))?;
@@ -653,7 +625,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the file cannot be read or the TOML cannot be parsed.
     fn load_from_path(path: &Path) -> Result<ThemeConfig> {
-        crate::config::loader::load_theme_from_path(&path.display().to_string())
+        crate::config::loader::load_theme_from_path(path)
     }
 
     /// Resolve `theme_name` (user, plugin, then builtin), shared by daemon and oneshot.
@@ -690,7 +662,9 @@ impl ThemeManager {
             let source = ThemeSource::Plugin {
                 plugin_id: plugin.manifest.id.as_str().to_owned(),
             };
-            discovery::insert_toml_dir(merged, &plugin.root.join("themes"), &source);
+            if let Some(root) = &plugin.root {
+                discovery::insert_toml_dir(merged, &root.join("themes"), &source);
+            }
         }
     }
 
@@ -730,11 +704,6 @@ impl Drop for ThemeManager {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{BUILTIN_THEMES, DiscoveredTheme, ThemeLocation, ThemeManager, ThemeSource};
     use crate::config::Config;
@@ -1020,7 +989,8 @@ mod tests {
             // fallback, exercised via a path that does not exist on disk.
             let synthetic_path = format!("/nonexistent/path/{name}.toml");
             assert!(
-                crate::config::loader::load_theme_from_path(&synthetic_path).is_ok(),
+                crate::config::loader::load_theme_from_path(std::path::Path::new(&synthetic_path))
+                    .is_ok(),
                 "load_theme_from_path should resolve embedded content for \"{name}\" via its BUILTIN_THEMES entry"
             );
 

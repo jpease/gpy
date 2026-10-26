@@ -9,13 +9,13 @@
     unsafe_code,
     reason = "raising RLIMIT_NOFILE for the 250-connection test needs libc::getrlimit/setrlimit"
 )]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 mod common;
 
+use common::endpoint::endpoint;
 #[cfg(unix)]
-use common::wait_for_socket;
-use common::{EnvGuard, endpoint_builder};
+use common::endpoint::wait_for_socket;
+use common::env_guard::EnvGuard;
 use gpy_agent::git::status::load_repository_state;
 use gpy_agent::language::version::{NodeDetector, detect_language_release, get_version_detectors};
 use std::fs;
@@ -35,7 +35,7 @@ fn test_ipc_server_creation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_ipc_server.sock");
 
-    let _server = endpoint_builder(socket_path).build().expect("server build");
+    let _server = endpoint(socket_path);
 }
 
 #[test]
@@ -123,9 +123,7 @@ async fn test_message_size_limit_enforced() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_size_limit.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
     });
@@ -176,12 +174,11 @@ enum ConnectionOutcome {
 ///
 /// An ack proves a permit is held; connect success only proves the OS backlog accepted it.
 #[cfg(unix)]
-#[allow(clippy::unused_async)]
-async fn spawn_concurrent_connection_attempts(
+fn spawn_concurrent_connection_attempts(
     socket_path: &std::path::Path,
     count: usize,
-    active: Arc<std::sync::atomic::AtomicUsize>,
-    peak: Arc<std::sync::atomic::AtomicUsize>,
+    active: &Arc<std::sync::atomic::AtomicUsize>,
+    peak: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> (
     Arc<tokio::sync::Barrier>,
     Vec<tokio::task::JoinHandle<ConnectionOutcome>>,
@@ -197,8 +194,8 @@ async fn spawn_concurrent_connection_attempts(
     for _ in 0_i32..i32::try_from(count).unwrap_or(i32::MAX) {
         let socket_path_clone = socket_path.to_path_buf();
         let barrier_clone = Arc::clone(&barrier);
-        let active_clone = Arc::clone(&active);
-        let peak_clone = Arc::clone(&peak);
+        let active_clone = Arc::clone(active);
+        let peak_clone = Arc::clone(peak);
         let handle = tokio::spawn(async move {
             barrier_clone.wait().await;
 
@@ -288,9 +285,7 @@ async fn test_concurrent_connection_limit() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_concurrent_limit.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
 
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
@@ -300,13 +295,8 @@ async fn test_concurrent_connection_limit() {
 
     let active = Arc::new(std::sync::atomic::AtomicUsize::new(0_usize));
     let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0_usize));
-    let (barrier, handles) = spawn_concurrent_connection_attempts(
-        &socket_path,
-        250_usize,
-        Arc::clone(&active),
-        Arc::clone(&peak),
-    )
-    .await;
+    let (barrier, handles) =
+        spawn_concurrent_connection_attempts(&socket_path, 250_usize, &active, &peak);
     let _ = barrier.wait().await;
 
     // Admission fails fast; the timeout only catches a genuine hang.
@@ -397,9 +387,7 @@ async fn test_workspace_update_requires_registration() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_workspace_registration.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
 
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
@@ -482,9 +470,7 @@ async fn ansi_error_replies_are_empty_lines() {
     fs::create_dir_all(fake_repo_dir.join(".git")).expect("create empty .git");
     let fake_repo = fake_repo_dir.to_str().expect("utf8 temp path");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
     });

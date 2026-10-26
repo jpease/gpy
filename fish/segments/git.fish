@@ -1,37 +1,15 @@
 function segment_git_detect
-    if set -q GPY_DEBUG_SEGMENTS
-        echo "[DEBUG] segment_git_detect: GPY_GIT_ENABLED=$GPY_GIT_ENABLED" >&2
-    end
-
     if set -q GPY_GIT_ENABLED; and test "$GPY_GIT_ENABLED" = 0
-        if set -q GPY_DEBUG_SEGMENTS
-            echo "[DEBUG] segment_git_detect: Git disabled by config, returning 1" >&2
-        end
         return 1
     end
 
     # Reuses the render-scoped memoized git root shared with the cache read.
-    if set -q GPY_DEBUG_SEGMENTS
-        echo "[DEBUG] segment_git_detect: Searching for .git from $PWD" >&2
-    end
-
-    set -l root (__gpy_memoized_git_root $PWD)
-    if test -n "$root"
-        if set -q GPY_DEBUG_SEGMENTS
-            echo "[DEBUG] segment_git_detect: Found .git at $root, returning 0" >&2
-        end
-        return 0
-    end
-
-    if set -q GPY_DEBUG_SEGMENTS
-        echo "[DEBUG] segment_git_detect: No .git found, returning 1" >&2
-    end
-    return 1
+    test -n "$(__gpy_memoized_git_root $PWD)"
 end
 
 # Returns 0 when the render must print nothing (agent down, cold miss), so git takes no position.
 function segment_git_omit
-    test "$GPY_AGENT_ENABLED" = 0; and return 1
+    not __gpy_agent_enabled; and return 1
     not __gpy_instant_cache_present git $PWD; and not test -S (__gpy_ipc_endpoint)
 end
 
@@ -53,7 +31,7 @@ function segment_git_render --argument-names is_last is_first
 
     if test "$cache_status" -eq 1
         # Agent-free mode renders through oneshot.
-        if test "$GPY_AGENT_ENABLED" = 0
+        if not __gpy_agent_enabled
             set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
             if test -n "$fresh"
                 printf '%s' "$fresh"

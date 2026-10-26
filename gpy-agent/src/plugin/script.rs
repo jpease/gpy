@@ -6,6 +6,7 @@
 //! declares and validates.
 
 use super::manifest::SegmentName;
+use super::newtype::{deserialize_via_new, detail, display_inner};
 use super::settings::{SettingDecl, SettingKey};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,13 @@ use std::path::{Component, Path, PathBuf};
 
 /// Manifest fields the user overrides in `[plugin.<segment>]` next to the
 /// declared settings; a declared setting may not reuse these names.
-pub const RESERVED_SETTING_KEYS: [&str; 2] = ["ttl_secs", "timeout_ms"];
+pub const RESERVED_SETTING_KEYS: [&str; 2] = [TTL_SECS_KEY, TIMEOUT_MS_KEY];
+
+/// The `ttl_secs` field of a script segment manifest and its `[plugin.<segment>]` override.
+pub const TTL_SECS_KEY: &str = "ttl_secs";
+
+/// The `timeout_ms` field of a script segment manifest and its `[plugin.<segment>]` override.
+pub const TIMEOUT_MS_KEY: &str = "timeout_ms";
 
 /// Cap on segment manifest reads, as for `plugin.toml`.
 const SEGMENT_MANIFEST_READ_CAP: usize = 65_536;
@@ -35,36 +42,6 @@ pub fn is_env_name(name: &str) -> bool {
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// The message of an [`Error::Invalid`] without its `Invalid operation:`
-/// prefix, so nested contexts read as one sentence.
-pub(crate) fn detail(error: Error) -> String {
-    match error {
-        Error::Invalid { message } => message,
-        other => other.to_string(),
-    }
-}
-
-/// Implement `Deserialize` through a validating `new(&str) -> Result<Self>`.
-macro_rules! deserialize_via_new {
-    ($ty:ty) => {
-        impl<'de> Deserialize<'de> for $ty {
-            fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                let raw = String::deserialize(deserializer)?;
-                Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
-            }
-        }
-
-        impl fmt::Display for $ty {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-    };
 }
 
 /// A public shell value a script can declare in `inputs`.
@@ -179,6 +156,7 @@ impl EnvName {
 }
 
 deserialize_via_new!(EnvName);
+display_inner!(EnvName);
 
 /// A plugin-relative path to a POSIX `sh` script (`command`, `require_command`).
 ///
@@ -251,6 +229,7 @@ impl ScriptPath {
 }
 
 deserialize_via_new!(ScriptPath);
+display_inner!(ScriptPath);
 
 /// One file or folder name searched for by `require_files`/`require_folders`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -285,6 +264,7 @@ impl ScanName {
 }
 
 deserialize_via_new!(ScanName);
+display_inner!(ScanName);
 
 /// A file extension for `require_extensions`, without the leading dot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -323,10 +303,11 @@ impl Extension {
 }
 
 deserialize_via_new!(Extension);
+display_inner!(Extension);
 
 /// Bounded `u32` newtype with a default, deserialized via `try_from`.
 macro_rules! bounded_u32 {
-    ($(#[$doc:meta])* $name:ident, $min:expr, $max:expr, $default:expr, $what:literal) => {
+    ($(#[$doc:meta])* $name:ident, $min:expr, $max:expr, $default:expr, $what:expr) => {
         $(#[$doc])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
         #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -349,7 +330,8 @@ macro_rules! bounded_u32 {
                     Ok(Self(value))
                 } else {
                     Err(Error::invalid(format!(
-                        concat!($what, " must be {}..={}, got {}"),
+                        "{} must be {}..={}, got {}",
+                        $what,
                         Self::MIN,
                         Self::MAX,
                         value
@@ -397,7 +379,7 @@ bounded_u32!(
     0,
     31_536_000,
     5,
-    "ttl_secs"
+    TTL_SECS_KEY
 );
 
 bounded_u32!(
@@ -406,7 +388,7 @@ bounded_u32!(
     1,
     500,
     500,
-    "timeout_ms"
+    TIMEOUT_MS_KEY
 );
 
 /// The optional second output line: a colour variant chosen by the script
@@ -447,6 +429,7 @@ impl VariantName {
 }
 
 deserialize_via_new!(VariantName);
+display_inner!(VariantName);
 
 /// Which colour of a variant a theme key sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -514,15 +497,7 @@ impl Serialize for VariantColorKey {
     }
 }
 
-impl<'de> Deserialize<'de> for VariantColorKey {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
-    }
-}
+deserialize_via_new!(VariantColorKey);
 
 /// A script segment manifest, `segments/<id>.toml` in a script plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

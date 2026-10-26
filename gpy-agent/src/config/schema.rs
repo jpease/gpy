@@ -1,25 +1,28 @@
 //! TOML configuration schema and config-file resolution.
 
+use std::path::{Path, PathBuf};
+
 /// Configuration file locations in priority order, for an explicit environment.
 ///
 /// Pure so precedence is testable without `set_var` (forbidden by `unsafe_code`).
 /// Empty `GPY_CONFIG_PATH` is dropped (else `config set` writes to `""`);
-/// `XDG_CONFIG_HOME` goes through [`crate::paths::xdg_value`]. Matches Fish's
+/// `XDG_CONFIG_HOME` goes through [`crate::paths::xdg_path`]. Matches Fish's
 /// `__gpy_user_config_candidates`. No `~/.gpy.toml` or project-local file: the
 /// daemon serves every directory, so CLI and prompt must agree on one file.
 #[must_use]
 pub fn config_candidates_for(
-    custom_path: Option<&str>,
-    xdg_config: Option<&str>,
-    home: Option<&str>,
+    custom_path: Option<&Path>,
+    xdg_config: Option<&Path>,
+    home: Option<&Path>,
     os: crate::paths::Os,
-) -> Vec<String> {
+) -> Vec<PathBuf> {
     [
         custom_path
-            .filter(|path| !path.is_empty())
-            .map(ToOwned::to_owned),
-        crate::paths::xdg_value(xdg_config, os).map(|xdg| format!("{xdg}/gpy/config.toml")),
-        crate::paths::xdg_value(home, os).map(|h| format!("{h}/.config/gpy/config.toml")),
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(Path::to_path_buf),
+        crate::paths::xdg_path(xdg_config, os).map(|xdg| xdg.join("gpy").join("config.toml")),
+        crate::paths::xdg_path(home, os)
+            .map(|root| root.join(".config").join("gpy").join("config.toml")),
     ]
     .into_iter()
     .flatten()
@@ -31,15 +34,11 @@ pub fn config_candidates_for(
 /// A relative `GPY_CONFIG_PATH` is made absolute against the cwd at start, so
 /// the daemon (in `/`) and CLI watch the same path.
 #[must_use]
-pub fn get_config_paths() -> Vec<String> {
-    let custom_path = crate::paths::root_var_os("GPY_CONFIG_PATH").map(|value| {
-        crate::paths::absolutize(std::path::Path::new(&value))
-            .to_string_lossy()
-            .into_owned()
-    });
-    let home = crate::paths::home_dir();
-    let xdg_config = crate::paths::root_var_os("XDG_CONFIG_HOME")
-        .map(|value| value.to_string_lossy().into_owned());
+pub fn get_config_paths() -> Vec<PathBuf> {
+    let custom_path = crate::paths::root_var_os("GPY_CONFIG_PATH")
+        .map(|value| crate::paths::absolutize(Path::new(&value)));
+    let home = crate::paths::home_path();
+    let xdg_config = crate::paths::root_var_os("XDG_CONFIG_HOME").map(PathBuf::from);
 
     config_candidates_for(
         custom_path.as_deref(),
@@ -55,9 +54,9 @@ pub fn get_config_paths() -> Vec<String> {
 /// highest-priority candidate so new files aren't shadowed. Shared by CLI,
 /// status and `ConfigManager` so they cannot drift.
 #[must_use]
-pub fn resolve_active_config<P: AsRef<std::path::Path>>(
+pub fn resolve_active_config<P: AsRef<Path>>(
     candidates: &[P],
-) -> Option<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+) -> Option<(PathBuf, Option<PathBuf>)> {
     candidates
         .iter()
         .map(AsRef::as_ref)
@@ -74,6 +73,25 @@ pub fn resolve_active_config<P: AsRef<std::path::Path>>(
 mod config_path_tests {
     use super::config_candidates_for;
     use crate::paths::Os;
+    use std::path::{Path, PathBuf};
+
+    fn candidates_for(
+        custom: Option<&str>,
+        xdg_config: Option<&str>,
+        home: Option<&str>,
+        os: Os,
+    ) -> Vec<PathBuf> {
+        config_candidates_for(
+            custom.map(Path::new),
+            xdg_config.map(Path::new),
+            home.map(Path::new),
+            os,
+        )
+    }
+
+    fn paths(expected: &[&str]) -> Vec<PathBuf> {
+        expected.iter().map(PathBuf::from).collect()
+    }
 
     /// `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME`, `HOME`, expected candidates.
     type CandidateCase = (
@@ -149,8 +167,8 @@ mod config_path_tests {
     fn config_candidate_precedence() {
         for (custom, xdg_config, home, expected) in CANDIDATE_CASES {
             assert_eq!(
-                config_candidates_for(custom, xdg_config, home, Os::Unix),
-                expected.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(),
+                candidates_for(custom, xdg_config, home, Os::Unix),
+                paths(expected),
                 "candidates for (GPY_CONFIG_PATH={custom:?}, XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
         }
@@ -164,22 +182,21 @@ mod config_path_tests {
     fn config_candidates_honour_windows_xdg_only_under_windows_rules() {
         let xdg = Some(r"C:\Users\u\cfg");
         assert_eq!(
-            config_candidates_for(None, xdg, Some("/h"), Os::Windows),
-            [
+            candidates_for(None, xdg, Some("/h"), Os::Windows),
+            paths(&[
                 r"C:\Users\u\cfg/gpy/config.toml",
                 "/h/.config/gpy/config.toml"
-            ],
+            ]),
         );
         assert_eq!(
-            config_candidates_for(None, xdg, Some("/h"), Os::Unix),
-            ["/h/.config/gpy/config.toml"],
+            candidates_for(None, xdg, Some("/h"), Os::Unix),
+            paths(&["/h/.config/gpy/config.toml"]),
         );
     }
 }
 
 #[cfg(test)]
 mod resolve_active_config_tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::resolve_active_config;
     use std::path::PathBuf;

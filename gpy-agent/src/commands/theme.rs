@@ -1,27 +1,20 @@
 //! `gpy theme` command handlers.
 
 use super::utils::{
-    active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
+    active_config_path, load_active_config, print_discovered, read_config, reload_agent_and_notify,
 };
-use super::validation::{self, ValidatableResource};
+use super::validation::{self, Failure, FailureKind, ValidatableResource, ValidationReport};
+use crate::config::discovery::validate_config_name;
+use crate::config::loader::save_config;
 use crate::config::recommended_layout::{
     PendingLayout, pending_layout, resolve_forced_detection, resolve_forced_palette,
     user_set_layout_fields,
 };
 use crate::{
     Error, Result, config,
-    theme::{RecommendedUi, ThemeConfig, ThemeManager, ThemeSource},
+    theme::{RecommendedUi, ThemeConfig, ThemeManager},
 };
 use std::path::Path;
-
-/// Result of validating a theme target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThemeValidationResult {
-    /// Target label.
-    pub target: String,
-    /// Active theme, named theme, or explicit file path.
-    pub source: String,
-}
 
 /// List available themes.
 ///
@@ -29,27 +22,11 @@ pub struct ThemeValidationResult {
 /// Returns an error if the active config cannot be read, parsed, or validated.
 pub fn list() -> Result<()> {
     let config = read_config()?;
-    let active = &config.ui.theme;
-
-    println!("Available Themes:");
-    println!("=================\n");
-
-    let themes = ThemeManager::discover_available_themes();
-
-    for theme in themes {
-        let marker = if theme.name == active.as_str() {
-            " *"
-        } else {
-            ""
-        };
-        let source = match &theme.source {
-            ThemeSource::Builtin => "builtin".to_owned(),
-            ThemeSource::User => "user".to_owned(),
-            ThemeSource::Plugin { plugin_id } => format!("plugin:{plugin_id}"),
-        };
-        println!("  {}{} [{}]", theme.name, marker, source);
-    }
-
+    print_discovered(
+        "Available Themes:",
+        config.ui.theme.as_str(),
+        &ThemeManager::discover_available_themes(),
+    );
     Ok(())
 }
 
@@ -74,8 +51,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
         .ok()
         .and_then(|outgoing| outgoing.get().ui.recommended.clone());
 
-    config.ui.theme = config::types::ThemeName::new(name.to_owned())
-        .ok_or_else(|| Error::config(format!("Invalid theme name: {name}")))?;
+    config.ui.theme = config::types::ThemeName::try_from(name.to_owned()).map_err(Error::config)?;
 
     let pending = pending_layout(theme.ui.recommended.as_ref(), &config.ui);
     // Detection mode lives in config.language, outside PendingLayout.
@@ -105,7 +81,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
         )?;
     } else {
         validate_prospective_activation(&theme, config.ui.palette.as_str())?;
-        save_config_to(&path, &original, &config, &[])?;
+        save_config(&path, &original, &config, &[])?;
 
         println!("Switched to '{name}' theme");
         let detection_hint = recommended_detection.map(|_| "language detection".to_owned());
@@ -138,7 +114,7 @@ fn apply_forced_switch(
     name: &str,
     original: &config::Config,
     config: &mut config::Config,
-    path: &str,
+    path: &Path,
     theme: &ThemeConfig,
     pending: PendingLayout,
     recommended_detection: Option<config::types::DetectionMode>,
@@ -160,7 +136,7 @@ fn apply_forced_switch(
     let (palette_applied, palette_preserved) =
         resolve_forced_palette(config, recommended_palette, &user_set, outgoing_recommended);
     validate_prospective_activation(theme, config.ui.palette.as_str())?;
-    save_config_to(path, original, config, &[])?;
+    save_config(path, original, config, &[])?;
 
     println!("Switched to '{name}' theme");
     print_summary(
@@ -221,52 +197,21 @@ pub fn validate(target: Option<&str>) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the theme fails to parse/validate.
-pub fn validate_target(target: Option<&str>) -> Result<ThemeValidationResult> {
-    let report = validation::validate_target::<ThemeResource>(target)?;
-    Ok(ThemeValidationResult {
-        target: report.target,
-        source: report.source.to_owned(),
-    })
+pub fn validate_target(target: Option<&str>) -> std::result::Result<ValidationReport, Failure> {
+    validation::validate_target::<ThemeResource>(target)
 }
 
 /// Validate a theme strictly by name, never treating it as a file path.
 ///
 /// # Errors
 /// Returns an error if the named theme cannot be loaded or validated.
-pub fn validate_by_name(name: &str) -> Result<ThemeValidationResult> {
-    let report = validation::validate_by_name::<ThemeResource>(name)?;
-    Ok(ThemeValidationResult {
-        target: report.target,
-        source: report.source.to_owned(),
-    })
+pub fn validate_by_name(name: &str) -> std::result::Result<ValidationReport, Failure> {
+    validation::validate_by_name::<ThemeResource>(name)
 }
 
-/// Which stage of validating a named theme failed.
-#[derive(Debug)]
-pub enum ThemeCheckError {
-    /// The theme does not exist, is unsafe, or failed to load/parse.
-    Load(Error),
-    /// The theme loaded but a segment `format` template is invalid.
-    Templates(Error),
-}
-
-/// Like [`validate_by_name`], but reports which validation stage failed.
-///
-/// # Errors
-/// Returns the [`ThemeCheckError`] stage that failed.
-pub fn validate_by_name_detailed(
-    name: &str,
-) -> std::result::Result<ThemeValidationResult, ThemeCheckError> {
-    validate_theme_name_detailed(name)?;
-    Ok(ThemeValidationResult {
-        target: name.to_owned(),
-        source: ThemeResource::NAME_LABEL.to_owned(),
-    })
-}
-
-/// Print remediation-focused diagnostics for a theme validation error.
-pub fn print_theme_validation_error(context: &str, error: &Error) {
-    validation::print_validation_error::<ThemeResource>(context, error);
+/// Print remediation-focused diagnostics for a theme validation failure.
+pub fn print_theme_validation_error(context: &str, failure: &Failure) {
+    validation::print_validation_error::<ThemeResource>(context, failure);
 }
 
 /// Create a new theme from the default template or by cloning `from`.
@@ -274,27 +219,27 @@ pub fn print_theme_validation_error(context: &str, error: &Error) {
 /// # Errors
 /// Returns an error if `from` cannot be read or the theme file cannot be created.
 pub fn new(name: &str, from: Option<&str>) -> Result<()> {
-    let _theme_name = config::types::ThemeName::new(name.to_owned())
-        .ok_or_else(|| Error::config(format!("Invalid theme name: '{name}'")))?;
+    validate_config_name("theme", name)?;
 
     let themes_dir = ThemeManager::user_themes_dir();
 
     std::fs::create_dir_all(&themes_dir)
-        .map_err(|e| Error::config(format!("Failed to create themes directory: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to create themes directory: {e}")))?;
 
     let new_theme_path = themes_dir.join(format!("{name}.toml"));
 
-    if new_theme_path.exists() {
-        return Err(Error::config(format!("Theme '{name}' already exists")));
-    }
-
     let source_content = match from {
         Some(base) => ThemeManager::theme_source_content(base)?,
-        None => ThemeManager::default_theme_template().to_owned(),
+        None => crate::config::defaults::DEFAULT_THEME_CONTENT.to_owned(),
     };
 
-    std::fs::write(&new_theme_path, &source_content)
-        .map_err(|e| Error::config(format!("Failed to write theme file: {e}")))?;
+    crate::fs_util::create_new(&new_theme_path, source_content.as_bytes()).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::config(format!("theme '{name}' already exists"))
+        } else {
+            Error::config(format!("failed to write theme file: {e}"))
+        }
+    })?;
 
     match from {
         Some(base) => println!(
@@ -320,20 +265,17 @@ pub fn save(name: Option<&str>) -> Result<()> {
     let active_theme = config.ui.theme.as_str().to_owned();
 
     let target_name = name.unwrap_or(active_theme.as_str());
-    if !config::types::is_safe_config_name(target_name) {
-        return Err(Error::config(format!(
-            "invalid theme name '{target_name}': must not contain path separators, '..', or control characters"
-        )));
-    }
+    validate_config_name("theme", target_name)?;
 
     let source_content = ThemeManager::theme_source_content(&active_theme)?;
 
     let themes_dir = ThemeManager::user_themes_dir();
     std::fs::create_dir_all(&themes_dir)
-        .map_err(|e| Error::config(format!("Failed to create themes directory: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to create themes directory: {e}")))?;
     let target_path = themes_dir.join(format!("{target_name}.toml"));
 
-    if save_requires_confirmation(name, target_path.exists()) {
+    let target_exists = target_path.exists();
+    if save_requires_confirmation(name, target_exists) {
         let prompt = if name.is_none() {
             format!(
                 "Overwrite current theme '{target_name}' with its current configuration? [y/N] "
@@ -347,8 +289,18 @@ pub fn save(name: Option<&str>) -> Result<()> {
         }
     }
 
-    std::fs::write(&target_path, &source_content)
-        .map_err(|e| Error::config(format!("Failed to write theme file: {e}")))?;
+    let written = if target_exists {
+        crate::fs_util::write_atomically(&target_path, source_content.as_bytes())
+    } else {
+        crate::fs_util::create_new(&target_path, source_content.as_bytes())
+    };
+    written.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::config(format!("theme '{target_name}' already exists"))
+        } else {
+            Error::config(format!("failed to write theme file: {e}"))
+        }
+    })?;
 
     println!("Saved theme: {}", target_path.display());
     println!("Edit: {}", target_path.display());
@@ -371,12 +323,12 @@ fn confirm(prompt: &str) -> Result<bool> {
     print!("{prompt}");
     std::io::stdout()
         .flush()
-        .map_err(|e| Error::config(format!("Failed to write prompt: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to write prompt: {e}")))?;
 
     let mut answer = String::new();
     std::io::stdin()
         .read_line(&mut answer)
-        .map_err(|e| Error::config(format!("Failed to read confirmation: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to read confirmation: {e}")))?;
 
     Ok(parse_confirmation(&answer))
 }
@@ -400,20 +352,38 @@ impl ValidatableResource for ThemeResource {
         Ok(cfg.ui.theme.to_string())
     }
 
-    fn validate_name(name: &str) -> Result<()> {
+    fn validate_name(name: &str) -> std::result::Result<(), Failure> {
         validate_theme_name(name)
     }
 
-    fn validate_file(path: &Path) -> Result<()> {
+    fn validate_file(path: &Path) -> std::result::Result<(), Failure> {
         validate_theme_file(path)
     }
 
     fn not_a_file_error(path: &Path) -> Error {
-        Error::config(format!("Theme path '{}' is not a file", path.display()))
+        Error::config(format!("theme path '{}' is not a file", path.display()))
     }
 
-    fn hints(message: &str) -> Vec<&'static str> {
-        theme_validation_hints(message)
+    fn hints(kind: FailureKind) -> &'static [&'static str] {
+        match kind {
+            FailureKind::Color => &["Use named colors, ANSI 0-255, or #RRGGBB values."],
+            FailureKind::IconControlChars => &["Remove control characters from icon values."],
+            FailureKind::Parse => {
+                &["Run `gpy theme validate <theme-file>` after fixing TOML syntax."]
+            }
+            FailureKind::Schema => &[
+                "Use named colors, ANSI 0-255, or #RRGGBB values.",
+                "Remove control characters from icon values.",
+            ],
+            FailureKind::NotAFile => &["Pass a theme name or a direct path to a .toml file."],
+            FailureKind::UnknownName => {
+                &["Confirm the theme is in ~/.config/gpy/themes or provided by a plugin."]
+            }
+            FailureKind::Template => &["Fix the segment `format` template named in the reason."],
+            FailureKind::Other => {
+                &["Re-run `gpy theme validate` after correcting the reported field."]
+            }
+        }
     }
 }
 
@@ -422,82 +392,84 @@ impl ValidatableResource for ThemeResource {
 /// [`ThemeManager::new`] falls back to the default theme for unknown names so
 /// rendering keeps working; validation must not, or it would validate the
 /// default theme and report success for a name that exists nowhere.
-fn ensure_theme_discovered(theme_name: &str) -> Result<()> {
+fn ensure_theme_discovered(theme_name: &str) -> std::result::Result<(), Failure> {
     if ThemeManager::discover_available_themes()
         .iter()
         .any(|theme| theme.name == theme_name)
     {
         return Ok(());
     }
-    Err(Error::config(format!(
-        "No discovered theme named '{theme_name}'"
-    )))
+    Err(Failure::new(
+        FailureKind::UnknownName,
+        Error::config(format!("no discovered theme named '{theme_name}'")),
+    ))
+}
+
+/// Tag a theme load `error` by what is wrong with the theme `file`: the theme
+/// parser reports syntax and value errors as plain text, so the file is
+/// re-read. Without a file, the typed source of `error` decides.
+fn classify_load_failure(error: Error, file: Option<&Path>) -> Failure {
+    let file_problem = file
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| {
+            if toml::from_str::<toml::Table>(&text).is_err() {
+                Some(FailureKind::Parse)
+            } else if toml::from_str::<ThemeConfig>(&text).is_err() {
+                Some(FailureKind::Schema)
+            } else {
+                None
+            }
+        });
+    match file_problem {
+        Some(kind) => Failure::new(kind, error),
+        None => Failure::from(error),
+    }
+}
+
+/// The discovered theme called `name`, if any.
+fn discovered_theme(name: &str) -> Option<config::discovery::Discovered> {
+    ThemeManager::discover_available_themes()
+        .into_iter()
+        .find(|theme| theme.name == name)
 }
 
 /// Every theme-name validation entry point (`theme validate`, `doctor`,
 /// `config set ui.theme`) funnels through here.
-fn validate_theme_name(theme_name: &str) -> Result<()> {
-    validate_theme_name_detailed(theme_name).map_err(|failure| match failure {
-        ThemeCheckError::Load(e) | ThemeCheckError::Templates(e) => e,
-    })
-}
-
-fn validate_theme_name_detailed(theme_name: &str) -> std::result::Result<(), ThemeCheckError> {
-    // Load first: `ThemeManager::new` gives the more specific name-safety and
-    // parse errors; only a name loaded via the default fallback reaches discovery.
-    let manager = ThemeManager::new(theme_name).map_err(ThemeCheckError::Load)?;
-    ensure_theme_discovered(theme_name).map_err(ThemeCheckError::Load)?;
+fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
+    validate_config_name("theme", theme_name)
+        .map_err(|error| Failure::new(FailureKind::UnknownName, error))?;
+    // Load first: `ThemeManager::new` gives the more specific parse errors;
+    // only a name loaded via the default fallback reaches discovery.
+    let manager =
+        ThemeManager::new(theme_name).map_err(|error| match discovered_theme(theme_name) {
+            Some(theme) => classify_load_failure(error, theme.path.as_deref()),
+            None => Failure::new(FailureKind::UnknownName, error),
+        })?;
+    ensure_theme_discovered(theme_name)?;
     let theme = manager.get();
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
-    crate::config::validation::templates::validate_segment_templates(&theme, &palette)
-        .map_err(|e| ThemeCheckError::Templates(Error::config(e.to_string())))?;
-    Ok(())
+    validate_templates(&theme, &palette)
 }
 
-fn validate_theme_file(path: &Path) -> Result<()> {
-    let theme = config::loader::load_theme_from_path(&path.display().to_string())?;
+fn validate_theme_file(path: &Path) -> std::result::Result<(), Failure> {
+    let theme = config::loader::load_theme_from_path(path)
+        .map_err(|error| classify_load_failure(error, Some(path)))?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
-    crate::config::validation::templates::validate_segment_templates(&theme, &palette)
-        .map_err(|e| Error::config(e.to_string()))?;
-    Ok(())
+    validate_templates(&theme, &palette)
 }
 
-fn theme_validation_hints(message: &str) -> Vec<&'static str> {
-    let lowered = message.to_ascii_lowercase();
-    let mut hints = Vec::new();
-
-    if lowered.contains("invalid color") {
-        hints.push("Use named colors, ANSI 0-255, or #RRGGBB values.");
-    }
-    if lowered.contains("icon") && lowered.contains("empty") {
-        hints.push("Set icon fields to a non-empty glyph or remove the key.");
-    }
-    if lowered.contains("control characters") {
-        hints.push("Remove control characters from icon values.");
-    }
-    if lowered.contains("toml parsing failed") || lowered.contains("parse theme toml") {
-        hints.push("Run `gpy theme validate <theme-file>` after fixing TOML syntax.");
-    }
-    if lowered.contains("theme path") && lowered.contains("not a file") {
-        hints.push("Pass a theme name or a direct path to a .toml file.");
-    }
-    if lowered.contains("invalid theme name") || lowered.contains("no discovered theme") {
-        hints.push("Confirm the theme is in ~/.config/gpy/themes or provided by a plugin.");
-    }
-    if hints.is_empty() {
-        hints.push("Re-run `gpy theme validate` after correcting the reported field.");
-    }
-    hints
+fn validate_templates(
+    theme: &ThemeConfig,
+    palette: &crate::template::Palette,
+) -> std::result::Result<(), Failure> {
+    crate::config::validation::templates::validate_segment_templates(theme, palette)
+        .map_err(|error| Failure::new(FailureKind::Template, Error::from(error)))
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{parse_confirmation, save_requires_confirmation};
 

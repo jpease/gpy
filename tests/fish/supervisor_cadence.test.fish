@@ -7,10 +7,13 @@
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
 # real, live dogfooding daemon's cache.
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 source fish/core/init.fish
 source fish/core/ipc.fish
+source fish/core/supervisor.fish
 
 # Stub agent restart to fail so we exercise retry logic
 functions -e __gpy_agent_restart 2>/dev/null
@@ -75,18 +78,18 @@ set -g __supervisor_sleep_calls
 __gpy_agent_supervisor_loop
 
 if test $__restart_calls -ne 2
-    echo "❌ Expected supervisor to attempt 2 restarts, got $__restart_calls"
+    fail "Expected supervisor to attempt 2 restarts, got $__restart_calls"
     exit 1
 end
 
 if not contains -- $GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS $__supervisor_sleep_calls
-    echo "❌ Supervisor failed to respect GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=$GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS (sleep calls: $__supervisor_sleep_calls)"
+    fail "Supervisor failed to respect GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=$GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS (sleep calls: $__supervisor_sleep_calls)"
     exit 1
 end
 
 if not contains -- $GPY_SUPERVISOR_LONG_BACKOFF_SECONDS $__supervisor_sleep_calls
-    echo "❌ Supervisor failed to respect GPY_SUPERVISOR_LONG_BACKOFF_SECONDS=$GPY_SUPERVISOR_LONG_BACKOFF_SECONDS (sleep calls: $__supervisor_sleep_calls)"
+    fail "Supervisor failed to respect GPY_SUPERVISOR_LONG_BACKOFF_SECONDS=$GPY_SUPERVISOR_LONG_BACKOFF_SECONDS (sleep calls: $__supervisor_sleep_calls)"
     exit 1
 end
 
-echo "✅ Supervisor honours restart cadence derived from config"
+test_finish "Supervisor honours restart cadence derived from config"

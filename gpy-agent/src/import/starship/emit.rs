@@ -2,13 +2,14 @@
 
 use crate::config::LanguageTheme;
 use crate::config::defaults::{STARSHIP_PALETTE_CONTENT, STARSHIP_THEME_CONTENT};
+use crate::import::starship::error::{ImportError, Result};
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::modules::{
     translate_character, translate_directory, translate_directory_layout, translate_duration,
     translate_git, translate_hostname, translate_languages, translate_time, translate_username,
 };
 use crate::import::starship::palette::{selected_palette, translate_palette};
-use crate::import::starship::{ImportError, Result, Warnings, layout};
+use crate::import::starship::{Warnings, layout};
 use crate::palette::config::PaletteConfig;
 use crate::template::{Color, parse_color};
 use crate::theme::{
@@ -35,9 +36,10 @@ impl ImportArtifacts {
     /// Serialize the theme to TOML with a provenance header.
     ///
     /// # Errors
-    /// Returns [`ImportError::Parse`] if `theme` fails to serialize.
+    /// Returns [`ImportError::Serialize`] if `theme` fails to serialize.
     pub fn theme_toml(&self) -> Result<String> {
-        let body = toml::to_string(&self.theme).map_err(|error| ImportError::Parse {
+        let body = toml::to_string(&self.theme).map_err(|error| ImportError::Serialize {
+            artifact: "theme",
             message: error.to_string(),
         })?;
         Ok(format!("{}{body}", header("theme", &self.palette_name)))
@@ -46,9 +48,10 @@ impl ImportArtifacts {
     /// Serialize the palette to TOML with a provenance header.
     ///
     /// # Errors
-    /// Returns [`ImportError::Parse`] if `palette` fails to serialize.
+    /// Returns [`ImportError::Serialize`] if `palette` fails to serialize.
     pub fn palette_toml(&self) -> Result<String> {
-        let body = toml::to_string(&self.palette).map_err(|error| ImportError::Parse {
+        let body = toml::to_string(&self.palette).map_err(|error| ImportError::Serialize {
+            artifact: "palette",
             message: error.to_string(),
         })?;
         Ok(format!("{}{body}", header("palette", &self.palette_name)))
@@ -194,16 +197,13 @@ fn add_preset_language_roles(
     }
 }
 
-/// A flat UI (transparent delimiters), approximating Starship's default look.
-fn flat_ui() -> UiTheme {
-    UiTheme::default()
-}
-
 /// Build the theme's `[ui]` block; two-line when `format` is absent or uses `$line_break`.
 fn build_ui(model: &StarshipConfig, warnings: &mut Warnings) -> UiTheme {
-    let mut ui = flat_ui();
-    ui.add_newline = model.add_newline.unwrap_or(true);
-    ui.two_line = model.format.as_deref().is_none_or(layout::has_line_break);
+    let mut ui = UiTheme {
+        add_newline: model.add_newline.unwrap_or(true),
+        two_line: model.format.as_deref().is_none_or(layout::has_line_break),
+        ..UiTheme::default()
+    };
     let Some(table) = model.module_table("directory") else {
         return ui;
     };
@@ -226,11 +226,6 @@ fn header(kind: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{ImportArtifacts, build};
     use crate::config::types::ColorSpec;

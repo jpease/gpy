@@ -13,7 +13,7 @@ run through all three shells by `tests/bash/shell_contract.test.bash`.
 ## Running
 
 ```bash
-./scripts/test_fish.sh                     # syntax, formatting, then every *.test.fish
+./scripts/test-fish.sh                     # syntax, formatting, then every *.test.fish
 fish tests/fish/init_integration.test.fish # one file, from any directory
 ```
 
@@ -35,6 +35,11 @@ never an installed `gpy-agent`.
   guard kills those (by PID or by the socket they hold, never by process
   name) and removes the directories on every exit path, including a failed
   assertion, `test_skip`, SIGINT and SIGTERM.
+- A test that needs a stand-in agent on a Unix socket (silent, slow,
+  answering, cut off mid-reply, or a socket file nobody listens on) uses
+  `test_stub_listener SOCKET MODE [OPTION...]`, which runs
+  `tests/lib/stub_listener.py` and registers it with the guard; never an
+  inline Python listener. `test_stop_pids $test_stub_pid` stops it early.
 - A test that cannot run because a prerequisite is missing calls
   `test_skip "reason"`: it passes locally and fails under `CI`.
 - Find the repository root from the file (`status --filename`) so the test

@@ -10,17 +10,8 @@
 # A non-numeric IPC budget falls back to 150 ms inside __gpy_ms_to_secs.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
-
-failures=0
-check() {
-    if [[ "$3" == "$2" ]]; then
-        echo "PASS: $1"
-    else
-        echo "FAIL: $1 (expected [$2], got [$3])"
-        failures=$((failures + 1))
-    fi
-}
 
 # constants_with VAR=VALUE...: "ipc git lang" as a child zsh sees them.
 constants_with() {
@@ -66,5 +57,4 @@ touch -t 200001010000 "$entry"
 __gpy_read_instant_cache git "$tmp/repo" "" ignored 2>/dev/null
 check "a non-numeric TTL falls back to the default and ages an old entry to stale" "2" "$?"
 
-(( failures == 0 )) || exit 1
-echo "PASS: zsh env knobs"
+test_finish "zsh env knobs"

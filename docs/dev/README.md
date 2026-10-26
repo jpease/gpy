@@ -13,6 +13,7 @@
 - [Plugin Framework](plugins.md) - Manifest, discovery, and runtime segment loading contract.
 - [Build a Segment Plugin](build-segment-plugin.md) - Step-by-step guide for community segment plugins.
 - [Create a Theme](create-theme.md) - Step-by-step guide for community theme authors.
+- [Starship Importer](starship-import.md) - CLI flags, module-by-module mapping, and style translation rules.
 - [Plugin + Theme Authoring](plugin-theme-authoring.md) - Short index for extension authoring docs.
 
 Plugin segments from v1 `.fish` files load in Fish only; see [Plugin Framework](plugins.md#segment-runtime-contract).

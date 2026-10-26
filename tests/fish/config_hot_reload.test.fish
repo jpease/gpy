@@ -1,6 +1,8 @@
 #!/usr/bin/env fish
 # Verifies that theme reload updates prompt-related vars without restarting.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l temp_root (mktemp -d)
 set -l config_dir "$temp_root/gpy"
 mkdir -p $config_dir
@@ -34,7 +36,7 @@ cd $_fake_project
 echo "Initial render uses versions"
 set rendered (segment_language_render last)
 if not string match -q '*1.23*' -- $rendered
-    echo "❌ Expected version in initial render, got '$rendered'"
+    fail "Expected version in initial render, got '$rendered'"
     exit 1
 end
 
@@ -45,7 +47,7 @@ gpy-agent theme export --format fish 2>/dev/null | source
 
 set rendered (segment_language_render last)
 if string match -q '*1.23*' -- $rendered
-    echo "❌ Expected version to be hidden after reload, got '$rendered'"
+    fail "Expected version to be hidden after reload, got '$rendered'"
     exit 1
 end
 
@@ -55,14 +57,14 @@ printf "[language]\nenabled = false\nshow_versions = false\n\n[ui]\nshow_icons =
 gpy-agent theme export --format fish 2>/dev/null | source
 
 if segment_language_detect
-    echo "❌ Language segment should not detect when disabled"
+    fail "Language segment should not detect when disabled"
     exit 1
 end
 
 set rendered (segment_language_render last)
 if test -n "$rendered"
-    echo "❌ Expected no render output when disabled, got '$rendered'"
+    fail "Expected no render output when disabled, got '$rendered'"
     exit 1
 end
 
-echo "✅ Config hot reload updates prompt state"
+test_finish "Config hot reload updates prompt state"

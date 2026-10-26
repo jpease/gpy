@@ -20,34 +20,21 @@ if ! zmodload zsh/net/socket 2>/dev/null; then
 fi
 
 test_tmp_dir=$(mktemp -d)
+cleanup() {
+    shell_e2e_kill_tracked
+    rm -rf "$test_tmp_dir"
+}
+trap cleanup EXIT
+
 sock="$test_tmp_dir/gpy-whitespace-test.sock"
 reply='  ❯ \D{%H} '
-
-python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-conn.recv(4096)
-conn.sendall(sys.argv[2].encode() + b"\n")
-conn.close()
-' "$sock" "$reply" &
-listener_pid=$!
-disown 2>/dev/null
-
-if ! shell_e2e_poll 2 test -S "$sock"; then
-    kill -9 "$listener_pid" 2>/dev/null
-    rm -rf "$test_tmp_dir"
-    test_skip "could not create test Unix socket listener"
-fi
+shell_e2e_stub_listener "$sock" reply --reply "$reply"
 
 export GPY_AGENT_SOCKET_PATH="$sock"
 result="$(__gpy_send_json '{"op":"ping"}'; print -n x)"
 result="${result%x}"
 
-kill -9 "$listener_pid" 2>/dev/null
-rm -rf "$test_tmp_dir"
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 
 if [[ "$result" == "$reply"$'\n' ]]; then
     pass "zsocket read preserves leading/trailing whitespace and backslashes"

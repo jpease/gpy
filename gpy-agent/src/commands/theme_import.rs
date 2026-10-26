@@ -3,8 +3,8 @@
 //! Pure translation lives in [`crate::import::starship`]; unsupported Starship
 //! constructs become stderr warnings and the import still exits 0.
 
-use crate::config::discovery::shadowed_provider;
-use crate::config::types::is_safe_config_name;
+use crate::commands::output;
+use crate::config::discovery::{shadowed_provider, validate_config_name};
 use crate::import::starship::{ImportArtifacts, build, parse};
 use crate::palette::manager::PaletteManager;
 use crate::theme::ThemeManager;
@@ -63,16 +63,13 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
             opts.path
         )));
     }
-    let input = std::fs::read_to_string(source_path)
-        .map_err(|error| Error::config(format!("failed to read '{}': {error}", opts.path)))?;
-    let model = parse(&input).map_err(|error| Error::config(error.to_string()))?;
+    let input = std::fs::read_to_string(source_path).map_err(|error| {
+        Error::io_context(format_args!("failed to read '{}'", opts.path), &error)
+    })?;
+    let model = parse(&input)?;
     let name = derive_name(opts.path, opts.name);
-    if !is_safe_config_name(&name) {
-        return Err(Error::config(format!(
-            "invalid artifact name '{name}': must not contain path separators, '..', or control characters"
-        )));
-    }
-    let artifacts = build(&model, &name).map_err(|error| Error::config(error.to_string()))?;
+    validate_config_name("artifact", &name)?;
+    let artifacts = build(&model, &name)?;
 
     if opts.output == ImportOutput::Stdout {
         print_stdout(&artifacts)?;
@@ -90,12 +87,8 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
 }
 
 fn print_stdout(artifacts: &ImportArtifacts) -> Result<()> {
-    let palette_toml = artifacts
-        .palette_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
-    let theme_toml = artifacts
-        .theme_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
+    let palette_toml = artifacts.palette_toml()?;
+    let theme_toml = artifacts.theme_toml()?;
     println!("# ---- palette ----");
     println!("{palette_toml}");
     println!("# ---- theme ----");
@@ -129,24 +122,26 @@ fn write_files(artifacts: &ImportArtifacts, name: &str, force: bool) -> Result<(
     for path in [&palette_path, &theme_path] {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
-                Error::config(format!("failed to create {}: {error}", parent.display()))
+                Error::io_context(
+                    format_args!("failed to create {}", parent.display()),
+                    &error,
+                )
             })?;
         }
     }
-    let palette_toml = artifacts
-        .palette_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
-    let theme_toml = artifacts
-        .theme_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
+    let palette_toml = artifacts.palette_toml()?;
+    let theme_toml = artifacts.theme_toml()?;
     std::fs::write(&palette_path, &palette_toml).map_err(|error| {
-        Error::config(format!(
-            "failed to write {}: {error}",
-            palette_path.display()
-        ))
+        Error::io_context(
+            format_args!("failed to write {}", palette_path.display()),
+            &error,
+        )
     })?;
     std::fs::write(&theme_path, &theme_toml).map_err(|error| {
-        Error::config(format!("failed to write {}: {error}", theme_path.display()))
+        Error::io_context(
+            format_args!("failed to write {}", theme_path.display()),
+            &error,
+        )
     })?;
     Ok(())
 }
@@ -170,18 +165,18 @@ fn refuse_shadowing(name: &str) -> Result<()> {
 
 fn print_activation_hints(artifacts: &ImportArtifacts, name: &str) {
     println!("Imported starship config into palette + theme '{name}'");
-    println!("   gpy palette use {name}");
-    println!("   gpy theme use {name}");
+    output::detail(format_args!("gpy palette use {name}"));
+    output::detail(format_args!("gpy theme use {name}"));
     if !artifacts.segments.is_empty() {
         let quoted: Vec<String> = artifacts
             .segments
             .iter()
             .map(|s| format!("\"{s}\""))
             .collect();
-        println!(
-            "   # recommended segment order (paste into config.toml, or re-run with --apply-layout):"
+        output::detail(
+            "# recommended segment order (paste into config.toml, or re-run with --apply-layout):",
         );
-        println!("   enabled_segments = [{}]", quoted.join(", "));
+        output::detail(format_args!("enabled_segments = [{}]", quoted.join(", ")));
     }
 }
 
@@ -190,9 +185,9 @@ fn apply_layout(segments: &[String]) -> Result<()> {
     let original = crate::commands::utils::load_active_config(&path)?;
     let mut config = original.clone();
     config.ui.enabled_segments = segments.to_vec();
-    crate::commands::utils::save_config_to(&path, &original, &config, &[])?;
+    crate::config::loader::save_config(&path, &original, &config, &[])?;
     crate::commands::utils::reload_agent_and_notify();
-    println!("Applied enabled_segments to {path}");
+    println!("Applied enabled_segments to {}", path.display());
     Ok(())
 }
 
@@ -206,11 +201,6 @@ fn print_warnings(artifacts: &ImportArtifacts) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::derive_name;
 

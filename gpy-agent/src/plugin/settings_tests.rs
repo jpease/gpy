@@ -52,6 +52,15 @@ fn declared_settings_parse_with_types_defaults_and_constraints() {
     );
     assert_eq!(get("max_len").summary(), "int 0..=10");
     assert_eq!(get("style").summary(), "string bold|dim");
+    let int = |min, max| SettingDecl::Int {
+        default: 0,
+        min,
+        max,
+        description: None,
+    };
+    assert_eq!(int(Some(0), None).summary(), "int >=0");
+    assert_eq!(int(None, Some(10)).summary(), "int <=10");
+    assert_eq!(int(None, None).summary(), "int");
     assert_eq!(
         SettingKey::new("max_len").unwrap().env_var(),
         "GPY_OPT_max_len"
@@ -143,6 +152,10 @@ fn cli_strings_parse_by_declared_type() {
         description: None,
     };
     assert_eq!(boolean.parse_str("on").unwrap(), SettingValue::Bool(true));
+    assert_eq!(
+        boolean.parse_str(" true\n").unwrap(),
+        SettingValue::Bool(true)
+    );
     assert!(boolean.parse_str("maybe").is_err());
     let int = SettingDecl::Int {
         default: 0,

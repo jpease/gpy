@@ -34,20 +34,8 @@ source (dirname (status -f))/../lib/test_helpers.fish
 # can silently drop the private-use character from this file.
 set -g BRANCH_GLYPH (printf '\xee\x82\xa0')
 
-set -g __content_pass 0
-set -g __content_fail 0
 set -g __render_last ""
 set -g __show_icons true
-
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        set -g __content_pass (math $__content_pass + 1)
-        print_test_result "$label" PASS
-    else
-        set -g __content_fail (math $__content_fail + 1)
-        print_test_result "$label" FAIL "$detail"
-    end
-end
 
 # SGR colour escapes and the default theme's powerline chevrons
 # (U+E0B0..U+E0BF) both go, leaving the text a person reads. `string` inside
@@ -129,9 +117,9 @@ end
 # Assert with polling: every token in $wanted present, none of $unwanted.
 function assert_render --argument-names label cwd wanted unwanted
     if wait_render $cwd "$wanted" "$unwanted"
-        check "$label" 1
+        pass "$label"
     else
-        check "$label" 0 "wanted [$wanted] without [$unwanted]; last render: "(string escape -- "$__render_last")
+        fail "$label" "wanted [$wanted] without [$unwanted]; last render: "(string escape -- "$__render_last")
     end
 end
 
@@ -193,9 +181,9 @@ function test_git_content --argument-names repo
         $repo "feature/x|$BRANCH_GLYPH feature/x|↑2|✱1|?1|≡1| repo " "↓"
     set -l render $__render_last
     if string match -q '*{"*' -- "$render"; or string match -q '*"op"*' -- "$render"
-        check "git: no JSON leaks into the prompt" 0 "$render"
+        fail "git: no JSON leaks into the prompt" "$render"
     else
-        check "git: no JSON leaks into the prompt" 1
+        pass "git: no JSON leaks into the prompt"
     end
 
     # Detached HEAD: the branch glyph becomes the detached marker and the
@@ -259,9 +247,9 @@ function test_language_content
         test (string match -ra 'rust|node' -- "$__render_last" | count) -eq 1
     end
     if poll_until 10 __one_language
-        check "language: filter = primary names exactly one language" 1
+        pass "language: filter = primary names exactly one language"
     else
-        check "language: filter = primary names exactly one language" 0 "$__render_last"
+        fail "language: filter = primary names exactly one language" "$__render_last"
     end
 
     # Python with a project venv: the version comes from the venv's
@@ -305,9 +293,9 @@ function test_directory_content --argument-names repo
         set -l expected (string split -m1 '|' -- $case)[2]
         write_config '[ui.directory]' "display = \"$mode\""
         if wait_directory $deep "$expected"
-            check "directory: display = $mode renders '$expected'" 1
+            pass "directory: display = $mode renders '$expected'"
         else
-            check "directory: display = $mode renders '$expected'" 0 "got '$__render_last'"
+            fail "directory: display = $mode renders '$expected'" "got '$__render_last'"
         end
     end
 
@@ -315,16 +303,16 @@ function test_directory_content --argument-names repo
     # root the repo folder is the leading one of those three.
     write_config '[ui.directory]' 'display = "truncated"' 'truncate_to_repo = true'
     if wait_directory $deep repo/b/c
-        check "directory: truncate_to_repo anchors at the repo root" 1
+        pass "directory: truncate_to_repo anchors at the repo root"
     else
-        check "directory: truncate_to_repo anchors at the repo root" 0 "got '$__render_last'"
+        fail "directory: truncate_to_repo anchors at the repo root" "got '$__render_last'"
     end
 
     write_config '[ui.directory]' 'display = "full"' 'max_length = 6'
     if wait_directory $deep "...b/c"
-        check "directory: max_length = 6 keeps an ellipsis plus the tail" 1
+        pass "directory: max_length = 6 keeps an ellipsis plus the tail"
     else
-        check "directory: max_length = 6 keeps an ellipsis plus the tail" 0 "got '$__render_last'"
+        fail "directory: max_length = 6 keeps an ellipsis plus the tail" "got '$__render_last'"
     end
 end
 
@@ -364,17 +352,17 @@ function test_icons_off_draws_no_powerline_caps --argument-names repo
     # Control: with icons on the same render does carry powerline caps, so
     # the icons-off assertion below cannot pass on an empty render.
     if wait_powerline_cap $repo 1
-        check "icons on: the prompt carries powerline caps (control)" 1
+        pass "icons on: the prompt carries powerline caps (control)"
     else
-        check "icons on: the prompt carries powerline caps (control)" 0 (string escape -- "$__render_last")
+        fail "icons on: the prompt carries powerline caps (control)" (string escape -- "$__render_last")
     end
 
     set -g __show_icons false
     write_config
     if wait_powerline_cap $repo 0
-        check "icons off: the prompt carries no powerline cap" 1
+        pass "icons off: the prompt carries no powerline cap"
     else
-        check "icons off: the prompt carries no powerline cap" 0 (string escape -- "$__render_last")
+        fail "icons off: the prompt carries no powerline cap" (string escape -- "$__render_last")
     end
 end
 
@@ -399,23 +387,23 @@ function test_prompt_frame
 
     set -l nerd (frame_render 'set -g __prompt_icons nerd' '')
     if text_matches "$nerd" "❯|✔" ""
-        check "frame: nerd icons render ✔ and ❯" 1
+        pass "frame: nerd icons render ✔ and ❯"
     else
-        check "frame: nerd icons render ✔ and ❯" 0 "$nerd"
+        fail "frame: nerd icons render ✔ and ❯" "$nerd"
     end
 
     set -l ascii (frame_render 'set -g __prompt_icons ascii' '')
     if text_matches "$ascii" "ok |> " "❯|✔"
-        check "frame: ascii icons render ok and >" 1
+        pass "frame: ascii icons render ok and >"
     else
-        check "frame: ascii icons render ok and >" 0 "$ascii"
+        fail "frame: ascii icons render ok and >" "$ascii"
     end
 
     set -l root (frame_render '' 'set -g __gpy_is_root 1; function __gpy_request_character; echo CHARACTER-REQUESTED; end')
     if text_matches "$root" '!❯!' CHARACTER-REQUESTED
-        check "frame: root prompt renders !❯! without asking the agent for a character" 1
+        pass "frame: root prompt renders !❯! without asking the agent for a character"
     else
-        check "frame: root prompt renders !❯! without asking the agent for a character" 0 "$root"
+        fail "frame: root prompt renders !❯! without asking the agent for a character" "$root"
     end
 end
 
@@ -428,11 +416,11 @@ set -l repo $HOME/repo
 make_repo $repo
 
 if not start_test_agent
-    print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+    fail "Agent Start" "gpy-agent failed to start"
     cleanup_test_files
     exit 1
 end
-print_test_result "Agent Start" PASS
+pass "Agent Start"
 
 test_git_content $repo
 test_language_content
@@ -442,6 +430,4 @@ test_icons_off_draws_no_powerline_caps $repo
 
 cleanup_test_files
 
-echo ""
-echo "Passed: $__content_pass  Failed: $__content_fail"
-test $__content_fail -eq 0
+test_finish "E2E prompt content"

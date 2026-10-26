@@ -104,6 +104,15 @@ pub fn xdg_value(value: Option<&str>, os: Os) -> Option<&str> {
     })
 }
 
+/// [`xdg_value`] for a non-UTF-8-capable path, with the same absoluteness rules.
+#[must_use]
+pub fn xdg_path(value: Option<&Path>, os: Os) -> Option<&Path> {
+    value.filter(|path| match os {
+        Os::Unix => path.as_os_str().as_encoded_bytes().first() == Some(&b'/'),
+        Os::Windows => is_absolute_windows(&path.to_string_lossy()),
+    })
+}
+
 /// Whether `value` is absolute under Windows rules (POSIX-style `/` included).
 fn is_absolute_windows(value: &str) -> bool {
     if value.starts_with('/') || value.starts_with('\\') {
@@ -121,9 +130,13 @@ fn is_absolute_windows(value: &str) -> bool {
 /// `HOME` counts as none.
 #[must_use]
 pub fn home_dir() -> Option<String> {
-    ambient_home()
-        .filter(|path| path.is_absolute())
-        .map(|path| path.to_string_lossy().into_owned())
+    home_path().map(|path| path.to_string_lossy().into_owned())
+}
+
+/// [`home_dir`] without the UTF-8 round trip.
+#[must_use]
+pub fn home_path() -> Option<PathBuf> {
+    ambient_home().filter(|path| path.is_absolute())
 }
 
 #[cfg(not(test))]
@@ -167,9 +180,27 @@ pub fn root_var(key: &str) -> Option<String> {
 }
 
 /// Per-process stand-in for HOME and the XDG roots, emptied on first use.
+/// Lives at `$TMPDIR/gpy-lib-test/<pid>`; creating it also removes the
+/// siblings of processes that have exited, so runs do not accumulate roots.
 #[cfg(test)]
 static TEST_ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
-    let root = std::env::temp_dir().join(format!("gpy-lib-test-{}", std::process::id()));
+    let parent = std::env::temp_dir().join("gpy-lib-test");
+    let pid = std::process::id();
+    if let Ok(entries) = std::fs::read_dir(&parent) {
+        for entry in entries.flatten() {
+            let stale = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+                .is_some_and(|other| {
+                    other != pid && !crate::ipc::ClientDirectory::is_client_alive(other)
+                });
+            if stale {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let root = parent.join(pid.to_string());
     let _ = std::fs::remove_dir_all(&root);
     root
 });
@@ -223,6 +254,35 @@ pub fn runtime_root_for(
 /// Overrides the default agent socket path (`--socket`, tests, fixed deployments).
 pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
+/// Sets the socket override path.
+///
+/// # Errors
+/// Returns an error if a conflicting socket override was already set.
+pub fn set_socket_override(path: &Path) -> crate::Result<()> {
+    let absolute = absolutize(path);
+    if let Some(existing) = SOCKET_OVERRIDE.get() {
+        if existing.as_path() != absolute.as_path() {
+            return Err(crate::Error::invalid(format!(
+                "conflicting socket override: existing={}, requested={}",
+                existing.display(),
+                absolute.display()
+            )));
+        }
+        return Ok(());
+    }
+    if SOCKET_OVERRIDE.set(absolute.clone()).is_err()
+        && let Some(existing) = SOCKET_OVERRIDE.get()
+        && existing.as_path() != absolute.as_path()
+    {
+        return Err(crate::Error::invalid(format!(
+            "conflicting socket override: existing={}, requested={}",
+            existing.display(),
+            absolute.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
 /// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches the shells).
 /// Never creates it; `gpy-agent start` does (`lifecycle::ensure_runtime_dir`).
@@ -248,16 +308,20 @@ pub fn get_socket_path() -> crate::Result<PathBuf> {
 /// The configured socket path before the length check, for diagnostics.
 #[must_use]
 pub fn resolve_socket_path() -> PathBuf {
-    if let Some(override_path) = SOCKET_OVERRIDE.get() {
-        return override_path.clone();
-    }
+    socket_override().unwrap_or_else(|| runtime_dir().join("gpy.sock"))
+}
 
-    // Empty means unset, matching Bash and Zsh.
-    if let Some(custom_path) = socket_path_override() {
-        return custom_path;
-    }
+/// The socket path set by `--socket` or `GPY_AGENT_SOCKET_PATH`, if any.
+#[must_use]
+pub fn socket_override() -> Option<PathBuf> {
+    SOCKET_OVERRIDE.get().cloned().or_else(socket_path_override)
+}
 
-    runtime_dir().join("gpy.sock")
+/// Whether the socket path comes from `--socket` or `GPY_AGENT_SOCKET_PATH`
+/// rather than the default runtime directory.
+#[must_use]
+pub fn socket_is_overridden() -> bool {
+    SOCKET_OVERRIDE.get().is_some() || socket_path_override().is_some()
 }
 
 /// The `GPY_AGENT_SOCKET_PATH` override; empty counts as unset everywhere.

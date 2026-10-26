@@ -56,14 +56,14 @@ function test_expired_backoff_closes_the_breaker
     set -l rc $status
 
     if test $rc -ne 0
-        print_test_result "Expired backoff closes the breaker" FAIL "expected availability 0, got $rc"
+        fail "Expired backoff closes the breaker" "expected availability 0, got $rc"
         return 1
     end
     if test $__probe_ping_calls -ne 1
-        print_test_result "Expired backoff closes the breaker" FAIL "expected 1 ping, saw $__probe_ping_calls"
+        fail "Expired backoff closes the breaker" "expected 1 ping, saw $__probe_ping_calls"
         return 1
     end
-    print_test_result "Expired backoff closes the breaker" PASS
+    pass "Expired backoff closes the breaker"
     return 0
 end
 
@@ -78,14 +78,14 @@ function test_active_backoff_still_short_circuits
     set -l rc $status
 
     if test $rc -ne 1
-        print_test_result "Active backoff short-circuits" FAIL "expected availability 1, got $rc"
+        fail "Active backoff short-circuits" "expected availability 1, got $rc"
         return 1
     end
     if test $__probe_ping_calls -ne 0
-        print_test_result "Active backoff short-circuits" FAIL "expected no ping, saw $__probe_ping_calls"
+        fail "Active backoff short-circuits" "expected no ping, saw $__probe_ping_calls"
         return 1
     end
-    print_test_result "Active backoff short-circuits" PASS
+    pass "Active backoff short-circuits"
     return 0
 end
 
@@ -104,10 +104,10 @@ function test_stale_prompt_timestamp_does_not_hold_the_breaker_open
     set -l rc $status
 
     if test $rc -ne 0
-        print_test_result "Stale prompt timestamp ignored for expiry" FAIL "expected availability 0, got $rc"
+        fail "Stale prompt timestamp ignored for expiry" "expected availability 0, got $rc"
         return 1
     end
-    print_test_result "Stale prompt timestamp ignored for expiry" PASS
+    pass "Stale prompt timestamp ignored for expiry"
     return 0
 end
 
@@ -136,22 +136,17 @@ function test_breaker_opens_correctly_on_an_idle_shell
     __gpy_agent_available >/dev/null 2>&1
 
     if test $__probe_ping_calls -ne $after_threshold
-        print_test_result "Breaker opens despite stale prompt timestamp" FAIL \
+        fail "Breaker opens despite stale prompt timestamp" \
             "expected the 4th call to be suppressed, but it pinged (calls=$__probe_ping_calls)"
         return 1
     end
-    print_test_result "Breaker opens despite stale prompt timestamp" PASS
+    pass "Breaker opens despite stale prompt timestamp"
     return 0
 end
 
-set -g __probe_failures 0
+test_expired_backoff_closes_the_breaker
+test_active_backoff_still_short_circuits
+test_stale_prompt_timestamp_does_not_hold_the_breaker_open
+test_breaker_opens_correctly_on_an_idle_shell
 
-test_expired_backoff_closes_the_breaker; or set __probe_failures (math "$__probe_failures + 1")
-test_active_backoff_still_short_circuits; or set __probe_failures (math "$__probe_failures + 1")
-test_stale_prompt_timestamp_does_not_hold_the_breaker_open; or set __probe_failures (math "$__probe_failures + 1")
-test_breaker_opens_correctly_on_an_idle_shell; or set __probe_failures (math "$__probe_failures + 1")
-
-if test $__probe_failures -gt 0
-    exit 1
-end
-exit 0
+test_finish "agent circuit breaker expiry"

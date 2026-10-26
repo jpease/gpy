@@ -60,7 +60,7 @@ count_calls() {
 
 # Case 1: the export disables the supervisor after gpy.zsh loaded.
 run_case 0 '__gpy_supervisor_check; __gpy_supervisor_check; __gpy_supervisor_check' \
-    GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0
+    GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0
 starts=$(count_calls start)
 if [[ "$starts" == 0 ]]; then
     echo "PASS: [agent.supervisor] enabled = false stops the per-prompt check"
@@ -86,7 +86,7 @@ fi
 
 # Case 3: max_restart_attempts caps restarts.
 run_case 1 '__gpy_supervisor_check; __gpy_supervisor_check; __gpy_supervisor_check' \
-    GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0 GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1
+    GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0 GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1
 starts=$(count_calls start)
 if [[ "$starts" == 1 ]]; then
     echo "PASS: max_restart_attempts=1 allows one restart"

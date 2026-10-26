@@ -3,6 +3,7 @@
 #[cfg(unix)]
 use crate::warn_log;
 use crate::{Error, Result};
+use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -21,10 +22,19 @@ impl SafePath {
         Ok(Self(validated))
     }
 
-    /// Get the path as a string slice.
+    /// Get the path as a string slice, or `None` if it is not valid UTF-8.
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.to_str().unwrap_or_default()
+    pub fn as_str(&self) -> Option<&str> {
+        let opt = self.0.to_str();
+        if opt.is_none() {
+            #[cfg(unix)]
+            crate::warn_log!(
+                "security",
+                "SafePath is not valid UTF-8: {}",
+                self.0.display()
+            );
+        }
+        opt
     }
 
     /// Get the inner `Path` reference.
@@ -259,7 +269,7 @@ impl PidValidator {
 
 /// Global sliding-window connection rate limiter (one shared counter).
 pub struct RateLimiter {
-    connections: Vec<Instant>,
+    connections: VecDeque<Instant>,
     max_per_second: u32,
 }
 
@@ -268,7 +278,7 @@ impl RateLimiter {
     #[must_use]
     pub const fn new(max_per_second: u32) -> Self {
         Self {
-            connections: Vec::new(),
+            connections: VecDeque::new(),
             max_per_second,
         }
     }
@@ -284,11 +294,15 @@ impl RateLimiter {
         let one_second_ago = now.checked_sub(Duration::from_secs(1));
 
         // `None` only near the monotonic epoch, when nothing has aged out yet.
-        self.connections
-            .retain(|&time| one_second_ago.is_none_or(|cutoff| time > cutoff));
+        // Entries are pushed in non-decreasing time order, so expired ones sit at the front.
+        if let Some(cutoff) = one_second_ago {
+            while self.connections.front().is_some_and(|&time| time <= cutoff) {
+                self.connections.pop_front();
+            }
+        }
 
         if self.connections.len() < usize::try_from(self.max_per_second).unwrap_or(usize::MAX) {
-            self.connections.push(now);
+            self.connections.push_back(now);
             true
         } else {
             false
@@ -379,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_pid_validation() {
-        use crate::config::types::ClientPid;
+        use crate::ipc::ClientPid;
 
         assert!(!ClientPid::pid_in_range(0));
         assert!(!ClientPid::pid_in_range(4_194_305));
@@ -394,7 +408,7 @@ mod tests {
     /// Constructing a `ClientPid` must not probe liveness (route time only).
     #[test]
     fn test_client_pid_construction_does_not_probe_liveness() {
-        use crate::config::types::ClientPid;
+        use crate::ipc::ClientPid;
 
         let dead_pid = 4_194_303_u32;
         assert!(
@@ -431,5 +445,23 @@ mod tests {
         assert!(!limiter.allow_connection_at(base + Duration::from_secs(2)));
 
         assert!(limiter.allow_connection_at(base + Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn test_safepath_as_str() {
+        let safe = SafePath::new("./src").unwrap();
+        assert!(safe.as_str().is_some_and(|s| s.ends_with("src")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_safepath_as_str_non_utf8() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = b"/tmp/invalid-\xff\xfe";
+        let os_str = OsStr::from_bytes(bytes);
+        let safe = SafePath(PathBuf::from(os_str));
+        assert_eq!(safe.as_str(), None);
     }
 }

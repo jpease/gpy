@@ -7,7 +7,7 @@ function __gpy_hostname_trim --argument-names value delim
 end
 
 function __gpy_hostname_should_show --argument-names is_ssh show_always
-    test "$is_ssh" -eq 1; or test "$show_always" -eq 1
+    test "$is_ssh" = 1; or test "$show_always" = 1
 end
 
 function segment_hostname_detect

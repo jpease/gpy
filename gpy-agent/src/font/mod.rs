@@ -35,7 +35,7 @@ pub fn detect_nerd_font() -> FontCapability {
 /// Public so `gpy setup` can skip confirmation for an explicit user answer.
 #[must_use]
 pub fn override_from_env() -> Option<FontCapability> {
-    let raw = std::env::var("GPY_NERD_FONT").ok()?;
+    let raw = crate::env_config::env_string("GPY_NERD_FONT")?;
     match raw.trim().to_lowercase().as_str() {
         "1" | "true" | "yes" | "on" | "nerd" => Some(FontCapability::NerdFont),
         "0" | "false" | "no" | "off" | "none" | "ascii" => Some(FontCapability::NoNerdFont),
@@ -45,7 +45,6 @@ pub fn override_from_env() -> Option<FontCapability> {
 }
 
 /// Whether a font family or file name (case-insensitive) looks like a Nerd Font.
-#[must_use]
 fn name_is_nerd_font(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.contains("nerd font") || lower.contains("nerdfont") || lower.contains("nerd-font")
@@ -131,12 +130,11 @@ fn run_fc_list() -> Option<String> {
 #[cfg(target_os = "linux")]
 fn linux_font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(home_os) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home_os);
+    if let Some(home) = crate::paths::home_path() {
         dirs.push(home.join(".local/share/fonts"));
         dirs.push(home.join(".fonts"));
     }
-    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+    if let Some(data_home) = crate::paths::root_var_os("XDG_DATA_HOME") {
         dirs.push(PathBuf::from(data_home).join("fonts"));
     }
     dirs.push(PathBuf::from("/usr/share/fonts"));
@@ -152,8 +150,8 @@ fn detect_from_platform() -> FontCapability {
 #[cfg(target_os = "macos")]
 fn macos_font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join("Library/Fonts"));
+    if let Some(home) = crate::paths::home_path() {
+        dirs.push(home.join("Library/Fonts"));
     }
     dirs.push(PathBuf::from("/Library/Fonts"));
     dirs.push(PathBuf::from("/System/Library/Fonts"));
@@ -184,8 +182,6 @@ fn detect_from_platform() -> FontCapability {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(missing_docs)]
 
     use super::*;
     use std::fs;

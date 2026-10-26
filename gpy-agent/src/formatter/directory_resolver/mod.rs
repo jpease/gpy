@@ -3,51 +3,118 @@
 use crate::config::Config;
 use crate::config::DirectorySettings;
 use crate::config::types::DirectoryDisplay;
-use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
+use crate::formatter::chrome::SegmentChrome;
+use crate::formatter::separator::Glyphs;
+use crate::formatter::{Format, SegmentPosition};
+use crate::ipc::Response;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 use std::path::{Path, PathBuf};
 
-/// Resolves Starship-exact directory variable names. All I/O happens once in
-/// [`DirectoryResolver::new`]; `resolve("path")` may run several times per render.
+/// `$read_only` when the theme sets no `read_only_icon` and glyphs are available.
+const READ_ONLY_ICON_NERD: &str = "\u{1f512}";
+/// `$read_only` when the theme sets no `read_only_icon` and glyphs are plain.
+const READ_ONLY_ICON_PLAIN: &str = "ro";
+
+/// What the directory segment reads from the environment and filesystem.
+/// The caller gathers it with [`DirectoryEnv::for_response`] before rendering,
+/// so [`DirectoryResolver`] does no I/O.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryEnv {
+    /// `$HOME`, contracted to `~` in the displayed path.
+    home: Option<String>,
+    /// The repository the path anchors at under `truncate_to_repo`.
+    repo: Option<RepoAnchor>,
+}
+
+/// A `cwd` inside a repository, both canonical so one strips from the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepoAnchor {
+    canonical_cwd: PathBuf,
+    root: PathBuf,
+}
+
+/// Nothing probed: no home contraction, no repository anchoring.
+static UNPROBED: DirectoryEnv = DirectoryEnv {
+    home: None,
+    repo: None,
+};
+
+impl DirectoryEnv {
+    /// What `response` renders against in `format`: probed for a directory
+    /// drawn as prompt text, [`Self::unprobed`] otherwise.
+    #[must_use]
+    pub fn for_response(response: &Response, format: Format, settings: &DirectorySettings) -> Self {
+        match response {
+            Response::Directory { cwd, .. } if !Format::is_json(format) => {
+                Self::probe(cwd, settings)
+            }
+            _ => UNPROBED.clone(),
+        }
+    }
+
+    /// The environment of a render that probed nothing.
+    #[must_use]
+    pub fn unprobed() -> &'static Self {
+        &UNPROBED
+    }
+
+    /// Read `$HOME` and, when `settings` anchor at the repository root,
+    /// canonicalize `cwd` and find the repository enclosing it.
+    fn probe(cwd: &str, settings: &DirectorySettings) -> Self {
+        Self::probe_with_home(cwd, settings, std::env::var("HOME").ok())
+    }
+
+    /// [`Self::probe`] with `home` in place of `$HOME`.
+    fn probe_with_home(cwd: &str, settings: &DirectorySettings, home: Option<String>) -> Self {
+        let anchors = settings.truncate_to_repo && anchors_to_repo(settings.display);
+        let repo = anchors
+            .then(|| enclosing_anchor_root(cwd, home.as_deref()))
+            .flatten()
+            .map(|root| RepoAnchor {
+                canonical_cwd: std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd)),
+                root,
+            });
+        Self { home, repo }
+    }
+}
+
+/// Resolves Starship-exact directory variable names. `resolve("path")` may run
+/// several times per render.
 pub struct DirectoryResolver<'a> {
     /// Lexically normalized `cwd` (see [`normalize_cwd`]); drives every display mode.
     cwd: String,
     read_only: bool,
+    env: &'a DirectoryEnv,
     config: &'a Config,
     theme: &'a ThemeConfig,
-    pos: SegmentPosition,
-    /// `$HOME`, read once at construction.
-    home: Option<String>,
-    /// Canonicalized `cwd` (or `cwd` if that fails); used only with `repo_root`.
-    canonical_cwd: PathBuf,
-    /// Enclosing git repo root, computed once at construction.
-    repo_root: Option<PathBuf>,
+    chrome: SegmentChrome<'a>,
 }
 
 impl<'a> DirectoryResolver<'a> {
-    /// Build a resolver; reads `$HOME`, canonicalizes `cwd`, finds the repo root.
+    /// Build a resolver for `cwd` with the facts `env` gathered about it.
     #[must_use]
     pub fn new(
-        cwd: &'a str,
+        cwd: &str,
         read_only: bool,
+        env: &'a DirectoryEnv,
         config: &'a Config,
         theme: &'a ThemeConfig,
         pos: SegmentPosition,
     ) -> Self {
-        let home = std::env::var("HOME").ok();
-        let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
-        let repo_root = enclosing_anchor_root(cwd, config, home.as_deref());
+        let colors = &theme.segments.directory;
         Self {
             cwd: normalize_cwd(cwd),
             read_only,
+            env,
             config,
             theme,
-            pos,
-            home,
-            canonical_cwd,
-            repo_root,
+            chrome: SegmentChrome::pill(
+                pos,
+                Glyphs::from(&config.ui),
+                colors.text_color.as_str(),
+                colors.bg_color.as_str(),
+            ),
         }
     }
 
@@ -56,33 +123,29 @@ impl<'a> DirectoryResolver<'a> {
         const ELLIPSIS: &str = "...";
         const ELLIPSIS_LEN: usize = 3;
 
-        let home_contracted = contract_home(&self.cwd, self.home.as_deref());
+        let home_contracted = contract_home(&self.cwd, self.env.home.as_deref());
 
-        let base = repo_anchored_for(
-            &self.canonical_cwd,
-            self.repo_root.as_deref(),
-            &self.config.ui.directory,
-        )
-        .unwrap_or_else(|| match self.config.ui.directory.display {
-            DirectoryDisplay::Basename => {
-                if home_contracted == "/" {
-                    "/".to_owned()
-                } else {
-                    home_contracted
-                        .rsplit('/')
-                        .next()
-                        .filter(|s| !s.is_empty())
-                        .map_or_else(|| "/".to_owned(), str::to_owned)
+        let base = repo_anchored_for(self.env.repo.as_ref(), &self.config.ui.directory)
+            .unwrap_or_else(|| match self.config.ui.directory.display {
+                DirectoryDisplay::Basename => {
+                    if home_contracted == "/" {
+                        "/".to_owned()
+                    } else {
+                        home_contracted
+                            .rsplit('/')
+                            .next()
+                            .filter(|s| !s.is_empty())
+                            .map_or_else(|| "/".to_owned(), str::to_owned)
+                    }
                 }
-            }
-            DirectoryDisplay::Truncated => truncate_to_components(
-                &home_contracted,
-                self.config.ui.directory.truncation_length.get(),
-                self.config.ui.directory.truncation_symbol.as_str(),
-            ),
-            DirectoryDisplay::Abbreviated => abbreviate_path(&home_contracted),
-            DirectoryDisplay::Full => home_contracted,
-        });
+                DirectoryDisplay::Truncated => truncate_to_components(
+                    &home_contracted,
+                    self.config.ui.directory.truncation_length.get(),
+                    self.config.ui.directory.truncation_symbol.as_str(),
+                ),
+                DirectoryDisplay::Abbreviated => abbreviate_path(&home_contracted),
+                DirectoryDisplay::Full => home_contracted,
+            });
 
         // Tail-style max_length truncation.
         let max = self.config.ui.directory.max_length.get();
@@ -103,11 +166,20 @@ impl<'a> DirectoryResolver<'a> {
         format!("{ELLIPSIS}{tail}")
     }
 
-    /// Style string: `fg:<text_color> bg:<bg_color>`.
-    fn style(&self) -> String {
-        let fg = self.theme.segments.directory.text_color.as_str();
-        let bg = self.theme.segments.directory.bg_color.as_str();
-        format!("fg:{fg} bg:{bg}")
+    /// The theme's `read_only_icon`; unset, or a Nerd Font icon that
+    /// [`Glyphs::Plain`] drops, falls back to a lock or, with plain glyphs, `ro`.
+    fn read_only_symbol(&self) -> &str {
+        let glyphs = self.chrome.glyphs();
+        self.theme
+            .segments
+            .directory
+            .read_only_icon
+            .as_deref()
+            .and_then(|icon| glyphs.icon(icon))
+            .unwrap_or(match glyphs {
+                Glyphs::Nerd => READ_ONLY_ICON_NERD,
+                Glyphs::Plain => READ_ONLY_ICON_PLAIN,
+            })
     }
 }
 
@@ -129,12 +201,11 @@ fn normalize_cwd(cwd: &str) -> String {
 }
 
 /// Enclosing git repo root for `cwd`, minus a root that is `$HOME`. Canonicalizes
-/// only when `truncate_to_repo` is on and a root was found.
-fn enclosing_anchor_root(cwd: &str, config: &Config, home: Option<&str>) -> Option<PathBuf> {
+/// `home` only when a root was found.
+fn enclosing_anchor_root(cwd: &str, home: Option<&str>) -> Option<PathBuf> {
     let found_root = crate::git::find_repo_root(Path::new(cwd));
     let canonical_home = found_root
         .as_ref()
-        .filter(|_| config.ui.directory.truncate_to_repo)
         .and(home)
         .and_then(|h| std::fs::canonicalize(h).ok());
     anchor_root(found_root, canonical_home.as_deref())
@@ -167,26 +238,12 @@ fn contract_home(cwd: &str, home: Option<&str>) -> String {
 }
 
 /// Repo-anchored display path when `truncate_to_repo` is on and a root exists.
-fn repo_anchored_for(
-    canonical_cwd: &Path,
-    repo_root: Option<&Path>,
-    dir: &DirectorySettings,
-) -> Option<String> {
-    if !dir.truncate_to_repo {
-        return None;
-    }
-    let display = dir.display;
-    if !matches!(
-        display,
-        DirectoryDisplay::Truncated | DirectoryDisplay::Full
-    ) {
-        return None;
-    }
-    let root = repo_root?;
+fn repo_anchored_for(repo: Option<&RepoAnchor>, dir: &DirectorySettings) -> Option<String> {
+    let anchor = repo.filter(|_| dir.truncate_to_repo)?;
     repo_anchored_path(
-        canonical_cwd,
-        root,
-        display,
+        &anchor.canonical_cwd,
+        &anchor.root,
+        dir.display,
         dir.truncation_length.get(),
         dir.truncation_symbol.as_str(),
     )
@@ -213,6 +270,14 @@ fn truncate_to_components(path: &str, keep: usize, symbol: &str) -> String {
     format!("{symbol}{tail}")
 }
 
+/// Whether `display` renders paths relative to the repository root.
+const fn anchors_to_repo(display: DirectoryDisplay) -> bool {
+    matches!(
+        display,
+        DirectoryDisplay::Truncated | DirectoryDisplay::Full
+    )
+}
+
 /// Render `cwd` anchored at the repo root's basename; `Truncated` caps the
 /// trailing components at `keep`. `None` when not applicable (caller falls back).
 fn repo_anchored_path(
@@ -222,10 +287,7 @@ fn repo_anchored_path(
     keep: usize,
     symbol: &str,
 ) -> Option<String> {
-    if !matches!(
-        display,
-        DirectoryDisplay::Truncated | DirectoryDisplay::Full
-    ) {
+    if !anchors_to_repo(display) {
         return None;
     }
     let root_name = repo_root.file_name()?.to_str()?;
@@ -361,19 +423,13 @@ fn join_anchored(root_name: &str, sub: &[&str]) -> String {
 
 impl VariableResolver for DirectoryResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
-        let glyphs = Glyphs::from(&self.config.ui);
         match name {
             "path" => {
                 let p = self.display_path();
                 (!p.is_empty()).then_some(p)
             }
-            "read_only" => self.read_only.then(|| "\u{1f512}".to_owned()), // 🔒
-            "style" => Some(self.style()),
-            "bg" => Some(self.theme.segments.directory.bg_color.as_str().to_owned()),
-            "sep_gap" | "sep_open" | "sep_close" => {
-                separator_var(name, self.pos, SeparatorStyle::Chained, glyphs)
-            }
-            _ => None,
+            "read_only" => self.read_only.then(|| self.read_only_symbol().to_owned()),
+            _ => self.chrome.resolve(name),
         }
     }
 }

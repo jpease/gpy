@@ -11,20 +11,28 @@
 #   BENCH_RUNS   - Number of runs per benchmark (default: 5)
 #   BENCH_SCOPE  - Benchmark scope: benchmark-mode (default) or user-config
 
-set -e
+set -euo pipefail
 
 BENCH_DIR="${BENCH_DIR:-$HOME/.cache/gpy-benchmarks}"
 BENCH_RUNS="${BENCH_RUNS:-5}"
 BENCH_SCOPE="${BENCH_SCOPE:-benchmark-mode}"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT="$SCRIPT_DIR/../target/release/gpy-agent"
 BASELINE_FILE="$SCRIPT_DIR/baseline.json"
 
 MODE="run"
-if [ "$1" = "--baseline" ]; then
+if [ "${1:-}" = "--baseline" ]; then
     MODE="baseline"
-elif [ "$1" = "--compare" ]; then
+elif [ "${1:-}" = "--compare" ]; then
     MODE="compare"
+fi
+
+if [ "$MODE" = "compare" ] && [ ! -f "$BASELINE_FILE" ]; then
+    echo "Error: No baseline found at $BASELINE_FILE"
+    echo "Run: ./benchmarks/run.sh --baseline"
+    exit 1
 fi
 
 # Check if benchmark repos exist
@@ -51,53 +59,57 @@ echo "Scope:    $BENCH_SCOPE"
 echo "Kernel:   $(uname -sr)"
 echo ""
 
-# Function to run a single benchmark
-run_benchmark() {
-    local name=$1
-    local repo="$BENCH_DIR/$name"
-
-    if [ ! -d "$repo" ]; then
-        echo "  ⚠️  Repo not found: $name"
-        return
-    fi
-
-    local files=$(cd "$repo" && git ls-files | wc -l | tr -d ' ')
-    local index_size=$(stat -f%z "$repo/.git/index" 2>/dev/null || stat -c%s "$repo/.git/index")
-    local index_mb=$(echo "scale=2; $index_size/1024/1024" | bc)
-
-    printf "%-25s (%6s files, %5s MB): " "$name" "$files" "$index_mb"
-
-    local bench_flags=""
-    if [ "$BENCH_SCOPE" = "benchmark-mode" ]; then
-        bench_flags=" --benchmark-mode"
-    fi
-
-    # Run hyperfine and capture result
-    local result=$(hyperfine \
-        --warmup 2 \
-        --runs "$BENCH_RUNS" \
-        --export-json /tmp/bench-$name.json \
-        "bash -c 'cd $repo && $AGENT oneshot git --cwd . --format json$bench_flags'" \
-        2>&1 | grep "Time (mean" | sed 's/.*Time (mean ± σ):  *//')
-
-    echo "$result"
-
-    # Store result
-    if [ "$MODE" = "baseline" ]; then
-        echo "  Saving to baseline..."
-    fi
-}
-
-# Run all benchmarks
-echo "=== Running Benchmarks ==="
-echo ""
-
 REPOS=(
     "tiny-express"
     "small-redis"
     "medium-kubernetes"
     "large-tensorflow"
 )
+
+# Print "<mean> <stddev>" in seconds from a hyperfine export (1.x and 2.x schemas).
+bench_stat() {
+    jq -r '.results[0] | (.summary.time_wall_clock // .) | "\(.mean) \(.stddev // 0)"' "$TMP_DIR/$1.json"
+}
+
+# Run hyperfine for one repo and write its JSON export to $TMP_DIR/<name>.json.
+run_benchmark() {
+    local name=$1
+    local repo="$BENCH_DIR/$name"
+
+    if [ ! -d "$repo" ]; then
+        echo "Error: repo not found: $name" >&2
+        exit 1
+    fi
+
+    local files index_size index_mb
+    files=$(cd "$repo" && git ls-files | wc -l | tr -d ' ')
+    index_size=$(stat -f%z "$repo/.git/index" 2>/dev/null || stat -c%s "$repo/.git/index")
+    index_mb=$(echo "scale=2; $index_size/1024/1024" | bc)
+
+    printf "%-25s (%6s files, %5s MB): " "$name" "$files" "$index_mb"
+
+    local bench_flags=()
+    if [ "$BENCH_SCOPE" = "benchmark-mode" ]; then
+        bench_flags=(--benchmark-mode)
+    fi
+
+    local cmd
+    cmd=$(printf 'cd %q && %q oneshot git --cwd . --format json %s' \
+        "$repo" "$AGENT" "${bench_flags[*]:-}")
+
+    hyperfine \
+        --warmup 2 \
+        --runs "$BENCH_RUNS" \
+        --export-json "$TMP_DIR/$name.json" \
+        --shell bash \
+        "$cmd" >"$TMP_DIR/$name.out" 2>&1
+    local mean stddev
+    read -r mean stddev < <(bench_stat "$name")
+    printf '%.1f ms ± %.1f ms\n' "$(echo "$mean * 1000" | bc -l)" "$(echo "$stddev * 1000" | bc -l)"
+}
+
+echo "=== Running Benchmarks ==="
+echo ""
 
 for repo in "${REPOS[@]}"; do
     run_benchmark "$repo"
@@ -106,45 +118,21 @@ done
 echo ""
 
 if [ "$MODE" = "baseline" ]; then
-    # Combine results into baseline file
-    echo "{"  > "$BASELINE_FILE"
-    echo "  \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"," >> "$BASELINE_FILE"
-    echo "  \"git_commit\": \"$(git rev-parse HEAD)\"," >> "$BASELINE_FILE"
-    echo "  \"scope\": \"$BENCH_SCOPE\"," >> "$BASELINE_FILE"
-    echo "  \"kernel\": \"$(uname -sr)\"," >> "$BASELINE_FILE"
-    echo "  \"benchmarks\": {" >> "$BASELINE_FILE"
-
-    first=true
     for repo in "${REPOS[@]}"; do
-        if [ -f "/tmp/bench-$repo.json" ]; then
-            if [ "$first" = false ]; then
-                echo "," >> "$BASELINE_FILE"
-            fi
-            first=false
+        read -r mean stddev < <(bench_stat "$repo")
+        jq -n --arg name "$repo" --argjson mean "$mean" --argjson stddev "$stddev" \
+            '{($name): {mean: $mean, stddev: $stddev}}'
+    done | jq -s \
+        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --arg commit "$(git -C "$SCRIPT_DIR" rev-parse HEAD)" \
+        --arg scope "$BENCH_SCOPE" \
+        --arg kernel "$(uname -sr)" \
+        '{timestamp: $ts, git_commit: $commit, scope: $scope, kernel: $kernel, benchmarks: add}' \
+        >"$BASELINE_FILE"
 
-            mean=$(jq -r '.results[0].mean' "/tmp/bench-$repo.json")
-            stddev=$(jq -r '.results[0].stddev' "/tmp/bench-$repo.json")
-
-            echo "    \"$repo\": {" >> "$BASELINE_FILE"
-            echo "      \"mean\": $mean," >> "$BASELINE_FILE"
-            echo "      \"stddev\": $stddev" >> "$BASELINE_FILE"
-            echo -n "    }" >> "$BASELINE_FILE"
-        fi
-    done
-
-    echo "" >> "$BASELINE_FILE"
-    echo "  }" >> "$BASELINE_FILE"
-    echo "}" >> "$BASELINE_FILE"
-
-    echo "✅ Baseline saved to: $BASELINE_FILE"
+    echo "Baseline saved to: $BASELINE_FILE"
 
 elif [ "$MODE" = "compare" ]; then
-    if [ ! -f "$BASELINE_FILE" ]; then
-        echo "Error: No baseline found at $BASELINE_FILE"
-        echo "Run: ./benchmarks/run.sh --baseline"
-        exit 1
-    fi
-
     echo "=== Comparison with Baseline ==="
     echo ""
 
@@ -155,34 +143,43 @@ elif [ "$MODE" = "compare" ]; then
     echo "Baseline: commit $baseline_commit ($baseline_date)"
     echo "Baseline scope: $baseline_scope"
     if [ "$baseline_scope" != "$BENCH_SCOPE" ]; then
-        echo "⚠️  Scope mismatch: current run uses '$BENCH_SCOPE' but baseline uses '$baseline_scope'"
+        echo "Warning: scope mismatch: current run uses '$BENCH_SCOPE' but baseline uses '$baseline_scope'"
         echo "    Compare results cautiously or regenerate the baseline with a matching scope."
     fi
     echo ""
 
+    missing=0
     for repo in "${REPOS[@]}"; do
-        if [ -f "/tmp/bench-$repo.json" ]; then
-            current_mean=$(jq -r '.results[0].mean' "/tmp/bench-$repo.json")
-            baseline_mean=$(jq -r ".benchmarks.\"$repo\".mean" "$BASELINE_FILE")
+        read -r current_mean _ < <(bench_stat "$repo")
+        baseline_mean=$(jq -r --arg name "$repo" '.benchmarks[$name].mean // "null"' "$BASELINE_FILE")
 
-            if [ "$baseline_mean" != "null" ]; then
-                change=$(echo "scale=1; ($current_mean - $baseline_mean) / $baseline_mean * 100" | bc)
-                current_ms=$(echo "scale=1; $current_mean * 1000" | bc)
-                baseline_ms=$(echo "scale=1; $baseline_mean * 1000" | bc)
-
-                if (( $(echo "$change > 10" | bc -l) )); then
-                    status="🔴 REGRESSION"
-                elif (( $(echo "$change < -10" | bc -l) )); then
-                    status="🟢 IMPROVEMENT"
-                else
-                    status="✓ No change"
-                fi
-
-                printf "  %-25s: %6.1f ms → %6.1f ms (%+.1f%%) %s\n" \
-                    "$repo" "$baseline_ms" "$current_ms" "$change" "$status"
-            fi
+        if [ "$baseline_mean" = "null" ]; then
+            printf "  %-25s: MISSING from baseline\n" "$repo"
+            missing=1
+            continue
         fi
+
+        change=$(echo "scale=1; ($current_mean - $baseline_mean) / $baseline_mean * 100" | bc)
+        current_ms=$(echo "scale=1; $current_mean * 1000" | bc)
+        baseline_ms=$(echo "scale=1; $baseline_mean * 1000" | bc)
+
+        if (( $(echo "$change > 10" | bc -l) )); then
+            status="REGRESSION"
+        elif (( $(echo "$change < -10" | bc -l) )); then
+            status="IMPROVEMENT"
+        else
+            status="no change"
+        fi
+
+        printf "  %-25s: %6.1f ms -> %6.1f ms (%+.1f%%) %s\n" \
+            "$repo" "$baseline_ms" "$current_ms" "$change" "$status"
     done
+
+    if [ "$missing" -ne 0 ]; then
+        echo ""
+        echo "Error: baseline is missing entries; regenerate with: ./benchmarks/run.sh --baseline" >&2
+        exit 1
+    fi
 fi
 
 echo ""

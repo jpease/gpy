@@ -1,6 +1,12 @@
 //! Language detection benchmarks. Run: cargo bench --bench `language_bench`
 
-#![allow(clippy::unwrap_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::missing_panics_doc,
+    reason = "benchmarks panic on fixture and setup failures"
+)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::language::detector::Detector;
@@ -154,7 +160,7 @@ fn setup_test_project(lang: &str) -> TempDir {
             fs::write(path.join("package.json"), "{\"name\": \"test\"}").unwrap();
             fs::write(path.join("index.js"), "console.log('hello')").unwrap();
         }
-        _ => {}
+        other => panic!("unknown language fixture: {other}"),
     }
 
     dir

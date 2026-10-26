@@ -13,6 +13,9 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
 # Drop inherited repo-scoping git env so fixtures target their own repo under
 # git hooks; `git -C <tmp>` does not override GIT_DIR/GIT_WORK_TREE.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
@@ -260,17 +263,13 @@ supervisor_test_tmp_dir=$(mktemp -d)
 supervisor_test_sock="$supervisor_test_tmp_dir/gpy-supervisor-healthy.sock"
 
 if ! command -v python3 &>/dev/null; then
-    echo "SKIP: python3 not installed, cannot create a test Unix socket"
+    test_skip_part "python3 not installed, cannot create a test Unix socket"
 else
 # __gpy_send_json is stubbed; the socket only needs to pass the `-S` gate.
-    python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-' "$supervisor_test_sock"
+    python3 tests/lib/stub_listener.py "$supervisor_test_sock" bind-only
 
     if [[ ! -S "$supervisor_test_sock" ]]; then
-        echo "SKIP: could not create test Unix socket for supervisor round-trip test"
+        test_skip_part "could not create test Unix socket for supervisor round-trip test"
     else
         __gpy_supervisor_test_saved_socket=$GPY_AGENT_SOCKET_PATH
         __gpy_supervisor_test_saved_enabled=$GPY_AGENT_SUPERVISOR_ENABLED
@@ -282,7 +281,7 @@ s.bind(sys.argv[1])
         export GPY_AGENT_ENABLED=1
         export GPY_AGENT_SUPERVISOR_ENABLED=1
 # Wide enough that three back-to-back calls land within one window.
-        export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=60
+        export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60
 
 # The stub runs in a command-substitution subshell; count via a file.
         __gpy_supervisor_call_count_file="$supervisor_test_tmp_dir/send_json_calls"
@@ -370,7 +369,7 @@ s.bind(sys.argv[1])
 # two prompts 15 s apart with a 60 s interval probe once.
         __gpy_supervisor_probe_count=0
         __gpy_supervisor_is_running() { __gpy_supervisor_probe_count=$((__gpy_supervisor_probe_count + 1)); return 1; }
-        unset GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS
+        unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
         export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0
@@ -385,7 +384,7 @@ s.bind(sys.argv[1])
         echo "PASS: GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS sets the health-check interval"
 
         # max_restart_attempts=1: a persistently dead agent gets one restart.
-        export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0
+        export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0
         export GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0
@@ -411,7 +410,7 @@ s.bind(sys.argv[1])
         }
         unset -f __gpy_supervisor_call_count
         unset __gpy_supervisor_call_count_file
-        unset GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS
+        unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
         __gpy_protocol_version_checked=0
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0

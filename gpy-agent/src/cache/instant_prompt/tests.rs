@@ -1,5 +1,11 @@
 use super::*;
 use crate::sync_ext::MutexExt;
+use files::get_gpy_cache_dir;
+use key::{
+    FLAT_CACHE_KEY_MAX_CHARS, WINDOWS_CACHE_KEY_MAX_LEN, cache_key_path_for, path_to_cache_key_for,
+};
+use std::time::Duration;
+use sweep::{CACHE_ENTRY_MAX_AGE, ORPHAN_TMP_MAX_AGE};
 
 /// A resolved Rust entry, so language writes never probe a real `rustc`.
 fn rust_languages() -> Vec<crate::ipc::LanguageInfo> {
@@ -10,13 +16,54 @@ fn rust_languages() -> Vec<crate::ipc::LanguageInfo> {
     }]
 }
 
+/// A cache stored directly in a fresh temp dir; keep the guard alive for the test.
+fn temp_cache() -> (tempfile::TempDir, InstantPromptCache) {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let cache = InstantPromptCache::new_in_dir(dir.path().to_path_buf()).expect("cache");
+    (dir, cache)
+}
+
+/// As [`temp_cache`], with the cache in the `subdir` child of the temp dir.
+fn temp_cache_in(subdir: &str) -> (tempfile::TempDir, InstantPromptCache) {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let cache = InstantPromptCache::new_in_dir(dir.path().join(subdir)).expect("cache");
+    (dir, cache)
+}
+
+/// Reads the ANSI file of `key`'s variant `suffix`, panicking when it is missing.
+fn ansi_reader<'a>(cache: &'a InstantPromptCache, key: &'a str) -> impl Fn(&str) -> String + 'a {
+    move |suffix| {
+        std::fs::read_to_string(cache.cache_file_path(key, suffix, PromptDialect::Ansi))
+            .unwrap_or_else(|_| panic!("read {suffix}"))
+    }
+}
+
 impl InstantPromptCache {
+    /// Cache-file writes so far, unchanged rewrites included (the recency tick).
+    #[cfg(unix)]
+    pub(crate) fn write_call_count(&self) -> u64 {
+        self.last_written.lock_or_recover().tick
+    }
+
     /// Get the cache file path for a given cache key, suffix and dialect
     /// (the writer needs the directory and name separately).
     fn cache_file_path(&self, key: &str, suffix: &str, dialect: PromptDialect) -> PathBuf {
         let ext = dialect.cache_ext();
         let (dir, file_name) = cache_file_parts(&self.cache_dir, key, &format!("{suffix}.{ext}"));
         dir.join(file_name)
+    }
+
+    /// [`Self::write_cache_file`] for `variant_token` such as `git_last.blue`.
+    fn write_entry(
+        &self,
+        key: &str,
+        variant_token: &str,
+        dialect: PromptDialect,
+        content: &str,
+    ) -> Result<bool> {
+        let file_name = format!("{key}.{variant_token}.{}", dialect.cache_ext());
+        let name = parse_cache_file_name(&file_name).expect("a valid cache file name");
+        self.write_cache_file(&name, content)
     }
 }
 
@@ -144,10 +191,9 @@ fn sweep_ignores_files_dated_in_the_future() {
 
 #[test]
 fn test_write_cache_file_is_atomic_no_temp_leftovers() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     cache
-        .write_cache_file("repo", "git", PromptDialect::Ansi, "hello world")
+        .write_entry("repo", "git.none", PromptDialect::Ansi, "hello world")
         .expect("write");
 
     let leftover_count = std::fs::read_dir(temp_dir.path())
@@ -161,18 +207,17 @@ fn test_write_cache_file_is_atomic_no_temp_leftovers() {
     );
 
     let content =
-        std::fs::read_to_string(cache.cache_file_path("repo", "git", PromptDialect::Ansi))
+        std::fs::read_to_string(cache.cache_file_path("repo", "git.none", PromptDialect::Ansi))
             .expect("read");
     assert_eq!(content, "hello world");
 }
 
 #[test]
 fn last_written_evicts_least_recently_written() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (_temp_dir, cache) = temp_cache();
     let write = |key: &str, content: &str| {
         cache
-            .write_cache_file(key, "git", PromptDialect::Ansi, content)
+            .write_entry(key, "git.none", PromptDialect::Ansi, content)
             .expect("write")
     };
     // Oldest first: one past capacity evicts exactly the oldest record.
@@ -189,8 +234,7 @@ fn last_written_evicts_least_recently_written() {
 
 #[test]
 fn known_contexts_evicts_least_recently_used_key() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (_temp_dir, cache) = temp_cache();
     for i in 0..INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
         cache.known_contexts(&format!("k{i:04}"), Some("red"));
     }
@@ -248,10 +292,10 @@ fn instant_cache_dir_and_files_are_private() {
 
     assert!(
         cache
-            .write_cache_file("repo", "git", PromptDialect::Ansi, "content")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "content")
             .expect("write")
     );
-    let file = cache.cache_file_path("repo", "git", PromptDialect::Ansi);
+    let file = cache.cache_file_path("repo", "git.none", PromptDialect::Ansi);
     assert_eq!(mode_of(&file), 0o600, "cache files are owner-only");
 }
 
@@ -265,11 +309,11 @@ fn recreated_cache_dir_is_private() {
 
     assert!(
         cache
-            .write_cache_file("repo", "git", PromptDialect::Ansi, "content")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "content")
             .expect("write")
     );
     assert_eq!(mode_of(&root), 0o700, "re-created root is owner-only");
-    let file = cache.cache_file_path("repo", "git", PromptDialect::Ansi);
+    let file = cache.cache_file_path("repo", "git.none", PromptDialect::Ansi);
     assert_eq!(mode_of(&file), 0o600, "cache files are owner-only");
 }
 
@@ -355,36 +399,35 @@ mod write_atomic_tests {
 
 #[test]
 fn write_cache_file_reports_content_change() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (_temp_dir, cache) = temp_cache();
 
     // First write of new content is reported as written (changed).
     assert!(
         cache
-            .write_cache_file("repo", "git", PromptDialect::Ansi, "alpha")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "alpha")
             .expect("write"),
         "first write of new content should report a change"
     );
     // Identical content with the file present is a no-op.
     assert!(
         !cache
-            .write_cache_file("repo", "git", PromptDialect::Ansi, "alpha")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "alpha")
             .expect("write"),
         "rewriting identical content should report no change"
     );
     // Different content is reported as changed.
     assert!(
         cache
-            .write_cache_file("repo", "git", PromptDialect::Ansi, "beta")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "beta")
             .expect("write"),
         "writing different content should report a change"
     );
     // A missing file is rewritten even when the record matches.
-    std::fs::remove_file(cache.cache_file_path("repo", "git", PromptDialect::Ansi))
+    std::fs::remove_file(cache.cache_file_path("repo", "git.none", PromptDialect::Ansi))
         .expect("remove");
     assert!(
         cache
-            .write_cache_file("repo", "git", PromptDialect::Ansi, "beta")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "beta")
             .expect("write"),
         "rewriting a missing file should report a change"
     );
@@ -395,12 +438,12 @@ fn write_cache_file_reports_content_change() {
 
 /// One step applied to the cache under test.
 enum Op {
-    /// Write `content` for `(key, suffix)` (Ansi dialect).
+    /// Write `content` for `(key, variant.token)` (Ansi dialect).
     Write(&'static str, &'static str, &'static str),
     /// Backdate every file by this many seconds.
     Age(u64),
     /// `threads` writers released together by a `Barrier`, thread `i`
-    /// writing `versions[i % versions.len()]` for `(key, suffix)`.
+    /// writing `versions[i % versions.len()]` for `(key, variant.token)`.
     Concurrent(&'static str, &'static str, &'static [&'static str], usize),
     /// Remove the whole cache directory, as `rm -rf ~/.cache/gpy` would.
     DeleteDir,
@@ -411,7 +454,7 @@ enum Op {
     Sweep,
 }
 
-/// Independent model of the on-disk name of `(key, suffix)`; Windows never chunks.
+/// Independent model of the on-disk name of `(key, variant.token)`; Windows never chunks.
 fn expected_name(key: &str, suffix: &str) -> String {
     let chars: Vec<char> = key.chars().collect();
     let stem = if cfg!(windows) || chars.len() <= 200 {
@@ -456,8 +499,7 @@ struct CacheHarness {
 
 impl CacheHarness {
     fn new() -> Self {
-        let dir = tempfile::TempDir::new().expect("temp dir");
-        let cache = InstantPromptCache::new_in_dir(dir.path().join("ip")).expect("cache");
+        let (dir, cache) = temp_cache_in("ip");
         Self {
             _dir: dir,
             cache,
@@ -475,7 +517,7 @@ impl CacheHarness {
             "git_first_last.none",
         ] {
             self.cache
-                .write_cache_file(&key, suffix, PromptDialect::Ansi, content)
+                .write_entry(&key, suffix, PromptDialect::Ansi, content)
                 .expect("every variant name that fits NAME_MAX must be writable");
             let name = expected_name(&key, suffix);
             self.expected.insert(name.clone(), content.to_owned());
@@ -512,7 +554,7 @@ impl CacheHarness {
             }
             Op::Write(key, suffix, content) => {
                 self.cache
-                    .write_cache_file(key, suffix, PromptDialect::Ansi, content)
+                    .write_entry(key, suffix, PromptDialect::Ansi, content)
                     .expect("write");
                 let name = expected_name(key, suffix);
                 self.expected.insert(name.clone(), content.to_owned());
@@ -536,7 +578,7 @@ impl CacheHarness {
                         s.spawn(move || {
                             gate_ref.wait();
                             writer_cache
-                                .write_cache_file(key, suffix, PromptDialect::Ansi, content)
+                                .write_entry(key, suffix, PromptDialect::Ansi, content)
                                 .expect("write");
                         });
                     }
@@ -547,7 +589,7 @@ impl CacheHarness {
                     .last_written
                     .lock_or_recover()
                     .entries
-                    .get(&format!("{key}:{suffix}.ansi"))
+                    .get(&format!("{key}.{suffix}.ansi"))
                     .map(|written| written.content.clone())
                     .expect("a concurrent write must be recorded");
                 assert!(
@@ -655,13 +697,12 @@ fn instant_cache_recovers_after_directory_deleted() {
 
 #[test]
 fn write_cache_file_recreates_missing_cache_dir() {
-    let dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(dir.path().join("instant-prompts")).expect("cache");
+    let (dir, cache) = temp_cache_in("instant-prompts");
     std::fs::remove_dir_all(dir.path().join("instant-prompts")).expect("remove dir");
 
     assert!(
         cache
-            .write_cache_file("repo", "git.none", PromptDialect::Ansi, "x")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "x")
             .expect("write after dir removal"),
         "first write after removal reports a change"
     );
@@ -683,10 +724,8 @@ fn instant_cache_concurrent_writers_keep_record_equal_to_disk() {
 
 #[test]
 fn write_cache_file_record_matches_disk_under_contention() {
-    let dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = std::sync::Arc::new(
-        InstantPromptCache::new_in_dir(dir.path().to_path_buf()).expect("cache"),
-    );
+    let (_dir, owned) = temp_cache();
+    let cache = std::sync::Arc::new(owned);
     let path = cache.cache_file_path("repo", "git.none", PromptDialect::Ansi);
     for round in 0..500_u32 {
         let gate = std::sync::Arc::new(std::sync::Barrier::new(32));
@@ -700,7 +739,7 @@ fn write_cache_file_record_matches_disk_under_contention() {
                 std::thread::spawn(move || {
                     writer_gate.wait();
                     writer_cache
-                        .write_cache_file("repo", "git.none", PromptDialect::Ansi, content)
+                        .write_entry("repo", "git.none", PromptDialect::Ansi, content)
                         .expect("write");
                 })
             })
@@ -709,7 +748,7 @@ fn write_cache_file_record_matches_disk_under_contention() {
             handle.join().expect("writer thread");
         }
         cache
-            .write_cache_file("repo", "git.none", PromptDialect::Ansi, "A")
+            .write_entry("repo", "git.none", PromptDialect::Ansi, "A")
             .expect("write");
         assert_eq!(
             std::fs::read_to_string(&path).expect("read"),
@@ -717,26 +756,6 @@ fn write_cache_file_record_matches_disk_under_contention() {
             "round {round}: write of A after contention must leave A on disk"
         );
     }
-}
-
-#[test]
-fn test_path_to_cache_key_consistency() {
-    let path = Path::new("/home/user/project");
-    let key1 = path_to_cache_key(path);
-    let key2 = path_to_cache_key(path);
-    assert_eq!(key1, key2, "Cache key should be consistent");
-}
-
-#[test]
-fn test_path_to_cache_key_different() {
-    let path1 = Path::new("/home/user/project1");
-    let path2 = Path::new("/home/user/project2");
-    let key1 = path_to_cache_key(path1);
-    let key2 = path_to_cache_key(path2);
-    assert_ne!(
-        key1, key2,
-        "Different paths should have different cache keys"
-    );
 }
 
 #[test]
@@ -867,13 +886,12 @@ fn test_cache_key_path_unix_characterization() {
 /// skipped without an error.
 #[test]
 fn write_cache_file_skips_a_flat_key_over_name_max() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let (_temp_dir, cache) = temp_cache_in("ip");
     let key = "\u{1F600}".repeat(64);
     for _ in 0_u8..2_u8 {
         assert!(
             !cache
-                .write_cache_file(&key, "git.none", PromptDialect::Ansi, "x")
+                .write_entry(&key, "git.none", PromptDialect::Ansi, "x")
                 .expect("an unrepresentable name is skipped, not an error")
         );
     }
@@ -1063,8 +1081,7 @@ fn test_find_project_root_finds_git_root() {
 
 #[test]
 fn test_write_language_uses_git_root_for_key() {
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("cache")).unwrap();
+    let (temp_dir, cache) = temp_cache_in("cache");
 
     let repo_root = temp_dir.path().join("repo");
     let subdir = repo_root.join("subdir");
@@ -1076,12 +1093,11 @@ fn test_write_language_uses_git_root_for_key() {
     let languages = rust_languages();
 
     cache
-        .write_language(
+        .write_language_variants(
             &subdir,
             &languages,
             &config,
             &theme,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
             None,
             &crate::palette::active_palette(&config),
         )
@@ -1099,52 +1115,8 @@ fn test_write_language_uses_git_root_for_key() {
 }
 
 #[test]
-fn test_language_cache_suffixes_use_repo_root() {
-    let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
-    let cache =
-        InstantPromptCache::new_in_dir(temp_dir.path().join("instant-prompts")).expect("cache");
-    let repo_root = temp_dir.path().join("repo");
-    std::fs::create_dir_all(&repo_root).expect("repo root");
-
-    let config = Config::default();
-    let theme = ThemeConfig::default();
-    let languages = rust_languages();
-
-    cache
-        .write_language(
-            &repo_root,
-            &languages,
-            &config,
-            &theme,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-            None,
-            &crate::palette::active_palette(&config),
-        )
-        .expect("write lang");
-    let key = path_to_cache_key(&repo_root);
-    let lang_path = cache.cache_file_path(&key, "lang.none", PromptDialect::Ansi);
-    assert!(lang_path.exists(), "lang cache file should exist");
-
-    cache
-        .write_language(
-            &repo_root,
-            &languages,
-            &config,
-            &theme,
-            SegmentPosition::new(IsLast::Yes, IsFirst::No),
-            None,
-            &crate::palette::active_palette(&config),
-        )
-        .expect("write lang_last");
-    let lang_last_path = cache.cache_file_path(&key, "lang_last.none", PromptDialect::Ansi);
-    assert!(lang_last_path.exists(), "lang_last cache file should exist");
-}
-
-#[test]
 fn test_write_language_variants_rewrites_missing_files() {
-    let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
-    let cache =
-        InstantPromptCache::new_in_dir(temp_dir.path().join("instant-prompts")).expect("cache");
+    let (temp_dir, cache) = temp_cache_in("instant-prompts");
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("repo root");
 
@@ -1190,29 +1162,27 @@ fn test_write_language_variants_rewrites_missing_files() {
 
 #[test]
 fn test_clear_unrefreshable_files_keeps_only_context_free_git_cache() {
-    let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
-    let cache =
-        InstantPromptCache::new_in_dir(temp_dir.path().join("instant-prompts")).expect("cache");
+    let (_temp_dir, cache) = temp_cache_in("instant-prompts");
 
     // Real `{base}.{token}.{ext}` names in every dialect.
     for dialect in PromptDialect::ALL {
         cache
-            .write_cache_file("repo", "git.none", dialect, "git status")
+            .write_entry("repo", "git.none", dialect, "git status")
             .expect("write git cache");
         cache
-            .write_cache_file("repo", "git_last.blue", dialect, "git status")
+            .write_entry("repo", "git_last.blue", dialect, "git status")
             .expect("write context-specific git cache");
         cache
-            .write_cache_file("repo", "lang.none", dialect, "ruby 4.0.5")
+            .write_entry("repo", "lang.none", dialect, "ruby 4.0.5")
             .expect("write lang cache");
         cache
-            .write_cache_file("repo", "lang_last.blue", dialect, "ruby 4.0.5")
+            .write_entry("repo", "lang_last.blue", dialect, "ruby 4.0.5")
             .expect("write lang_last cache");
         cache
-            .write_cache_file("repo", "lang_first.none", dialect, "ruby 4.0.5")
+            .write_entry("repo", "lang_first.none", dialect, "ruby 4.0.5")
             .expect("write lang_first cache");
         cache
-            .write_cache_file("repo", "lang_first_last.blue", dialect, "ruby 4.0.5")
+            .write_entry("repo", "lang_first_last.blue", dialect, "ruby 4.0.5")
             .expect("write lang_first_last cache");
     }
 
@@ -1252,7 +1222,7 @@ fn clear_unrefreshable_files_skips_unremovable_entries() {
     let blocker = cache_dir.join("x.lang.none.ansi");
     std::fs::create_dir_all(&blocker).expect("create blocking dir");
     cache
-        .write_cache_file("repo", "lang.none", PromptDialect::Ansi, "ruby 4.0.5")
+        .write_entry("repo", "lang.none", PromptDialect::Ansi, "ruby 4.0.5")
         .expect("write lang cache");
 
     cache.clear_unrefreshable_files();
@@ -1282,7 +1252,7 @@ fn clear_unrefreshable_files_clears_chunked_entries() {
         (&both, "git.none"),
     ] {
         cache
-            .write_cache_file(key, suffix, PromptDialect::Ansi, "x")
+            .write_entry(key, suffix, PromptDialect::Ansi, "x")
             .expect("write");
     }
 
@@ -1307,8 +1277,7 @@ fn clear_unrefreshable_files_clears_chunked_entries() {
 #[test]
 fn test_write_git_creates_both_is_last_variants() {
     use crate::git::RepositoryStatus;
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
 
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
@@ -1362,8 +1331,7 @@ fn test_write_git_creates_both_is_last_variants() {
 /// `write_git` writes `is_first` variants, and only those drop `$sep_open`.
 #[test]
 fn write_git_creates_is_first_variants_and_suppresses_opening_cap() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -1386,10 +1354,7 @@ fn write_git_creates_is_first_variants_and_suppresses_opening_cap() {
         .expect("write git");
 
     let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canonicalize"));
-    let read = |suffix: &str| {
-        std::fs::read_to_string(cache.cache_file_path(&key, suffix, PromptDialect::Ansi))
-            .unwrap_or_else(|_| panic!("read {suffix}"))
-    };
+    let read = ansi_reader(&cache, &key);
 
     for suffix in [
         "git.none",
@@ -1427,8 +1392,7 @@ fn write_git_creates_is_first_variants_and_suppresses_opening_cap() {
 /// `write_language_variants` writes all four variants; only `is_first` ones drop the cap.
 #[test]
 fn write_language_variants_creates_is_first_variants_and_suppresses_opening_cap() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -1449,10 +1413,7 @@ fn write_language_variants_creates_is_first_variants_and_suppresses_opening_cap(
         .expect("write variants");
 
     let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canonicalize"));
-    let read = |suffix: &str| {
-        std::fs::read_to_string(cache.cache_file_path(&key, suffix, PromptDialect::Ansi))
-            .unwrap_or_else(|_| panic!("read {suffix}"))
-    };
+    let read = ansi_reader(&cache, &key);
 
     for suffix in [
         "lang.none",
@@ -1508,8 +1469,7 @@ const GIT_VARIANTS: [&str; 4] = [
 
 #[test]
 fn write_git_writes_every_variant_for_a_near_name_max_path() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let (temp_dir, cache) = temp_cache_in("ip");
     let (repo, key) = near_name_max_repo(temp_dir.path());
     let config = Config::default();
 
@@ -1537,8 +1497,7 @@ fn write_git_writes_every_variant_for_a_near_name_max_path() {
 
 #[test]
 fn write_language_variants_writes_every_variant_for_a_near_name_max_path() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let (temp_dir, cache) = temp_cache_in("ip");
     let (repo, key) = near_name_max_repo(temp_dir.path());
     let config = Config::default();
     let theme_mgr = crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
@@ -1573,8 +1532,7 @@ fn write_language_variants_writes_every_variant_for_a_near_name_max_path() {
 /// A ~300-byte key is written at the path `cache_file_for_dir` resolves.
 #[test]
 fn write_git_caches_repo_with_very_long_path() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let (temp_dir, cache) = temp_cache_in("ip");
     let repo = temp_dir
         .path()
         .join("a".repeat(80))
@@ -1628,8 +1586,7 @@ fn write_git_caches_repo_with_very_long_path() {
 /// the caches of a repo whose key merely extends it.
 #[test]
 fn remove_git_deletes_only_that_repos_git_caches() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let (temp_dir, cache) = temp_cache_in("ip");
     let config = Config::default();
     let palette = crate::palette::active_palette(&config);
     let write = |repo: &Path, prev_bg: Option<&str>| {
@@ -1721,8 +1678,7 @@ fn remove_git_deletes_only_that_repos_git_caches() {
 
 #[test]
 fn write_git_writes_every_variant_when_one_fails() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let (temp_dir, cache) = temp_cache_in("ip");
     let repo = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo.join(".git")).expect("git dir");
     let key = path_to_cache_key(&std::fs::canonicalize(&repo).expect("canonicalize"));
@@ -1758,8 +1714,7 @@ fn write_git_writes_every_variant_when_one_fails() {
 fn git_cache_reflects_active_palette() {
     use crate::git::{RepositoryState, RepositoryStatus};
 
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -1815,8 +1770,7 @@ fn git_cache_reflects_active_palette() {
 fn write_git_writes_each_dialect_escaped_for_its_shell() {
     use crate::git::{RepositoryState, RepositoryStatus};
 
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -1865,8 +1819,7 @@ fn write_git_writes_each_dialect_escaped_for_its_shell() {
 fn write_git_with_none_prev_bg_produces_valid_output() {
     use crate::git::{RepositoryState, RepositoryStatus};
 
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -2007,6 +1960,76 @@ fn prev_bg_token_sanitizes_and_defaults_to_none() {
     );
 }
 
+/// Variant names are the shells' `__gpy_cache_variant_suffix` outputs.
+#[test]
+fn cache_file_name_tail_spells_the_shell_variants() {
+    let tails: Vec<String> = [CacheKind::Git, CacheKind::Lang]
+        .into_iter()
+        .flat_map(|kind| {
+            SEGMENT_POSITIONS.map(|position| {
+                CacheFileName {
+                    key: "k",
+                    kind,
+                    position,
+                    token: "none",
+                    dialect: PromptDialect::ZshPrompt,
+                }
+                .tail()
+            })
+        })
+        .collect();
+    assert_eq!(
+        tails,
+        [
+            "git.none.zsh",
+            "git_first.none.zsh",
+            "git_last.none.zsh",
+            "git_first_last.none.zsh",
+            "lang.none.zsh",
+            "lang_first.none.zsh",
+            "lang_last.none.zsh",
+            "lang_first_last.none.zsh",
+        ]
+    );
+}
+
+/// Every name the writer produces parses back, including keys with dots.
+#[test]
+fn parse_cache_file_name_inverts_the_writer() {
+    for key in ["repo", "_shome_srepo.x", "k.git.none"] {
+        for kind in [CacheKind::Git, CacheKind::Lang] {
+            for position in SEGMENT_POSITIONS {
+                for dialect in PromptDialect::ALL {
+                    let name = CacheFileName {
+                        key,
+                        kind,
+                        position,
+                        token: "_112233",
+                        dialect,
+                    };
+                    let file_name = format!("{key}.{}", name.tail());
+                    assert_eq!(parse_cache_file_name(&file_name), Some(name), "{file_name}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn parse_cache_file_name_rejects_other_names() {
+    for file_name in [
+        ".tmp-123-4",
+        "git.none.ansi",
+        "repo.git.none.txt",
+        "repo.gitx.none.ansi",
+        "repo.git_middle.none.ansi",
+        "repo.git.ansi",
+        "theme-export.fish",
+    ] {
+        assert_eq!(parse_cache_file_name(file_name), None, "{file_name}");
+    }
+}
+
 fn clean_status(branch: &str) -> RepositoryStatus {
     use crate::git::RepositoryState;
     RepositoryStatus {
@@ -2030,8 +2053,7 @@ fn clean_status(branch: &str) -> RepositoryStatus {
 /// rendering on `prev_bg` never clobber another context's output.
 #[test]
 fn git_cache_writes_one_file_per_prev_bg_context() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -2082,8 +2104,7 @@ fn git_cache_writes_one_file_per_prev_bg_context() {
 /// and must NOT overwrite a previously written context-specific file.
 #[test]
 fn git_none_write_does_not_clobber_context_file() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -2136,8 +2157,7 @@ fn git_none_write_does_not_clobber_context_file() {
 /// Language cache writes resolve one file per `prev_bg` context, like git.
 #[test]
 fn language_cache_writes_one_file_per_prev_bg_context() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -2183,8 +2203,7 @@ fn language_cache_writes_one_file_per_prev_bg_context() {
 /// A context-free (`None`) write refreshes every known context.
 #[test]
 fn none_write_refreshes_all_known_contexts() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let (temp_dir, cache) = temp_cache();
     let repo_root = temp_dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
 
@@ -2192,10 +2211,7 @@ fn none_write_refreshes_all_known_contexts() {
     let theme_mgr = crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
     let theme = theme_mgr.get();
     let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
-    let read = |suffix: &str| {
-        std::fs::read_to_string(cache.cache_file_path(&key, suffix, PromptDialect::Ansi))
-            .unwrap_or_else(|_| panic!("read {suffix}"))
-    };
+    let read = ansi_reader(&cache, &key);
 
     // Two live shells establish "blue" and "green" contexts on a clean repo.
     cache

@@ -1,8 +1,6 @@
 //! Icon-style bootstrap: `gpy setup --redetect-icons` and the first-install
 //! path of `gpy setup`. `GPY_NERD_FONT` pins the detected capability.
 
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]

@@ -23,16 +23,6 @@ test_track_dir $XDG_RUNTIME_DIR
 mkdir -p (__gpy_shell_registry_dir)
 set -g registry_file (__gpy_shell_registry_file)
 
-set -g failures 0
-function check --argument-names name expected actual
-    if test "$expected" = "$actual"
-        echo "PASS: $name"
-    else
-        echo "FAIL: $name (expected '$expected', got '$actual')"
-        set -g failures (math $failures + 1)
-    end
-end
-
 # Record the side-effect functions instead of talking to an agent.
 set -g reregister_calls 0
 set -g reload_calls 0
@@ -89,9 +79,4 @@ check "untrack removes registry file and flags" 0 (path filter $registry_file $r
 
 rm -rf $XDG_RUNTIME_DIR
 
-if test $failures -eq 0
-    echo "✅ All tests passed"
-    exit 0
-end
-echo "❌ $failures test(s) failed"
-exit 1
+test_finish "doorbell signal"

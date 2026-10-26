@@ -3,7 +3,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::loader;
 use std::fs;
@@ -47,8 +46,7 @@ text_color = "white"
 "#,
     );
 
-    let theme =
-        loader::load_theme_from_path(theme_path.to_str().expect("path str")).expect("load theme");
+    let theme = loader::load_theme_from_path(&theme_path).expect("load theme");
     assert_eq!(theme.ui.prompt_icon, "::");
     assert_eq!(theme.segments.directory.bg_color, "magenta");
     assert_eq!(theme.segments.duration.icon.as_deref(), Some("X"));
@@ -84,8 +82,7 @@ bg_color = "match_bg"
 "##,
     );
 
-    let theme =
-        loader::load_theme_from_path(theme_path.to_str().expect("path str")).expect("load theme");
+    let theme = loader::load_theme_from_path(&theme_path).expect("load theme");
     let k8s = theme.segments.plugin.get("k8s").expect("k8s style present");
     assert_eq!(k8s.bg_color.as_deref(), Some("#073642"));
     assert_eq!(k8s.text_color.as_deref(), Some("white"));
@@ -116,7 +113,7 @@ fn plugin_segment_theme_rejects_untyped_keys() {
             "plugin-untyped",
             &format!("[ui]\nprompt_icon = \">\"\n\n[segments.k8s]\n{key} = {value}\n"),
         );
-        let err = loader::load_theme_from_path(theme_path.to_str().expect("path str"))
+        let err = loader::load_theme_from_path(&theme_path)
             .expect_err("untyped plugin key must fail")
             .to_string();
         assert!(err.contains(key), "{key} not named in: {err}");
@@ -159,7 +156,7 @@ show_seconds = true
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(
-        stdout.contains("__gpy_ui_prompt_icon"),
+        stdout.contains("__icon_prompt"),
         "Theme export should include prompt icon variable. Got: {stdout}"
     );
     assert!(
@@ -171,7 +168,8 @@ show_seconds = true
 #[test]
 fn starship_preset_loads_with_format_templates() {
     // Builtin presets are embedded; no file on disk.
-    let theme = loader::load_theme_from_path("starship.toml").expect("starship preset should load");
+    let theme = loader::load_theme_from_path(Path::new("starship.toml"))
+        .expect("starship preset should load");
 
     assert!(
         theme.segments.directory.format.is_some(),
@@ -207,7 +205,8 @@ fn starship_preset_loads_with_format_templates() {
 fn starship_preset_clock_blends_into_flat_look() {
     // The clock still renders shell-side; without an explicit transparent bg it
     // defaults to a black box that clashes with the flat Starship look.
-    let theme = loader::load_theme_from_path("starship.toml").expect("starship preset should load");
+    let theme = loader::load_theme_from_path(Path::new("starship.toml"))
+        .expect("starship preset should load");
     assert_eq!(
         theme.segments.clock.bg_color, "transparent",
         "starship preset clock must use a transparent background to match the flat look"
@@ -218,7 +217,8 @@ fn starship_preset_clock_blends_into_flat_look() {
 fn starship_preset_recommends_full_ui_layout() {
     // The preset declares order/display/icons so `theme use --force` needs no
     // manual config edits.
-    let theme = loader::load_theme_from_path("starship.toml").expect("starship preset should load");
+    let theme = loader::load_theme_from_path(Path::new("starship.toml"))
+        .expect("starship preset should load");
     let recommended = theme
         .ui
         .recommended
@@ -268,7 +268,8 @@ fn starship_preset_recommends_full_ui_layout() {
 fn default_preset_recommends_builtin_defaults() {
     // Default recommends stock settings so `--force` round-trips back; text
     // leaves config alone.
-    let default = loader::load_theme_from_path("default.toml").expect("default theme should load");
+    let default =
+        loader::load_theme_from_path(Path::new("default.toml")).expect("default theme should load");
     let recommended = default
         .ui
         .recommended
@@ -298,7 +299,8 @@ fn default_preset_recommends_builtin_defaults() {
     );
     assert_eq!(recommended.show_icons, Some(true));
 
-    let text = loader::load_theme_from_path("text.toml").expect("text theme should load");
+    let text =
+        loader::load_theme_from_path(Path::new("text.toml")).expect("text theme should load");
     assert!(
         text.ui.recommended.is_none(),
         "text theme should not recommend ui settings"
@@ -611,8 +613,7 @@ fn load_theme_missing_segments_errors() {
         "[ui]\nprompt_icon = \">\"\n",
     );
 
-    let err = loader::load_theme_from_path(broken.to_str().expect("path"))
-        .expect_err("theme load should fail");
+    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message
@@ -632,8 +633,7 @@ fn load_theme_invalid_color_errors() {
         "[ui]\nprompt_icon = \">\"\n\n[segments.clock]\nbg_color = \"not-a-color\"\ntext_color = \"white\"\n",
     );
 
-    let err = loader::load_theme_from_path(broken.to_str().expect("path"))
-        .expect_err("theme load should fail");
+    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message.contains("Invalid color"),
@@ -651,8 +651,7 @@ fn load_theme_invalid_icon_errors() {
         "[ui]\nprompt_icon = \"\\u0007\"\n\n[segments.clock]\nbg_color = \"black\"\ntext_color = \"white\"\n",
     );
 
-    let err = loader::load_theme_from_path(broken.to_str().expect("path"))
-        .expect_err("theme load should fail");
+    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message.contains("contains control characters"),
@@ -679,8 +678,7 @@ warn_bg_color = "definitely-not-a-color"
 "#,
     );
 
-    let err = loader::load_theme_from_path(broken.to_str().expect("path"))
-        .expect_err("theme load should fail");
+    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message.contains("definitely-not-a-color"),

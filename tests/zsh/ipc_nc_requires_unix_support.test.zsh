@@ -31,8 +31,7 @@ zmodload() { [[ "$1" == "zsh/net/socket" ]] && return 1; builtin zmodload "$@"; 
 
 # A socket node nothing listens on: the stub nc never connects to it, but the
 # pre-flight `-S` test needs the real thing.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$tmp/agent.sock"
-[[ -S "$tmp/agent.sock" ]] || test_skip "could not create a Unix socket node"
+shell_e2e_stub_listener "$tmp/agent.sock" bind-only
 
 mkdir -p "$tmp/bin"
 log="$tmp/nc.log"

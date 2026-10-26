@@ -29,6 +29,30 @@ impl Source {
     }
 }
 
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Builtin => f.write_str("builtin"),
+            Self::User => f.write_str("user"),
+            Self::Plugin { plugin_id } => write!(f, "plugin:{plugin_id}"),
+        }
+    }
+}
+
+/// Reject a theme or palette `name` that could escape its directory.
+///
+/// # Errors
+/// Returns an error unless `name` is [`is_safe_config_name`](super::types::is_safe_config_name).
+pub fn validate_config_name(kind: &str, name: &str) -> crate::Result<()> {
+    if super::types::is_safe_config_name(name) {
+        Ok(())
+    } else {
+        Err(crate::Error::config(super::types::invalid_name_message(
+            kind, name,
+        )))
+    }
+}
+
 /// A discovered artifact (re-exported as `DiscoveredTheme`/`DiscoveredPalette`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovered {
@@ -122,11 +146,6 @@ pub(crate) fn shadowed_provider(discovered: &[Discovered], name: &str) -> Option
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{
         Discovered, Source, insert_builtins, insert_toml_dir, merge_candidate, toml_stems,

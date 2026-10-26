@@ -34,17 +34,9 @@ function __guard_test_cleanup --on-event fish_exit
     rm -rf $scratch
 end
 
-set -g failures 0
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        print_test_result "$label" PASS
-    else
-        set -g failures (math $failures + 1)
-        print_test_result "$label" FAIL "$detail"
-    end
-end
-
-# The child test; $argv = out_dir mode.
+# The child test; $argv = out_dir mode. The held socket's holder is started
+# without test_stub_listener, which would register its PID: only the
+# directory registration may reap it.
 set -g child_script $scratch/child.fish
 printf '%s\n' \
     'set -l out $argv[1]' \
@@ -54,13 +46,7 @@ printf '%s\n' \
     'start_test_agent; or exit 9' \
     'set -l holder_dir (mktemp -d /tmp/gpy-fguard-held.XXXXXX)' \
     'test_track_dir $holder_dir' \
-    'python3 -c "import socket, sys, time
-s = socket.socket(socket.AF_UNIX)
-s.bind(sys.argv[1])
-s.listen(1)
-time.sleep(120)" $holder_dir/held.sock &' \
-    'set -l holder_pid $last_pid' \
-    'poll_until 5 test -S $holder_dir/held.sock; or exit 9' \
+    'set -l holder_pid (python3 $argv[3]/tests/lib/stub_listener.py $holder_dir/held.sock silent --lifetime 120); or exit 9' \
     'sleep 120 &' \
     'set -l tracked_pid $last_pid' \
     'test_track_pid $tracked_pid' \
@@ -112,7 +98,7 @@ open(out + "/rc", "w").write(str(child.wait()))' $out fish $child_script $out $m
     set running_child (cat $out/child_pid)
 
     if not poll_until 60 test -e $out/ready
-        check "$label: the child reached ready" 0 (string collect <$out/log)
+        fail "$label: the child reached ready" (string collect <$out/log)
         kill -9 $running_child 2>/dev/null
         set running_child
         return
@@ -126,7 +112,7 @@ open(out + "/rc", "w").write(str(child.wait()))' $out fish $child_script $out $m
         pid_alive $pid; or set alive_before 0
     end
     if test $alive_before = 0
-        check "$label: the child's processes were alive before teardown" 0 "pids: $pids"
+        fail "$label: the child's processes were alive before teardown" "pids: $pids"
         return
     end
 
@@ -142,13 +128,13 @@ open(out + "/rc", "w").write(str(child.wait()))' $out fish $child_script $out $m
 
     if test -n "$want_rc"
         set -l got (cat $out/rc 2>/dev/null)
-        check "$label: exit status $want_rc preserved" (test "$got" = "$want_rc"; and echo 1; or echo 0) "child return code '$got'"
+        check "$label: exit status $want_rc preserved" "$want_rc" "$got"
     end
-    check "$label: the agent is stopped" (poll_until 10 all_gone $pids[1]; and echo 1; or echo 0) "agent pid $pids[1] still alive"
-    check "$label: the registered process is killed" (poll_until 10 all_gone $pids[2]; and echo 1; or echo 0) "pid $pids[2] still alive"
-    check "$label: the registered directory's socket holder is killed" (poll_until 10 all_gone $pids[3]; and echo 1; or echo 0) "pid $pids[3] still alive"
-    check "$label: the sandbox is removed" (test -e $sandbox; and echo 0; or echo 1) "$sandbox exists"
-    check "$label: the registered directory is removed" (test -e $holder_dir; and echo 0; or echo 1) "$holder_dir exists"
+    check "$label: the agent is stopped" 1 (poll_until 10 all_gone $pids[1]; and echo 1; or echo 0)
+    check "$label: the registered process is killed" 1 (poll_until 10 all_gone $pids[2]; and echo 1; or echo 0)
+    check "$label: the registered directory's socket holder is killed" 1 (poll_until 10 all_gone $pids[3]; and echo 1; or echo 0)
+    check "$label: the sandbox is removed" 1 (test -e $sandbox; and echo 0; or echo 1)
+    check "$label: the registered directory is removed" 1 (test -e $holder_dir; and echo 0; or echo 1)
 end
 
 run_case normal "" 0
@@ -156,8 +142,4 @@ run_case exit3 "" 3
 run_case hold TERM -15
 run_case hold INT ""
 
-if test $failures -gt 0
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-end
-echo "PASS: an exiting, interrupted or terminated test leaves no agent, process or directory behind"
+test_finish "an exiting, interrupted or terminated test leaves no agent, process or directory behind"

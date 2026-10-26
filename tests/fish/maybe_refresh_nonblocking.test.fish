@@ -13,9 +13,8 @@
 # Case 3: agent down, `fish_prompt` with `language directory` in a directory
 #         holding only `Cargo.toml` still renders the directory segment.
 #
-# The listener is a python3 Unix-socket server (model:
-# ipc_nc_fallback_timeout.test.fish) that self-destructs, so the worst case is
-# bounded without tracking background PIDs.
+# The listener is a stub agent (tests/lib/stub_listener.py) with a bounded
+# lifetime, registered with the teardown guard.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -32,17 +31,6 @@ end
 if not command -q nc
     test_skip "nc not installed, cannot exercise the IPC client"
 end
-
-set -g test_result PASS
-function check --argument-names name ok detail
-    if test "$ok" = PASS
-        print_test_result $name PASS $detail
-    else
-        print_test_result $name FAIL $detail
-        set -g test_result FAIL
-    end
-end
-
 set -l real_date (command -v date)
 set -l tmp (mktemp -d)
 set -l tmp (path resolve $tmp)
@@ -60,45 +48,8 @@ set -gx GPY_AGENT_BINARY_PATH $tmp/stub-agent
 
 # --- Case 1: non-blocking against a slow listener ---
 set -l sock $tmp/gpy.sock
-python3 -c '
-import socket, sys, threading, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(8)
-s.settimeout(0.2)
-log = sys.argv[2]
-deadline = time.time() + float(sys.argv[3])
-def handle(conn):
-    try:
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = conn.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-        with open(log, "ab") as f:
-            f.write(data)
-        time.sleep(3)
-        conn.sendall(b"{\"status\":\"ok\"}\n")
-    except OSError:
-        pass
-    finally:
-        conn.close()
-while time.time() < deadline:
-    try:
-        conn, _ = s.accept()
-    except socket.timeout:
-        continue
-    threading.Thread(target=handle, args=(conn,), daemon=True).start()
-' $sock $tmp/server.log 10 &
-set -g listener_pid $last_pid
-
-poll_until 2 test -S $sock
-if not test -S $sock
-    kill -9 $listener_pid 2>/dev/null
-    rm -rf $tmp
-    test_skip "could not create test Unix socket listener"
-end
+test_stub_listener $sock reply --reply '{"status":"ok"}' --delay 3 \
+    --requests $tmp/server.log --lifetime 10
 
 # Restrict PATH so the IPC client is nc without coreutils `timeout` or socat
 # (stock macOS), whatever the host has installed. That is the path where a
@@ -121,19 +72,19 @@ for op in git lang
     set -l elapsed_ms (math --scale=0 "($end_ns - $start_ns) / 1000000")
 
     if test $elapsed_ms -lt 300
-        check "maybe_refresh $op returns immediately" PASS "$elapsed_ms"ms
+        pass "maybe_refresh $op returns immediately"
     else
-        check "maybe_refresh $op returns immediately" FAIL "took $elapsed_ms"ms", expected < 300ms against a 3s listener"
+        fail "maybe_refresh $op returns immediately" "took $elapsed_ms"ms", expected < 300ms against a 3s listener"
     end
 
     if poll_until 2 test -s $tmp/server.log; and string match -q "*\"op\":\"$op\"*" -- (cat $tmp/server.log)
-        check "listener receives the $op refresh payload" PASS
+        pass "listener receives the $op refresh payload"
     else
-        check "listener receives the $op refresh payload" FAIL "server.log: ["(cat $tmp/server.log 2>/dev/null)"]"
+        fail "listener receives the $op refresh payload" "server.log: ["(cat $tmp/server.log 2>/dev/null)"]"
     end
 end
 
-kill -9 $listener_pid 2>/dev/null
+test_stop_pids $test_stub_pid
 rm -f $sock
 set -e GPY_AGENT_SOCKET_PATH
 set -e __gpy_registered
@@ -150,14 +101,14 @@ set -e __gpy_last_segment_bg
 set -l lang_out (segment_language_render "" true)
 
 if test -e $tmp/calls.log
-    check "cold-miss language render forks no gpy-agent" FAIL "calls: ["(cat $tmp/calls.log)"]"
+    fail "cold-miss language render forks no gpy-agent" "calls: ["(cat $tmp/calls.log)"]"
 else
-    check "cold-miss language render forks no gpy-agent" PASS
+    pass "cold-miss language render forks no gpy-agent"
 end
 if set -q __gpy_oneshot_used
-    check "cold-miss language render leaves the oneshot budget unclaimed" FAIL
+    fail "cold-miss language render leaves the oneshot budget unclaimed"
 else
-    check "cold-miss language render leaves the oneshot budget unclaimed" PASS
+    pass "cold-miss language render leaves the oneshot budget unclaimed"
 end
 
 # --- Case 3: agent down, the directory segment still renders ---
@@ -174,13 +125,12 @@ end
 set -l prompt_out (fish_prompt 2>/dev/null | string collect)
 
 if string match -q '*DIR*' -- "$prompt_out"
-    check "directory segment renders with the agent down" PASS
+    pass "directory segment renders with the agent down"
 else
-    check "directory segment renders with the agent down" FAIL "prompt: ["(string escape -- "$prompt_out")"]"
+    fail "directory segment renders with the agent down" "prompt: ["(string escape -- "$prompt_out")"]"
 end
 
 cd $repo_root
 rm -rf $tmp
 
-print_test_footer "Fish background refresh is non-blocking" $test_result
-test "$test_result" = PASS
+test_finish "Fish background refresh is non-blocking"

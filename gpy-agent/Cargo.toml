@@ -130,12 +130,15 @@ sysinfo = "0.39"
 portable-pty = "0.9"
 
 [features]
-# Compiles in test-only surface (`ThemeManager::watch_registry_for_test`).
+# Library surface for integration tests and benches only. The self
+# dev-dependency below turns it on for every test, bench and example build,
+# so no command passes `--features`; `--lib`, release and `cargo doc` builds
+# never compile it.
 test-support = []
 
 [dev-dependencies]
+gpy-agent = { path = ".", features = ["test-support"] }
 tempfile = "3.27"
-futures = "0.3"
 serial_test = { version = "4.0", features = ["file_locks"] }
 regex = "1.13"
 
@@ -186,6 +189,10 @@ harness = false
 
 [[bench]]
 name = "agent_startup_bench"
+harness = false
+
+[[bench]]
+name = "plugin_bench"
 harness = false
 
 # Local `--release` builds and `cargo bench` (the bench profile inherits this).

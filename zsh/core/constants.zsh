@@ -1,30 +1,11 @@
 # zsh/core/constants.zsh
 
-# Icon Theme: Nerd
-typeset -g __gpy_icon_nerd_git_new="󰿞"
-typeset -g __gpy_icon_nerd_git_staged="󱓞"
-typeset -g __gpy_icon_nerd_git_unstaged="󰇷"
-typeset -g __gpy_icon_nerd_git_untracked="?"
-typeset -g __gpy_icon_nerd_git_stash="󰋀"
-typeset -g __gpy_icon_nerd_git_clean="󰄬"
-typeset -g __gpy_icon_nerd_git_ahead="󰁞"
-typeset -g __gpy_icon_nerd_git_behind="󰁆"
-typeset -g __gpy_icon_nerd_git_diverged="󰩋"
-typeset -g __gpy_icon_nerd_lock="🔒"
-typeset -g __gpy_icon_nerd_status_ok="✔"
-typeset -g __gpy_icon_nerd_status_fail="✖"
-typeset -g __gpy_icon_nerd_duration="󰑧"
-typeset -g __gpy_icon_nerd_clock=""
-typeset -g __gpy_icon_nerd_prompt="❯"
-
 # Defaults (overridden by agent theme export)
-typeset -g __gpy_ui_prompt_icon="❯"
 typeset -g __prompt_color="green"
 typeset -g __icon_prompt="❯"
 typeset -g __icon_root_prompt="!❯!"
 typeset -g __root_prompt_color="red"
 
-# Initialize segments array
 typeset -g -a __enabled_segments=()
 
 # IPC round-trip bound (ms); __gpy_ms_to_secs rejects a non-numeric override.

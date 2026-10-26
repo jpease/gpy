@@ -36,7 +36,10 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
 ```
 
 - `test_skip "reason"` / `test_require_command NAME`: `SKIP:` and exit 0
-  locally, exit 1 under `CI`. Never `exit 0` on a missing prerequisite.
+  locally, exit 1 under `CI`. `test_skip_part "reason"` does the same for one
+  section of a test: it returns locally so the rest still runs. Never print
+  `SKIP:` or `exit 0` on a missing prerequisite directly; `quality-check.sh`
+  and `test-fish.sh` list every test whose output has a `SKIP:` line.
 - All waits are bounded polls (`shell_e2e_poll SECONDS CMD...`); do not add
   fixed sleeps for synchronisation. A sleep stays only where elapsed time is
   the behaviour (a measured duration, a TTL) or a window in which nothing may
@@ -47,6 +50,12 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
   `shell_e2e_init` arms the EXIT trap that stops the client and agent, kills
   whatever holds a unix socket under the sandbox, and removes it; register a
   helper process with `shell_e2e_track_pid PID`.
+- A test that needs a stand-in agent on a Unix socket (silent, slow,
+  answering, cut off mid-reply, or a socket file nobody listens on) uses
+  `shell_e2e_stub_listener SOCKET MODE [OPTION...]`, which runs
+  `tests/lib/stub_listener.py`; never an inline Python listener. Stop it with
+  `shell_e2e_stop_pids`; a test without `shell_e2e_init` calls
+  `shell_e2e_kill_tracked` from its own EXIT trap.
 - Tests that must not start an agent source `tests/lib/supervisor_off.bash`,
   write `[agent] enabled = false` into their own sandbox `config.toml`, or
   source with no `gpy-agent` on `PATH` (`shell_e2e_agent_free_begin` /

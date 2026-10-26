@@ -2,6 +2,8 @@
 # Test IPC security - request payloads JSON-escape paths, preventing injection
 
 # Source the core files
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 source fish/core/util.fish
 source fish/core/ipc.fish
 
@@ -35,18 +37,18 @@ function test_ipc_path_injection_security
 
         # Verify the payload is valid JSON
         if echo $git_payload | jq . >/dev/null 2>&1
-            echo "✓ Git payload is valid JSON"
+            pass "Git payload is valid JSON"
         else
-            echo "✗ Git payload is not valid JSON"
+            fail "Git payload is not valid JSON"
             return 1
         end
 
         # Verify the cwd field contains the escaped path
         set -l extracted_cwd (echo $git_payload | jq -r '.cwd')
         if test "$extracted_cwd" = "$malicious_path"
-            echo "✓ Git cwd field matches original path"
+            pass "Git cwd field matches original path"
         else
-            echo "⚠ Git cwd field was modified during JSON processing: '$extracted_cwd' vs '$malicious_path'"
+            echo "NOTE: Git cwd field was modified during JSON processing: '$extracted_cwd' vs '$malicious_path'"
         end
 
         # Test lang operation
@@ -55,18 +57,18 @@ function test_ipc_path_injection_security
 
         # Verify the payload is valid JSON
         if echo $lang_payload | jq . >/dev/null 2>&1
-            echo "✓ Lang payload is valid JSON"
+            pass "Lang payload is valid JSON"
         else
-            echo "✗ Lang payload is not valid JSON"
+            fail "Lang payload is not valid JSON"
             return 1
         end
 
         # Verify the cwd field contains the escaped path
         set -l extracted_cwd (echo $lang_payload | jq -r '.cwd')
         if test "$extracted_cwd" = "$malicious_path"
-            echo "✓ Lang cwd field matches original path"
+            pass "Lang cwd field matches original path"
         else
-            echo "⚠ Lang cwd field was modified during JSON processing: '$extracted_cwd' vs '$malicious_path'"
+            echo "NOTE: Lang cwd field was modified during JSON processing: '$extracted_cwd' vs '$malicious_path'"
         end
 
         echo
@@ -95,18 +97,18 @@ function test_json_escape_function
         # Create a JSON string and verify it's valid
         set -l json_string (string join '' '{"test":"' $escaped '"}')
         if echo $json_string | jq . >/dev/null 2>&1
-            echo "✓ Escaped string produces valid JSON"
+            pass "Escaped string produces valid JSON"
         else
-            echo "✗ Escaped string does not produce valid JSON"
+            fail "Escaped string does not produce valid JSON"
             return 1
         end
 
         # Verify we can extract the original value back
         set -l extracted (echo $json_string | jq -r '.test')
         if test "$extracted" = "$test_case"
-            echo "✓ Round-trip successful"
+            pass "Round-trip successful"
         else
-            echo "✗ Round-trip failed: got '$extracted' expected '$test_case'"
+            fail "Round-trip failed: got '$extracted' expected '$test_case'"
             return 1
         end
         echo
@@ -125,9 +127,9 @@ function test_old_method_vulnerability
 
     # `string escape` is not JSON escaping: it may produce invalid JSON or allow injection
     if echo $old_payload | jq . >/dev/null 2>&1
-        echo "⚠ Old method still produces valid JSON (unexpected)"
+        echo "NOTE: Old method still produces valid JSON (unexpected)"
     else
-        echo "✓ Old method produces invalid JSON (as expected)"
+        pass "Old method produces invalid JSON (as expected)"
     end
 
     # __gpy_request's payload must be valid JSON
@@ -135,9 +137,9 @@ function test_old_method_vulnerability
     echo "New method payload: $new_payload"
 
     if echo $new_payload | jq . >/dev/null 2>&1
-        echo "✓ New method produces valid JSON"
+        pass "New method produces valid JSON"
     else
-        echo "✗ New method produces invalid JSON"
+        fail "New method produces invalid JSON"
         return 1
     end
 end
@@ -150,19 +152,8 @@ function run_ipc_security_tests
     test_json_escape_function
     and test_ipc_path_injection_security
     and test_old_method_vulnerability
-
-    if test $status -eq 0
-        echo
-        echo "🎉 All IPC security tests passed!"
-        echo "✅ JSON escaping works correctly"
-        echo "✅ Malicious paths are properly handled"
-        echo "✅ Path injection vulnerability is fixed"
-    else
-        echo
-        echo "❌ Some security tests failed"
-        return 1
-    end
 end
 
 # Run the tests
-run_ipc_security_tests
+run_ipc_security_tests; or exit 1
+test_finish "IPC security"

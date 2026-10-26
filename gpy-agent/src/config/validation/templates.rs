@@ -134,10 +134,6 @@ fn escape_controls(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{ValidationErrorKind, validate_segment_templates};
     use crate::template::Palette;

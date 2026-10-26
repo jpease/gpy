@@ -3,7 +3,8 @@
 # Usage: ./scripts/ci-bench.sh [--ci]   # --ci (or CI=true): budget overages fail
 #
 # A broken measurement (non-zero exit, empty output, unparseable timing, zero
-# RSS, unresponsive daemon) is a hard failure in every mode.
+# RSS, unresponsive daemon) is a hard failure in every mode. A missing jq,
+# baseline file (BASELINE_FILE overrides it) or budget key exits 2.
 
 set -uo pipefail
 
@@ -11,7 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENT_DIR="$PROJECT_ROOT/gpy-agent"
 AGENT_BIN="$AGENT_DIR/target/release/gpy-agent"
-BASELINE_FILE="$PROJECT_ROOT/tests/performance-baselines.json"
+# shellcheck source=scripts/lib/bench-common.sh
+. "$SCRIPT_DIR/lib/bench-common.sh"
 RESULTS_DIR="$PROJECT_ROOT/bench-results"
 FISH_FUNCS="$PROJECT_ROOT/fish/functions"
 FISH_CORE="$PROJECT_ROOT/fish/core/init.fish"
@@ -63,7 +65,6 @@ trap cleanup EXIT INT TERM
 
 require_tools() {
   local missing=()
-  command -v jq >/dev/null 2>&1 || missing+=("jq")
   command -v hyperfine >/dev/null 2>&1 || missing+=("hyperfine")
   command -v fish >/dev/null 2>&1 || missing+=("fish")
   command -v git >/dev/null 2>&1 || missing+=("git")
@@ -79,22 +80,20 @@ require_tools() {
   return 0
 }
 
-ensure_agent_built() {
-  if [[ ! -x "$AGENT_BIN" ]]; then
-    info "Building release agent for benchmarks..."
-    if ! (cd "$AGENT_DIR" && cargo build --release --quiet); then
-      record_hard "Failed to build release agent"
-      return 1
-    fi
-  fi
-  return 0
+# Budgets, read once in main from the baseline file.
+load_budgets() {
+  bench_load_baselines \
+    TOLERANCE_PCT=.regression_thresholds.measurement_variance_percent \
+    BUDGET_PROMPT_WARM=.budgets.prompt_render.max_ms \
+    BUDGET_PROMPT_COLD=.budgets.prompt_render_cold.max_ms \
+    BUDGET_PROMPT_STALE=.budgets.prompt_render_stale.max_ms \
+    BUDGET_PROMPT_DEGRADED=.budgets.prompt_render_degraded.max_ms \
+    BUDGET_PROMPT_BASH=.budgets.prompt_render_bash.max_ms \
+    BUDGET_PROMPT_ZSH=.budgets.prompt_render_zsh.max_ms \
+    BUDGET_GIT_COLD=.budgets.git_status_cold.max_ms \
+    BUDGET_MEMORY_STARTUP=.budgets.memory_usage.max_mb \
+    BUDGET_MEMORY_LONG=.budgets.memory_long_running.max_mb
 }
-
-budget_ms() { jq -r ".budgets.${1}.max_ms // empty" "$BASELINE_FILE" 2>/dev/null; }
-budget_mb() { jq -r ".budgets.${1}.max_mb // empty" "$BASELINE_FILE" 2>/dev/null; }
-
-TOLERANCE_PCT="$(jq -r '.regression_thresholds.measurement_variance_percent // 15' "$BASELINE_FILE" 2>/dev/null || echo 15)"
-TOLERANCE_PCT="$(printf '%.0f' "$TOLERANCE_PCT")"
 
 within_budget() {
   local measured="$1" budget="$2"
@@ -191,7 +190,7 @@ scenario_shell_prompts() {
     # shellcheck disable=SC2016
     body="$cd_src"'for i in $(seq '"$RENDER_ITERS"'); do __gpy_precmd; : "${PS1@P}"; done'
     # shellcheck disable=SC2016
-    run_latency "bash prompt" "$(budget_ms prompt_render_bash)" \
+    run_latency "bash prompt" "$BUDGET_PROMPT_BASH" \
       "$(bench_shell_command "$body" "$bash_bin" --noprofile --norc)" "$RENDER_ITERS" \
       "$(bench_shell_command "$cd_src"'__gpy_precmd; printf %s "${PS1@P}"' "$bash_bin" --noprofile --norc)"
   fi
@@ -207,7 +206,7 @@ scenario_shell_prompts() {
     # shellcheck disable=SC2016
     body="$cd_src"'for i in {1..'"$RENDER_ITERS"'}; do for f in $precmd_functions; do $f; done; : ${(%)PROMPT}; done'
     # shellcheck disable=SC2016
-    run_latency "zsh prompt" "$(budget_ms prompt_render_zsh)" \
+    run_latency "zsh prompt" "$BUDGET_PROMPT_ZSH" \
       "$(bench_shell_command "$body" zsh -f)" "$RENDER_ITERS" \
       "$(bench_shell_command "$cd_src"'for f in $precmd_functions; do $f; done; print -P "$PROMPT"' zsh -f)"
   fi
@@ -227,11 +226,6 @@ preflight_render() {
 run_latency() {
   local label="$1" budget="$2" cmd="$3" iters="${4:-1}" preflight="${5:-$3}"
   info "Scenario: $label"
-
-  if [[ -z "$budget" ]]; then
-    record_hard "$label: no budget defined in $(basename "$BASELINE_FILE")"
-    return 1
-  fi
 
   if ! preflight_render "$preflight"; then
     record_hard "$label: command failed or produced empty output"
@@ -279,10 +273,6 @@ sample_rss_mb() {
 
 check_memory() {
   local label="$1" budget="$2" measured="$3"
-  if [[ -z "$budget" ]]; then
-    record_hard "$label: no memory budget defined"
-    return 1
-  fi
   if [[ -z "$measured" ]] || awk -v m="$measured" 'BEGIN { exit !(m <= 0) }'; then
     record_hard "$label: invalid RSS measurement (\"$measured\")"
     return 1
@@ -330,13 +320,13 @@ scenario_prompt_latency() {
 
   if start_daemon; then
     eval "$preflight" >/dev/null 2>&1
-    run_latency "warm prompt" "$(budget_ms prompt_render)" "$warm" "$RENDER_ITERS" "$preflight"
+    run_latency "warm prompt" "$BUDGET_PROMPT_WARM" "$warm" "$RENDER_ITERS" "$preflight"
 
-    run_latency "cold cache" "$(budget_ms prompt_render_cold)" "$cold" "$RENDER_ITERS" "$preflight"
+    run_latency "cold cache" "$BUDGET_PROMPT_COLD" "$cold" "$RENDER_ITERS" "$preflight"
 
     # Stale: cache aged before every render (serve-stale path).
     eval "$preflight" >/dev/null 2>&1
-    run_latency "stale cache" "$(budget_ms prompt_render_stale)" "$stale" "$RENDER_ITERS" "$preflight"
+    run_latency "stale cache" "$BUDGET_PROMPT_STALE" "$stale" "$RENDER_ITERS" "$preflight"
 
     scenario_shell_prompts
   else
@@ -348,7 +338,7 @@ scenario_prompt_latency() {
   if [[ -n "$(daemon_pid)" ]]; then
     record_hard "agent unavailable: daemon did not shut down cleanly"
   else
-    run_latency "agent unavailable" "$(budget_ms prompt_render_degraded)" "$warm" "$RENDER_ITERS" "$preflight"
+    run_latency "agent unavailable" "$BUDGET_PROMPT_DEGRADED" "$warm" "$RENDER_ITERS" "$preflight"
   fi
 }
 
@@ -357,7 +347,7 @@ scenario_large_repo() {
   # Oneshot = fresh process with no daemon cache.
   local cmd
   cmd="$(printf 'XDG_CACHE_HOME=%q %q oneshot git --cwd %q' "$BENCH_CACHE" "$AGENT_BIN" "$LARGE_REPO")"
-  run_latency "large repository" "$(budget_ms git_status_cold)" "$cmd" 1 "$cmd"
+  run_latency "large repository" "$BUDGET_GIT_COLD" "$cmd" 1 "$cmd"
 }
 
 scenario_memory() {
@@ -376,7 +366,7 @@ scenario_memory() {
   if ! rss="$(sample_rss_mb "$pid")"; then
     record_hard "startup RSS: measured an empty/zero RSS (process not alive)"
   else
-    check_memory "startup RSS" "$(budget_mb memory_usage)" "$rss"
+    check_memory "startup RSS" "$BUDGET_MEMORY_STARTUP" "$rss"
   fi
 
   info "Scenario: long-running RSS (${LONG_RUN_ITERS} iterations)"
@@ -392,7 +382,7 @@ scenario_memory() {
       awk -v s="$sample" -v p="$peak" 'BEGIN { exit !(s > p) }' && peak="$sample"
     fi
   done
-  check_memory "long-running RSS" "$(budget_mb memory_long_running)" "$peak"
+  check_memory "long-running RSS" "$BUDGET_MEMORY_LONG" "$peak"
   stop_daemon
 }
 
@@ -416,13 +406,8 @@ main() {
   mkdir -p "$RESULTS_DIR"
 
   require_tools || { print_summary; return $?; }
-  ensure_agent_built || { print_summary; return $?; }
-
-  if [[ ! -f "$BASELINE_FILE" ]]; then
-    record_hard "Baseline file not found: $BASELINE_FILE"
-    print_summary
-    return $?
-  fi
+  load_budgets
+  bench_build_release_agent "$AGENT_DIR"
 
   scenario_prompt_latency
   scenario_large_repo

@@ -18,6 +18,9 @@
 #   registers is killed, removed or called back on every exit path (normal
 #   exit, failed assertion, `exit N`, test_skip, SIGINT, SIGTERM, SIGHUP).
 #   init_test_env arms it and registers its own sandbox and agent.
+# - test_stub_listener SOCKET MODE [OPTION...] / test_stop_pids PID...: a
+#   stand-in agent on a Unix socket (tests/lib/stub_listener.py), and the
+#   TERM-then-KILL stop for it or any other helper process
 
 # Global test state
 set -g __gpy_root (realpath (dirname (status -f))/../..)
@@ -111,8 +114,22 @@ function test_track_cleanup
     set -a __gpy_guard_hooks $argv
 end
 
+# Run tests/lib/stub_listener.py on $argv[1] (its docstring lists the modes
+# and options). Returns once the socket accepts connections, with the serving
+# process's PID in $test_stub_pid, registered with test_track_pid. Stop it
+# with test_stop_pids: it logs what is still queued, then exits. Mode
+# bind-only leaves a socket file nothing listens on and $test_stub_pid empty.
+# A stub that cannot start fails the test.
+function test_stub_listener
+    if not set -g test_stub_pid (python3 $__gpy_root/tests/lib/stub_listener.py $argv)
+        echo "FAIL: could not start a stub listener on $argv[1]"
+        exit 1
+    end
+    set -q test_stub_pid[1]; and test_track_pid $test_stub_pid
+end
+
 # TERM every PID, wait (bounded) for them to leave, then KILL the stragglers.
-function __gpy_guard_kill_pids
+function test_stop_pids
     set -l pids
     for pid in $argv
         kill -0 $pid 2>/dev/null; and set -a pids $pid
@@ -154,7 +171,7 @@ function __gpy_guard_teardown
     if set -q sockets[1]; and not command -q lsof
         echo "WARNING: lsof unavailable; cannot stop agents bound under the test sandbox" >&2
     end
-    __gpy_guard_kill_pids $__gpy_guard_pids $file_pids $holders
+    test_stop_pids $__gpy_guard_pids $file_pids $holders
     for socket in $sockets
         rm -f $socket 2>/dev/null
     end
@@ -227,7 +244,7 @@ function init_test_env
 
     # Test this checkout's gpy-agent, never an installed one: a standalone
     # `fish tests/fish/<file>` otherwise resolves whatever the caller's PATH
-    # (or fish_user_paths) holds. Same rule as scripts/test_fish.sh and
+    # (or fish_user_paths) holds. Same rule as scripts/test-fish.sh and
     # tests/lib/shell_e2e.sh.
     set -l target_dir $__gpy_root/gpy-agent/target
     test -n "$CARGO_TARGET_DIR"; and set target_dir $CARGO_TARGET_DIR
@@ -546,23 +563,6 @@ function cleanup_test_files
     cleanup_git_test_files
 end
 
-# Wait for next minute boundary (:00 seconds)
-# Returns: Number of seconds until next boundary
-function wait_for_minute_boundary
-    set -l current_second (date +%S)
-    set -l seconds_to_wait (math "60 - $current_second + 2")
-
-    echo "Waiting $seconds_to_wait seconds for next :00 boundary..." >&2
-    sleep $seconds_to_wait
-
-    return 0
-end
-
-# Get current second of minute
-function get_current_second
-    date +%S | string replace -r '^0' ''
-end
-
 # Create a temporary git repository for testing
 # Returns: Path to the temporary repo
 function create_test_repo
@@ -620,6 +620,54 @@ function test_backdate --argument-names file seconds
     $__gpy_test_clock_bin -e 'my $t = time() - $ARGV[1]; utime($t, $t, $ARGV[0]) or die "utime: $!"' $file $seconds
 end
 
+# Assertions. Every test reports through these, in the one format the runner
+# and the Bash/Zsh suites share (tests/lib/shell_e2e.sh):
+#   pass LABEL                   print `PASS: LABEL`
+#   fail LABEL [DETAIL...]       print `FAIL: LABEL[: DETAIL]` and count it
+#   check LABEL EXPECTED ACTUAL  pass when the strings are equal
+#   expect_eq LABEL ACTUAL EXPECTED
+#                                check with the operands swapped
+#   test_finish [SUMMARY]        exit 1 with the failure count if any
+#                                assertion failed, else print `PASS: SUMMARY`
+set -g __gpy_test_failures 0
+
+function pass
+    echo "PASS: $argv"
+end
+
+function fail
+    set -g __gpy_test_failures (math $__gpy_test_failures + 1)
+    if set -q argv[2]
+        echo "FAIL: $argv[1]: $argv[2..-1]"
+    else
+        echo "FAIL: $argv"
+    end
+end
+
+function check --argument-names label expected actual
+    if test "$actual" = "$expected"
+        pass "$label"
+    else
+        fail "$label (expected [$expected], got [$actual])"
+    end
+end
+
+function expect_eq --argument-names label actual expected
+    check "$label" "$expected" "$actual"
+end
+
+function test_finish
+    if test $__gpy_test_failures -gt 0
+        echo "FAILED: $__gpy_test_failures assertion(s)"
+        exit 1
+    end
+    if set -q argv[1]
+        echo "PASS: $argv"
+    else
+        echo "PASS: all assertions"
+    end
+end
+
 # Print test header
 function print_test_header
     echo ""
@@ -627,83 +675,6 @@ function print_test_header
     echo "$argv[1]"
     echo "========================================"
     echo ""
-end
-
-# Print test result
-function print_test_result
-    set -l test_name $argv[1]
-    set -l result $argv[2]
-
-    if test "$result" = PASS
-        echo "✅ $test_name: PASS"
-        return 0
-    else
-        echo "❌ $test_name: FAIL"
-        if set -q argv[3]
-            echo "   Reason: $argv[3]"
-        end
-        return 1
-    end
-end
-
-# Assert that a value equals expected
-function assert_equals
-    set -l actual $argv[1]
-    set -l expected $argv[2]
-    set -l message $argv[3]
-
-    if test "$actual" = "$expected"
-        return 0
-    else
-        echo "FAIL: $message" >&2
-        echo "  Expected: $expected" >&2
-        echo "  Actual:   $actual" >&2
-        return 1
-    end
-end
-
-# Assert that a value is greater than threshold
-function assert_greater_than
-    set -l actual $argv[1]
-    set -l threshold $argv[2]
-    set -l message $argv[3]
-
-    if test $actual -gt $threshold
-        return 0
-    else
-        echo "FAIL: $message" >&2
-        echo "  Expected: > $threshold" >&2
-        echo "  Actual:   $actual" >&2
-        return 1
-    end
-end
-
-# Assert that a value is less than threshold
-function assert_less_than
-    set -l actual $argv[1]
-    set -l threshold $argv[2]
-    set -l message $argv[3]
-
-    if test $actual -lt $threshold
-        return 0
-    else
-        echo "FAIL: $message" >&2
-        echo "  Expected: < $threshold" >&2
-        echo "  Actual:   $actual" >&2
-        return 1
-    end
-end
-
-# Print test footer
-function print_test_footer
-    set -l test_name $argv[1]
-    set -l test_status $argv[2]
-
-    if test "$test_status" = PASS
-        echo "✅ $test_name: All tests passed"
-    else
-        echo "❌ $test_name: Tests failed"
-    end
 end
 
 # Remove a client PID from the cleanup list

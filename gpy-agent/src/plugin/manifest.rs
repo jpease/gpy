@@ -1,5 +1,6 @@
 //! Plugin manifest (`plugin.toml`) schema and validated plugin identifiers.
 
+use super::newtype::{deserialize_via_new, display_inner};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -39,21 +40,9 @@ impl PluginId {
     }
 }
 
-impl<'de> Deserialize<'de> for PluginId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
+deserialize_via_new!(PluginId, keep_prefix);
 
-impl fmt::Display for PluginId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+display_inner!(PluginId);
 
 /// A validated, normalized segment name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -151,21 +140,9 @@ pub fn first_token_collision<'a>(
     None
 }
 
-impl<'de> Deserialize<'de> for SegmentName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
+deserialize_via_new!(SegmentName, keep_prefix);
 
-impl fmt::Display for SegmentName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+display_inner!(SegmentName);
 
 /// Entry type for a plugin
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,15 +197,20 @@ impl fmt::Display for PluginApiVersion {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct GpyVersion(
-    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$")))] String,
-);
+#[cfg_attr(test, schemars(transparent))]
+pub struct GpyVersion {
+    #[serde(skip)]
+    core: [u64; 3],
+    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$")))]
+    raw: String,
+}
 
 impl GpyVersion {
     /// Create a new parsed GPY version string.
     ///
     /// # Errors
-    /// Returns an error if the value is empty or does not start with `MAJOR.MINOR.PATCH`.
+    /// Returns an error if the value is empty, does not start with
+    /// `MAJOR.MINOR.PATCH`, or a component does not fit in a `u64`.
     pub fn new(version: &str) -> crate::Result<Self> {
         let normalized = version.trim();
         if normalized.is_empty() {
@@ -252,24 +234,25 @@ impl GpyVersion {
             )));
         }
 
-        Ok(Self(normalized.to_owned()))
+        let mut core = [0u64; 3];
+        for (slot, part) in core.iter_mut().zip(&parts) {
+            *slot = part.parse().map_err(|e| {
+                crate::Error::invalid(format!(
+                    "Version component '{part}' is too large in '{normalized}': {e}"
+                ))
+            })?;
+        }
+
+        Ok(Self {
+            core,
+            raw: normalized.to_owned(),
+        })
     }
 
     /// Get the normalized string.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn numeric_parts(&self) -> [u64; 3] {
-        let mut parts = Self::numeric_core(&self.0)
-            .split('.')
-            .map(|part| part.parse::<u64>().unwrap_or_default());
-        [
-            parts.next().unwrap_or_default(),
-            parts.next().unwrap_or_default(),
-            parts.next().unwrap_or_default(),
-        ]
+        &self.raw
     }
 
     fn numeric_core(version: &str) -> &str {
@@ -282,23 +265,15 @@ impl GpyVersion {
     /// Compare two versions using their numeric semver core.
     #[must_use]
     pub fn is_greater_than(&self, other: &Self) -> bool {
-        self.numeric_parts() > other.numeric_parts()
+        self.core > other.core
     }
 }
 
-impl<'de> Deserialize<'de> for GpyVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
+deserialize_via_new!(GpyVersion, keep_prefix);
 
 impl fmt::Display for GpyVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.raw)
     }
 }
 
@@ -387,36 +362,47 @@ impl PluginManifest {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
 
+    /// Asserts `result` failed and its message contains `needle`.
+    fn assert_rejected<T: std::fmt::Debug>(result: crate::Result<T>, needle: &str) {
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains(needle), "expected `{needle}` in: {err}");
+    }
+
     #[test]
-    fn test_valid_plugin_id() {
+    fn plugin_id_is_trimmed_and_lowercased() {
         assert_eq!(PluginId::new("my-plugin").unwrap().as_str(), "my-plugin");
         assert_eq!(PluginId::new(" My-Plugin ").unwrap().as_str(), "my-plugin");
         assert_eq!(PluginId::new("123-ABC").unwrap().as_str(), "123-abc");
     }
 
     #[test]
-    fn test_invalid_plugin_id() {
-        assert!(PluginId::new("").is_err());
-        assert!(PluginId::new("  ").is_err());
-        assert!(PluginId::new("my plugin").is_err());
-        assert!(PluginId::new("my_plugin").is_err());
+    fn plugin_id_rejects_empty_and_non_alphanumeric_hyphen_input() {
+        assert_rejected(PluginId::new(""), "cannot be empty");
+        assert_rejected(PluginId::new("  "), "cannot be empty");
+        assert_rejected(
+            PluginId::new("my plugin"),
+            "alphanumeric characters and hyphens",
+        );
+        assert_rejected(
+            PluginId::new("my_plugin"),
+            "alphanumeric characters and hyphens",
+        );
     }
 
     #[test]
-    fn test_valid_segment_name() {
+    fn segment_name_is_trimmed_and_lowercased() {
         assert_eq!(SegmentName::new("my_seg").unwrap().as_str(), "my_seg");
         assert_eq!(SegmentName::new(" MY-seg ").unwrap().as_str(), "my-seg");
     }
 
     #[test]
-    fn test_invalid_segment_name() {
-        assert!(SegmentName::new("").is_err());
-        assert!(SegmentName::new("my seg").is_err());
-        assert!(SegmentName::new("my@seg").is_err());
+    fn segment_name_rejects_empty_and_invalid_characters() {
+        assert_rejected(SegmentName::new(""), "cannot be empty");
+        assert_rejected(SegmentName::new("my seg"), "underscores, and hyphens");
+        assert_rejected(SegmentName::new("my@seg"), "underscores, and hyphens");
     }
 
     #[test]
@@ -445,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rejects_colliding_segment_tokens() {
+    fn parse_rejects_colliding_segment_tokens() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -462,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_valid_manifest() {
+    fn parse_accepts_a_valid_manifest() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -482,16 +468,16 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_missing_required_fields() {
+    fn parse_rejects_a_manifest_missing_required_fields() {
         let toml = r#"
             name = "My Test Plugin"
             version = "1.0.0"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(PluginManifest::parse(toml), "missing field");
     }
 
     #[test]
-    fn test_parse_rejects_missing_provided_segments() {
+    fn parse_rejects_missing_provided_segments() {
         for key_line in ["", "provided_segment = [\"x\"]"] {
             let toml = format!(
                 r#"
@@ -512,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rejects_empty_provided_segments() {
+    fn parse_rejects_empty_provided_segments() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -526,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_duplicate_segments() {
+    fn parse_rejects_duplicate_segments() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -535,7 +521,10 @@ mod tests {
             provided_segments = ["test_seg1", "test_seg1"]
             entry_type = "file"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(
+            PluginManifest::parse(toml),
+            "Duplicate segment declaration: 'test_seg1'",
+        );
     }
 
     #[test]
@@ -603,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_accepts_command_entry_type_for_diagnostics() {
+    fn parse_accepts_command_entry_type_for_diagnostics() {
         // Must parse so discovery can tell unsupported from malformed.
         let toml = r#"
             id = "cmd-plugin"
@@ -619,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_invalid_id() {
+    fn parse_rejects_an_invalid_id() {
         let toml = r#"
             id = "my_invalid_id"
             name = "My Test Plugin"
@@ -628,11 +617,14 @@ mod tests {
             provided_segments = ["x"]
             entry_type = "file"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(
+            PluginManifest::parse(toml),
+            "alphanumeric characters and hyphens",
+        );
     }
 
     #[test]
-    fn test_parse_rejects_unknown_api_version() {
+    fn parse_rejects_unknown_api_version() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -641,11 +633,11 @@ mod tests {
             provided_segments = ["x"]
             entry_type = "file"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(PluginManifest::parse(toml), "unknown variant `v2`");
     }
 
     #[test]
-    fn test_valid_gpy_version() {
+    fn gpy_version_accepts_release_and_prerelease() {
         assert_eq!(GpyVersion::new("0.1.0").unwrap().as_str(), "0.1.0");
         assert_eq!(
             GpyVersion::new("1.2.3-beta.1").unwrap().as_str(),
@@ -654,10 +646,17 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_gpy_version() {
-        assert!(GpyVersion::new("").is_err());
-        assert!(GpyVersion::new("1").is_err());
-        assert!(GpyVersion::new("1.2").is_err());
-        assert!(GpyVersion::new("1.2.x").is_err());
+    fn gpy_version_rejects_empty_and_malformed_cores() {
+        assert_rejected(GpyVersion::new(""), "cannot be empty");
+        assert_rejected(GpyVersion::new("1"), "MAJOR.MINOR.PATCH");
+        assert_rejected(GpyVersion::new("1.2"), "MAJOR.MINOR.PATCH");
+        assert_rejected(GpyVersion::new("1.2.x"), "only digits");
+    }
+
+    #[test]
+    fn gpy_version_component_overflow_is_rejected() {
+        assert_rejected(GpyVersion::new("99999999999999999999.0.0"), "too large");
+        assert_rejected(GpyVersion::new("0.0.18446744073709551616"), "too large");
+        assert!(GpyVersion::new("18446744073709551615.0.0").is_ok());
     }
 }

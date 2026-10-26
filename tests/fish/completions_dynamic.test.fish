@@ -34,19 +34,10 @@
 # missing/stale relative to source, rather than trusting a possibly-stale
 # target/debug/gpy.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l test_root (status dirname)/../..
 set -g repo_root (path resolve $test_root)
-
-set -g test_failures 0
-
-function test_fail
-    set -g test_failures (math $test_failures + 1)
-    echo "❌ FAIL: $argv[1]"
-end
-
-function test_pass
-    echo "✅ PASS: $argv[1]"
-end
 
 # `complete -C` returns "value\tdescription" per candidate (tab-separated).
 # Strip the description so callers can match on the bare value. Takes the
@@ -71,7 +62,7 @@ if not test -x $gpy_bin
 end
 
 if not test -x $gpy_bin
-    echo "❌ gpy binary not found at $gpy_bin after build"
+    fail "gpy binary not found at $gpy_bin after build"
     exit 1
 end
 
@@ -79,7 +70,7 @@ set -gx PATH (path dirname $gpy_bin) $PATH
 
 set -l dynamic_completions $repo_root/fish/completions/gpy-dynamic.fish
 if not test -f $dynamic_completions
-    test_fail "fish/completions/gpy-dynamic.fish does not exist yet"
+    fail "fish/completions/gpy-dynamic.fish does not exist yet"
     if test $test_failures -gt 0
         exit 1
     end
@@ -97,14 +88,14 @@ mkdir -p $comp_dir
 set -l generated_completions $comp_dir/gpy.fish
 
 if not $gpy_bin completions fish >$generated_completions
-    test_fail "gpy completions fish failed to generate output"
+    fail "gpy completions fish failed to generate output"
 end
 cat $dynamic_completions >>$generated_completions
 
 if fish -n $generated_completions 2>$tmp_dir/installed.err
-    test_pass "installed gpy.fish (structural + dynamic glue) parses"
+    pass "installed gpy.fish (structural + dynamic glue) parses"
 else
-    test_fail "installed gpy.fish does not parse: "(cat $tmp_dir/installed.err)
+    fail "installed gpy.fish does not parse: "(cat $tmp_dir/installed.err)
 end
 
 set fish_complete_path $comp_dir $fish_complete_path
@@ -114,58 +105,75 @@ set -l theme_use_names (__cd_test_names (complete -C 'gpy theme use '))
 if contains default $theme_use_names
     and contains starship $theme_use_names
     and contains text $theme_use_names
-    test_pass "'gpy theme use <TAB>' completes installed theme names"
+    pass "'gpy theme use <TAB>' completes installed theme names"
 else
-    test_fail "'gpy theme use <TAB>' did not complete installed theme names: $theme_use_names"
+    fail "'gpy theme use <TAB>' did not complete installed theme names: $theme_use_names"
 end
 
 set -l theme_validate_names (__cd_test_names (complete -C 'gpy theme validate '))
 if contains default $theme_validate_names
-    test_pass "'gpy theme validate <TAB>' completes installed theme names"
+    pass "'gpy theme validate <TAB>' completes installed theme names"
 else
-    test_fail "'gpy theme validate <TAB>' did not complete installed theme names: $theme_validate_names"
+    fail "'gpy theme validate <TAB>' did not complete installed theme names: $theme_validate_names"
 end
 
 # Dynamic value completions: palette
 set -l palette_use_names (__cd_test_names (complete -C 'gpy palette use '))
 if contains default $palette_use_names
     and contains nord $palette_use_names
-    test_pass "'gpy palette use <TAB>' completes installed palette names"
+    pass "'gpy palette use <TAB>' completes installed palette names"
 else
-    test_fail "'gpy palette use <TAB>' did not complete installed palette names: $palette_use_names"
+    fail "'gpy palette use <TAB>' did not complete installed palette names: $palette_use_names"
 end
 
 set -l palette_validate_names (__cd_test_names (complete -C 'gpy palette validate '))
 if contains default $palette_validate_names
-    test_pass "'gpy palette validate <TAB>' completes installed palette names"
+    pass "'gpy palette validate <TAB>' completes installed palette names"
 else
-    test_fail "'gpy palette validate <TAB>' did not complete installed palette names: $palette_validate_names"
+    fail "'gpy palette validate <TAB>' did not complete installed palette names: $palette_validate_names"
 end
 
 # Dynamic value completions: segment (enable/disable)
 set -l enable_names (__cd_test_names (complete -C 'gpy enable '))
 if contains git $enable_names
     and contains status $enable_names
-    test_pass "'gpy enable <TAB>' completes segment names"
+    pass "'gpy enable <TAB>' completes segment names"
 else
-    test_fail "'gpy enable <TAB>' did not complete segment names: $enable_names"
+    fail "'gpy enable <TAB>' did not complete segment names: $enable_names"
 end
 
 set -l disable_names (__cd_test_names (complete -C 'gpy disable '))
 if contains git $disable_names
     and contains status $disable_names
-    test_pass "'gpy disable <TAB>' completes segment names"
+    pass "'gpy disable <TAB>' completes segment names"
 else
-    test_fail "'gpy disable <TAB>' did not complete segment names: $disable_names"
+    fail "'gpy disable <TAB>' did not complete segment names: $disable_names"
+end
+
+# Position guard: a value is offered only in its own slot. (Fish may still
+# offer file names, so assert on the dynamic values only.)
+set -l past_theme (__cd_test_names (complete -C 'gpy theme use dark '))
+if not contains default $past_theme; and not contains starship $past_theme
+    pass "'gpy theme use dark <TAB>' offers no further theme names"
+else
+    fail "'gpy theme use dark <TAB>' still offered names: $past_theme"
+end
+
+set -l past_palette (__cd_test_names (complete -C 'gpy palette validate nord '))
+if not contains default $past_palette; and not contains nord $past_palette
+    pass "'gpy palette validate nord <TAB>' offers no further palette names"
+else
+    fail "'gpy palette validate nord <TAB>' still offered names: $past_palette"
+end
+
+set -l past_enable (__cd_test_names (complete -C 'gpy enable git '))
+if not contains git $past_enable; and not contains status $past_enable
+    pass "'gpy enable git <TAB>' offers no further segment names"
+else
+    fail "'gpy enable git <TAB>' still offered names: $past_enable"
 end
 
 # Cleanup + verdict
 rm -rf $tmp_dir
 
-if test $test_failures -gt 0
-    echo "❌ $test_failures completions test(s) failed"
-    exit 1
-end
-
-echo "✅ All gpy completions tests passed"
-exit 0
+test_finish "gpy completions"

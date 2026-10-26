@@ -4,7 +4,7 @@
 //! user may override the value in `config.toml` (`[plugin.<segment>]`). Every
 //! value reaches the script as the string `GPY_OPT_<key>`.
 
-use super::script::detail;
+use super::newtype::{deserialize_via_new, detail, display_inner};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -55,19 +55,25 @@ impl SettingKey {
     }
 }
 
-impl<'de> Deserialize<'de> for SettingKey {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
-    }
+deserialize_via_new!(SettingKey);
+
+display_inner!(SettingKey);
+
+/// The type of a setting, shared by declarations and values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingType {
+    Bool,
+    Int,
+    String,
 }
 
-impl fmt::Display for SettingKey {
+impl fmt::Display for SettingType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(match self {
+            Self::Bool => "bool",
+            Self::Int => "int",
+            Self::String => "string",
+        })
     }
 }
 
@@ -84,11 +90,11 @@ pub enum SettingValue {
 }
 
 impl SettingValue {
-    const fn type_name(&self) -> &'static str {
+    const fn kind(&self) -> SettingType {
         match self {
-            Self::Bool(_) => "bool",
-            Self::Int(_) => "int",
-            Self::String(_) => "string",
+            Self::Bool(_) => SettingType::Bool,
+            Self::Int(_) => SettingType::Int,
+            Self::String(_) => SettingType::String,
         }
     }
 }
@@ -164,17 +170,31 @@ impl SettingDecl {
         }
     }
 
-    /// Type and constraints, for CLI listings (`int 0..=10`, `string bold|dim`).
+    /// Type and constraints, for CLI listings (`int 0..=10`, `int >=0`, `string bold|dim`).
     #[must_use]
     pub fn summary(&self) -> String {
         match self {
             Self::Bool { .. } => "bool".to_owned(),
-            Self::Int { min, max, .. } if min.is_none() && max.is_none() => "int".to_owned(),
-            Self::Int { min, max, .. } => format!(
-                "int {}..={}",
-                min.map_or_else(String::new, |v| v.to_string()),
-                max.map_or_else(String::new, |v| v.to_string())
-            ),
+            Self::Int {
+                min: Some(low),
+                max: Some(high),
+                ..
+            } => format!("int {low}..={high}"),
+            Self::Int {
+                min: Some(low),
+                max: None,
+                ..
+            } => format!("int >={low}"),
+            Self::Int {
+                min: None,
+                max: Some(high),
+                ..
+            } => format!("int <={high}"),
+            Self::Int {
+                min: None,
+                max: None,
+                ..
+            } => "int".to_owned(),
             Self::String { choices, .. } if choices.is_empty() => "string".to_owned(),
             Self::String { choices, .. } => format!("string {}", choices.join("|")),
         }
@@ -241,8 +261,8 @@ impl SettingDecl {
             }
             (declared, _) => Err(Error::invalid(format!(
                 "expected {}, got {} {value}",
-                declared.type_name(),
-                value.type_name()
+                declared.kind(),
+                value.kind()
             ))),
         }
     }
@@ -253,11 +273,13 @@ impl SettingDecl {
     /// Returns an error if the text does not parse or fails the constraints.
     pub fn parse_str(&self, raw: &str) -> Result<SettingValue> {
         let value = match self {
-            Self::Bool { .. } => SettingValue::Bool(match raw.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => true,
-                "false" | "0" | "no" | "off" => false,
-                _ => return Err(Error::invalid(format!("{raw:?} is not a boolean"))),
-            }),
+            Self::Bool { .. } => {
+                SettingValue::Bool(match raw.trim().to_ascii_lowercase().as_str() {
+                    "true" | "1" | "yes" | "on" => true,
+                    "false" | "0" | "no" | "off" => false,
+                    _ => return Err(Error::invalid(format!("{raw:?} is not a boolean"))),
+                })
+            }
             Self::Int { .. } => SettingValue::Int(
                 raw.trim()
                     .parse()
@@ -269,11 +291,11 @@ impl SettingDecl {
         Ok(value)
     }
 
-    const fn type_name(&self) -> &'static str {
+    const fn kind(&self) -> SettingType {
         match self {
-            Self::Bool { .. } => "bool",
-            Self::Int { .. } => "int",
-            Self::String { .. } => "string",
+            Self::Bool { .. } => SettingType::Bool,
+            Self::Int { .. } => SettingType::Int,
+            Self::String { .. } => SettingType::String,
         }
     }
 }

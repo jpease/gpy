@@ -3,8 +3,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 
 use gpy_agent::{Error, Result};
 use std::error::Error as StdError;
@@ -168,14 +166,6 @@ fn test_from_io_error() {
 }
 
 #[test]
-fn test_from_utf8_error() {
-    let invalid = vec![0x80, 0x81];
-    let utf8_err = std::str::from_utf8(&invalid).expect_err("Should fail");
-    let err: Error = utf8_err.into();
-    assert!(matches!(err, Error::Utf8(_)));
-}
-
-#[test]
 fn test_from_serde_json_error() {
     let json_err = serde_json::from_str::<i32>("not a number").expect_err("Should fail");
     let err: Error = json_err.into();
@@ -200,15 +190,8 @@ fn test_error_with_multiple_conversions() {
         Ok(())
     }
 
-    fn cause_utf8_error() -> Result<()> {
-        let bytes = vec![0xFF];
-        let _ = std::str::from_utf8(&bytes)?;
-        Ok(())
-    }
-
     assert!(cause_io_error().is_err());
     assert!(cause_json_error().is_err());
-    assert!(cause_utf8_error().is_err());
 }
 
 #[test]
@@ -283,4 +266,26 @@ fn test_all_variants_have_proper_display() {
             "Error message should be descriptive: {display}"
         );
     }
+}
+
+#[test]
+fn test_io_context_keeps_kind_and_names_action() {
+    let source = io::Error::new(io::ErrorKind::NotFound, "no such file");
+    let err = Error::io_context("failed to read x", &source);
+    assert!(matches!(&err, Error::Io(e) if e.kind() == io::ErrorKind::NotFound));
+    assert_eq!(
+        gpy_agent::error::user_message(&err),
+        "I/O operation failed: failed to read x: no such file"
+    );
+}
+
+#[test]
+fn test_import_errors_keep_their_type() {
+    let base16: Error = gpy_agent::import::base16::ImportError::BadHex("zz".to_owned()).into();
+    assert!(matches!(base16, Error::Base16Import(_)));
+    let starship: Error = gpy_agent::import::starship::ImportError::Parse {
+        message: "bad".to_owned(),
+    }
+    .into();
+    assert!(matches!(starship, Error::StarshipImport(_)));
 }

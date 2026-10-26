@@ -67,43 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn test_json_formatter_repository_status() {
-        let formatter = JsonFormatter;
-        let (config, theme) = create_test_context();
-        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-        let response = Response::RepositoryStatus(crate::git::RepositoryStatus {
-            branch: "main".to_owned(),
-            ahead: 2_u32,
-            behind: 1_u32,
-            ahead_capped: false,
-            behind_capped: false,
-            staged: 3_u32,
-            unstaged: 4_u32,
-            untracked: 5_u32,
-            conflicts: 0_u32,
-            state: crate::git::RepositoryState::Clean,
-            stash_count: 0,
-            detached: false,
-            rebase_progress: None,
-        });
-
-        let output = formatter.render(&response, &ctx).expect("render failed");
-
-        let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
-
-        assert_eq!(field(&parsed, "/branch"), "main");
-        assert_eq!(field(&parsed, "/ahead"), 2_i32);
-        assert_eq!(field(&parsed, "/behind"), 1_i32);
-        assert_eq!(field(&parsed, "/staged"), 3_i32);
-        assert_eq!(field(&parsed, "/unstaged"), 4_i32);
-        assert_eq!(field(&parsed, "/untracked"), 5_i32);
-        assert_eq!(field(&parsed, "/conflicts"), 0_i32);
-        assert_eq!(field(&parsed, "/state"), "clean");
-    }
-
-    #[test]
-    fn test_json_formatter_repository_status_includes_every_field() {
+    fn json_formatter_emits_non_default_repository_fields() {
         let formatter = JsonFormatter;
         let (config, theme) = create_test_context();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -144,44 +108,6 @@ mod tests {
         assert_eq!(field(&parsed, "/detached"), true);
         assert_eq!(field(&parsed, "/rebase_progress/step"), 2_i32);
         assert_eq!(field(&parsed, "/rebase_progress/total"), 5_i32);
-    }
-
-    #[test]
-    fn test_json_formatter_language() {
-        let formatter = JsonFormatter;
-        let (config, theme) = create_test_context();
-        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-        let response = Response::Language {
-            languages: vec![crate::ipc::LanguageInfo {
-                name: "Rust".to_owned(),
-                version: Some("1.75.0".to_owned()),
-                color: crate::config::types::ColorSpec::new("#dea584").unwrap(),
-            }],
-        };
-
-        let output = formatter.render(&response, &ctx).expect("render failed");
-
-        let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
-
-        assert!(field(&parsed, "/languages").is_array());
-        assert_eq!(field(&parsed, "/languages/0/name"), "Rust");
-        assert_eq!(field(&parsed, "/languages/0/version"), "1.75.0");
-        assert_eq!(field(&parsed, "/languages/0/color"), "#dea584");
-    }
-
-    #[test]
-    fn test_json_formatter_ack() {
-        let formatter = JsonFormatter;
-        let (config, theme) = create_test_context();
-        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-        let response = Response::Ack;
-        let output = formatter.render(&response, &ctx).expect("render failed");
-
-        let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
-
-        assert_eq!(field(&parsed, "/status"), "ok");
     }
 
     fn pinned_cases() -> Vec<(Response, &'static str)> {

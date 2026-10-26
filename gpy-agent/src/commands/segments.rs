@@ -1,9 +1,9 @@
 //! `gpy segments`, `gpy enable`, and `gpy disable` command handlers.
 
-use super::utils::{
-    active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
-};
+use super::output;
+use super::utils::{active_config_path, load_active_config, read_config, reload_agent_and_notify};
 use crate::config::Config;
+use crate::config::loader::save_config;
 use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
 use crate::shell::Shell;
 use crate::{Error, Result};
@@ -43,7 +43,7 @@ pub fn enable(segment: &str) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
     apply_enable(&mut config, &canonical);
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
 
     println!("Enabled {canonical} segment");
     if is_file_plugin_segment(&canonical)
@@ -128,8 +128,7 @@ pub fn list() -> Result<()> {
     let config = read_config()?;
     let available = available_segments();
 
-    println!("Prompt Segments:");
-    println!("================\n");
+    output::heading("Prompt Segments:");
 
     for segment in &available {
         let enabled = is_effectively_enabled(&config, segment);
@@ -142,18 +141,16 @@ pub fn list() -> Result<()> {
 }
 
 /// Canonicalize a segment name.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "the message already names the rejected segment; attaching the cause would append to the CLI error text"
-)]
 fn canonicalize_segment(segment: &str) -> Result<String> {
     let normalized = if segment == "lang" {
         "language"
     } else {
         segment
     };
-    let name = SegmentName::new(normalized)
-        .map_err(|_| Error::config(format!("Invalid segment: {segment}")))?;
+    let name = SegmentName::new(normalized).map_err(|e| Error::Config {
+        message: format!("invalid segment '{segment}'"),
+        source: Some(Box::new(e)),
+    })?;
     Ok(name.to_string())
 }
 
@@ -177,7 +174,7 @@ fn set_feature_enabled(feature: FeatureToggle, enabled: bool) -> Result<()> {
 
     apply_feature_toggle(&mut config, feature, enabled);
 
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
     Ok(())
 }
 
@@ -208,7 +205,7 @@ fn remove_from_enabled_segments(segment: &str) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
     config.ui.enabled_segments.retain(|s| s != segment);
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
     Ok(())
 }
 
@@ -270,12 +267,11 @@ fn ensure_segment_known(segment: &str, enabling: bool) -> Result<()> {
     }
 
     Err(Error::config(format!(
-        "Unknown segment '{segment}'. Install a plugin that provides it or check segment spelling."
+        "unknown segment '{segment}'; install a plugin that provides it or check the spelling"
     )))
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -386,9 +382,12 @@ mod tests {
 
     #[test]
     fn canonicalize_segment_accepts_plugin_names() {
+        use std::error::Error as _;
+
         assert_eq!(canonicalize_segment("lang").unwrap(), "language");
         assert_eq!(canonicalize_segment("k8s-tools").unwrap(), "k8s-tools");
-        assert!(canonicalize_segment("bad segment").is_err());
+        let err = canonicalize_segment("bad segment").expect_err("should reject invalid name");
+        assert!(err.source().is_some(), "error should preserve source cause");
     }
 
     #[test]

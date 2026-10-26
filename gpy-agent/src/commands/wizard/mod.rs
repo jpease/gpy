@@ -1,6 +1,7 @@
 //! `gpy config wizard`: interactive TUI for theme, palette, and segment
 //! configuration with a live preview.
 
+mod bindings;
 mod detail;
 mod facts;
 mod fuzzy;
@@ -34,35 +35,16 @@ fn init_terminal() -> Result<(DefaultTerminal, RestoreOnDrop)> {
     Ok((terminal, RestoreOnDrop))
 }
 
-/// Re-resolve theme/palette only when the selection changed.
-fn refresh_theme_palette_cache(
-    state: &state::WizardState,
-    cached_selection: &mut Option<(String, String)>,
-    cached_theme: &mut std::sync::Arc<crate::theme::ThemeConfig>,
-    cached_palette: &mut crate::template::Palette,
-) -> Result<()> {
-    let current_selection = (
-        state.selected_theme().to_owned(),
-        state.selected_palette().to_owned(),
-    );
-    if cached_selection.as_ref() == Some(&current_selection) {
-        return Ok(());
-    }
-    *cached_theme = crate::theme::ThemeManager::new(state.selected_theme())?.get();
-    *cached_palette = crate::palette::resolve::palette_by_name(state.selected_palette());
-    *cached_selection = Some(current_selection);
-    Ok(())
-}
-
 /// Per-frame render-loop state.
 struct WizardRuntime {
     state: state::WizardState,
     mode: keys::InputMode,
-    /// Baseline config; cloned per frame for the preview.
-    config: crate::config::Config,
+    /// Startup config with the selection applied, kept for the preview.
+    preview_config: crate::config::Config,
     facts: facts::PreviewFacts,
-    // Avoid re-parsing theme/palette files on every keypress.
-    cached_selection: Option<(String, String)>,
+    /// Theme/palette names `cached_theme`/`cached_palette` were loaded for,
+    /// so files are re-parsed only when the selection changes.
+    cached_selection: (String, String),
     cached_theme: std::sync::Arc<crate::theme::ThemeConfig>,
     cached_palette: crate::template::Palette,
     /// Why the last theme activation failed; cleared on next key.
@@ -75,21 +57,57 @@ impl WizardRuntime {
             crate::Error::config(format!("Failed to resolve current directory: {e}"))
         })?;
         let config = crate::commands::utils::read_config()?;
-        let initial_theme = crate::theme::ThemeManager::new(config.ui.theme.as_str())?.get();
-        let facts = facts::gather(&cwd, &config, &initial_theme)?;
+        let cached_theme = crate::theme::ThemeManager::new(config.ui.theme.as_str())?.get();
+        let facts = facts::gather(&cwd, &config, &cached_theme)?;
         let state = state::WizardState::new(config.clone());
         let cached_palette = crate::palette::resolve::palette_by_name(state.selected_palette());
+        let cached_selection = (
+            state.selected_theme().to_owned(),
+            state.selected_palette().to_owned(),
+        );
 
         Ok(Self {
             state,
             mode: keys::InputMode::default(),
-            config,
+            preview_config: config,
             facts,
-            cached_selection: None,
-            cached_theme: initial_theme,
+            cached_selection,
+            cached_theme,
             cached_palette,
             theme_error: None,
         })
+    }
+
+    /// Re-resolve theme/palette when the selection changed. A theme that
+    /// fails to load reverts the selection and is reported in `theme_error`.
+    fn refresh_theme_palette_cache(&mut self) {
+        if self.state.selected_theme() != self.cached_selection.0 {
+            match crate::theme::ThemeManager::new(self.state.selected_theme()) {
+                Ok(manager) => {
+                    self.cached_theme = manager.get();
+                    self.state
+                        .selected_theme()
+                        .clone_into(&mut self.cached_selection.0);
+                }
+                Err(error) => {
+                    // First line only; the rest is a TOML excerpt.
+                    let reason = error.to_string();
+                    self.theme_error = Some(format!(
+                        "Cannot select theme \"{}\": {}",
+                        self.state.selected_theme(),
+                        reason.lines().next().unwrap_or_default()
+                    ));
+                    self.state.select_theme(&self.cached_selection.0);
+                }
+            }
+        }
+        if self.state.selected_palette() != self.cached_selection.1 {
+            self.cached_palette =
+                crate::palette::resolve::palette_by_name(self.state.selected_palette());
+            self.state
+                .selected_palette()
+                .clone_into(&mut self.cached_selection.1);
+        }
     }
 }
 
@@ -97,30 +115,11 @@ impl WizardRuntime {
 ///
 /// # Errors
 ///
-/// Returns an error if drawing fails or the very first theme load fails;
-/// later load failures revert the selection and show in the detail panel.
+/// Returns an error if drawing fails.
 fn draw_frame(terminal: &mut DefaultTerminal, runtime: &mut WizardRuntime) -> Result<()> {
-    if let Err(error) = refresh_theme_palette_cache(
-        &runtime.state,
-        &mut runtime.cached_selection,
-        &mut runtime.cached_theme,
-        &mut runtime.cached_palette,
-    ) {
-        let Some((previous_theme, _)) = runtime.cached_selection.clone() else {
-            return Err(error);
-        };
-        // First line only; the rest is a TOML excerpt.
-        let reason = error.to_string();
-        runtime.theme_error = Some(format!(
-            "Cannot select theme \"{}\": {}",
-            runtime.state.selected_theme(),
-            reason.lines().next().unwrap_or_default()
-        ));
-        runtime.state.select_theme(&previous_theme);
-    }
+    runtime.refresh_theme_palette_cache();
+    runtime.state.reapply_to(&mut runtime.preview_config);
 
-    let mut preview_config = runtime.config.clone();
-    runtime.state.apply_to(&mut preview_config);
     // Pending theme edits live in `pending_theme()`, not the on-disk theme.
     let preview_theme = runtime
         .state
@@ -128,7 +127,7 @@ fn draw_frame(terminal: &mut DefaultTerminal, runtime: &mut WizardRuntime) -> Re
         .unwrap_or_else(|| runtime.cached_theme.as_ref());
     let preview_lines = preview::render_preview_line(
         &runtime.state,
-        &preview_config,
+        &runtime.preview_config,
         preview_theme,
         &runtime.cached_palette,
         &runtime.facts,
@@ -189,7 +188,7 @@ pub fn run() -> Result<()> {
 
     if should_save {
         let path = save::save(&runtime.state)?;
-        println!("Saved configuration to {path}");
+        println!("Saved configuration to {}", path.display());
         crate::commands::utils::reload_agent_and_notify();
     }
 

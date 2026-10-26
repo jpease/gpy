@@ -40,13 +40,23 @@ impl ConfigManager {
     /// # Errors
     /// Returns an error if no config path can be determined.
     pub fn with_defaults() -> Result<Self> {
-        Self::from_candidates_with_defaults(Self::ambient_candidates())
+        Self::from_config(Config::default())
+    }
+
+    /// Start on `config` (no file read) but reload from the standard candidates.
+    ///
+    /// # Errors
+    /// Returns an error if no config path can be determined.
+    pub fn from_config(config: Config) -> Result<Self> {
+        let candidates = Self::ambient_candidates();
+        Self::ensure_candidates(&candidates)?;
+        Ok(Self::from_parts(candidates, config))
     }
 
     /// Create a new `ConfigManager` for a specific config file path.
     ///
     /// # Errors
-    /// Returns an error if the path is not UTF-8 or the file fails to parse.
+    /// Returns an error if the file fails to parse.
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::from_candidates(vec![path.as_ref().to_path_buf()])
     }
@@ -79,7 +89,7 @@ impl ConfigManager {
     }
 
     fn ambient_candidates() -> Vec<PathBuf> {
-        get_config_paths().into_iter().map(PathBuf::from).collect()
+        get_config_paths()
     }
 
     fn ensure_candidates(candidates: &[PathBuf]) -> Result<()> {
@@ -107,34 +117,10 @@ impl ConfigManager {
         *self.on_reload.lock_or_recover() = Some(callback);
     }
 
-    #[cfg(test)]
-    /// Invoke the reload callback with synthetic configs.
-    ///
-    /// # Panics
-    /// Panics when the callback returns an error.
-    pub fn trigger_reload_for_tests(&self, old_config: &Config, new_config: &Config) {
-        if let Some(callback) = self.on_reload.lock_or_recover().as_ref() {
-            callback(old_config, new_config).expect("reload callback should succeed");
-        }
-    }
-
-    #[cfg(test)]
-    /// Overwrite the in-memory config.
-    pub fn overwrite_for_tests(&self, new_config: Config) {
-        *self.config.write_or_recover() = Arc::new(new_config);
-    }
-
-    /// Current config (cheap `Arc` clone); recovers from a poisoned lock.
+    /// Current config (cheap `Arc` clone).
     #[must_use]
     pub fn get(&self) -> Arc<Config> {
-        let guard = self.config.read().unwrap_or_else(|poisoned| {
-            debug_log!(
-                "config",
-                "CRITICAL: Config lock poisoned, recovering with poisoned data"
-            );
-            poisoned.into_inner()
-        });
-        Arc::clone(&guard)
+        Arc::clone(&self.config.read_or_recover())
     }
 
     /// Watch the config candidates with a private registry.
@@ -224,10 +210,7 @@ impl ConfigManager {
         let Some((_, Some(existing))) = resolve_active_config(candidates) else {
             return Ok(Config::default());
         };
-        let path_str = existing
-            .to_str()
-            .ok_or_else(|| Error::config("Config path contains invalid UTF-8".to_owned()))?;
-        load_config_from_file(path_str)
+        load_config_from_file(&existing)
     }
 
     /// Load the active config and run `on_reload` against `old`; no shared state.
@@ -257,7 +240,7 @@ impl ConfigManager {
     ) {
         debug_log!("config", "Config file changed, reloading...");
 
-        let _serialized = Self::enter_reload(reload_gate);
+        let _serialized = reload_gate.lock_or_recover();
         let old_config = config.read_or_recover().clone();
 
         match Self::try_reload(candidates, on_reload, &old_config) {
@@ -360,11 +343,6 @@ impl ConfigManager {
         }
     }
 
-    /// Recover a poisoned gate so a panicking callback doesn't wedge later reloads.
-    fn enter_reload(reload_gate: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
-        reload_gate.lock_or_recover()
-    }
-
     fn poll_target(&self) -> PollTarget {
         let candidates_for_poll = Arc::clone(&self.candidates);
         let candidates_for_reload = Arc::clone(&self.candidates);
@@ -383,13 +361,6 @@ impl ConfigManager {
                 );
             }),
         }
-    }
-
-    /// Tests call this directly since `set_var` needs `unsafe` (forbidden here).
-    #[cfg(test)]
-    fn spawn_poll_thread(&self, poll_interval: Duration, debounce_duration: Duration) {
-        self.hot_reload
-            .spawn_poll_thread(poll_interval, debounce_duration, self.poll_target());
     }
 
     /// Poll fallback when `GPY_CONFIG_WATCH_POLL_MS` > 0, for when `FSEvents`
@@ -486,29 +457,16 @@ impl ConfigManager {
     /// Re-resolve and reload now, serialized with watcher/poll reloads.
     ///
     /// # Errors
-    /// Returns an error if the active file fails to load or the lock is poisoned.
-    #[allow(
-        clippy::map_err_ignore,
-        reason = "PoisonError borrows the lock guard, so it cannot be boxed as a 'static error source"
-    )]
+    /// Returns an error if the active file fails to load.
     pub fn reload_now(&self) -> Result<()> {
-        let _serialized = Self::enter_reload(&self.reload_gate);
-        let old_config = self
-            .config
-            .read()
-            .map_err(|_| Error::config("Config lock poisoned".to_owned()))?
-            .clone();
+        let _serialized = self.reload_gate.lock_or_recover();
+        let old_config = self.config.read_or_recover().clone();
 
         let on_reload_option = self.on_reload.lock_or_recover().clone();
         let new_config =
             Self::try_reload(&self.candidates, on_reload_option.as_ref(), &old_config)?;
 
-        let mut guard = self
-            .config
-            .write()
-            .map_err(|_| Error::config("Config lock poisoned".to_owned()))?;
-        *guard = Arc::new(new_config);
-        drop(guard);
+        *self.config.write_or_recover() = Arc::new(new_config);
 
         Ok(())
     }
@@ -523,6 +481,15 @@ impl Drop for ConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl ConfigManager {
+        /// Start the poll fallback directly: enabling it through
+        /// `GPY_CONFIG_WATCH_POLL_MS` needs `set_var`, which is `unsafe`.
+        fn spawn_poll_thread(&self, poll_interval: Duration, debounce_duration: Duration) {
+            self.hot_reload
+                .spawn_poll_thread(poll_interval, debounce_duration, self.poll_target());
+        }
+    }
 
     #[test]
     fn test_config_manager_new_with_default() {
@@ -696,11 +663,8 @@ theme = "other"
     }
 
     #[test]
-    fn test_config_manager_with_defaults_fallback() {
-        let manager_res = ConfigManager::with_defaults();
-        assert!(manager_res.is_ok());
-
-        let manager = manager_res.unwrap();
+    fn with_defaults_exposes_the_default_config() {
+        let manager = ConfigManager::with_defaults().expect("default manager");
         let config = manager.get();
 
         assert_eq!(config.agent.timeout_seconds.get(), 5);

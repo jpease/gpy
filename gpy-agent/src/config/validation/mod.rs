@@ -17,8 +17,7 @@ use crate::Error;
 
 /// A config value failed a structural/semantic validation check.
 ///
-/// `field_path` locates the failing field; `kind` says why. `Display` keeps the
-/// established user-facing wording.
+/// `field_path` locates the failing field; `kind` says why.
 #[derive(Debug)]
 pub struct ValidationError {
     /// Dotted path (or indexed slot) to the offending config field.
@@ -68,8 +67,8 @@ pub enum ValidationErrorKind {
         /// The colliding fields and the shared variable.
         collision: crate::theme::export::PluginVariableCollision,
     },
-    /// A `git.skip_paths` entry is not an absolute path (nor `~`-prefixed).
-    RelativeSkipPath {
+    /// A `git.skip_paths` entry is neither an absolute path, `~`, nor `~/…`.
+    InvalidSkipPath {
         /// The offending path.
         value: String,
     },
@@ -114,9 +113,10 @@ impl std::fmt::Display for ValidationError {
             ValidationErrorKind::PluginVariableCollision { collision } => {
                 write!(f, "{}: {collision}", self.field_path)
             }
-            ValidationErrorKind::RelativeSkipPath { value } => write!(
+            ValidationErrorKind::InvalidSkipPath { value } => write!(
                 f,
-                "skip_paths must contain absolute paths: {value} is not absolute"
+                "{} must be an absolute path, '~', or start with '~/': {value}",
+                self.field_path
             ),
             ValidationErrorKind::InvalidColor { value, theme } => write!(
                 f,
@@ -142,7 +142,7 @@ impl std::error::Error for ValidationError {
             | ValidationErrorKind::InvalidSegmentName { .. }
             | ValidationErrorKind::SegmentTokenCollision { .. }
             | ValidationErrorKind::PluginVariableCollision { .. }
-            | ValidationErrorKind::RelativeSkipPath { .. }
+            | ValidationErrorKind::InvalidSkipPath { .. }
             | ValidationErrorKind::InvalidColor { .. }
             | ValidationErrorKind::IconControlChars { .. } => None,
         }
@@ -160,10 +160,6 @@ impl From<ValidationError> for Error {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
     #![allow(clippy::too_many_lines)]
 
     use super::{ValidationError, ValidationErrorKind};
@@ -295,13 +291,13 @@ mod tests {
             ),
             (
                 ValidationError {
-                    field_path: "ui.directory.display".to_owned(),
+                    field_path: "language.confidence_threshold".to_owned(),
                     kind: ValidationErrorKind::InvalidValue {
-                        expected: "directory display mode",
-                        value: "invalid directory display mode: 'sideways'".to_owned(),
+                        expected: "threshold",
+                        value: "high".to_owned(),
                     },
                 },
-                "Invalid directory display mode: invalid directory display mode: 'sideways'",
+                "Invalid threshold: high",
             ),
             (
                 ValidationError {
@@ -317,31 +313,31 @@ mod tests {
                 ValidationError {
                     field_path: "agent.timeout_seconds".to_owned(),
                     kind: ValidationErrorKind::InvalidValue {
-                        expected: "u64 value",
+                        expected: "whole number",
                         value: "-1".to_owned(),
                     },
                 },
-                "Invalid u64 value: -1",
+                "Invalid whole number: -1",
             ),
             (
                 ValidationError {
                     field_path: "agent.supervisor.max_restart_attempts".to_owned(),
                     kind: ValidationErrorKind::InvalidValue {
-                        expected: "u32 value",
+                        expected: "whole number",
                         value: "-1".to_owned(),
                     },
                 },
-                "Invalid u32 value: -1",
+                "Invalid whole number: -1",
             ),
             (
                 ValidationError {
                     field_path: "git.max_branch_length".to_owned(),
                     kind: ValidationErrorKind::InvalidValue {
-                        expected: "usize value",
+                        expected: "whole number",
                         value: "-1".to_owned(),
                     },
                 },
-                "Invalid usize value: -1",
+                "Invalid whole number: -1",
             ),
             (
                 ValidationError {
@@ -359,7 +355,7 @@ mod tests {
             ),
             (
                 ValidationError {
-                    field_path: "segments[1]".to_owned(),
+                    field_path: "ui.enabled_segments[1]".to_owned(),
                     kind: ValidationErrorKind::InvalidSegmentName {
                         value: "bad seg".to_owned(),
                     },
@@ -368,12 +364,12 @@ mod tests {
             ),
             (
                 ValidationError {
-                    field_path: "skip_paths[0]".to_owned(),
-                    kind: ValidationErrorKind::RelativeSkipPath {
+                    field_path: "git.skip_paths[0]".to_owned(),
+                    kind: ValidationErrorKind::InvalidSkipPath {
                         value: "relative/path".to_owned(),
                     },
                 },
-                "skip_paths must contain absolute paths: relative/path is not absolute",
+                "git.skip_paths[0] must be an absolute path, '~', or start with '~/': relative/path",
             ),
             (
                 ValidationError {
@@ -434,14 +430,14 @@ mod tests {
                 kind: ValidationErrorKind::ReadOnlyKey,
             },
             ValidationError {
-                field_path: "segments[0]".to_owned(),
+                field_path: "ui.enabled_segments[0]".to_owned(),
                 kind: ValidationErrorKind::InvalidSegmentName {
                     value: "bad seg".to_owned(),
                 },
             },
             ValidationError {
-                field_path: "skip_paths[0]".to_owned(),
-                kind: ValidationErrorKind::RelativeSkipPath {
+                field_path: "git.skip_paths[0]".to_owned(),
+                kind: ValidationErrorKind::InvalidSkipPath {
                     value: "relative/path".to_owned(),
                 },
             },

@@ -14,15 +14,12 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(
-    unsafe_code,
-    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
-)]
 #![cfg(unix)]
 
 #[path = "common/env_guard.rs"]
 mod env_guard;
+#[path = "common/sigurg.rs"]
+mod sigurg;
 #[path = "common/wait.rs"]
 mod wait;
 
@@ -34,29 +31,26 @@ use gpy_agent::config::defaults::DEFAULT_THEME_CONTENT;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::palette::active_palette;
 use gpy_agent::theme::ThemeManager;
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use serial_test::serial;
+use sigurg::SigurgCounter;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use wait::wait_until;
 
-static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-extern "C" fn count_doorbell(_signal: i32) {
-    DOORBELL_COUNTER.fetch_add(1, Ordering::Relaxed);
-}
-
 const SHELL_EXPORTS: [&str; 3] = ["theme-export.fish", "theme-export.bash", "theme-export.zsh"];
 /// Generous headroom over the 1 s watcher debounce under load.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(25);
-/// Extra time after settling to catch a late stale overwrite.
+/// Absence window after settling: a late stale overwrite would land by then.
 const QUIET_PERIOD: Duration = Duration::from_millis(2500);
-/// Doorbells are counted this long after the change, so a late ring from
+/// Absence window for doorbells, counted from the change: a late ring from
 /// either 1 s watcher, whose flush deadline drains a change within 2 s, lands.
 const DOORBELL_WINDOW: Duration = Duration::from_secs(5);
+/// The poll fallback's period in the prompt-switch test. A switch that waited
+/// on the poll thread would take about this long; a prompt one takes
+/// milliseconds, so half of it separates them on any machine.
+const SLOW_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 const ACTIVE_THEME: &str = "active";
 const OTHER_THEME: &str = "other";
@@ -270,7 +264,7 @@ struct Harness {
     cache_home: PathBuf,
     _env: EnvGuard,
     prev_cwd: PathBuf,
-    prev_sigurg: SigAction,
+    doorbells: SigurgCounter,
 }
 
 impl Harness {
@@ -293,16 +287,7 @@ impl Harness {
         env.set("XDG_CONFIG_HOME", &config_home);
         env.set("XDG_CACHE_HOME", &cache_home);
         env.set("XDG_RUNTIME_DIR", &runtime);
-        DOORBELL_COUNTER.store(0, Ordering::Relaxed);
-        let handler = SigAction::new(
-            SigHandler::Handler(count_doorbell),
-            SaFlags::empty(),
-            SigSet::empty(),
-        );
-        // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which
-        // is async-signal-safe; every harness test is `#[serial]`, so no other test
-        // changes the SIGURG disposition while it is installed.
-        let prev_sigurg = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG");
+        let doorbells = SigurgCounter::install();
         let harness = Self {
             _temp: temp,
             home: root,
@@ -310,7 +295,7 @@ impl Harness {
             cache_home,
             _env: env,
             prev_cwd: std::env::current_dir().expect("current dir"),
-            prev_sigurg,
+            doorbells,
         };
         harness.write_theme(ACTIVE_THEME, "white");
         harness.write_theme(OTHER_THEME, "cyan");
@@ -409,7 +394,7 @@ impl Harness {
     fn fresh_config(&self) -> Config {
         self.active_config_file()
             .map_or_else(Config::default, |path| {
-                load_config_from_file(&path.display().to_string()).expect("fresh config load")
+                load_config_from_file(&path).expect("fresh config load")
             })
     }
 
@@ -418,7 +403,7 @@ impl Harness {
     /// fallback), so a row may begin on an invalid file.
     fn startup_config(&self) -> Config {
         self.active_config_file()
-            .and_then(|path| load_config_from_file(&path.display().to_string()).ok())
+            .and_then(|path| load_config_from_file(&path).ok())
             .unwrap_or_default()
     }
 
@@ -453,10 +438,6 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         let _ = std::env::set_current_dir(&self.prev_cwd);
-        // SAFETY: restores the handler `Harness::new` replaced; tests are serial.
-        unsafe {
-            let _ = sigaction(Signal::SIGURG, &self.prev_sigurg);
-        }
     }
 }
 
@@ -477,11 +458,10 @@ fn run_mechanism(mechanism: &Mechanism) {
         fs::write(harness.cache_home.join("gpy").join(file), content).expect("warm export");
     }
 
+    // `Agent::new` arms every watcher before it returns.
     let agent = Agent::new().expect("agent starts");
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
-    // Let the watchers arm before touching the disk.
-    std::thread::sleep(Duration::from_millis(500));
-    DOORBELL_COUNTER.store(0, Ordering::Relaxed);
+    let rang_before = harness.doorbells.count();
 
     (mechanism.apply)(&harness);
     let applied_at = Instant::now();
@@ -522,7 +502,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     if let Some(rings) = mechanism.doorbells {
         std::thread::sleep(DOORBELL_WINDOW.saturating_sub(applied_at.elapsed()));
         assert_eq!(
-            DOORBELL_COUNTER.load(Ordering::Relaxed),
+            harness.doorbells.count().saturating_sub(rang_before),
             rings,
             "[{}] reload doorbell count",
             mechanism.name
@@ -580,9 +560,11 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
 
     let manager = ThemeManager::new(ACTIVE_THEME).expect("theme manager");
     manager
-        .start_watching(Duration::from_secs(5))
+        .start_watching(SLOW_POLL_INTERVAL)
         .expect("start watching");
-    // Let the poll thread enter its between-ticks sleep.
+    // No signal marks the poll thread asleep between ticks. This pause only
+    // makes a regression observable: a switch landing before the first sleep
+    // is prompt whether or not the stop path is.
     std::thread::sleep(Duration::from_millis(500));
 
     let started = Instant::now();
@@ -595,8 +577,9 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
 
     switched.expect("switch theme");
     assert!(
-        elapsed < Duration::from_millis(1000),
-        "switch_theme took {elapsed:?} with the poll fallback; it must not wait out the 5 s poll interval"
+        elapsed < SLOW_POLL_INTERVAL / 2,
+        "switch_theme took {elapsed:?} with the poll fallback; it must not wait out the \
+         {SLOW_POLL_INTERVAL:?} poll interval"
     );
 }
 

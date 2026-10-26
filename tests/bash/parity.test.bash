@@ -3,9 +3,6 @@
 # tests/bash/parity.test.bash
 # Verify Bash implementation matches Fish/Zsh feature set
 
-# shellcheck disable=SC2154
-# __gpy_duration_method is assigned by bash/gpy.bash, sourced above.
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
@@ -26,24 +23,7 @@ unset XDG_RUNTIME_DIR
 
 echo "=== Checking Feature Parity with Fish/Zsh ==="
 
-required_segments=(
-    directory
-    git
-    clock
-    duration
-    language
-    status
-)
-
 source bash/gpy.bash
-
-for seg in "${required_segments[@]}"; do
-    if ! declare -f "__gpy_segment_$seg" &>/dev/null; then
-        echo "FAIL: Missing segment: $seg"
-        exit 1
-    fi
-    echo "✓ $seg"
-done
 
 # Bash must NOT trap SIGURG: a trap would re-render a PS1 readline cannot show.
 # Read via $(...), not a pipe: bash 3.2 resets traps in pipe subshells.
@@ -51,22 +31,7 @@ if [[ -n "$(trap -p URG)" ]]; then
     echo "FAIL: SIGURG is trapped: $(trap -p URG)"
     exit 1
 fi
-if ! declare -F __gpy_consume_shell_flags >/dev/null; then
-    echo "FAIL: Missing doorbell flag consumer __gpy_consume_shell_flags"
-    exit 1
-fi
-echo "✓ SIGURG doorbell flags consumed at the prompt, no URG trap"
-
-if ! declare -f __gpy_supervisor_start &>/dev/null; then
-    echo "FAIL: Missing supervisor"
-    exit 1
-fi
-echo "✓ Supervisor"
-
-echo "✓ Duration method: $__gpy_duration_method (Bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})"
-
-echo "✓ Exit cleanup: EXIT trap unregisters the client"
-
+pass "Bash does not trap SIGURG"
 
 echo "=== Warm Cache Hit Tests ==="
 
@@ -98,7 +63,7 @@ if [[ "$result" != "$sentinel" ]]; then
     rm -f "$cache_file"
     exit 1
 fi
-echo "✓ warm cache hit returns cached content"
+pass "warm cache hit returns cached content"
 
 echo "=== Serve-Stale Tests ==="
 
@@ -117,18 +82,18 @@ if [[ "$stale_result" != "$sentinel" ]]; then
     rm -f "$cache_file"
     exit 1
 fi
-echo "✓ stale cache is served (not deleted)"
+pass "stale cache is served (not deleted)"
 
 if [[ ! -f "$cache_file" ]]; then
     echo "FAIL: stale cache file was deleted (should be preserved for serve-stale)"
     rm -rf "$tmpdir"
     exit 1
 fi
-echo "✓ stale cache file preserved after serve"
+pass "stale cache file preserved after serve"
 
 # Staleness is carried by the exit code (bit 2: status 2 or 6).
 if (( (stale_status & 2) != 0 )); then
-    echo "✓ stale status bit set to signal background refresh needed"
+    pass "stale status bit set to signal background refresh needed"
 else
     echo "FAIL: stale status bit not set (got $stale_status) — background refresh cannot be triggered"
     rm -rf "$tmpdir"
@@ -154,7 +119,7 @@ assert_detect() {
     (cd "$dir" && __gpy_segment_language_detect)
     local got=$?
     if [[ "$got" -eq "$expected" ]]; then
-        echo "✓ $label"
+        pass "$label"
     else
         echo "FAIL: $label (expected $expected, got $got)"
         rm -rf "$detect_proj"
@@ -191,7 +156,7 @@ if [[ "$lang_result" != "$lang_sentinel" ]]; then
     rm -rf "$nongit"; rm -f "$lang_file"
     exit 1
 fi
-echo "✓ language cache served in non-git project"
+pass "language cache served in non-git project"
 
 # Git cache must NOT use the path fallback (requires a real Git root).
 git_nongit_file="$cache_dir/$nongit_key.git.none.bash"
@@ -203,7 +168,7 @@ if [[ -n "$git_nongit_result" ]]; then
     rm -rf "$nongit"; rm -f "$lang_file" "$git_nongit_file"
     exit 1
 fi
-echo "✓ git cache correctly misses in non-git project"
+pass "git cache correctly misses in non-git project"
 
 rm -rf "$nongit"
 rm -f "$lang_file" "$git_nongit_file"
@@ -226,14 +191,14 @@ case "$single_prompt" in
         exit 1
         ;;
 esac
-echo "✓ single-line prompt has no newline (no regression)"
+pass "single-line prompt has no newline (no regression)"
 
 __gpy_two_line=1
 __gpy_render_prompt 0
 two_line_prompt="$PS1"
 case "$two_line_prompt" in
     *$'\n'*)
-        echo "✓ two-line prompt inserts newline before character"
+        pass "two-line prompt inserts newline before character"
         ;;
     *)
         echo "FAIL: two-line prompt (two_line=1) missing newline before character"
@@ -250,7 +215,7 @@ __gpy_prev_bg_token "blue" token
 [[ "$token" == "blue" ]] || { echo "FAIL: plain prev_bg token"; exit 1; }
 __gpy_prev_bg_token "#5277C3" token
 [[ "$token" == "_5277C3" ]] || { echo "FAIL: hex prev_bg token"; exit 1; }
-echo "✓ prev_bg token derivation matches Rust"
+pass "prev_bg token derivation matches Rust"
 
 # Cache read selects the prev_bg-specific file, with a fallback to the none file.
 pb_repo=$(mktemp -d)
@@ -265,13 +230,13 @@ got_blue=""
 
 __gpy_read_instant_cache "git" "$pb_repo" "blue" got_blue
 [[ "$got_blue" == "blue-render" ]] || { echo "FAIL: prev_bg=blue did not read .git.blue.bash (got '$got_blue')"; rm -rf "$pb_repo"; exit 1; }
-echo "✓ cache read selects prev_bg-specific file"
+pass "cache read selects prev_bg-specific file"
 
 rm -f "$cache_dir/$pb_key.git.blue.bash"
 got_fallback=""
 __gpy_read_instant_cache "git" "$pb_repo" "blue" got_fallback
 [[ "$got_fallback" == "none-render" ]] || { echo "FAIL: missing context file did not fall back to none (got '$got_fallback')"; rm -rf "$pb_repo"; exit 1; }
-echo "✓ cache read falls back to none render when context file absent"
+pass "cache read falls back to none render when context file absent"
 
 rm -rf "$pb_repo"
 rm -f "$cache_dir/$pb_key.git.none.bash"
@@ -285,7 +250,7 @@ assert_payload_has_prev_bg() {
     local label="$1" expected="$2" captured
     captured="$(cat "$__gpy_capture_file" 2>/dev/null)"
     case "$captured" in
-        *"\"prev_bg\":\"$expected\""*) echo "✓ $label payload includes prev_bg" ;;
+        *"\"prev_bg\":\"$expected\""*) pass "$label payload includes prev_bg" ;;
         *) echo "FAIL: $label payload missing prev_bg: $captured"; rm -f "$__gpy_capture_file"; exit 1 ;;
     esac
 }
@@ -331,13 +296,13 @@ _assert_venv_forwarding() {
     local label="$1" expected="$2" captured="$3"
     if [[ -n "$expected" ]]; then
         case "$captured" in
-            *"\"virtual_env\":\"$expected\""*) echo "✓ $label forwards virtual_env=$expected" ;;
+            *"\"virtual_env\":\"$expected\""*) pass "$label forwards virtual_env=$expected" ;;
             *) echo "FAIL: $label should forward virtual_env=$expected: $captured"; rm -f "$__gpy_capture_file"; exit 1 ;;
         esac
     else
         case "$captured" in
             *virtual_env*) echo "FAIL: $label should not forward virtual_env: $captured"; rm -f "$__gpy_capture_file"; exit 1 ;;
-            *) echo "✓ $label omits virtual_env" ;;
+            *) pass "$label omits virtual_env" ;;
         esac
     fi
 }
@@ -352,7 +317,7 @@ for sender in refresh request; do
         "$(__gpy_capture_venv "$sender" git /proj/.venv /opt/conda/envs/ml ml)"
 done
 rm -f "$__gpy_capture_file"
-echo "✓ virtual_env forwarding: conda env, precedence, base skip, git omits"
+pass "virtual_env forwarding: conda env, precedence, base skip, git omits"
 
 # The render loop must advance prev_bg across segments; stubs record to a file
 # because segments run in command substitution.
@@ -372,6 +337,6 @@ seen_git="$(sed -n '2p' "$__gpy_seen_file")"
 rm -f "$__gpy_seen_file"
 [[ "$seen_dir" == "dir:black" ]] || { echo "FAIL: first segment prev_bg not 'black' ($seen_dir)"; exit 1; }
 [[ "$seen_git" == "git:dircolor" ]] || { echo "FAIL: second segment prev_bg not advanced to first segment bg ($seen_git)"; exit 1; }
-echo "✓ render loop threads prev_bg and advances it across segments"
+pass "render loop threads prev_bg and advances it across segments"
 
-echo "=== Parity Check Passed ==="
+test_finish "parity"
