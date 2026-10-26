@@ -220,15 +220,20 @@ impl fmt::Display for PluginApiVersion {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct GpyVersion(
-    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$")))] String,
-);
+#[cfg_attr(test, schemars(transparent))]
+pub struct GpyVersion {
+    #[serde(skip)]
+    core: [u64; 3],
+    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$")))]
+    raw: String,
+}
 
 impl GpyVersion {
     /// Create a new parsed GPY version string.
     ///
     /// # Errors
-    /// Returns an error if the value is empty or does not start with `MAJOR.MINOR.PATCH`.
+    /// Returns an error if the value is empty, does not start with
+    /// `MAJOR.MINOR.PATCH`, or a component does not fit in a `u64`.
     pub fn new(version: &str) -> crate::Result<Self> {
         let normalized = version.trim();
         if normalized.is_empty() {
@@ -252,24 +257,25 @@ impl GpyVersion {
             )));
         }
 
-        Ok(Self(normalized.to_owned()))
+        let mut core = [0u64; 3];
+        for (slot, part) in core.iter_mut().zip(&parts) {
+            *slot = part.parse().map_err(|e| {
+                crate::Error::invalid(format!(
+                    "Version component '{part}' is too large in '{normalized}': {e}"
+                ))
+            })?;
+        }
+
+        Ok(Self {
+            core,
+            raw: normalized.to_owned(),
+        })
     }
 
     /// Get the normalized string.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn numeric_parts(&self) -> [u64; 3] {
-        let mut parts = Self::numeric_core(&self.0)
-            .split('.')
-            .map(|part| part.parse::<u64>().unwrap_or_default());
-        [
-            parts.next().unwrap_or_default(),
-            parts.next().unwrap_or_default(),
-            parts.next().unwrap_or_default(),
-        ]
+        &self.raw
     }
 
     fn numeric_core(version: &str) -> &str {
@@ -282,7 +288,7 @@ impl GpyVersion {
     /// Compare two versions using their numeric semver core.
     #[must_use]
     pub fn is_greater_than(&self, other: &Self) -> bool {
-        self.numeric_parts() > other.numeric_parts()
+        self.core > other.core
     }
 }
 
@@ -298,7 +304,7 @@ impl<'de> Deserialize<'de> for GpyVersion {
 
 impl fmt::Display for GpyVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.raw)
     }
 }
 
@@ -659,5 +665,12 @@ mod tests {
         assert!(GpyVersion::new("1").is_err());
         assert!(GpyVersion::new("1.2").is_err());
         assert!(GpyVersion::new("1.2.x").is_err());
+    }
+
+    #[test]
+    fn gpy_version_component_overflow_is_rejected() {
+        assert!(GpyVersion::new("99999999999999999999.0.0").is_err());
+        assert!(GpyVersion::new("0.0.18446744073709551616").is_err());
+        assert!(GpyVersion::new("18446744073709551615.0.0").is_ok());
     }
 }

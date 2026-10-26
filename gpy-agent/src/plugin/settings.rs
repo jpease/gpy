@@ -164,17 +164,31 @@ impl SettingDecl {
         }
     }
 
-    /// Type and constraints, for CLI listings (`int 0..=10`, `string bold|dim`).
+    /// Type and constraints, for CLI listings (`int 0..=10`, `int >=0`, `string bold|dim`).
     #[must_use]
     pub fn summary(&self) -> String {
         match self {
             Self::Bool { .. } => "bool".to_owned(),
-            Self::Int { min, max, .. } if min.is_none() && max.is_none() => "int".to_owned(),
-            Self::Int { min, max, .. } => format!(
-                "int {}..={}",
-                min.map_or_else(String::new, |v| v.to_string()),
-                max.map_or_else(String::new, |v| v.to_string())
-            ),
+            Self::Int {
+                min: Some(low),
+                max: Some(high),
+                ..
+            } => format!("int {low}..={high}"),
+            Self::Int {
+                min: Some(low),
+                max: None,
+                ..
+            } => format!("int >={low}"),
+            Self::Int {
+                min: None,
+                max: Some(high),
+                ..
+            } => format!("int <={high}"),
+            Self::Int {
+                min: None,
+                max: None,
+                ..
+            } => "int".to_owned(),
             Self::String { choices, .. } if choices.is_empty() => "string".to_owned(),
             Self::String { choices, .. } => format!("string {}", choices.join("|")),
         }
@@ -253,11 +267,13 @@ impl SettingDecl {
     /// Returns an error if the text does not parse or fails the constraints.
     pub fn parse_str(&self, raw: &str) -> Result<SettingValue> {
         let value = match self {
-            Self::Bool { .. } => SettingValue::Bool(match raw.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => true,
-                "false" | "0" | "no" | "off" => false,
-                _ => return Err(Error::invalid(format!("{raw:?} is not a boolean"))),
-            }),
+            Self::Bool { .. } => {
+                SettingValue::Bool(match raw.trim().to_ascii_lowercase().as_str() {
+                    "true" | "1" | "yes" | "on" => true,
+                    "false" | "0" | "no" | "off" => false,
+                    _ => return Err(Error::invalid(format!("{raw:?} is not a boolean"))),
+                })
+            }
             Self::Int { .. } => SettingValue::Int(
                 raw.trim()
                     .parse()
