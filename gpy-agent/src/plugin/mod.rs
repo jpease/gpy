@@ -24,8 +24,8 @@ pub use registry::{
 };
 pub use script::{
     CacheScope, EnvName, Extension, InputName, RESERVED_SETTING_KEYS, ScanName, ScriptPath,
-    ScriptSegmentManifest, TimeoutMs, TtlSecs, VariantColorKey, VariantColorPart, VariantName,
-    script_segment_manifest_path,
+    ScriptSegmentManifest, TIMEOUT_MS_KEY, TTL_SECS_KEY, TimeoutMs, TtlSecs, VariantColorKey,
+    VariantColorPart, VariantName, script_segment_manifest_path,
 };
 pub use settings::{SettingDecl, SettingKey, SettingValue};
 

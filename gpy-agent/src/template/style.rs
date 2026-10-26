@@ -196,10 +196,6 @@ pub fn parse_color(text: &str) -> Result<Color> {
 ///
 /// # Errors
 /// Returns [`TemplateError::UnknownColor`] unless exactly 6 ASCII hex digits.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "TemplateError::UnknownColor has no source field; the hex digits were validated above, so the parse cannot fail"
-)]
 fn parse_hex(hex: &str) -> Result<Color> {
     if hex.len() != 6_usize || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(TemplateError::UnknownColor {
@@ -210,9 +206,11 @@ fn parse_hex(hex: &str) -> Result<Color> {
         let slice = hex.get(range).ok_or_else(|| TemplateError::UnknownColor {
             name: format!("#{hex}"),
         })?;
-        u8::from_str_radix(slice, 16).map_err(|_| TemplateError::UnknownColor {
-            name: format!("#{hex}"),
-        })
+        u8::from_str_radix(slice, 16)
+            .ok()
+            .ok_or_else(|| TemplateError::UnknownColor {
+                name: format!("#{hex}"),
+            })
     };
     Ok(Color::Rgb {
         r: channel(0..2)?,

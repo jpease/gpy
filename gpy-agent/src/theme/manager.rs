@@ -176,7 +176,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the theme file cannot be loaded or parsed.
     pub fn new(theme_name: &str) -> Result<Self> {
-        discovery::ensure_safe_name("theme", theme_name)?;
+        discovery::validate_config_name("theme", theme_name)?;
         let location = ThemeLocation::resolve(theme_name);
         let (theme, fingerprint) = Self::load_source(&location)?;
         Ok(Self::with_state(theme_name, location, fingerprint, theme))
@@ -564,7 +564,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the theme isn't discoverable or its file can't be read.
     pub fn theme_source_content(theme_name: &str) -> Result<String> {
-        discovery::ensure_safe_name("theme", theme_name)?;
+        discovery::validate_config_name("theme", theme_name)?;
 
         let Some(discovered) = Self::discover_available_themes()
             .into_iter()
@@ -618,7 +618,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error on an unsafe name, serialization failure, or I/O failure.
     pub fn save_user_theme(theme_name: &str, theme: &ThemeConfig) -> Result<PathBuf> {
-        discovery::ensure_safe_name("theme", theme_name)?;
+        discovery::validate_config_name("theme", theme_name)?;
 
         let toml_content = toml::to_string_pretty(theme)
             .map_err(|e| Error::config(format!("Failed to serialize theme to TOML: {e}")))?;

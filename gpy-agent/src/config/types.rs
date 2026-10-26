@@ -392,6 +392,14 @@ bounded_int! {
     }
 }
 
+/// The rejection text for a theme or palette `name` that fails [`is_safe_config_name`].
+#[must_use]
+pub fn invalid_name_message(kind: &str, name: &str) -> String {
+    format!(
+        "invalid {kind} name '{name}': must not contain path separators, '..', or control characters"
+    )
+}
+
 /// Return `true` when `name` is safe to use as a palette or theme file stem.
 ///
 /// Rejects empty, `/`, `\`, `..`, and control characters so joins stay inside
@@ -407,8 +415,8 @@ pub fn is_safe_config_name(name: &str) -> bool {
 
 /// Marks which kind of file stem a [`SafeName`] names; supplies the label used in errors.
 pub trait NameKind {
-    /// Noun used in the rejection message, e.g. `theme name`.
-    const LABEL: &'static str;
+    /// Noun used in the rejection message, e.g. `theme`.
+    const KIND: &'static str;
 }
 
 /// Marker for [`ThemeName`].
@@ -416,7 +424,7 @@ pub trait NameKind {
 pub enum ThemeKind {}
 
 impl NameKind for ThemeKind {
-    const LABEL: &'static str = "theme name";
+    const KIND: &'static str = "theme";
 }
 
 /// Marker for [`PaletteName`].
@@ -424,7 +432,7 @@ impl NameKind for ThemeKind {
 pub enum PaletteKind {}
 
 impl NameKind for PaletteKind {
-    const LABEL: &'static str = "palette name";
+    const KIND: &'static str = "palette";
 }
 
 /// A theme or palette name that [`is_safe_config_name`] accepts.
@@ -472,12 +480,11 @@ impl<K: NameKind> TryFrom<String> for SafeName<K> {
     type Error = String;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "{} must be non-empty and must not contain path separators or control characters",
-                K::LABEL
-            )
-        })
+        if is_safe_config_name(&value) {
+            Ok(Self(value, PhantomData))
+        } else {
+            Err(invalid_name_message(K::KIND, &value))
+        }
     }
 }
 
@@ -903,12 +910,12 @@ mod tests {
         assert!(
             ThemeName::try_from(String::new())
                 .expect_err("empty")
-                .starts_with("theme name must be non-empty")
+                .starts_with("invalid theme name")
         );
         assert!(
             PaletteName::try_from("a/b".to_owned())
                 .expect_err("separator")
-                .starts_with("palette name must be non-empty")
+                .starts_with("invalid palette name")
         );
     }
 

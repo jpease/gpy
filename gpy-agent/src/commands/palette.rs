@@ -5,7 +5,7 @@ use super::utils::{
     save_config_to,
 };
 use super::validation::{self, Failure, FailureKind, ValidatableResource};
-use crate::config::discovery::{ensure_safe_name, invalid_name_error};
+use crate::config::discovery::validate_config_name;
 use crate::{Error, Result, config, palette::PaletteManager};
 use std::path::Path;
 
@@ -42,8 +42,8 @@ pub fn use_palette(name: &str) -> Result<()> {
     let path = active_config_path()?;
     let original = load_active_config(&path)?;
     let mut config = original.clone();
-    config.ui.palette = config::types::PaletteName::new(name.to_owned())
-        .ok_or_else(|| invalid_name_error("palette", name))?;
+    config.ui.palette =
+        config::types::PaletteName::try_from(name.to_owned()).map_err(Error::config)?;
     save_config_to(&path, &original, &config, &[])?;
 
     println!("Switched to '{name}' palette");
@@ -143,7 +143,7 @@ impl ValidatableResource for PaletteResource {
 }
 
 fn validate_palette_name(palette_name: &str) -> std::result::Result<(), Failure> {
-    ensure_safe_name("palette", palette_name)
+    validate_config_name("palette", palette_name)
         .map_err(|error| Failure::new(FailureKind::UnknownName, error))?;
     let manager = PaletteManager::new(palette_name).map_err(|error| {
         let discovered = PaletteManager::discover_available_palettes()
@@ -187,7 +187,7 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
         name.clone_into(&mut palette.name);
     }
     let stem = palette.name.clone();
-    ensure_safe_name("palette", &stem)?;
+    validate_config_name("palette", &stem)?;
     if !force
         && let Some(provider) = config::discovery::shadowed_provider(
             &PaletteManager::discover_available_palettes(),

@@ -5,7 +5,7 @@ use super::utils::{
     save_config_to,
 };
 use super::validation::{self, Failure, FailureKind, ValidatableResource};
-use crate::config::discovery::{ensure_safe_name, invalid_name_error};
+use crate::config::discovery::validate_config_name;
 use crate::config::recommended_layout::{
     PendingLayout, pending_layout, resolve_forced_detection, resolve_forced_palette,
     user_set_layout_fields,
@@ -60,8 +60,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
         .ok()
         .and_then(|outgoing| outgoing.get().ui.recommended.clone());
 
-    config.ui.theme = config::types::ThemeName::new(name.to_owned())
-        .ok_or_else(|| invalid_name_error("theme", name))?;
+    config.ui.theme = config::types::ThemeName::try_from(name.to_owned()).map_err(Error::config)?;
 
     let pending = pending_layout(theme.ui.recommended.as_ref(), &config.ui);
     // Detection mode lives in config.language, outside PendingLayout.
@@ -239,8 +238,7 @@ pub fn print_theme_validation_error(context: &str, failure: &Failure) {
 /// # Errors
 /// Returns an error if `from` cannot be read or the theme file cannot be created.
 pub fn new(name: &str, from: Option<&str>) -> Result<()> {
-    let _theme_name = config::types::ThemeName::new(name.to_owned())
-        .ok_or_else(|| invalid_name_error("theme", name))?;
+    validate_config_name("theme", name)?;
 
     let themes_dir = ThemeManager::user_themes_dir();
 
@@ -286,7 +284,7 @@ pub fn save(name: Option<&str>) -> Result<()> {
     let active_theme = config.ui.theme.as_str().to_owned();
 
     let target_name = name.unwrap_or(active_theme.as_str());
-    ensure_safe_name("theme", target_name)?;
+    validate_config_name("theme", target_name)?;
 
     let source_content = ThemeManager::theme_source_content(&active_theme)?;
 
@@ -457,7 +455,7 @@ fn discovered_theme(name: &str) -> Option<config::discovery::Discovered> {
 /// Every theme-name validation entry point (`theme validate`, `doctor`,
 /// `config set ui.theme`) funnels through here.
 fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
-    ensure_safe_name("theme", theme_name)
+    validate_config_name("theme", theme_name)
         .map_err(|error| Failure::new(FailureKind::UnknownName, error))?;
     // Load first: `ThemeManager::new` gives the more specific parse errors;
     // only a name loaded via the default fallback reaches discovery.

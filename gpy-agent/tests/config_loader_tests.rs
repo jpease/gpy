@@ -276,7 +276,7 @@ theme = ''
         result
             .unwrap_err()
             .to_string()
-            .contains("theme name must be non-empty")
+            .contains("invalid theme name")
     );
 }
 

@@ -46,7 +46,7 @@ impl PaletteManager {
     /// # Errors
     /// Returns an error if the name is invalid or no such palette exists.
     pub fn new(name: &str) -> Result<Self> {
-        discovery::ensure_safe_name("palette", name)?;
+        discovery::validate_config_name("palette", name)?;
         let user_path = Self::palette_path(name);
         let palette = if user_path.exists() {
             Self::load_from_path(&user_path, name)?

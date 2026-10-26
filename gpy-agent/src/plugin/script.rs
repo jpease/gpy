@@ -16,7 +16,13 @@ use std::path::{Component, Path, PathBuf};
 
 /// Manifest fields the user overrides in `[plugin.<segment>]` next to the
 /// declared settings; a declared setting may not reuse these names.
-pub const RESERVED_SETTING_KEYS: [&str; 2] = ["ttl_secs", "timeout_ms"];
+pub const RESERVED_SETTING_KEYS: [&str; 2] = [TTL_SECS_KEY, TIMEOUT_MS_KEY];
+
+/// The `ttl_secs` field of a script segment manifest and its `[plugin.<segment>]` override.
+pub const TTL_SECS_KEY: &str = "ttl_secs";
+
+/// The `timeout_ms` field of a script segment manifest and its `[plugin.<segment>]` override.
+pub const TIMEOUT_MS_KEY: &str = "timeout_ms";
 
 /// Cap on segment manifest reads, as for `plugin.toml`.
 const SEGMENT_MANIFEST_READ_CAP: usize = 65_536;
@@ -301,7 +307,7 @@ display_inner!(Extension);
 
 /// Bounded `u32` newtype with a default, deserialized via `try_from`.
 macro_rules! bounded_u32 {
-    ($(#[$doc:meta])* $name:ident, $min:expr, $max:expr, $default:expr, $what:literal) => {
+    ($(#[$doc:meta])* $name:ident, $min:expr, $max:expr, $default:expr, $what:expr) => {
         $(#[$doc])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
         #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -324,7 +330,8 @@ macro_rules! bounded_u32 {
                     Ok(Self(value))
                 } else {
                     Err(Error::invalid(format!(
-                        concat!($what, " must be {}..={}, got {}"),
+                        "{} must be {}..={}, got {}",
+                        $what,
                         Self::MIN,
                         Self::MAX,
                         value
@@ -372,7 +379,7 @@ bounded_u32!(
     0,
     31_536_000,
     5,
-    "ttl_secs"
+    TTL_SECS_KEY
 );
 
 bounded_u32!(
@@ -381,7 +388,7 @@ bounded_u32!(
     1,
     500,
     500,
-    "timeout_ms"
+    TIMEOUT_MS_KEY
 );
 
 /// The optional second output line: a colour variant chosen by the script

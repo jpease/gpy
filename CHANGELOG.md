@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Config validation errors name the exact field and the real rule.
+  `gpy config set` reports a non-integer value as `Invalid whole number: <value>`
+  instead of naming a Rust type (`u64 value`). A `git.skip_paths` entry such as
+  `~root/x`, which was accepted but never matched, is now rejected, and
+  `git.skip_paths[i]` / `ui.enabled_segments[i]` errors carry the full dotted
+  path. A malformed `ui.theme` or `ui.palette` in `config.toml` now reads
+  `invalid theme name '<name>': must not contain path separators, '..', or control characters`.
 - A theme now renders the same on every load path. Without its own colours,
   a git state (`clean_*`, `dirty_*`, `ahead_behind_*`, `conflicts_*`,
   `untracked_only_*`, `in_progress_*`) takes the segment's `bg_color` and

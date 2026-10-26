@@ -2,6 +2,7 @@
 
 use super::{ValidationError, ValidationErrorKind};
 use crate::Result;
+use crate::config::skip_paths;
 use crate::plugin::{SegmentName, first_token_collision};
 
 /// Parse every enabled segment into its normalized [`SegmentName`].
@@ -9,19 +10,18 @@ use crate::plugin::{SegmentName, first_token_collision};
 /// # Errors
 /// Returns an error if any segment name is invalid or two names share a shell
 /// variable token (e.g. `a-b` and `a_b`).
-#[allow(
-    clippy::map_err_ignore,
-    reason = "ValidationError has no source field; InvalidSegmentName already carries the rejected value"
-)]
 fn parse_enabled_segments(segments: &[String]) -> Result<Vec<SegmentName>> {
     let mut names = Vec::with_capacity(segments.len());
     for (i, segment) in segments.iter().enumerate() {
-        names.push(SegmentName::new(segment).map_err(|_| ValidationError {
-            field_path: format!("segments[{i}]"),
-            kind: ValidationErrorKind::InvalidSegmentName {
-                value: segment.clone(),
-            },
-        })?);
+        let name = SegmentName::new(segment)
+            .ok()
+            .ok_or_else(|| ValidationError {
+                field_path: format!("ui.enabled_segments[{i}]"),
+                kind: ValidationErrorKind::InvalidSegmentName {
+                    value: segment.clone(),
+                },
+            })?;
+        names.push(name);
     }
     if let Some(collision) = first_token_collision(&names) {
         return Err(ValidationError {
@@ -41,16 +41,17 @@ fn validate_enabled_segments(segments: &[String]) -> Result<()> {
     parse_enabled_segments(segments).map(drop)
 }
 
-/// Validate that skip paths are absolute paths.
-/// `Path::is_absolute` is platform-aware; `~` is special-cased since it isn't expanded.
+/// Validate that every skip path is absolute, `~`, or `~/…`.
+///
 /// # Errors
-/// Returns an error if any path is not absolute.
+/// Returns an error naming the first entry that could never match a repository,
+/// including `~user/…`, which is never expanded.
 fn validate_skip_paths(paths: &[String]) -> Result<()> {
     for (i, path) in paths.iter().enumerate() {
-        if !path.starts_with('~') && !std::path::Path::new(path).is_absolute() {
+        if !skip_paths::is_valid_entry(path) {
             return Err(ValidationError {
-                field_path: format!("skip_paths[{i}]"),
-                kind: ValidationErrorKind::RelativeSkipPath {
+                field_path: format!("git.skip_paths[{i}]"),
+                kind: ValidationErrorKind::InvalidSkipPath {
                     value: path.clone(),
                 },
             }
@@ -166,7 +167,34 @@ mod tests {
     #[test]
     fn test_validate_skip_paths() {
         assert!(validate_skip_paths(&["~/test".to_owned()]).is_ok());
+        assert!(validate_skip_paths(&["~".to_owned()]).is_ok());
         assert!(validate_skip_paths(&["relative/path".to_owned()]).is_err());
+    }
+
+    /// `~user/…` is never expanded, so it could never match a repository.
+    #[test]
+    fn test_validate_skip_paths_rejects_other_users_home() {
+        let err = validate_skip_paths(&["/tmp".to_owned(), "~root/x".to_owned()])
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "Configuration error: git.skip_paths[1] must be an absolute path, '~', or start with '~/': ~root/x"
+        );
+    }
+
+    #[test]
+    fn test_enabled_segment_error_names_full_field_path() {
+        let err = validate_enabled_segments(&["git".to_owned(), "bad seg".to_owned()]).unwrap_err();
+        let crate::Error::Config {
+            source: Some(source),
+            ..
+        } = &err
+        else {
+            panic!("expected a config error, got {err:?}");
+        };
+        let validation = source.downcast_ref::<ValidationError>().unwrap();
+        assert_eq!(validation.field_path, "ui.enabled_segments[1]");
     }
 
     #[cfg(unix)]

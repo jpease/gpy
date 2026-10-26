@@ -39,24 +39,17 @@ impl std::fmt::Display for Source {
     }
 }
 
-/// The error for a theme or palette `name` that fails
-/// [`is_safe_config_name`](super::types::is_safe_config_name).
-#[must_use]
-pub fn invalid_name_error(kind: &str, name: &str) -> crate::Error {
-    crate::Error::config(format!(
-        "invalid {kind} name '{name}': must not contain path separators, '..', or control characters"
-    ))
-}
-
 /// Reject a theme or palette `name` that could escape its directory.
 ///
 /// # Errors
-/// Returns [`invalid_name_error`] unless `name` is [`is_safe_config_name`](super::types::is_safe_config_name).
-pub fn ensure_safe_name(kind: &str, name: &str) -> crate::Result<()> {
+/// Returns an error unless `name` is [`is_safe_config_name`](super::types::is_safe_config_name).
+pub fn validate_config_name(kind: &str, name: &str) -> crate::Result<()> {
     if super::types::is_safe_config_name(name) {
         Ok(())
     } else {
-        Err(invalid_name_error(kind, name))
+        Err(crate::Error::config(super::types::invalid_name_message(
+            kind, name,
+        )))
     }
 }
 

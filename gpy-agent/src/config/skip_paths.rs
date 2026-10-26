@@ -23,6 +23,13 @@ fn expand_tilde(entry: &str, home: Option<&Path>) -> Option<PathBuf> {
     )
 }
 
+/// Whether `entry` can ever match: an absolute path, `~`, or `~/…`.
+/// `Path::is_absolute` is platform-aware; `~user/…` is never expanded.
+#[must_use]
+pub fn is_valid_entry(entry: &str) -> bool {
+    entry == "~" || entry.starts_with("~/") || Path::new(entry).is_absolute()
+}
+
 /// Pre-resolved `skip_paths` entries.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SkipMatcher {
