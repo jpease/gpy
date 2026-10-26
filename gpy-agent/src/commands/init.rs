@@ -6,6 +6,7 @@
 //! A set `GPY_NERD_FONT` is the user's answer and skips the prompt.
 
 use crate::Result;
+use crate::commands::output;
 use crate::commands::utils::{active_config_path, load_active_config, save_config_to};
 use crate::font::{self, FontCapability};
 use std::path::Path;
@@ -30,7 +31,7 @@ pub fn run(options: InitOptions) -> Result<()> {
 
     if Path::new(&path).exists() && !options.redetect {
         println!("GPY config already exists at {path}");
-        println!("   Leaving your existing settings unchanged.");
+        output::detail("Leaving your existing settings unchanged.");
         return Ok(());
     }
 
@@ -116,28 +117,30 @@ fn report(path: &str, capability: FontCapability, show_icons: bool) {
     println!("Wrote ui.show_icons to {path}");
 
     if show_icons {
-        println!("   Icon style: Nerd Font glyphs (ui.show_icons = true)");
+        output::detail("Icon style: Nerd Font glyphs (ui.show_icons = true)");
         return;
     }
 
     match capability {
         FontCapability::NoNerdFont => {
-            println!("   Icon style: ASCII (ui.show_icons = false) — no Nerd Font was detected.");
+            output::detail(
+                "Icon style: ASCII (ui.show_icons = false) — no Nerd Font was detected.",
+            );
         }
         FontCapability::Unknown => {
-            println!(
-                "   Icon style: ASCII (ui.show_icons = false) — your fonts could not be detected."
+            output::detail(
+                "Icon style: ASCII (ui.show_icons = false) — your fonts could not be detected.",
             );
         }
         FontCapability::NerdFont => {
-            println!("   Icon style: ASCII (ui.show_icons = false).");
+            output::detail("Icon style: ASCII (ui.show_icons = false).");
         }
     }
-    println!("   This renders correctly on any terminal.");
-    println!();
-    println!("   Want the full icon look? Install a Nerd Font (https://www.nerdfonts.com),");
-    println!("   set it as your terminal font, then run:");
-    println!("       gpy config set ui.show_icons true");
+    output::detail("This renders correctly on any terminal.");
+    output::blank();
+    output::detail("Want the full icon look? Install a Nerd Font (https://www.nerdfonts.com),");
+    output::detail("set it as your terminal font, then run:");
+    output::detail_at(2, "gpy config set ui.show_icons true");
 }
 
 #[cfg(test)]

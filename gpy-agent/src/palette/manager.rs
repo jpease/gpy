@@ -9,7 +9,6 @@ use crate::config::defaults::{
     STARSHIP_PALETTE_CONTENT,
 };
 use crate::config::discovery::{self, Discovered, Source};
-use crate::config::types::is_safe_config_name;
 use crate::palette::PaletteConfig;
 use crate::{Error, Result};
 use std::collections::BTreeMap;
@@ -47,11 +46,7 @@ impl PaletteManager {
     /// # Errors
     /// Returns an error if the name is invalid or no such palette exists.
     pub fn new(name: &str) -> Result<Self> {
-        if !is_safe_config_name(name) {
-            return Err(Error::config(format!(
-                "invalid palette name '{name}': must not contain path separators, '..', or control characters"
-            )));
-        }
+        discovery::ensure_safe_name("palette", name)?;
         let user_path = Self::palette_path(name);
         let palette = if user_path.exists() {
             Self::load_from_path(&user_path, name)?
@@ -119,8 +114,7 @@ impl PaletteManager {
                 "No palette named '{name}' found (checked user path and builtins)"
             )));
         };
-        let mut cfg: PaletteConfig =
-            toml::from_str(content).map_err(|e| Error::config(e.to_string()))?;
+        let mut cfg: PaletteConfig = toml::from_str(content)?;
         if cfg.name.is_empty() {
             name.clone_into(&mut cfg.name);
         }
@@ -132,8 +126,7 @@ impl PaletteManager {
     /// Returns an error if the file cannot be read or its TOML is invalid.
     fn load_from_path(path: &std::path::Path, stem_fallback: &str) -> Result<PaletteConfig> {
         let content = std::fs::read_to_string(path).map_err(|e| Error::config(e.to_string()))?;
-        let mut cfg: PaletteConfig =
-            toml::from_str(&content).map_err(|e| Error::config(e.to_string()))?;
+        let mut cfg: PaletteConfig = toml::from_str(&content)?;
         if cfg.name.is_empty() {
             stem_fallback.clone_into(&mut cfg.name);
         }

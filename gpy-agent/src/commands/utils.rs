@@ -1,5 +1,7 @@
 //! Config load/save, agent binary lookup and agent reload helpers shared by CLI commands.
 
+use crate::commands::output;
+use crate::config::discovery::Discovered;
 use crate::{Error, Result, config};
 use std::path::{Path, PathBuf};
 
@@ -65,6 +67,26 @@ pub fn read_config() -> Result<config::Config> {
     load_active_config(&path)
 }
 
+/// One `name [source]` line per discovered theme or palette, with ` *` after
+/// the `active` one.
+fn discovered_lines(active: &str, items: &[Discovered]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| {
+            let marker = if item.name == active { " *" } else { "" };
+            format!("{}{marker} [{}]", item.name, item.source)
+        })
+        .collect()
+}
+
+/// Print `items` under `title`, marking the `active` one.
+pub fn print_discovered(title: &str, active: &str, items: &[Discovered]) {
+    output::heading(title);
+    for line in discovered_lines(active, items) {
+        output::detail(line);
+    }
+}
+
 /// The `gpy-agent` installed beside this `gpy`, else `gpy-agent` from `PATH`
 /// (split installs).
 #[must_use]
@@ -118,6 +140,37 @@ pub fn reload_agent_and_notify() {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::config::discovery::Source;
+
+    fn discovered(name: &str, source: Source) -> Discovered {
+        Discovered {
+            name: name.to_owned(),
+            source,
+            path: None,
+        }
+    }
+
+    #[test]
+    fn discovered_lines_mark_only_the_active_entry_and_label_each_source() {
+        let items = [
+            discovered("default", Source::Builtin),
+            discovered("mine", Source::User),
+            discovered(
+                "from-plugin",
+                Source::Plugin {
+                    plugin_id: "acme".to_owned(),
+                },
+            ),
+        ];
+        assert_eq!(
+            discovered_lines("mine", &items),
+            [
+                "default [builtin]",
+                "mine * [user]",
+                "from-plugin [plugin:acme]"
+            ]
+        );
+    }
 
     #[test]
     fn agent_binary_falls_back_to_path_without_a_sibling() {

@@ -1,13 +1,12 @@
 //! `gpy palette` command handlers.
 
 use super::utils::{
-    active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
+    active_config_path, load_active_config, print_discovered, read_config, reload_agent_and_notify,
+    save_config_to,
 };
-use super::validation::{self, ValidatableResource};
-use crate::{
-    Error, Result, config,
-    palette::{PaletteManager, PaletteSource},
-};
+use super::validation::{self, Failure, FailureKind, ValidatableResource};
+use crate::config::discovery::{ensure_safe_name, invalid_name_error};
+use crate::{Error, Result, config, palette::PaletteManager};
 use std::path::Path;
 
 /// Result of validating a palette target.
@@ -25,27 +24,11 @@ pub struct PaletteValidationResult {
 /// Returns an error if the active config cannot be read, parsed, or validated.
 pub fn list() -> Result<()> {
     let config = read_config()?;
-    let active = &config.ui.palette;
-
-    println!("Available Palettes:");
-    println!("===================\n");
-
-    let palettes = PaletteManager::discover_available_palettes();
-
-    for palette in palettes {
-        let marker = if palette.name == active.as_str() {
-            " *"
-        } else {
-            ""
-        };
-        let source = match &palette.source {
-            PaletteSource::Builtin => "builtin".to_owned(),
-            PaletteSource::User => "user".to_owned(),
-            PaletteSource::Plugin { plugin_id } => format!("plugin:{plugin_id}"),
-        };
-        println!("  {}{} [{}]", palette.name, marker, source);
-    }
-
+    print_discovered(
+        "Available Palettes:",
+        config.ui.palette.as_str(),
+        &PaletteManager::discover_available_palettes(),
+    );
     Ok(())
 }
 
@@ -60,7 +43,7 @@ pub fn use_palette(name: &str) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
     config.ui.palette = config::types::PaletteName::new(name.to_owned())
-        .ok_or_else(|| Error::config(format!("Invalid palette name: {name}")))?;
+        .ok_or_else(|| invalid_name_error("palette", name))?;
     save_config_to(&path, &original, &config, &[])?;
 
     println!("Switched to '{name}' palette");
@@ -91,7 +74,9 @@ pub fn validate(target: Option<&str>) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the palette fails to parse/validate.
-pub fn validate_target(target: Option<&str>) -> Result<PaletteValidationResult> {
+pub fn validate_target(
+    target: Option<&str>,
+) -> std::result::Result<PaletteValidationResult, Failure> {
     let report = validation::validate_target::<PaletteResource>(target)?;
     Ok(PaletteValidationResult {
         target: report.target,
@@ -103,7 +88,7 @@ pub fn validate_target(target: Option<&str>) -> Result<PaletteValidationResult> 
 ///
 /// # Errors
 /// Returns an error if the named palette cannot be loaded or validated.
-pub fn validate_by_name(name: &str) -> Result<PaletteValidationResult> {
+pub fn validate_by_name(name: &str) -> std::result::Result<PaletteValidationResult, Failure> {
     let report = validation::validate_by_name::<PaletteResource>(name)?;
     Ok(PaletteValidationResult {
         target: report.target,
@@ -112,8 +97,8 @@ pub fn validate_by_name(name: &str) -> Result<PaletteValidationResult> {
 }
 
 /// Print remediation-focused diagnostics for a palette validation error.
-pub fn print_palette_validation_error(context: &str, error: &Error) {
-    validation::print_validation_error::<PaletteResource>(context, error);
+pub fn print_palette_validation_error(context: &str, failure: &Failure) {
+    validation::print_validation_error::<PaletteResource>(context, failure);
 }
 
 struct PaletteResource;
@@ -130,34 +115,54 @@ impl ValidatableResource for PaletteResource {
         Ok(cfg.ui.palette.to_string())
     }
 
-    fn validate_name(name: &str) -> Result<()> {
+    fn validate_name(name: &str) -> std::result::Result<(), Failure> {
         validate_palette_name(name)
     }
 
-    fn validate_file(path: &Path) -> Result<()> {
+    fn validate_file(path: &Path) -> std::result::Result<(), Failure> {
         validate_palette_file(path)
     }
 
     fn not_a_file_error(path: &Path) -> Error {
-        Error::config(format!("Palette path '{}' is not a file", path.display()))
+        Error::config(format!("palette path '{}' is not a file", path.display()))
     }
 
-    fn hints(message: &str) -> Vec<&'static str> {
-        palette_validation_hints(message)
+    fn hints(kind: FailureKind) -> &'static [&'static str] {
+        match kind {
+            FailureKind::Parse => &[
+                "Use named colors, ANSI 0-255, or #RRGGBB values.",
+                "Run `gpy palette validate <palette-file>` after fixing TOML syntax.",
+            ],
+            FailureKind::NotAFile => &["Pass a palette name or a direct path to a .toml file."],
+            FailureKind::UnknownName => {
+                &["Confirm the palette is in ~/.config/gpy/palettes or is a known builtin."]
+            }
+            _ => &["Re-run `gpy palette validate` after correcting the reported field."],
+        }
     }
 }
 
-fn validate_palette_name(palette_name: &str) -> Result<()> {
-    let manager = PaletteManager::new(palette_name)?;
+fn validate_palette_name(palette_name: &str) -> std::result::Result<(), Failure> {
+    ensure_safe_name("palette", palette_name)
+        .map_err(|error| Failure::new(FailureKind::UnknownName, error))?;
+    let manager = PaletteManager::new(palette_name).map_err(|error| {
+        let discovered = PaletteManager::discover_available_palettes()
+            .iter()
+            .any(|palette| palette.name == palette_name);
+        if discovered {
+            Failure::from(error)
+        } else {
+            Failure::new(FailureKind::UnknownName, error)
+        }
+    })?;
     warn_aliased_keys(&manager.get());
     Ok(())
 }
 
-fn validate_palette_file(path: &Path) -> Result<()> {
+fn validate_palette_file(path: &Path) -> std::result::Result<(), Failure> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| Error::config(format!("Failed to read palette file: {e}")))?;
-    let palette: crate::palette::PaletteConfig =
-        toml::from_str(&content).map_err(|e| Error::config(format!("TOML parsing failed: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to read palette file: {e}")))?;
+    let palette: crate::palette::PaletteConfig = toml::from_str(&content).map_err(Error::from)?;
     palette.validate()?;
     warn_aliased_keys(&palette);
     Ok(())
@@ -176,18 +181,14 @@ fn warn_aliased_keys(palette: &crate::palette::PaletteConfig) {
 /// Returns an error on read/parse/write failure, or without `force` on name clashes.
 pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<()> {
     let input = std::fs::read_to_string(file)
-        .map_err(|e| Error::config(format!("Failed to read scheme file: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to read scheme file: {e}")))?;
     let mut palette =
         crate::import::base16::import_scheme(&input).map_err(|e| Error::config(e.to_string()))?;
     if let Some(name) = name_override {
         name.clone_into(&mut palette.name);
     }
     let stem = palette.name.clone();
-    if !config::types::is_safe_config_name(&stem) {
-        return Err(Error::config(format!(
-            "Invalid palette name derived from scheme: '{stem}'"
-        )));
-    }
+    ensure_safe_name("palette", &stem)?;
     if !force
         && let Some(provider) = config::discovery::shadowed_provider(
             &PaletteManager::discover_available_palettes(),
@@ -201,42 +202,20 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
     let dest = PaletteManager::palette_path(&stem);
     if dest.exists() && !force {
         return Err(Error::config(format!(
-            "Palette '{stem}' already exists at {}; pass --force to overwrite",
+            "palette '{stem}' already exists at {}; pass --force to overwrite",
             dest.display()
         )));
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| Error::config(format!("Failed to create palettes dir: {e}")))?;
+            .map_err(|e| Error::config(format!("failed to create palettes directory: {e}")))?;
     }
     let toml = toml::to_string_pretty(&palette)
-        .map_err(|e| Error::config(format!("Failed to serialize palette: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to serialize palette: {e}")))?;
     std::fs::write(&dest, toml)
-        .map_err(|e| Error::config(format!("Failed to write palette: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to write palette: {e}")))?;
     println!("Imported palette '{stem}' → {}", dest.display());
     Ok(())
-}
-
-fn palette_validation_hints(message: &str) -> Vec<&'static str> {
-    let lowered = message.to_ascii_lowercase();
-    let mut hints = Vec::new();
-
-    if lowered.contains("invalid color") {
-        hints.push("Use named colors, ANSI 0-255, or #RRGGBB values.");
-    }
-    if lowered.contains("toml parsing failed") {
-        hints.push("Run `gpy palette validate <palette-file>` after fixing TOML syntax.");
-    }
-    if lowered.contains("palette path") && lowered.contains("not a file") {
-        hints.push("Pass a palette name or a direct path to a .toml file.");
-    }
-    if lowered.contains("invalid palette name") || lowered.contains("no palette named") {
-        hints.push("Confirm the palette is in ~/.config/gpy/palettes or is a known builtin.");
-    }
-    if hints.is_empty() {
-        hints.push("Re-run `gpy palette validate` after correcting the reported field.");
-    }
-    hints
 }
 
 // Builtin `default` validation lives in `tests/palette_manager_tests.rs`, where
@@ -251,12 +230,14 @@ mod tests {
 
     #[test]
     fn validate_target_rejects_unknown() {
-        assert!(super::validate_target(Some("no-such-palette-xyz")).is_err());
+        let err = super::validate_target(Some("no-such-palette-xyz")).expect_err("unknown palette");
+        assert_eq!(err.kind(), super::FailureKind::UnknownName);
     }
 
     #[test]
     fn validate_by_name_rejects_traversal() {
         let err = super::validate_by_name("../../etc/passwd").expect_err("traversal must fail");
+        assert_eq!(err.kind(), super::FailureKind::UnknownName);
         assert!(err.to_string().contains("invalid palette name"), "{err}");
     }
 }

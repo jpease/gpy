@@ -1850,7 +1850,7 @@ fn documented_cli_commands_exist() {
 #[test]
 fn config_list_matches_registry() {
     let key_line =
-        regex::Regex::new(r"^  (\S+) \[(?:read-write|read-only )\]$").expect("valid regex");
+        regex::Regex::new(r"^   (\S+) \[(?:read-write|read-only )\]$").expect("valid regex");
     let env = CliTestEnv::new().expect("failed to create CLI test env");
 
     let all = env.run_gpy(&["config", "list"]).expect("spawn gpy");

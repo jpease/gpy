@@ -219,11 +219,11 @@ gpy theme list
 Available Themes:
 =================
 
-  default *
-  text
+   default * [builtin]
+   text [builtin]
 ```
 
-The `*` marker indicates the currently active theme.
+The `*` marker indicates the currently active theme. `[builtin]`/`[user]`/`[plugin:<id>]` shows the theme's source.
 
 ---
 
@@ -437,14 +437,14 @@ gpy palette list
 Available Palettes:
 ===================
 
-  catppuccin-frappe [builtin]
-  catppuccin-latte [builtin]
-  catppuccin-macchiato * [builtin]
-  catppuccin-mocha [builtin]
-  default [builtin]
-  gruvbox-dark-medium [builtin]
-  nord [builtin]
-  starship [builtin]
+   catppuccin-frappe [builtin]
+   catppuccin-latte [builtin]
+   catppuccin-macchiato * [builtin]
+   catppuccin-mocha [builtin]
+   default [builtin]
+   gruvbox-dark-medium [builtin]
+   nord [builtin]
+   starship [builtin]
 ```
 
 The `*` marker indicates the currently active palette. `[builtin]`/`[user]`/`[plugin:<id>]` shows the palette's source.
@@ -733,14 +733,15 @@ gpy config list git.icons
 **Output:**
 ```text
 Available configuration keys:
+=============================
 
-  git.icons.ahead [read-write]
-    Ahead indicator
+   git.icons.ahead [read-write]
+      Ahead indicator
 
-  git.icons.behind [read-write]
-    Behind indicator
+   git.icons.behind [read-write]
+      Behind indicator
 
-  ...
+   ...
 
 Total: 9 keys
 ```
@@ -902,13 +903,14 @@ gpy doctor
 **Output:**
 ```
 GPY Doctor - System Health Report
+=================================
 
 [Agent]
-  Checking process... ✓ Running
+   Checking process... ✓ Running
 
 [Configuration]
-  Checking config file... ✓ Valid
-  ...
+   Checking config file... ✓ Valid
+   ...
 
 Summary:
 ✓ All checks passed.

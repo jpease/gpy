@@ -1,5 +1,6 @@
 //! `gpy segments`, `gpy enable`, and `gpy disable` command handlers.
 
+use super::output;
 use super::utils::{
     active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
 };
@@ -128,8 +129,7 @@ pub fn list() -> Result<()> {
     let config = read_config()?;
     let available = available_segments();
 
-    println!("Prompt Segments:");
-    println!("================\n");
+    output::heading("Prompt Segments:");
 
     for segment in &available {
         let enabled = is_effectively_enabled(&config, segment);
@@ -153,7 +153,7 @@ fn canonicalize_segment(segment: &str) -> Result<String> {
         segment
     };
     let name = SegmentName::new(normalized)
-        .map_err(|_| Error::config(format!("Invalid segment: {segment}")))?;
+        .map_err(|_| Error::config(format!("invalid segment '{segment}'")))?;
     Ok(name.to_string())
 }
 
@@ -270,7 +270,7 @@ fn ensure_segment_known(segment: &str, enabling: bool) -> Result<()> {
     }
 
     Err(Error::config(format!(
-        "Unknown segment '{segment}'. Install a plugin that provides it or check segment spelling."
+        "unknown segment '{segment}'; install a plugin that provides it or check the spelling"
     )))
 }
 

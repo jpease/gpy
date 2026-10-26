@@ -96,6 +96,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `./install-dev.fish` no longer removes `conf.d/gpy_init.fish` or warns about
   `~/.config/gpy/core`, and the Fish integration no longer looks for
   `gpy-agent` in `~/.config/gpy/bin`; no installer writes those paths.
+- CLI reports share one layout: underlined headings, details indented three
+  spaces (`theme list`, `palette list`, `plugin list`, `config list`,
+  `doctor`, `init`), and `theme list` and `palette list` print each entry's
+  source. Error messages start lowercase and name invalid theme and palette
+  names the same way. `gpy doctor` no longer says "this is fine", and the
+  rc-file block that `gpy setup` writes is headed `GPY shell integration`
+  (uninstall matches the marker lines, not the heading).
+- `gpy theme validate` and `gpy palette validate` choose their remediation
+  hints from the kind of failure, so rewording an error no longer drops its
+  hint. A palette file with a bad TOML value now reports
+  `TOML parsing failed: ...` for named palettes too.
 
 ## [0.6.0] - 2026-10-22
 

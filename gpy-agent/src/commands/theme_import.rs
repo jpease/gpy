@@ -3,8 +3,8 @@
 //! Pure translation lives in [`crate::import::starship`]; unsupported Starship
 //! constructs become stderr warnings and the import still exits 0.
 
-use crate::config::discovery::shadowed_provider;
-use crate::config::types::is_safe_config_name;
+use crate::commands::output;
+use crate::config::discovery::{ensure_safe_name, shadowed_provider};
 use crate::import::starship::{ImportArtifacts, build, parse};
 use crate::palette::manager::PaletteManager;
 use crate::theme::ThemeManager;
@@ -67,11 +67,7 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
         .map_err(|error| Error::config(format!("failed to read '{}': {error}", opts.path)))?;
     let model = parse(&input).map_err(|error| Error::config(error.to_string()))?;
     let name = derive_name(opts.path, opts.name);
-    if !is_safe_config_name(&name) {
-        return Err(Error::config(format!(
-            "invalid artifact name '{name}': must not contain path separators, '..', or control characters"
-        )));
-    }
+    ensure_safe_name("artifact", &name)?;
     let artifacts = build(&model, &name).map_err(|error| Error::config(error.to_string()))?;
 
     if opts.output == ImportOutput::Stdout {
@@ -170,18 +166,18 @@ fn refuse_shadowing(name: &str) -> Result<()> {
 
 fn print_activation_hints(artifacts: &ImportArtifacts, name: &str) {
     println!("Imported starship config into palette + theme '{name}'");
-    println!("   gpy palette use {name}");
-    println!("   gpy theme use {name}");
+    output::detail(format_args!("gpy palette use {name}"));
+    output::detail(format_args!("gpy theme use {name}"));
     if !artifacts.segments.is_empty() {
         let quoted: Vec<String> = artifacts
             .segments
             .iter()
             .map(|s| format!("\"{s}\""))
             .collect();
-        println!(
-            "   # recommended segment order (paste into config.toml, or re-run with --apply-layout):"
+        output::detail(
+            "# recommended segment order (paste into config.toml, or re-run with --apply-layout):",
         );
-        println!("   enabled_segments = [{}]", quoted.join(", "));
+        output::detail(format_args!("enabled_segments = [{}]", quoted.join(", ")));
     }
 }
 

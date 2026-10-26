@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 const BLOCK_START: &str = "# >>> gpy-init >>>";
 /// Last line of the rc-file block.
 const BLOCK_END: &str = "# <<< gpy-init <<<";
+/// Comment on the line after [`BLOCK_START`] that says what the block is for.
+const RC_BLOCK_HEADER: &str = "GPY shell integration";
 /// Tag in the block header for an rc file `gpy setup` itself created, so the
 /// uninstaller may delete it again.
 const CREATED_NOTE: &str = " (gpy-created-file)";
@@ -372,7 +374,7 @@ pub fn find_source_root(from: Option<&Path>, env: &Environment, shell: Shell) ->
         .map(|dir| fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()))
         .ok_or_else(|| {
             Error::invalid(format!(
-                "could not find GPY's {shell} files next to this binary. \
+                "cannot find GPY's {shell} files next to this binary. \
                  Point setup at a checkout of the repository with `gpy setup --from <dir>` \
                  (the directory containing fish/, zsh/ and bash/), \
                  or use the curl installer, which downloads them."
@@ -542,7 +544,7 @@ fn wire_fish(config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         "if status is-interactive\n    source \"{}\"\nend",
         shell_dir.join("conf.d/gpy_init.fish").display()
     );
-    let added = append_block(&config, "GPY Prompt Enhancement", &body)?;
+    let added = append_block(&config, RC_BLOCK_HEADER, &body)?;
     link_fish_prompt(
         &fish_dir.join("functions/fish_prompt.fish"),
         &shell_dir.join("functions/fish_prompt.fish"),
@@ -639,7 +641,7 @@ fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         .map_or_else(|| env.home(), Ok)?
         .join(".zshrc");
     let body = format!("source \"{}\"", shell_dir.join("gpy.zsh").display());
-    let added = append_block(&rc, "GPY Prompt Enhancement", &body)?;
+    let added = append_block(&rc, RC_BLOCK_HEADER, &body)?;
     Ok((rc, added))
 }
 
@@ -648,7 +650,7 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let home = env.home()?;
     let rc = home.join(".bashrc");
     let body = format!("source \"{}\"", shell_dir.join("gpy.bash").display());
-    let added = append_block(&rc, "GPY Prompt Enhancement", &body)?;
+    let added = append_block(&rc, RC_BLOCK_HEADER, &body)?;
 
     // A login shell reads only the first of these. With none present, create
     // ~/.profile (~/.bash_profile would shadow a later ~/.profile).

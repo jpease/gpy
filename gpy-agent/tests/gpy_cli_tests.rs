@@ -893,8 +893,8 @@ provided_segments = ["broken_seg"]
         "Validation should fail when segment file is missing"
     );
     assert!(
-        output.stderr.contains("Missing segment file")
-            || output.stdout.contains("Missing segment file"),
+        output.stderr.contains("missing segment file")
+            || output.stdout.contains("missing segment file"),
         "Output should mention the missing segment file.\nstdout:\n{}\nstderr:\n{}",
         output.stdout,
         output.stderr

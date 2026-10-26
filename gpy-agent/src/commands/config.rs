@@ -1,5 +1,6 @@
 //! `gpy config` command handlers.
 
+use super::output;
 use super::utils::{
     active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
 };
@@ -32,7 +33,7 @@ pub fn show(section: Option<&str>) -> Result<()> {
                 .find(|(key, _)| *key == name)
                 .ok_or_else(|| {
                     Error::config(format!(
-                        "Invalid section: {name}. Valid sections: agent, git, language, ui, plugin"
+                        "invalid section '{name}'; valid sections: agent, git, language, ui, plugin"
                     ))
                 })?;
             show_section(&config, key, title)?;
@@ -57,17 +58,17 @@ pub fn show(section: Option<&str>) -> Result<()> {
 /// headers are TOML comments so the full output parses as one document.
 fn show_section(config: &config::Config, section: &str, title: &str) -> Result<()> {
     let table = toml::Table::try_from(config)
-        .map_err(|e| Error::config(format!("Failed to serialize config to TOML: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to serialize config to TOML: {e}")))?;
     let mut selected = toml::Table::new();
     if let Some(value) = table.get(section) {
         selected.insert(section.to_owned(), value.clone());
     }
     let body = toml::to_string(&selected)
-        .map_err(|e| Error::config(format!("Failed to render config as TOML: {e}")))?;
+        .map_err(|e| Error::config(format!("failed to render config as TOML: {e}")))?;
 
     let heading = format!("{title} Configuration:");
     println!("# {heading}");
-    println!("# {}\n", "=".repeat(heading.chars().count()));
+    println!("# {}\n", output::underline(&heading));
     println!("{}", body.trim_end());
     Ok(())
 }
@@ -130,22 +131,22 @@ fn validate_resource_backed_key(key: &str, config: &config::Config) -> Result<()
 /// Validate that `name` is a discoverable, parseable palette, printing the
 /// `gpy palette validate` diagnostic on failure.
 fn validate_palette_selection(name: &str) -> Result<()> {
-    let Err(error) = crate::commands::palette::validate_by_name(name) else {
+    let Err(failure) = crate::commands::palette::validate_by_name(name) else {
         return Ok(());
     };
 
-    crate::commands::palette::print_palette_validation_error("config set ui.palette", &error);
+    crate::commands::palette::print_palette_validation_error("config set ui.palette", &failure);
     Err(Error::config("palette validation failed".to_owned()))
 }
 
 /// Validate that `name` is a discoverable, parseable theme, printing the
 /// `gpy theme validate` diagnostic on failure.
 fn validate_theme_selection(name: &str) -> Result<()> {
-    let Err(error) = crate::commands::theme::validate_by_name(name) else {
+    let Err(failure) = crate::commands::theme::validate_by_name(name) else {
         return Ok(());
     };
 
-    crate::commands::theme::print_theme_validation_error("config set ui.theme", &error);
+    crate::commands::theme::print_theme_validation_error("config set ui.theme", &failure);
     Err(Error::config("theme validation failed".to_owned()))
 }
 
@@ -171,13 +172,13 @@ pub fn open() -> Result<()> {
 pub fn list(filter: Option<&str>) {
     use crate::config::metadata::CONFIG_KEYS;
 
-    println!("Available configuration keys:\n");
+    output::heading("Available configuration keys:");
 
     let core = CONFIG_KEYS.iter().map(|meta| {
         let access = if meta.set.is_some() {
             "read-write"
         } else {
-            "read-only "
+            "read-only"
         };
         (meta.key.to_owned(), access, meta.description.to_owned())
     });
@@ -185,51 +186,38 @@ pub fn list(filter: Option<&str>) {
         .into_iter()
         .map(|(key, description)| (key, "read-write", description));
 
-    let mut count = 0_i32;
-    for (key, access, description) in core.chain(plugin) {
-        if let Some(f) = filter
-            && !key.starts_with(f)
-        {
-            continue;
-        }
+    let entries: Vec<_> = core
+        .chain(plugin)
+        .filter(|(key, _, _)| filter.is_none_or(|prefix| key.starts_with(prefix)))
+        .collect();
 
-        println!("  {key} [{access}]");
-        println!("    {description}");
+    for (key, access, description) in &entries {
+        output::detail(format_args!("{key} [{access:<ACCESS_WIDTH$}]"));
+        output::detail_at(2, description);
         println!();
-
-        count = count.saturating_add(1_i32);
     }
 
-    if count == 0_i32 {
-        if let Some(f) = filter {
-            println!("No config keys found matching filter: {f}");
-        } else {
-            println!("No config keys available.");
-        }
-    } else {
-        println!(
-            "Total: {} key{}",
-            count,
-            if count == 1_i32 { "" } else { "s" }
-        );
+    match (entries.len(), filter) {
+        (0, Some(prefix)) => println!("No config keys found matching filter: {prefix}"),
+        (0, None) => println!("No config keys available."),
+        (1, _) => println!("Total: 1 key"),
+        (count, _) => println!("Total: {count} keys"),
     }
 }
 
+/// Width of the `read-write`/`read-only` column, so brackets line up.
+const ACCESS_WIDTH: usize = "read-write".len();
+
 /// Launch `$VISUAL`, `$EDITOR`, or the platform opener on `config_path`.
 fn launch_editor(config_path: &std::path::Path) -> Result<()> {
-    if let Ok(editor) = std::env::var("VISUAL")
-        && !editor.trim().is_empty()
-    {
-        return launch_shell_editor(&editor, config_path);
-    }
-
-    if let Ok(editor) = std::env::var("EDITOR")
-        && !editor.trim().is_empty()
-    {
-        return launch_shell_editor(&editor, config_path);
-    }
-
-    launch_default_editor(config_path)
+    let configured = ["VISUAL", "EDITOR"]
+        .into_iter()
+        .filter_map(|var| std::env::var(var).ok())
+        .find(|editor| !editor.trim().is_empty());
+    configured.map_or_else(
+        || launch_default_editor(config_path),
+        |editor| launch_shell_editor(&editor, config_path),
+    )
 }
 
 /// Launch an editor command through the system shell.

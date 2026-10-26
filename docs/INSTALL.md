@@ -441,7 +441,7 @@ cp -r /tmp/gpy/fish/* ~/.config/fish/gpy/
 # what scripts/uninstall.sh removes.
 echo '
 # >>> gpy-init >>>
-# GPY Prompt Enhancement
+# GPY shell integration
 if status is-interactive
     source ~/.config/fish/gpy/conf.d/gpy_init.fish
 end
@@ -458,7 +458,7 @@ mkdir -p ~/.config/gpy/zsh
 cp -r /tmp/gpy/zsh/* ~/.config/gpy/zsh/
 
 # Add to .zshrc (the marker lines are what scripts/uninstall.sh removes)
-printf '\n# >>> gpy-init >>>\n# GPY Prompt Enhancement\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
+printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
 ```
 
 **For Bash:**
@@ -467,7 +467,7 @@ mkdir -p ~/.config/gpy/bash
 cp -r /tmp/gpy/bash/* ~/.config/gpy/bash/
 
 # Add to .bashrc (the marker lines are what scripts/uninstall.sh removes)
-printf '\n# >>> gpy-init >>>\n# GPY Prompt Enhancement\nsource ~/.config/gpy/bash/gpy.bash\n# <<< gpy-init <<<\n' >> ~/.bashrc
+printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.config/gpy/bash/gpy.bash\n# <<< gpy-init <<<\n' >> ~/.bashrc
 ```
 
 ### 3. Verify Installation

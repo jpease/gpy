@@ -22,6 +22,16 @@ pub enum PluginSource {
     User,
 }
 
+impl std::fmt::Display for PluginSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::FirstParty => "first-party",
+            Self::Bundled => "bundled",
+            Self::User => "user",
+        })
+    }
+}
+
 impl PluginSource {
     const fn precedence(self) -> u8 {
         match self {

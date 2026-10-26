@@ -2,7 +2,7 @@
 
 use super::utils::agent_binary;
 use crate::commands::output::{self, Status};
-use crate::commands::theme::ThemeCheckError;
+use crate::commands::validation::FailureKind;
 use crate::plugin::discover_plugins;
 use crate::{Error, Result, config};
 use std::collections::{HashMap, HashSet};
@@ -24,28 +24,29 @@ const SLOW_PATTERN_HINTS: &[(&str, &str)] = &[
 /// # Errors
 /// Returns an error if any critical health check fails.
 pub fn run() -> Result<()> {
-    println!("GPY Doctor - System Health Report\n");
+    output::heading("GPY Doctor - System Health Report");
 
     let mut all_ok = true;
 
     let loaded_config = config::loader::load_config();
     all_ok &= check_agent_status(loaded_config.as_ref().ok());
-    println!();
+    output::blank();
 
     let discovery = discover_plugins();
     all_ok &= check_config_and_theme(&loaded_config, &discovery);
-    println!();
+    output::blank();
 
     all_ok &= check_plugins(&discovery);
-    println!();
+    output::blank();
 
     check_plugin_performance(&discovery);
-    println!();
+    output::blank();
 
     all_ok &= check_binaries();
     check_shell_integrations(&super::setup::installed_integrations());
 
-    println!("\nSummary:");
+    output::blank();
+    output::plain("Summary:");
     if all_ok {
         output::ok("All checks passed.");
         Ok(())
@@ -56,10 +57,10 @@ pub fn run() -> Result<()> {
 }
 
 fn check_agent_status(cfg: Option<&config::Config>) -> bool {
-    println!("[Agent]");
-    print!("  Checking process... ");
+    output::section("Agent");
+    output::step("Checking process");
     if cfg.is_some_and(|loaded| !loaded.agent.enabled) {
-        println!("Disabled via config (agent.enabled = false)");
+        output::plain("Disabled via config (agent.enabled = false)");
         return true;
     }
     if check_agent_running() {
@@ -67,13 +68,13 @@ fn check_agent_status(cfg: Option<&config::Config>) -> bool {
         true
     } else {
         output::warn("Not running");
-        println!("  Hint: Start the agent with `gpy start` or just use your prompt.");
+        output::detail("Hint: Start the agent with `gpy start` or just use your prompt.");
         false
     }
 }
 
 fn check_active_palette(palette_name: &str) -> bool {
-    print!("  Checking active palette... ");
+    output::step("Checking active palette");
     match crate::commands::palette::validate_by_name(palette_name) {
         Ok(report) => {
             output::ok(format_args!(
@@ -82,9 +83,9 @@ fn check_active_palette(palette_name: &str) -> bool {
             ));
             true
         }
-        Err(e) => {
+        Err(failure) => {
             output::fail("Validation failed");
-            crate::commands::palette::print_palette_validation_error("palette check", &e);
+            crate::commands::palette::print_palette_validation_error("palette check", &failure);
             false
         }
     }
@@ -100,7 +101,11 @@ fn print_unknown_config_keys(path: &std::path::Path) {
         return;
     };
     for key in config::loader::unknown_config_keys(&raw) {
-        println!("  Unknown key in {}: {key} (ignored)", path.display());
+        output::detail_status(
+            1,
+            Status::Warn,
+            format_args!("Unknown key in {}: {key} (ignored)", path.display()),
+        );
     }
 }
 
@@ -108,8 +113,8 @@ fn check_config_and_theme(
     loaded_config: &Result<config::Config>,
     discovery: &crate::plugin::PluginDiscovery,
 ) -> bool {
-    println!("[Configuration]");
-    print!("  Checking config file... ");
+    output::section("Configuration");
+    output::step("Checking config file");
     let active = config::schema::resolve_active_config(&config::schema::get_config_paths());
     let cfg = match loaded_config {
         Ok(cfg) => {
@@ -121,20 +126,22 @@ fn check_config_and_theme(
         }
         Err(e) => {
             output::fail("Invalid");
-            println!("  Diagnostic: {e}");
+            output::detail(format_args!("Diagnostic: {e}"));
             let write_path = active.as_ref().map_or_else(
                 || "~/.config/gpy/config.toml".to_owned(),
                 |(write_path, _)| write_path.display().to_string(),
             );
-            println!("  Remediation: Fix the syntax error in {write_path}");
+            output::detail(format_args!(
+                "Remediation: Fix the syntax error in {write_path}"
+            ));
             return false;
         }
     };
 
-    print!("  Checking active theme... ");
+    output::step("Checking active theme");
     let theme_name = cfg.ui.theme.as_str();
     // Loading the theme also validates its segment templates.
-    let theme_result = crate::commands::theme::validate_by_name_detailed(theme_name);
+    let theme_result = crate::commands::theme::validate_by_name(theme_name);
     let theme_ok = match &theme_result {
         Ok(report) => {
             output::ok(format_args!(
@@ -143,34 +150,34 @@ fn check_config_and_theme(
             ));
             true
         }
-        Err(ThemeCheckError::Load(e) | ThemeCheckError::Templates(e)) => {
+        Err(failure) => {
             output::fail("Validation failed");
-            crate::commands::theme::print_theme_validation_error("theme check", e);
+            crate::commands::theme::print_theme_validation_error("theme check", failure);
             false
         }
     };
 
     let palette_ok = check_active_palette(cfg.ui.palette.as_str());
 
-    print!("  Checking segment templates... ");
+    output::step("Checking segment templates");
     let templates_ok = match &theme_result {
         Ok(_) => {
             output::ok("Valid");
             true
         }
-        Err(ThemeCheckError::Load(_)) => {
-            println!("Skipped (theme failed to load)");
-            true
-        }
-        Err(ThemeCheckError::Templates(e)) => {
+        Err(failure) if failure.kind() == FailureKind::Template => {
             output::fail("Invalid template");
-            println!("  Diagnostic: {e}");
-            println!("  Remediation: Fix the segment `format` template named above.");
+            output::detail(format_args!("Diagnostic: {failure}"));
+            output::detail("Remediation: Fix the segment `format` template named above.");
             false
+        }
+        Err(_) => {
+            output::plain("Skipped (theme failed to load)");
+            true
         }
     };
 
-    print!("  Checking enabled segments... ");
+    output::step("Checking enabled segments");
     let segments_ok = check_segments(&cfg.ui.enabled_segments, discovery);
 
     theme_ok && palette_ok && segments_ok && templates_ok
@@ -190,10 +197,10 @@ fn check_segments(enabled_segments: &[String], discovery: &crate::plugin::Plugin
     } else {
         output::fail("Unrecognized segments found");
         for seg in invalid {
-            println!("    - '{seg}'");
+            output::detail_at(2, format_args!("- '{seg}'"));
         }
-        println!(
-            "  Remediation: Check for typos in `enabled_segments` or ensure the providing plugin is installed."
+        output::detail(
+            "Remediation: Check for typos in `enabled_segments` or ensure the providing plugin is installed.",
         );
         false
     }
@@ -215,41 +222,41 @@ fn valid_segment_names(discovery: &crate::plugin::PluginDiscovery) -> HashSet<&s
 }
 
 fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
-    println!("[Plugins]");
+    output::section("Plugins");
     if discovery.plugins.is_empty() && discovery.diagnostics.is_empty() {
-        println!("  No plugins discovered (this is fine).");
+        output::detail_status(1, Status::Ok, "No plugins discovered");
         return true;
     }
 
     let mut all_plugins_ok = true;
 
     if !discovery.plugins.is_empty() {
-        println!("  Discovered Plugins:");
+        output::detail("Discovered Plugins:");
         for plugin in &discovery.plugins {
-            println!(
-                "    {} {} v{} [{}]",
-                output::marker(Status::Ok),
-                plugin.manifest.id,
-                plugin.manifest.version,
-                crate::commands::plugin::render_source(plugin.source)
+            output::detail_status(
+                2,
+                Status::Ok,
+                format_args!(
+                    "{} v{} [{}]",
+                    plugin.manifest.id, plugin.manifest.version, plugin.source
+                ),
             );
         }
     }
 
     if !discovery.diagnostics.is_empty() {
         all_plugins_ok = false;
-        println!("  Plugin Issues:");
+        output::detail("Plugin Issues:");
         for diag in &discovery.diagnostics {
-            println!(
-                "    {} {} [{}]",
-                output::marker(Status::Fail),
-                diag.plugin_dir.display(),
-                crate::commands::plugin::render_source(diag.source)
+            output::detail_status(
+                2,
+                Status::Fail,
+                format_args!("{} [{}]", diag.plugin_dir.display(), diag.source),
             );
-            println!("       Error: {}", diag.message);
+            output::detail_at(3, format_args!("Error: {}", diag.message));
         }
-        println!(
-            "  Remediation: Review the plugin manifests (plugin.toml) for the reported errors."
+        output::detail(
+            "Remediation: Review the plugin manifests (plugin.toml) for the reported errors.",
         );
     }
 
@@ -257,21 +264,21 @@ fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
 }
 
 fn check_plugin_performance(discovery: &crate::plugin::PluginDiscovery) {
-    println!("[Plugin Performance]");
+    output::section("Plugin Performance");
 
     let Ok(cfg) = config::loader::load_config() else {
-        println!("  Skipped: config unavailable.");
+        output::detail("Skipped: config unavailable.");
         return;
     };
 
     let enabled_plugin_segments = enabled_plugin_segments(&cfg, discovery);
 
     if enabled_plugin_segments.is_empty() {
-        println!("  No enabled community plugin segments detected.");
+        output::detail("No enabled community plugin segments detected.");
         return;
     }
 
-    println!("  Enabled community plugin segments:");
+    output::detail("Enabled community plugin segments:");
     for (segment, plugin) in enabled_plugin_segments {
         print_plugin_performance_hint(segment, plugin);
     }
@@ -313,16 +320,22 @@ fn plugin_segment_index(
 
 fn print_plugin_performance_hint(segment: &str, plugin: &crate::plugin::DiscoveredPlugin) {
     let segment_path = plugin.root.join("segments").join(format!("{segment}.fish"));
-    println!(
-        "    - {segment} (plugin: {}, file: {})",
-        plugin.manifest.id,
-        segment_path.display()
+    output::detail_at(
+        2,
+        format_args!(
+            "- {segment} (plugin: {}, file: {})",
+            plugin.manifest.id,
+            segment_path.display()
+        ),
     );
 
     match std::fs::read_to_string(&segment_path) {
         Ok(content) => print_suspect_patterns(segment, &content),
         Err(error) => {
-            println!("      heuristic: unable to inspect file ({error})");
+            output::detail_at(
+                3,
+                format_args!("heuristic: unable to inspect file ({error})"),
+            );
         }
     }
 }
@@ -333,14 +346,20 @@ fn print_suspect_patterns(segment: &str, content: &str) {
         .filter_map(|(pattern, reason)| content.contains(pattern).then_some(*reason))
         .collect::<Vec<_>>();
     if suspects.is_empty() {
-        println!("      heuristic: no obvious slow patterns detected");
+        output::detail_at(3, "heuristic: no obvious slow patterns detected");
     } else {
-        println!(
-            "      heuristic: possible slowdown source ({})",
-            suspects.join(", ")
+        output::detail_at(
+            3,
+            format_args!(
+                "heuristic: possible slowdown source ({})",
+                suspects.join(", ")
+            ),
         );
-        println!(
-            "      hint: if your prompt feels slow, disable `{segment}` first to confirm whether this plugin segment is responsible"
+        output::detail_at(
+            3,
+            format_args!(
+                "hint: if your prompt feels slow, disable `{segment}` first to confirm whether this plugin segment is responsible"
+            ),
         );
     }
 }
@@ -351,7 +370,7 @@ fn print_suspect_patterns(segment: &str, content: &str) {
 fn check_shell_integrations(installed: &[super::setup::InstalledIntegration]) {
     for integration in installed {
         let shell = integration.shell;
-        print!("  Checking {shell} integration... ");
+        output::step(format_args!("Checking {shell} integration"));
         match integration.version.as_deref() {
             Some(version) if version == crate::VERSION => {
                 output::ok(format_args!("{version} ({})", integration.dir.display()));
@@ -366,17 +385,17 @@ fn check_shell_integrations(installed: &[super::setup::InstalledIntegration]) {
                     crate::VERSION,
                     integration.dir.display()
                 ));
-                println!(
-                    "  Remediation: run `gpy setup --shell {shell}` to install the current scripts."
-                );
+                output::detail(format_args!(
+                    "Remediation: run `gpy setup --shell {shell}` to install the current scripts."
+                ));
             }
         }
     }
 }
 
 fn check_binaries() -> bool {
-    println!("[System]");
-    print!("  Checking gpy-agent binary... ");
+    output::section("System");
+    output::step("Checking gpy-agent binary");
     let agent = agent_binary();
     match Command::new(&agent).arg("--version").output() {
         Ok(probe) if probe.status.success() => {
@@ -391,24 +410,24 @@ fn check_binaries() -> bool {
             ));
             let stderr = String::from_utf8_lossy(&probe.stderr);
             if let Some(line) = stderr.lines().map(str::trim).find(|line| !line.is_empty()) {
-                println!("  Diagnostic: {line}");
+                output::detail(format_args!("Diagnostic: {line}"));
             }
-            println!(
-                "  Remediation: Reinstall gpy-agent, and check that the first gpy-agent in your PATH (`command -v gpy-agent`) is GPY's agent."
+            output::detail(
+                "Remediation: Reinstall gpy-agent, and check that the first gpy-agent in your PATH (`command -v gpy-agent`) is GPY's agent.",
             );
             false
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             output::fail("Not found in PATH");
-            println!(
-                "  Remediation: Ensure gpy-agent is installed and your PATH includes its location."
+            output::detail(
+                "Remediation: Ensure gpy-agent is installed and your PATH includes its location.",
             );
             false
         }
         Err(err) => {
             output::fail(format_args!("Could not run gpy-agent: {err}"));
-            println!(
-                "  Remediation: Reinstall gpy-agent, and check that the first gpy-agent in your PATH (`command -v gpy-agent`) is executable."
+            output::detail(
+                "Remediation: Reinstall gpy-agent, and check that the first gpy-agent in your PATH (`command -v gpy-agent`) is executable.",
             );
             false
         }
