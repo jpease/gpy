@@ -9,6 +9,14 @@
 # hung ones are hidden, and no script process survives. A latency test, not a
 # benchmark: scripts/ci-bench.sh measures cost.
 #
+# Mixed timeouts: one runner batch (bash/core/g_runner.bash, which Zsh and
+# Fish run in a Bash child) holds a 500 ms hung script and a 100 ms script
+# that catches TERM and keeps running, in both orders. The short one must get
+# TERM by its own deadline (not the long one), then the grace (its TERM
+# handler runs) and KILL soon after. Hang-type bounds: TERM within T + 150 ms
+# and KILL within the 50 ms grace + 100 ms of it; strict also needs 25 ms of
+# the grace seen between the two.
+#
 # Two latency bounds. Strict: p99 (nearest rank over RUNS due prompts per
 # shell) within T + 50 ms grace + 30 ms, the quiet-host acceptance of
 # ADR-0011 Spike 2. Hang: every prompt within T + 500 ms, which only a missed
@@ -74,6 +82,9 @@ chmod 755 "$T/plug" "$T/plug/bin"
 printf '#!/bin/sh\necho fast-ok\n' >"$T/plug/bin/fast.sh"
 printf '#!/bin/sh\necho partial\nsleep %s\n' "$MARK" >"$T/plug/bin/hung.sh"
 printf '#!/bin/sh\ntrap "" TERM\necho partial\nsleep %s\n' "$MARK" >"$T/plug/bin/ign.sh"
+# Mixed-timeout case: notes its PID, then a TERM in a file, and keeps going.
+printf '#!/bin/sh\necho $$ >"%s/mix.pid"\ntrap "echo term >\\"%s/mix.term\\"" TERM\nwhile :; do sleep %s; done\n' \
+    "$T" "$T" "$MARK" >"$T/plug/bin/catch.sh"
 chmod 644 "$T"/plug/bin/*.sh
 
 # Fish loads script segments only with the agent enabled; this stub makes
@@ -314,5 +325,92 @@ if command -v fish >/dev/null 2>&1; then
 else
     test_skip_part "fish not installed"
 fi
+
+# run_mixed LABEL BASH FIRST: one runner batch in BASH with the 100 ms
+# catch.sh and the 500 ms hung.sh, FIRST (short or long) given first. Polls
+# without a fork (a read on a FIFO nobody writes paces it) for the TERM note
+# and the death of catch.sh, both timed from the start of the batch child.
+MIX_SHORT_MS=100
+MIX_LONG_MS=500
+mkfifo "$T/tick"
+exec {tick}<>"$T/tick"
+run_mixed() {
+    local label="$1" bash="$2" first="$3" t0 now tt="" tk="" pid="" bp out left
+    local -a segs
+    local -a short=(mix_short "$MIX_SHORT_MS" "" "$T/plug/bin/catch.sh" "" 0)
+    local -a long=(mix_long "$MIX_LONG_MS" "" "$T/plug/bin/hung.sh" "" 0)
+    if [[ "$first" == short ]]; then
+        segs=("${short[@]}" "${long[@]}")
+    else
+        segs=("${long[@]}" "${short[@]}")
+    fi
+    label="$label, $first first"
+    rm -f "$T/mix.pid" "$T/mix.term" "$T/mix.out"
+    t0=${EPOCHREALTIME/[.,]/}
+    "$bash" --noprofile --norc -c 'source "$1" && shift && __gpy_g_batch "$@"' gpy \
+        "$ROOT/bash/core/g_runner.bash" "$script_sh" "${segs[@]}" >"$T/mix.out" 2>/dev/null &
+    bp=$!
+    while :; do
+        now=${EPOCHREALTIME/[.,]/}
+        now=$((10#$now - 10#$t0))
+        [[ -z "$tt" && -e "$T/mix.term" ]] && tt=$now
+        if [[ -z "$pid" && -s "$T/mix.pid" ]]; then
+            read -r pid <"$T/mix.pid"
+            [[ "$pid" != *[!0-9]* ]] || pid=""
+        fi
+        [[ -n "$pid" && -z "$tk" ]] && ! kill -0 "$pid" 2>/dev/null && tk=$now
+        [[ -n "$tk" ]] && ! kill -0 "$bp" 2>/dev/null && break
+        ((now > 2000000)) && break
+        read -r -t 0.002 -u "$tick" _
+    done
+    wait "$bp"
+    out="$(<"$T/mix.out")"
+    if [[ -z "$tt" ]]; then
+        fail "$label: the ${MIX_SHORT_MS} ms segment never ran its TERM handler (no grace before KILL)"
+    elif ((tt < MIX_SHORT_MS * 1000 || tt > (MIX_SHORT_MS + 150) * 1000)); then
+        fail "$label: the ${MIX_SHORT_MS} ms segment got TERM at $((tt / 1000)) ms, not by its own deadline + 150 ms"
+    else
+        pass "$label: the ${MIX_SHORT_MS} ms segment got TERM at $((tt / 1000)) ms, by its own deadline"
+    fi
+    if [[ -z "$tk" ]]; then
+        fail "$label: the ${MIX_SHORT_MS} ms segment was not killed"
+    elif [[ -n "$tt" ]]; then
+        left=$((tk - tt))
+        if ((left > (GRACE_MS + 100) * 1000)); then
+            fail "$label: KILL came $((left / 1000)) ms after TERM, not within the ${GRACE_MS} ms grace + 100 ms"
+        else
+            pass "$label: KILL came $((left / 1000)) ms after TERM"
+        fi
+        if ((left >= 25000)); then
+            pass "$label: the grace between TERM and KILL was seen ($((left / 1000)) ms)"
+        elif [[ "$STRICT" == 1 ]]; then
+            fail "$label: only $((left / 1000)) ms between TERM and KILL, the grace is ${GRACE_MS} ms"
+        else
+            printf 'NOTE: %s: only %s ms between TERM and KILL, not enforced (GPY_STRICT_DEADLINE=0)\n' \
+                "$label" "$((left / 1000))"
+        fi
+    fi
+    if [[ "$out" == *mix_short$'\037'timeout$'\037'* && "$out" == *mix_long$'\037'timeout$'\037'* ]]; then
+        pass "$label: both segments report a timeout"
+    else
+        fail "$label: both segments should report a timeout, got: ${out//[$'\001'-$'\037']/|}"
+    fi
+    sleep 0.2
+    left="$(survivors)"
+    if [[ "$left" == 0 ]]; then
+        pass "$label: no script process survives"
+    else
+        fail "$label: $left script process(es) survived"
+        pkill -KILL -f "sleep $MARK" 2>/dev/null
+    fi
+}
+
+for first in long short; do
+    run_mixed "Mixed timeouts, Bash $BASH_VERSION" "$BASH" "$first"
+    if [[ -n "$bash32" && "$("$bash32" -c 'echo $BASH_VERSION')" != "$BASH_VERSION" ]]; then
+        run_mixed "Mixed timeouts, Bash $("$bash32" -c 'echo $BASH_VERSION')" "$bash32" "$first"
+    fi
+done
+exec {tick}<&-
 
 test_finish "script segment deadline: no hang in every shell, p99 within T + grace + 30 ms where strict"

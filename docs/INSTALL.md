@@ -363,7 +363,7 @@ manual download, or for confirming what an installer did.
 **Checksum:**
 
 ```bash
-VERSION=v0.6.0   # the release you downloaded
+VERSION=v0.7.0   # the release you downloaded
 BASE=https://github.com/jpease/gpy/releases/download/$VERSION
 
 curl -fsSLO "$BASE/SHA256SUMS"
@@ -401,7 +401,7 @@ along with its checksum sidecar. Substitute the asset name for your platform:
 (Apple Silicon) or `gpy-agent-macos-x86_64` (Intel).
 
 ```bash
-VERSION=v0.6.0
+VERSION=v0.7.0
 ASSET=gpy-agent-linux-x86_64
 BASE=https://github.com/jpease/gpy/releases/download/$VERSION
 

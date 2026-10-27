@@ -36,8 +36,11 @@ typeset -gA __gpy_g_text=() __gpy_g_variant=() __gpy_g_key=() __gpy_g_at=() \
 typeset -g __gpy_g_due=1 __gpy_g_pwd="" __gpy_g_cmd_seen=""
 typeset -g __gpy_g_sh=/bin/sh __gpy_g_bash="" __gpy_g_bash_resolved=""
 typeset -g __gpy_g_src=""
-if [[ -f ${${(%):-%x}:A:h}/g_runner.bash ]]; then
-    __gpy_g_src="$(<${${(%):-%x}:A:h}/g_runner.bash)"$'\n''__gpy_g_batch "$@"'
+typeset -g __gpy_g_runner_file=${${(%):-%x}:A:h}/g_runner.bash
+if [[ -r $__gpy_g_runner_file ]]; then
+    __gpy_g_src="$(<$__gpy_g_runner_file)"$'\n''__gpy_g_batch "$@"'
+elif [[ ${GPY_DEBUG-} == 1 || ${GPY_VERBOSE-} == 1 ]]; then
+    print -ru2 -- "gpy[script]: warning: Runner $__gpy_g_runner_file missing - script segments disabled"
 fi
 
 # Every variable name built from exported data is checked before ${(P)...}.

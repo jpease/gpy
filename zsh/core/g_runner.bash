@@ -41,12 +41,13 @@
 #   working directory is named by __gpy_g_pwd when set, else PWD, so a caller
 #   can start Bash without PWD in its environment or argv.
 #
-# Process rules per run (batch): the script group gets TERM and CONT at the
-# deadline or on Ctrl-C, KILL after a 50 ms grace or once it exited. The
-# prompt never waits for that grace on a timeout: with Bash 3.2-4.4 the
-# timer group sends the KILL; with a clock a detached killer sends it to the
-# groups still there, at most 50 ms after the last deadline (the batch
-# budget), so a group the reader reaches later gets KILL at once. After a
+# Process rules per run (batch): the reader takes the segments in deadline
+# order, so each script group gets TERM and CONT at its own deadline (or on
+# Ctrl-C), and KILL after a 50 ms grace or once it exited. The prompt never
+# waits for that grace on a timeout: with Bash 3.2-4.4 the timer group sends
+# the KILL; with a clock a detached killer, started at the first TERM, sends
+# each group its KILL 50 ms after its deadline (after its TERM when that came
+# first), so a group the reader reaches late gets KILL sooner. After a
 # normal exit, members left in the group get TERM and CONT, then KILL within
 # the grace. Records travel in-band ("RS TOKEN kind RS"); TOKEN is random
 # per batch, so script output cannot forge one. Bash 5 reads against a
@@ -159,6 +160,27 @@ __gpy_g_prod() {
     printf '\036%s r %s\036' "$tok" "$s"
 }
 
+# Killer of a clock reader, inside >( ): reads "TIME PGID" lines (TIME in
+# epoch microseconds, in rising order) and sends each group KILL at its TIME.
+# Closes the $1 producer descriptors, so they still see their reader go.
+__gpy_g_kill() {
+    local i x c
+    trap '' INT HUP PIPE
+    for ((i = 3; i < 3 + $1; i++)); do
+        eval "exec $i<&-"
+    done
+    exec >/dev/null
+    while read -r x c; do
+        i=${EPOCHREALTIME/[.,]/}
+        i=$((x - 10#$i))
+        if ((i > 0)); then
+            printf -v x '%d.%06d' $((i / 1000000)) $((i % 1000000))
+            "$__gpy_g_sleep" "$x"
+        fi
+        kill -KILL -"$c"
+    done
+}
+
 __gpy_g_batch() {
     set +euf
     exec 2>/dev/null
@@ -168,9 +190,9 @@ __gpy_g_batch() {
     shift
     __gpy_g_base
     local LC_ALL=C
-    local k=0 m n i id ms cwd cmd req pay ref name t start= left rem ch
-    local c w f r q o sep intr= late= v x y s gx=0 dmax=0
-    local -a ids ds cs ws fs rs qs os
+    local k=0 m n i j id ms cwd cmd req pay ref name t start= left rem ch
+    local c w f r q o sep intr= late= kf= v x y s
+    local -a ids ts ord ds cs ws fs rs qs os
     if [[ -n $__gpy_g_clock ]]; then
         start=${EPOCHREALTIME/[.,]/}
         start=$((10#$start))
@@ -182,7 +204,8 @@ __gpy_g_batch() {
             ((x > 0)) && start=$((start - x))
         fi
     fi
-    # Launch every producer first (one shared start), then read them in turn.
+    # Launch every producer first (one shared start), then read them in
+    # deadline order, so no read outlasts the deadline of a segment still unread.
     while (($# >= 6 && k < 40)); do
         id=$1 ms=$2 cwd=$3 cmd=$4 req=$5 n=$6
         shift 6
@@ -199,28 +222,36 @@ __gpy_g_batch() {
             pay+="export $name=$__gpy_g_qv"$'\n'
         done
         ids[k]=$id
+        ts[k]=0
         fs[k]=
         if [[ -n $id && $id != *[!a-z0-9_]* && -n $ms && $ms != *[!0-9]* && ${#ms} -le 3 ]] &&
             ((10#$ms >= 1 && 10#$ms <= 500)) && [[ $sh == /* && $cmd == /* ]] &&
             [[ -z $cwd || $cwd == /* ]] &&
             [[ -z $req || $req == /* ]]; then
-            printf -v t '0.%03d' "$((10#$ms))"
+            ts[k]=$((10#$ms))
+            printf -v t '0.%03d' "${ts[k]}"
             [[ $ms == 500 ]] && t=0.5
-            if [[ -n $start ]]; then
-                ds[k]=$((start + 10#$ms * 1000))
-                ((ds[k] > dmax)) && dmax=${ds[k]}
-            fi
+            [[ -n $start ]] && ds[k]=$((start + ts[k] * 1000))
             eval "exec $((3 + k))< <(__gpy_g_prod $k)"
         else
             fs[k]=x
         fi
+        # ord lists the segments by deadline, equal ones in batch order.
+        i=$k
+        while ((i > 0)); do
+            ((ts[ord[i - 1]] > ts[k])) || break
+            ord[i]=${ord[i - 1]}
+            i=$((i - 1))
+        done
+        ord[i]=$k
         k=$((k + 1))
     done
     # From here the reader notes INT itself. Bash 3.2 as a non-interactive
     # child starts <( ) with SIGINT ignored and runs this trap only after
     # read -t returns, so there a Ctrl-C ends the run at its deadline.
     trap 'intr=1' INT TERM HUP
-    for ((m = 0; m < k; m++)); do
+    for ((j = 0; j < k; j++)); do
+        m=${ord[j]}
         c= w= f=${fs[m]} r= q= o= sep=
         if [[ -z $f ]]; then
             rem=2 # Bash < 5: safety net only; the timer record ends the wait
@@ -277,57 +308,38 @@ __gpy_g_batch() {
         fi
         cs[m]=$c ws[m]=$w fs[m]=$f rs[m]=$r qs[m]=$q os[m]=$o
         [[ -n $c ]] || continue
-        if [[ -n $f ]]; then
-            # A clock reader KILLs every late group after one shared grace;
-            # the timer KILLs a timed-out group itself.
-            if [[ -n $__gpy_g_clock || $f != t ]]; then
-                kill -TERM -"$c"
-                kill -CONT -"$c"
-                [[ -n $w ]] && kill -TERM -"$w"
-                late=1
-                # Grace from now, cut at the batch budget.
-                if [[ -n $__gpy_g_clock ]]; then
-                    x=${EPOCHREALTIME/[.,]/}
-                    x=$((10#$x))
-                    ((x > dmax)) && x=$dmax
-                    ((x + __gpy_g_grace_us > gx)) && gx=$((x + __gpy_g_grace_us))
-                fi
+        if [[ -n $f && -n $__gpy_g_clock ]]; then
+            kill -TERM -"$c"
+            kill -CONT -"$c"
+            # KILL when the grace from the deadline (or from now, when
+            # earlier) ends, from a detached killer, so the prompt does not
+            # wait for it. The times reach it in rising order.
+            x=${EPOCHREALTIME/[.,]/}
+            x=$((10#$x))
+            ((x > ds[m])) && x=${ds[m]}
+            if [[ -z $kf ]]; then
+                kf=$((3 + k))
+                eval "exec $kf> >(__gpy_g_kill $k)"
             fi
+            printf '%s %s\n' "$((x + __gpy_g_grace_us))" "$c" >&"$kf"
+        elif [[ -n $f && $f != t ]]; then
+            # The timer KILLs a timed-out group itself.
+            kill -TERM -"$c"
+            kill -CONT -"$c"
+            [[ -n $w ]] && kill -TERM -"$w"
+            late=1
         fi
     done
     if [[ -n $late ]]; then
-        if [[ -n $__gpy_g_clock ]]; then
-            # Groups still there get KILL when the grace ends, from a
-            # detached killer, so the prompt does not wait for it.
-            v=
-            for ((m = 0; m < k; m++)); do
-                [[ -n ${fs[m]} && -n ${cs[m]} ]] || continue
-                kill -0 -"${cs[m]}" && v+=" -${cs[m]}"
-            done
-            left=${EPOCHREALTIME/[.,]/}
-            left=$((gx - 10#$left))
-            if [[ -n $v ]] && ((left > 0)); then
-                printf -v rem '0.%06d' "$left"
-                {
-                    trap '' INT HUP PIPE
-                    "$__gpy_g_sleep" "$rem"
-                    # shellcheck disable=SC2086  # v may hold several pids
-                    kill -KILL $v
-                } </dev/null >/dev/null 2>&1 &
-            elif [[ -n $v ]]; then
-                # shellcheck disable=SC2086  # v may hold several pids
-                kill -KILL $v
-            fi
-        else
-            "$__gpy_g_sleep" "$__gpy_g_grace"
-            for ((m = 0; m < k; m++)); do
-                [[ -n ${fs[m]} && -n ${cs[m]} && ${fs[m]} != t ]] && kill -KILL -"${cs[m]}"
-            done
-        fi
+        "$__gpy_g_sleep" "$__gpy_g_grace"
+        for ((m = 0; m < k; m++)); do
+            [[ -n ${fs[m]} && -n ${cs[m]} && ${fs[m]} != t ]] && kill -KILL -"${cs[m]}"
+        done
     fi
     for ((m = 0; m < k; m++)); do
         eval "exec $((3 + m))<&-"
     done 2>/dev/null
+    [[ -n $kf ]] && eval "exec $kf>&-"
     # Sanitize once: cap (above), split, strip C0 and DEL, then hide on C1.
     for ((m = 0; m < k; m++)); do
         r=${rs[m]} s= x= v=

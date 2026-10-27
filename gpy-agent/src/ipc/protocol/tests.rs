@@ -28,167 +28,11 @@ fn test_prev_bg_validation_too_long() {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_hostname_into_message_with_is_last_and_prev_bg() {
-    let json = r#"{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue","is_ssh":true}"#;
-    let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
-    match msg {
-        Message::HostnameRequest {
-            hostname,
-            is_ssh,
-            segment,
-        } => {
-            assert_eq!(hostname, "myhost");
-            assert!(is_ssh);
-            assert_eq!(
-                segment,
-                Segment {
-                    format: Format::Ansi,
-                    is_last: true,
-                    is_first: true,
-                    prev_bg: Some("blue".to_owned()),
-                }
-            );
-        }
-        other => panic!("expected HostnameRequest, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_hostname_into_message_without_is_last_and_prev_bg() {
-    let json = r#"{"op":"hostname","hostname":"myhost"}"#;
-    let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
-    match msg {
-        Message::HostnameRequest {
-            hostname,
-            is_ssh,
-            segment,
-        } => {
-            assert_eq!(hostname, "myhost");
-            assert!(!is_ssh, "an absent is_ssh must default to false");
-            assert_eq!(
-                segment,
-                Segment::default(),
-                "absent position flags must default to false"
-            );
-        }
-        other => panic!("expected HostnameRequest, got {other:?}"),
-    }
-}
-
 fn ansi_segment() -> Segment {
     Segment {
         format: Format::Ansi,
         ..Segment::default()
     }
-}
-
-#[test]
-fn test_hostname_validation_accepts_valid_request() {
-    let msg = Message::HostnameRequest {
-        hostname: "my-host".to_owned(),
-        is_ssh: false,
-        segment: ansi_segment(),
-    };
-    assert!(validate_message_content(&msg).is_ok());
-}
-
-#[test]
-fn test_hostname_validation_rejects_too_long_hostname() {
-    let msg = Message::HostnameRequest {
-        hostname: "x".repeat(MAX_IDENTITY_LEN + 1),
-        is_ssh: false,
-        segment: ansi_segment(),
-    };
-    assert!(validate_message_content(&msg).is_err());
-}
-
-#[test]
-fn test_hostname_validation_rejects_control_chars() {
-    let msg = Message::HostnameRequest {
-        hostname: "host\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}name".to_owned(),
-        is_ssh: false,
-        segment: ansi_segment(),
-    };
-    assert!(validate_message_content(&msg).is_err());
-}
-
-#[test]
-fn test_username_into_message_with_is_last_and_prev_bg() {
-    let json = r#"{"op":"username","username":"root","format":"ansi","is_last":true,"is_first":true,"is_root":true,"prev_bg":"blue"}"#;
-    let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
-    match msg {
-        Message::UsernameRequest {
-            username,
-            is_root,
-            segment,
-        } => {
-            assert_eq!(username, "root");
-            assert!(is_root);
-            assert_eq!(
-                segment,
-                Segment {
-                    format: Format::Ansi,
-                    is_last: true,
-                    is_first: true,
-                    prev_bg: Some("blue".to_owned()),
-                }
-            );
-        }
-        other => panic!("expected UsernameRequest, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_username_into_message_without_is_last_and_prev_bg() {
-    let json = r#"{"op":"username","username":"root"}"#;
-    let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
-    match msg {
-        Message::UsernameRequest {
-            username,
-            is_root,
-            segment,
-        } => {
-            assert_eq!(username, "root");
-            assert!(!is_root, "an absent is_root must default to false");
-            assert_eq!(
-                segment,
-                Segment::default(),
-                "absent position flags must default to false"
-            );
-        }
-        other => panic!("expected UsernameRequest, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_username_validation_accepts_valid_request() {
-    let msg = Message::UsernameRequest {
-        username: "root".to_owned(),
-        is_root: false,
-        segment: ansi_segment(),
-    };
-    assert!(validate_message_content(&msg).is_ok());
-}
-
-#[test]
-fn test_username_validation_rejects_too_long_username() {
-    let msg = Message::UsernameRequest {
-        username: "x".repeat(MAX_IDENTITY_LEN + 1),
-        is_root: false,
-        segment: ansi_segment(),
-    };
-    assert!(validate_message_content(&msg).is_err());
-}
-
-#[test]
-fn test_username_validation_rejects_control_chars() {
-    let msg = Message::UsernameRequest {
-        username: "ro\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}ot".to_owned(),
-        is_root: false,
-        segment: ansi_segment(),
-    };
-    assert!(validate_message_content(&msg).is_err());
 }
 
 #[test]
@@ -241,19 +85,6 @@ fn test_exit_status_validation_rejects_long_prev_bg() {
 fn test_status_op_is_still_the_agent_health_check() {
     let msg = deserialize_message(br#"{"op":"status"}"#).expect("deserialize failed");
     assert!(matches!(msg, Message::Status));
-}
-
-#[test]
-fn test_segment_reports_is_first_for_hostname_username_and_exit_status() {
-    for json in [
-        r#"{"op":"hostname","hostname":"h","is_first":true}"#,
-        r#"{"op":"username","username":"u","is_first":true}"#,
-        r#"{"op":"exit_status","success":true,"is_first":true}"#,
-    ] {
-        let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
-        let segment = msg.segment().expect("segment request has a segment");
-        assert!(segment.is_first, "{json}");
-    }
 }
 
 #[test]

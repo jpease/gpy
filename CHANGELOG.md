@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-27
+
 ### Added
 
 - Script plugin segments (`entry_type = "script"`) now render in Bash, Zsh
@@ -93,6 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<variant>_text_color`, exported as
   `__gpy_segment_<token>_variant_<variant>_bg_color`/`_text_color` so
   variant `open`/`close` cannot overwrite the cap colours.
+- The agent IPC no longer accepts the `hostname` and `username` ops or
+  produces their `Hostname`/`Username` replies (#1077); both segments are
+  bundled G plugins since #1003. Shells shipped since then never send them,
+  and an older shell that does gets `{"error":...}` and falls back.
 
 ### Changed
 
@@ -143,6 +149,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gpy doctor` adds a warning with a `chmod -R go-w` hint when a plugin, a
+  bundled one included, is dropped because a script or directory is group-
+  or world-writable (for example a checkout made under umask 002). The shell
+  test harnesses set explicit modes, so they pass under umask 002 (#1081).
+- Zsh logs the same `GPY_DEBUG`/`GPY_VERBOSE` warning as Fish when
+  `g_runner.bash` is missing, instead of disabling script segments silently
+  (#1082).
+- Script segments with different `timeout_ms` values in one prompt: each
+  script now gets TERM at its own deadline and KILL 50 ms later, instead of
+  waiting on the longest segment (Bash 5 runner, also used by Zsh and Fish;
+  #1080).
+- Theme validation rejects a plugin segment whose exported theme variables
+  collide with a built-in theme export (for example `git_clean` with
+  `bg_color` writing `__color_git_clean_bg`, or `status_fail` with `icon`
+  writing `__icon_status_fail`), naming both; before, the plugin silently
+  overwrote the built-in value (#1067).
 - Serialization and UTF-8 decoding failures, debug-command socket I/O
   failures and an over-long socket path now report as JSON, I/O and
   configuration errors, and request-validation failures (paths, PIDs, message
@@ -681,7 +703,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jpease/gpy/releases/tag/v0.7.0
 [0.6.0]: https://github.com/jpease/gpy/releases/tag/v0.6.0
 [0.5.1]: https://github.com/jpease/gpy/releases/tag/v0.5.1
 [0.5.0]: https://github.com/jpease/gpy/releases/tag/v0.5.0

@@ -264,8 +264,7 @@ fn error_response_renders_empty() {
     }
 }
 
-/// Replies with no template to fill render nothing: status/ack, and the
-/// `username`/`hostname` replies, which the shells draw as script segments.
+/// Replies with no template to fill render nothing: status and ack.
 #[test]
 fn non_segment_responses_render_empty() {
     let (config, theme) = ctx();
@@ -277,16 +276,8 @@ fn non_segment_responses_render_empty() {
         registered_clients: 0,
         cache_entries: 0,
     };
-    let hostname = Response::Hostname {
-        hostname: "box".to_owned(),
-        is_ssh: true,
-    };
-    let username = Response::Username {
-        username: "ada".to_owned(),
-        is_root: true,
-    };
     for dialect in PromptDialect::ALL {
-        for response in [&Response::Ack, &status, &hostname, &username] {
+        for response in [&Response::Ack, &status] {
             let got = PromptFormatter::new(dialect)
                 .render(response, &rc)
                 .expect("render");

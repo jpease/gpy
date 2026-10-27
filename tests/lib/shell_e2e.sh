@@ -248,6 +248,9 @@ shell_e2e_init() {
     SHELL_E2E_ROOT="$(mktemp -d "$_test_root/shell-e2e.XXXXXX")"
     mkdir -p "$SHELL_E2E_ROOT/home" "$SHELL_E2E_ROOT/config/gpy" \
         "$SHELL_E2E_ROOT/cache" "$SHELL_E2E_ROOT/runtime"
+    # The agent refuses a group-writable socket directory; `mkdir -p` would
+    # leave one under a umask of 002.
+    chmod -R go-w "$SHELL_E2E_ROOT"
     export HOME="$SHELL_E2E_ROOT/home"
     export XDG_CONFIG_HOME="$SHELL_E2E_ROOT/config"
     export XDG_CACHE_HOME="$SHELL_E2E_ROOT/cache"

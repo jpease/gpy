@@ -290,8 +290,6 @@ impl HandlerRegistry {
             | Message::ClockRequest { .. }
             | Message::DurationRequest { .. }
             | Message::CharacterRequest { .. }
-            | Message::HostnameRequest { .. }
-            | Message::UsernameRequest { .. }
             | Message::ExitStatusRequest { .. } => self.misc.handle(message),
             Message::Ping
             | Message::Status
@@ -310,7 +308,7 @@ pub mod client_handler;
 pub mod git_handler;
 /// Language detection handler.
 pub mod language_handler;
-/// Small self-contained segments (directory, duration, character, hostname, username).
+/// Small self-contained segments (directory, clock, duration, character, exit status).
 pub mod misc_handler;
 
 pub use client_handler::ClientHandler;

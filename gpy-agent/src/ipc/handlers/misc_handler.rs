@@ -1,5 +1,5 @@
 //! IPC handler for segment requests that carry their own response data
-//! (directory, duration, character, hostname, username, exit status); the agent echoes it
+//! (directory, clock, duration, character, exit status); the agent echoes it
 //! back, plus a writability `stat` for directories.
 
 use super::{HandlerError, RequestHandler};
@@ -43,18 +43,6 @@ impl RequestHandler for MiscHandler {
             Message::CharacterRequest { success, .. } => {
                 Ok(Response::Character { success: *success })
             }
-            Message::HostnameRequest {
-                hostname, is_ssh, ..
-            } => Ok(Response::Hostname {
-                hostname: hostname.clone(),
-                is_ssh: *is_ssh,
-            }),
-            Message::UsernameRequest {
-                username, is_root, ..
-            } => Ok(Response::Username {
-                username: username.clone(),
-                is_root: *is_root,
-            }),
             Message::ExitStatusRequest { success, .. } => {
                 Ok(Response::ExitStatus { success: *success })
             }

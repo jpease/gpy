@@ -166,6 +166,8 @@ run_shell() {
     local dir="$1" sh="$2" sandbox="$BASE_ROOT/s$3${2:0:1}" _
     rm -rf "$sandbox"
     mkdir -p "$sandbox/config/gpy/themes" "$sandbox/cache" "$sandbox/runtime" "$sandbox/home"
+    # The agent refuses a group-writable socket directory (a umask of 002 makes one).
+    chmod -R go-w "$sandbox"
     cp "$SCN_FIXTURES"/themes/*.toml "$sandbox/config/gpy/themes/"
     # The bundled username/hostname plugins, where `gpy setup` puts them
     # (the default bundled root). Plugin files must not be group/world

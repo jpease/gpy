@@ -128,28 +128,6 @@ pub enum Message {
         segment: Segment,
     },
 
-    /// Request hostname segment render for a client-supplied hostname value.
-    /// The client resolves the hostname and SSH state; the agent does not.
-    HostnameRequest {
-        /// The hostname string resolved by the client.
-        hostname: String,
-        /// Whether the client session is over SSH; absent means `false`.
-        is_ssh: bool,
-        /// Render position and format.
-        segment: Segment,
-    },
-
-    /// Request username segment render for a client-supplied username value.
-    /// The client resolves `$USER`, root state and visibility; the agent does not.
-    UsernameRequest {
-        /// The effective username string resolved by the client.
-        username: String,
-        /// Whether the client session runs as root; absent means `false`.
-        is_root: bool,
-        /// Render position and format.
-        segment: Segment,
-    },
-
     /// Request status segment render: the pill showing the previous command's exit status.
     /// Distinct from [`Message::Status`], the agent health check.
     ExitStatusRequest {
@@ -209,8 +187,6 @@ impl Message {
             | Self::ClockRequest { segment, .. }
             | Self::DurationRequest { segment, .. }
             | Self::CharacterRequest { segment, .. }
-            | Self::HostnameRequest { segment, .. }
-            | Self::UsernameRequest { segment, .. }
             | Self::ExitStatusRequest { segment, .. } => Some(segment),
             Self::RegisterClient { .. }
             | Self::UnregisterClient { .. }
@@ -276,24 +252,6 @@ pub enum Response {
     ExitStatus {
         /// Whether the last command succeeded (`true`) or failed (`false`).
         success: bool,
-    },
-
-    /// Hostname segment data returned by the agent when format is set.
-    Hostname {
-        /// The hostname string, as supplied by the requesting client.
-        hostname: String,
-        /// Whether the requesting client's session is over SSH.
-        #[serde(default)]
-        is_ssh: bool,
-    },
-
-    /// Username segment data returned by the agent when format is set.
-    Username {
-        /// The username string, as supplied by the requesting client.
-        username: String,
-        /// Whether the requesting client's session runs as root.
-        #[serde(default)]
-        is_root: bool,
     },
 
     /// Simple acknowledgment
