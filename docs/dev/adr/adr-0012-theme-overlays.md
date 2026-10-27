@@ -161,6 +161,5 @@ Depth-1 merge makes a one-key overlay drop its siblings (section 2). Without `un
 - `gpy-agent/src/config/loader.rs`, `gpy-agent/src/config/discovery.rs`, `gpy-agent/src/commands/theme.rs`, `gpy-agent/src/commands/wizard/`
 - [ADR-0005](adr-0005-theme-hot-reload.md): theme hot reload; [ADR-0011](adr-0011-plugin-shell-coverage.md) item 4: plugin settings in `config.toml`
 - [`gpy-agent/SCHEMA_EVOLUTION.md`](../../../gpy-agent/SCHEMA_EVOLUTION.md)
-- Epic jpease/gpy-archive#1083 and its items #1084, #1085, #1086, #1088, #1089; #1003 (username/hostname as plugins)
 - Helix theme inheritance: <https://docs.helix-editor.com/themes.html#inheritance>, <https://github.com/helix-editor/helix/blob/master/helix-view/src/theme.rs>
 - TypeScript `extends`: <https://www.typescriptlang.org/tsconfig#extends>
