@@ -11,7 +11,7 @@
 #   - root draws `__icon_root_prompt` in `__root_prompt_color` and never asks
 #     the agent for a character; the fallback draws the exit-status indicator
 #     unless GPY_SHOW_STATUS=0, as fish_prompt does;
-#   - data the renderer prints (hostname, username, icons) shows literally,
+#   - data the renderer prints (icons) shows literally,
 #     whatever `$(...)`, backticks, backslashes or `!` it holds;
 #   - the color table maps names, bright names, `#RRGGBB` and 0-255.
 
@@ -134,18 +134,13 @@ shown() {
     printf '%s' "$out" | sed -e $'s/\033\\[[0-9;]*m//g'
 }
 contains() { [[ "$1" == *"$2"* ]] && echo true || echo false; }
-unset __username_format __hostname_format
-__color_username_bg="red" __color_username_fg="white" __icon_username=""
+unset __status_format
+__gpy_last_status=0
 for hostile in '$(echo GPY_EXPANDED)' 'tick`echo GPY_TICK`' 'a\u\hb' '100%_done' 'x!y' '\\\\' '${HOME}'; do
-    USER="$hostile"
-    check "username '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_username true "" true)")" "< $hostile)")"
-    HOSTNAME="$hostile" __hostname_trim_at="" __icon_hostname="" __gpy_is_ssh=1
-    check "hostname '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_hostname true "" true)")" "< $hostile)")"
+    __icon_status_ok="$hostile"
+    check "status icon '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_status true "" true)")" "< $hostile)")"
 done
-__icon_username='$(echo ICON)`'
-USER="u"
-check "an icon with shell metacharacters shows literally" true \
-    "$(contains "$(shown "$(__gpy_segment_username true "" true)")" '< $(echo ICON)` u)')"
+unset __icon_status_ok
 
 # __gpy_prompt_escape works on 64-byte slices in the C locale: the exact bytes
 # for multibyte text, invalid UTF-8, `&` (Bash 5.2's patsub_replacement) and

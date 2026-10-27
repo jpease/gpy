@@ -1,4 +1,4 @@
-//! In-process live preview facts (git/language/hostname/username); no agent IPC.
+//! In-process live preview facts (git/language); no agent IPC.
 
 use crate::config::Config;
 use crate::git::{CompleteStatus, RepositoryStatus};
@@ -13,16 +13,10 @@ pub struct PreviewFacts {
     /// `None` outside a repo or when git is disabled or skipped for `cwd`.
     pub(crate) repository_status: Option<RepositoryStatus>,
     pub(crate) languages: Vec<LanguageInfo>,
-    pub(crate) hostname: String,
-    pub(crate) username: String,
     /// Fixed sample: there is no real "last command" in the wizard.
     pub(crate) sample_duration_ms: u64,
     /// Fixed sample for the character segment.
     pub(crate) sample_character_success: bool,
-    /// Render hostname as over SSH, since the preview always shows it.
-    pub(crate) sample_is_ssh: bool,
-    /// Render username in its root style, the elevated-session warning.
-    pub(crate) sample_is_root: bool,
 }
 
 /// Gather preview facts for `cwd`, honoring the same config settings as the prompt.
@@ -67,29 +61,9 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
     Ok(PreviewFacts {
         repository_status,
         languages,
-        hostname: local_hostname(),
-        username: local_username(),
         sample_duration_ms: 128,
         sample_character_success: true,
-        sample_is_ssh: true,
-        sample_is_root: true,
     })
-}
-
-/// Best-effort hostname; falls back to a placeholder.
-#[cfg(unix)]
-fn local_hostname() -> String {
-    sysinfo::System::host_name().unwrap_or_else(|| "localhost".to_owned())
-}
-
-#[cfg(not(unix))]
-fn local_hostname() -> String {
-    "localhost".to_owned()
-}
-
-/// Best-effort username; falls back to a placeholder.
-fn local_username() -> String {
-    crate::paths::user_name().unwrap_or_else(|| "user".to_owned())
 }
 
 #[cfg(test)]
@@ -215,16 +189,6 @@ mod tests {
         let facts = gather(dir.path(), &config, &theme).expect("gather should not error");
 
         assert!(facts.languages.is_empty());
-    }
-
-    #[test]
-    fn local_hostname_is_non_empty() {
-        assert_ne!(local_hostname(), "");
-    }
-
-    #[test]
-    fn local_username_is_non_empty() {
-        assert_ne!(local_username(), "");
     }
 
     #[test]

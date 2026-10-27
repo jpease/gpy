@@ -26,6 +26,9 @@ const CREATED_NOTE: &str = " (gpy-created-file)";
 const VERSION_STAMP: &str = ".gpy-version";
 /// Every shell `gpy setup` can install.
 const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
+/// Directory beside the shell trees holding the script plugins GPY ships
+/// (`username`, `hostname`), installed as the bundled plugin root.
+const BUNDLED_PLUGINS_SOURCE: &str = "plugins";
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -104,6 +107,8 @@ struct Outcome {
     shell_dir: PathBuf,
     rc_file: PathBuf,
     rc_block_added: bool,
+    /// Where the bundled plugins went; `None` for a source without them.
+    plugins_dir: Option<PathBuf>,
 }
 
 /// Run `gpy setup`. `completions` renders the structural completion script,
@@ -133,6 +138,9 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
     let outcome = install(shell, &source_root, &env, &completions)?;
 
     println!("Installed {shell} files to {}", outcome.shell_dir.display());
+    if let Some(dir) = &outcome.plugins_dir {
+        println!("Installed bundled plugins to {}", dir.display());
+    }
     if outcome.rc_block_added {
         println!("Added GPY initialization to {}", outcome.rc_file.display());
     } else {
@@ -154,11 +162,12 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
     Ok(())
 }
 
-/// Copy the shell trees from an explicit `source_root` to `share/gpy` beside
-/// the binary (`~/.local/share/gpy` for the installers), where a later bare
-/// `gpy setup` looks: the installers pass a temporary `--from`. Skipped when
-/// the binary lives in the source tree (a checkout's build) or the trees are
-/// already there; a failure is reported and setup still succeeds.
+/// Copy the shell trees and the bundled plugins from an explicit `source_root`
+/// to `share/gpy` beside the binary (`~/.local/share/gpy` for the installers),
+/// where a later bare `gpy setup` looks: the installers pass a temporary
+/// `--from`. Skipped when the binary lives in the source tree (a checkout's
+/// build) or the trees are already there; a failure is reported and setup
+/// still succeeds.
 fn keep_shell_trees(source_root: &Path, env: &Environment) {
     let Some(prefix) = env
         .exe
@@ -183,13 +192,11 @@ fn keep_shell_trees(source_root: &Path, env: &Environment) {
             if !has_shell_tree(&source, shell) {
                 continue;
             }
-            let dst = target.join(shell.as_str());
-            match fs::remove_dir_all(&dst) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-            copy_tree(&source.join(shell.as_str()), &dst, &[])?;
+            replace_tree(&source.join(shell.as_str()), &target.join(shell.as_str()))?;
+        }
+        let plugins = source.join(BUNDLED_PLUGINS_SOURCE);
+        if plugins.is_dir() {
+            replace_tree(&plugins, &target.join(BUNDLED_PLUGINS_SOURCE))?;
         }
         Ok(())
     };
@@ -404,6 +411,7 @@ fn install(
 ) -> Result<Outcome> {
     let config_home = env.config_home()?;
     let shell_dir = install_files(shell, source_root, &config_home, completions)?;
+    let plugins_dir = install_bundled_plugins(source_root, &config_home)?;
 
     let (rc_file, rc_block_added) = match shell {
         Shell::Fish => wire_fish(&config_home, &shell_dir)?,
@@ -414,7 +422,60 @@ fn install(
         shell_dir,
         rc_file,
         rc_block_added,
+        plugins_dir,
     })
+}
+
+/// Replace the bundled plugin root (`<config home>/gpy/bundled-plugins`) with
+/// `source_root/plugins`, so a plugin dropped by an upgrade is gone too. A
+/// source without that tree (an older archive) leaves the installed root alone.
+/// Group and world write bits are cleared, as export refuses a shared script.
+fn install_bundled_plugins(source_root: &Path, config_home: &Path) -> Result<Option<PathBuf>> {
+    let source = source_root.join(BUNDLED_PLUGINS_SOURCE);
+    if !source.is_dir() {
+        return Ok(None);
+    }
+    let target = config_home
+        .join("gpy")
+        .join(crate::plugin::BUNDLED_PLUGINS_DIR_NAME);
+    replace_tree(&source, &target)?;
+    clear_shared_write(&target)?;
+    Ok(Some(target))
+}
+
+/// Clear the group and world write bits of `path` and everything below it.
+#[cfg(unix)]
+fn clear_shared_write(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mode = metadata.permissions().mode();
+    if mode & 0o022 != 0 {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode & !0o022))?;
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            clear_shared_write(&entry?.path())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn clear_shared_write(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Remove `dst` (if present), then copy `src` to it.
+fn replace_tree(src: &Path, dst: &Path) -> Result<()> {
+    match fs::remove_dir_all(dst) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    copy_tree(src, dst, &[])
 }
 
 /// Where `gpy setup` installs `shell`'s scripts under `config_home`.

@@ -8,7 +8,7 @@ mod parse;
 pub use manager::{ThemeManager, ThemeSource};
 pub use model::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitState, GitTextElement, GitTheme,
-    HostnameTheme, PluginSegmentTheme, RecommendedDirectory, RecommendedUi, SegmentThemes,
-    StatusTheme, ThemeConfig, UiTheme, UsernameTheme,
+    PluginSegmentTheme, RecommendedDirectory, RecommendedUi, SegmentThemes, StatusTheme,
+    ThemeConfig, UiTheme,
 };
 pub use parse::parse;

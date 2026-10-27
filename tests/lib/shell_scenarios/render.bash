@@ -21,6 +21,8 @@ source "$GPY_ROOT/bash/gpy.bash" >/dev/null 2>&1
 # Root-ness is cached once at source time, so a scenario forces it afterwards.
 [[ "${SCN_ROOT:-0}" == 1 ]] && __gpy_is_root=1
 
+# Script (G) segments run in __gpy_precmd before the render, as here.
+__gpy_g_maybe_run
 __gpy_render_prompt "${SCN_STATUS:-0}"
 [[ -n "${SCN_RAW_OUT:-}" ]] && printf '%s' "$PS1" >"$SCN_RAW_OUT"
 

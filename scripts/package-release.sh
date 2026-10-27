@@ -25,9 +25,10 @@
 #
 # Produces, in --out (which must not be the repository root: the published
 # install-oneline.sh would overwrite the source installer):
-#   gpy-release.tar.gz / gpy-release.zip  (binaries + all three shells + docs)
-#   gpy-shell-files.tar.gz                (fish/, zsh/, bash/ trees: the files
-#                                          install-oneline.sh installs)
+#   gpy-release.tar.gz / gpy-release.zip  (binaries + all three shells + the
+#                                          bundled plugins + docs)
+#   gpy-shell-files.tar.gz                (fish/, zsh/, bash/ and plugins/ trees:
+#                                          the files install-oneline.sh installs)
 #   install-oneline.sh                    (the source installer with this
 #                                          release's tag stamped in)
 #   uninstall.sh                          (the uninstaller, as a release asset)
@@ -149,6 +150,10 @@ for shell_dir in fish bash zsh; do
     cp -R "$REPO_ROOT/$shell_dir" "$STAGE/$shell_dir"
 done
 
+# Bundled G plugins (username, hostname); `gpy setup` installs them as the bundled plugin root.
+[[ -d "$REPO_ROOT/plugins" ]] || die "missing bundled plugins directory: plugins/"
+cp -R "$REPO_ROOT/plugins" "$STAGE/plugins"
+
 # Built-in themes/palettes are compiled in via include_str!; only the config template ships.
 cp "$REPO_ROOT/config/config.example.toml" "$STAGE/config/config.example.toml"
 
@@ -186,7 +191,7 @@ grep -qxF "RELEASE_VERSION=\"$VERSION\"" install-oneline.sh ||
 chmod +x install-oneline.sh
 
 # Shell files the installer fetches as one checksummed archive.
-tar -czf gpy-shell-files.tar.gz -C gpy-release fish zsh bash
+tar -czf gpy-shell-files.tar.gz -C gpy-release fish zsh bash plugins
 
 cp "$REPO_ROOT/scripts/uninstall.sh" .
 chmod +x uninstall.sh
@@ -227,6 +232,12 @@ RELEASE_REQUIRED=(
     zsh/gpy.zsh
     zsh/core/init.zsh
     zsh/segments/git.zsh
+    plugins/hostname/plugin.toml
+    plugins/hostname/segments/hostname.toml
+    plugins/hostname/bin/hostname.sh
+    plugins/username/plugin.toml
+    plugins/username/segments/username.toml
+    plugins/username/bin/username.sh
     config/config.example.toml
     docs/README.md
     docs/LICENSE
@@ -253,6 +264,12 @@ SHELL_FILES_REQUIRED=(
     zsh/core/init.zsh
     zsh/segments/git.zsh
     zsh/completions/_gpy-dynamic
+    plugins/hostname/plugin.toml
+    plugins/hostname/segments/hostname.toml
+    plugins/hostname/bin/hostname.sh
+    plugins/username/plugin.toml
+    plugins/username/segments/username.toml
+    plugins/username/bin/username.sh
 )
 
 tar_listing="$(tar -tzf gpy-release.tar.gz)"

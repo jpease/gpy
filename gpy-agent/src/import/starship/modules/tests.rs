@@ -68,20 +68,6 @@ fn duration_style_wins_over_default() {
 }
 
 #[test]
-fn hostname_without_style_uses_starship_default() {
-    use super::translate_hostname;
-
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&table("ssh_only = false\n"), &mut warnings);
-    assert_eq!(
-        theme.format.as_deref(),
-        Some("[$symbol$hostname](bold dimmed green) in ")
-    );
-    assert_eq!(theme.icon.as_deref(), Some("🌐 "), "Starship's default");
-    assert!(warnings.is_empty());
-}
-
-#[test]
 fn translate_directory_layout_carries_truncation_settings() {
     use super::translate_directory_layout;
     let module = table("truncation_length = 3\ntruncation_symbol = \"…\"\n");
@@ -582,180 +568,122 @@ fn character_symbol_with_variable_warns_lossy() {
     assert_eq!(w.len(), 1_usize);
 }
 
-#[test]
-fn translate_hostname_inverts_ssh_only() {
-    use super::translate_hostname;
-    let module = table("ssh_only = false\n");
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&module, &mut warnings);
-    assert!(theme.show_always, "ssh_only=false -> show_always=true");
+fn variant(name: &str) -> crate::plugin::VariantName {
+    crate::plugin::VariantName::new(name).expect("variant")
 }
 
+/// Starship's defaults: the globe as the SSH variant's icon, the dimmed green
+/// as the pill's text on a transparent background, and nothing to report.
 #[test]
-fn translate_hostname_defaults_ssh_only_to_true() {
+fn translate_hostname_defaults_to_starship_style_and_ssh_globe() {
     use super::translate_hostname;
-    let module = table("");
     let mut warnings = Warnings::new();
-    let theme = translate_hostname(&module, &mut warnings);
-    assert!(
-        !theme.show_always,
-        "ssh_only absent defaults to true -> show_always=false"
+    let theme = translate_hostname(&table(""), NO_PALETTE, &mut warnings);
+    assert_eq!(
+        theme
+            .variant_icons
+            .get(&variant("ssh"))
+            .map(crate::config::types::Icon::as_str),
+        Some("🌐 ")
     );
-}
-
-#[test]
-fn translate_hostname_maps_ssh_symbol_to_icon() {
-    use super::translate_hostname;
-    let module = table("ssh_symbol = \"🌐 \"\nstyle = \"bold dimmed green\"\n");
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&module, &mut warnings);
-    assert_eq!(theme.icon.as_deref(), Some("🌐 "));
-    assert!(warnings.is_empty());
-}
-
-#[test]
-fn translate_hostname_defaults_ssh_symbol_to_globe_when_ssh_only() {
-    use super::translate_hostname;
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&table(""), &mut warnings);
-    assert_eq!(theme.icon.as_deref(), Some("🌐 "), "Starship's default");
+    assert!(theme.icon.is_none(), "the icon shows over SSH only");
+    assert_eq!(theme.text_color.as_deref(), Some("green"));
+    assert_eq!(theme.bg_color.as_deref(), Some("transparent"));
+    assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 #[test]
 fn translate_hostname_keeps_explicit_ssh_symbol_over_default() {
     use super::translate_hostname;
     let mut warnings = Warnings::new();
-    let theme = translate_hostname(&table("ssh_symbol = \"@\"\n"), &mut warnings);
-    assert_eq!(theme.icon.as_deref(), Some("@"));
-}
-
-/// SSH gating happens agent-side, so the default globe is always imported.
-#[test]
-fn translate_hostname_defaults_ssh_symbol_to_globe_when_not_ssh_only() {
-    use super::translate_hostname;
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&table("ssh_only = false\n"), &mut warnings);
-    assert_eq!(theme.icon.as_deref(), Some("🌐 "), "Starship's default");
-}
-
-#[test]
-fn translate_hostname_passes_through_trim_at() {
-    use super::translate_hostname;
-    let mut warnings = Warnings::new();
-
-    let custom = table("trim_at = \"-\"\n");
-    assert_eq!(translate_hostname(&custom, &mut warnings).trim_at, "-");
-
-    let absent = table("");
-    assert_eq!(translate_hostname(&absent, &mut warnings).trim_at, ".");
-}
-
-#[test]
-fn translate_hostname_renames_ssh_symbol_and_inlines_style() {
-    use super::translate_hostname;
-    let module =
-        table("format = \"[$ssh_symbol$hostname]($style) in \"\nstyle = \"bold dimmed green\"\n");
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&module, &mut warnings);
+    let theme = translate_hostname(&table("ssh_symbol = \"@\"\n"), NO_PALETTE, &mut warnings);
     assert_eq!(
-        theme.format.as_deref(),
-        Some("[$symbol$hostname](bold dimmed green) in ")
+        theme
+            .variant_icons
+            .get(&variant("ssh"))
+            .map(crate::config::types::Icon::as_str),
+        Some("@")
     );
-    assert!(warnings.is_empty());
 }
 
+/// `format`, `ssh_only = false` and a non-default `trim_at` cannot live in a
+/// theme: one warning each, naming the setting to use instead.
 #[test]
-fn translate_hostname_drops_unknown_vars() {
+fn translate_hostname_reports_format_and_settings() {
     use super::translate_hostname;
-    let module = table("format = \"[$ssh_symbol$hostname$sep_close]($style) \"\n");
-    let mut warnings = Warnings::new();
-    let theme = translate_hostname(&module, &mut warnings);
-    let format = theme.format.expect("hostname format produced");
-    assert!(format.contains("$symbol"));
-    assert!(format.contains("$hostname"));
-    assert!(!format.contains("sep_close"));
-    assert!(warnings.iter().any(|w| w.message.contains("sep_close")));
-}
-
-#[test]
-fn translate_username_maps_show_always() {
-    use super::translate_username;
-    let mut warnings = Warnings::new();
-
-    let shown = table("show_always = true\n");
-    assert!(translate_username(&shown, &mut warnings).show_always);
-
-    let hidden = table("");
-    assert!(
-        !translate_username(&hidden, &mut warnings).show_always,
-        "show_always absent defaults to false (root/sudo/SSH only)"
-    );
-}
-
-#[test]
-fn translate_username_renames_user_and_inlines_root_and_user_styles() {
-    use super::translate_username;
     let module = table(
-        "format = \"[$user]($style) in \"\nstyle_root = \"bold red\"\nstyle_user = \"green\"\n",
+        "format = \"[$ssh_symbol$hostname]($style) in \"\nssh_only = false\ntrim_at = \"-\"\n",
     );
     let mut warnings = Warnings::new();
-    let theme = translate_username(&module, &mut warnings);
-    assert_eq!(theme.format.as_deref(), Some("[$username](bold red) in "));
-    assert_eq!(theme.user_format.as_deref(), Some("[$username](green) in "));
-    assert!(warnings.is_empty());
+    let _unused = translate_hostname(&module, NO_PALETTE, &mut warnings);
+    let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    assert!(messages.iter().any(|m| m.contains("format")));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("plugin.hostname.show_always true"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("plugin.hostname.trim_at '-'"))
+    );
+
+    let mut quiet = Warnings::new();
+    let _theme = translate_hostname(&table("trim_at = \".\"\n"), NO_PALETTE, &mut quiet);
+    assert!(quiet.is_empty(), "the default trim_at needs no setting");
 }
 
+/// `style_user` colours the pill, `style_root` the `root` variant.
 #[test]
-fn translate_username_renames_only_the_whole_user_variable() {
+fn translate_username_maps_user_and_root_styles() {
     use super::translate_username;
-    let module = table("format = '[$username $userfoo \\$user]($style)'\n");
+    let module = table("style_root = \"bold red\"\nstyle_user = \"green\"\n");
     let mut warnings = Warnings::new();
-    let theme = translate_username(&module, &mut warnings);
+    let theme = translate_username(&module, NO_PALETTE, &mut warnings);
+    assert_eq!(theme.text_color.as_deref(), Some("green"));
+    assert_eq!(theme.bg_color.as_deref(), Some("transparent"));
+    let root = |part| {
+        let key = crate::plugin::VariantColorKey {
+            variant: variant("root"),
+            part,
+        };
+        theme.variant_colors.get(&key).map(ToString::to_string)
+    };
     assert_eq!(
-        theme.format.as_deref(),
-        Some(r"[$username  \$user](bold red)")
+        root(crate::plugin::VariantColorPart::Text).as_deref(),
+        Some("red")
     );
     assert_eq!(
-        warnings
-            .iter()
-            .filter(|w| w.message.contains("$userfoo"))
-            .count(),
-        1,
-        "$userfoo is unknown, not a renamed $user"
+        root(crate::plugin::VariantColorPart::Bg).as_deref(),
+        Some("transparent")
     );
-    assert_eq!(warnings.len(), 1);
+    assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 #[test]
 fn translate_username_defaults_styles_when_absent() {
     use super::translate_username;
-    let module = table("");
     let mut warnings = Warnings::new();
-    let theme = translate_username(&module, &mut warnings);
-    assert_eq!(theme.format.as_deref(), Some("[$username](bold red) in "));
-    assert_eq!(
-        theme.user_format.as_deref(),
-        Some("[$username](bold yellow) in ")
-    );
+    let theme = translate_username(&table(""), NO_PALETTE, &mut warnings);
+    assert_eq!(theme.text_color.as_deref(), Some("yellow"));
+    assert_eq!(theme.variant_colors.len(), 2);
 }
 
 #[test]
-fn translate_username_drops_unknown_vars_and_warns_once() {
+fn translate_username_reports_format_and_show_always() {
     use super::translate_username;
-    let module = table("format = \"[$user$sep_close]($style) \"\n");
+    let module = table("format = \"[$user]($style) in \"\nshow_always = true\n");
     let mut warnings = Warnings::new();
-    let theme = translate_username(&module, &mut warnings);
-    for produced in [theme.format, theme.user_format] {
-        let format = produced.expect("username format produced");
-        assert!(format.contains("$username"));
-        assert!(!format.contains("sep_close"));
-    }
-    assert_eq!(
-        warnings
+    let _theme = translate_username(&module, NO_PALETTE, &mut warnings);
+    let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages.iter().any(|m| m.contains("format")));
+    assert!(
+        messages
             .iter()
-            .filter(|w| w.message.contains("sep_close"))
-            .count(),
-        1
+            .any(|m| m.contains("plugin.username.show_always true"))
     );
 }
 

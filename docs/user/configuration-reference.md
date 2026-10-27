@@ -271,7 +271,7 @@ truncate_to_repo = false
 
 ## `[plugin.<segment>]`
 
-Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch. No shell executes script segments yet, so these overrides are accepted and validated but change no prompt.
+Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
@@ -291,6 +291,27 @@ style = "dim"
 gpy config set plugin.k8s.ttl_secs 30
 gpy config get plugin.k8s.style   # the override, or the declared default
 ```
+
+### Bundled `hostname` and `username`
+
+`hostname` and `username` are bundled script plugins (installed by `gpy setup` into `$XDG_CONFIG_HOME/gpy/bundled-plugins`, see [Bundled Plugins](../dev/plugins.md#bundled-plugins)), so their settings live here and no longer in the theme. These replace the theme keys `show_always` and `trim_at` (hostname) and `show_always` (username) of earlier versions; move them when upgrading, since the theme no longer reads them.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `plugin.hostname.show_always` | bool | `false` | Show the host name in every session, not only over SSH. |
+| `plugin.hostname.trim_at` | string | `"."` | Cut the host name at the first occurrence of this text; empty keeps it whole. |
+| `plugin.username.show_always` | bool | `false` | Show the user name in every session, not only as root, under sudo or over SSH. |
+
+```toml
+[plugin.hostname]
+show_always = true
+trim_at = ""
+
+[plugin.username]
+show_always = true
+```
+
+The theme's `format` and `user_format` keys for these segments are gone. Style them with `[segments.hostname]` / `[segments.username]` (`bg_color`, `text_color`, `icon`) and the per-variant keys `<variant>_bg_color`, `<variant>_text_color` and `<variant>_icon`. `hostname` prints the variant `ssh` over SSH and `username` prints `root` as root, so `ssh_icon = "🌐 "` shows an icon only over SSH and `root_bg_color` colors a root session. `<variant>_icon` replaces the segment `icon` while that variant is shown; give it its own trailing space if you want a gap.
 
 ---
 

@@ -136,10 +136,20 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
         artifacts.theme.segments.directory.format.as_deref(),
         Some("[ $path ](fg:color_fg0 bg:color_yellow)")
     );
+    // `username` is a script segment: the style's colours, resolved through the
+    // palette, draw a pill.
+    let username = artifacts
+        .theme
+        .segments
+        .plugin
+        .get("username")
+        .expect("username segment");
     assert_eq!(
-        artifacts.theme.segments.username.format.as_deref(),
-        Some("[ $username ](bg:color_orange fg:color_fg0)")
+        username.bg_color.as_deref(),
+        Some("#d65d0e"),
+        "{username:?}"
     );
+    assert_eq!(username.text_color.as_deref(), Some("#fbf1c7"));
 
     // `bg:`-only language style can't apply to the shared format: lossy, not invalid.
     let count = |kind: WarningKind, needle: &str| {
@@ -167,7 +177,19 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
     );
     assert!(artifacts.theme.ui.two_line);
 
-    assert_eq!(artifacts.warnings.len(), 32, "pin total warning count");
+    // `username`'s `format` (no pill equivalent) and `show_always` (a plugin
+    // setting) are each reported.
+    assert_eq!(
+        count(WarningKind::LossyMapping, "username: format"),
+        1,
+        "{:?}",
+        artifacts.warnings
+    );
+    assert_eq!(
+        count(WarningKind::UnrepresentableOption, "username: show_always"),
+        1
+    );
+    assert_eq!(artifacts.warnings.len(), 34, "pin total warning count");
 }
 
 #[test]
@@ -195,21 +217,6 @@ fn missing_module_tables_fall_back_to_starship_defaults() {
             &preset.duration.format,
         ),
         (
-            "hostname",
-            &imported.hostname.format,
-            &preset.hostname.format,
-        ),
-        (
-            "username",
-            &imported.username.format,
-            &preset.username.format,
-        ),
-        (
-            "username (user)",
-            &imported.username.user_format,
-            &preset.username.user_format,
-        ),
-        (
             "language",
             &imported.language.format,
             &preset.language.format,
@@ -217,6 +224,17 @@ fn missing_module_tables_fall_back_to_starship_defaults() {
     ] {
         assert!(got.is_some(), "{segment} format must be set");
         assert_eq!(got, want, "{segment} format must match the builtin preset");
+    }
+    for segment in ["hostname", "username"] {
+        let style = |segments: &gpy_agent::theme::SegmentThemes| {
+            toml::to_string(segments.plugin.get(segment).expect("plugin segment"))
+                .expect("serialize")
+        };
+        assert_eq!(
+            style(imported),
+            style(preset),
+            "{segment} style must match the builtin preset"
+        );
     }
 
     assert_eq!(imported.character.success_symbol, ">");

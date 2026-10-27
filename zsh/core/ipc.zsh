@@ -736,57 +736,6 @@ function __gpy_request_clock() {
     return 0
 }
 
-# Only for a Starship-style `__hostname_format`. No oneshot fallback by
-# design: with a dead daemon (or an error reply) this returns 1 and the
-# segment draws its local pill rather than fork per prompt.
-function __gpy_request_hostname() {
-    local hostname=$1
-    local is_last=$2
-    local prev_bg=${3:-}
-    local is_ssh=${4:-}
-    local is_first=${5:-}
-
-    local json_hostname flags_tail ssh_json=""
-    __gpy_escape_json_into json_hostname "$hostname"
-    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
-    [[ "$is_ssh" == "1" ]] && ssh_json=',"is_ssh":true'
-    local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"zsh-prompt\"${flags_tail}${ssh_json}}"
-
-    local result
-    result=$(__gpy_send_json "$request")
-
-    if [[ -n "$result" && "$result" != '{"error"'* ]]; then
-        print -r -- "$result"
-        return 0
-    fi
-    return 1
-}
-
-# No oneshot fallback, as for hostname. is_root "1" sends "is_root":true so the
-# agent picks the root style; omitted (agent default: user style) otherwise.
-function __gpy_request_username() {
-    local username=$1
-    local is_last=$2
-    local prev_bg=${3:-}
-    local is_root=${4:-}
-    local is_first=${5:-}
-
-    local json_username flags_tail root_json=""
-    __gpy_escape_json_into json_username "$username"
-    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
-    [[ "$is_root" == "1" ]] && root_json=',"is_root":true'
-    local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"zsh-prompt\"${flags_tail}${root_json}}"
-
-    local result
-    result=$(__gpy_send_json "$request")
-
-    if [[ -n "$result" && "$result" != '{"error"'* ]]; then
-        print -r -- "$result"
-        return 0
-    fi
-    return 1
-}
-
 # Exit-status pill request ("exit_status": the bare "status" op is the agent
 # health check). success is a 0/1 flag (1 == exit status 0). No oneshot
 # fallback: the status segment draws the pill locally instead. An error reply

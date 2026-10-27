@@ -262,9 +262,7 @@ fn test_complete_segment_emits_expected_builtins() {
             "language",
             "directory",
             "git",
-            "status",
-            "username",
-            "hostname"
+            "status"
         ]
     );
 }
@@ -465,8 +463,12 @@ fn test_enable_hostname_segment() {
     )
     .expect("Failed to write config");
 
+    let bundled = [(
+        "GPY_BUNDLED_PLUGIN_DIR",
+        CliTestEnv::repo_bundled_plugins_dir(),
+    )];
     let enable = env
-        .run_gpy(&["enable", "hostname"])
+        .run_gpy_with_env(&["enable", "hostname"], &bundled)
         .expect("Failed to run gpy enable hostname");
     enable.assert_success("gpy enable hostname");
 
@@ -490,8 +492,12 @@ fn test_doctor_accepts_starship_recommended_segments() {
     let env = CliTestEnv::with_config("[ui]\ntheme = \"default\"\n")
         .expect("Failed to create isolated CLI test environment");
 
+    let bundled = [(
+        "GPY_BUNDLED_PLUGIN_DIR",
+        CliTestEnv::repo_bundled_plugins_dir(),
+    )];
     let theme_use = env
-        .run_gpy(&["theme", "use", "starship", "--force"])
+        .run_gpy_with_env(&["theme", "use", "starship", "--force"], &bundled)
         .expect("Failed to run gpy theme use starship --force");
     theme_use.assert_success("gpy theme use starship --force");
     assert!(
@@ -503,7 +509,9 @@ fn test_doctor_accepts_starship_recommended_segments() {
     );
 
     // No agent runs in CliTestEnv, so doctor's exit code is not asserted.
-    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    let output = env
+        .run_gpy_with_env(&["doctor"], &bundled)
+        .expect("Failed to run gpy doctor");
     assert!(
         output.stdout.contains("ok: All segments recognized"),
         "doctor should accept the starship layout: {:?}",
@@ -831,13 +839,12 @@ fn test_plugin_new_creates_scaffold() {
 
     let plugin_root = env.plugins_dir().join("demo-tools");
     let manifest_path = plugin_root.join("plugin.toml");
-    let segment_path = plugin_root.join("segments").join("demo_status.fish");
+    let segment_manifest_path = plugin_root.join("segments").join("demo_status.toml");
+    let script_path = plugin_root.join("bin").join("demo_status.sh");
 
-    assert!(manifest_path.is_file(), "Plugin manifest should be created");
-    assert!(
-        segment_path.is_file(),
-        "Plugin segment file should be created"
-    );
+    for path in [&manifest_path, &segment_manifest_path, &script_path] {
+        assert!(path.is_file(), "{} should be created", path.display());
+    }
 
     let manifest = fs::read_to_string(&manifest_path).expect("Failed to read plugin manifest");
     assert!(
@@ -845,22 +852,16 @@ fn test_plugin_new_creates_scaffold() {
         "Manifest should include plugin id"
     );
     assert!(
+        manifest.contains("entry_type = \"script\""),
+        "Scaffold should be a script (G) plugin"
+    );
+    assert!(
         manifest.contains("provided_segments = [\"demo_status\"]"),
         "Manifest should include requested segment"
     );
-
-    let segment = fs::read_to_string(&segment_path).expect("Failed to read plugin segment file");
     assert!(
-        segment.contains("function segment_demo_status_detect"),
-        "Scaffold should create detect function"
-    );
-    assert!(
-        segment.contains("gpy_section_standalone"),
-        "Scaffold should use supported public helper surface"
-    );
-    assert!(
-        output.stdout.contains(FISH_ONLY_LINE),
-        "plugin new must say v1 plugin segments are Fish-only.\nstdout:\n{}",
+        !output.stdout.contains("Fish"),
+        "a script plugin runs in every shell.\nstdout:\n{}",
         output.stdout
     );
 }
@@ -1962,89 +1963,6 @@ fn test_theme_validate_and_config_set_reject_broken_clock_hostname_username() {
             "config bytes must remain unchanged on rejected config set for {segment}"
         );
     }
-}
-
-#[test]
-#[allow(clippy::too_many_lines)]
-fn test_valid_hostname_username_theme_renders_via_oneshot() {
-    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
-    let themes_dir = env.themes_dir();
-    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
-
-    let valid_theme = r#"
-[ui]
-[segments.hostname]
-format = "[$hostname](fg:white)"
-[segments.username]
-format = "[$username](fg:white)"
-"#;
-    fs::write(themes_dir.join("valid-custom.toml"), valid_theme)
-        .expect("Failed to write valid theme");
-
-    let env_overrides = [
-        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
-        (
-            "GPY_AGENT_SOCKET_PATH",
-            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
-        ),
-        (
-            "GPY_BUNDLED_PLUGIN_DIR",
-            env.root().join("empty_plugins").display().to_string(),
-        ),
-    ];
-
-    let val_out = env
-        .run_gpy_with_env(&["theme", "validate", "valid-custom"], &env_overrides)
-        .expect("Failed to run validate");
-    val_out.assert_success("valid-custom theme validation");
-
-    let set_out = env
-        .run_gpy_with_env(
-            &["config", "set", "ui.theme", "valid-custom"],
-            &env_overrides,
-        )
-        .expect("Failed to set theme");
-    set_out.assert_success("set theme valid-custom");
-
-    let host_out = env
-        .run_gpy_agent_with_env(
-            &[
-                "oneshot",
-                "hostname",
-                "--hostname",
-                "example-box",
-                "--format",
-                "ansi",
-            ],
-            &env_overrides,
-        )
-        .expect("Failed to run oneshot hostname");
-    assert!(
-        host_out.stdout.contains("example-box"),
-        "hostname rendering must contain example-box: stdout={:?} stderr={:?}",
-        host_out.stdout,
-        host_out.stderr
-    );
-
-    let user_out = env
-        .run_gpy_agent_with_env(
-            &[
-                "oneshot",
-                "username",
-                "--username",
-                "test-user",
-                "--format",
-                "ansi",
-            ],
-            &env_overrides,
-        )
-        .expect("Failed to run oneshot username");
-    assert!(
-        user_out.stdout.contains("test-user"),
-        "username rendering must contain test-user: stdout={:?} stderr={:?}",
-        user_out.stdout,
-        user_out.stderr
-    );
 }
 
 #[test]

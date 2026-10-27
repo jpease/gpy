@@ -106,14 +106,6 @@ async fn test_oneshot_every_kind_renders_json_and_ansi() -> Result<()> {
         ("directory", serde_json::json!({})),
         ("duration", serde_json::json!({"duration_ms": 2_500_u64})),
         ("character", serde_json::json!({"success": true})),
-        (
-            "hostname",
-            serde_json::json!({"hostname": "box", "is_ssh": true}),
-        ),
-        (
-            "username",
-            serde_json::json!({"username": "me", "is_root": false}),
-        ),
         ("exit_status", serde_json::json!({"success": false})),
     ];
 

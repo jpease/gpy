@@ -107,7 +107,7 @@ Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/
 
 ## Zsh-Specific Issues
 
-Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract is identical across Fish, Zsh, and Bash: `directory`/`duration`/`git`/`language` are agent-rendered, and `clock`/`hostname`/`username`/`status` are agent-rendered when the theme sets a `format` and drawn locally by the shell otherwise or whenever the agent gives no reply.
+Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract is identical across Fish, Zsh, and Bash: `directory`/`duration`/`git`/`language` are agent-rendered, and `clock`/`status` are agent-rendered when the theme sets a `format` and drawn locally by the shell otherwise or whenever the agent gives no reply. `hostname` and `username` are bundled script plugins (installed by `gpy setup` into `~/.config/gpy/bundled-plugins`) run by the shell, so if they are missing run `gpy setup` again.
 
 Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke and a restarted agent's re-register nudge re-registers the shell. A dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, please [report it](https://github.com/jpease/gpy/issues).
 

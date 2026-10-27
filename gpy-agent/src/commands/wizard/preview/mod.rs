@@ -13,11 +13,9 @@ use crate::formatter::character_resolver::CharacterResolver;
 use crate::formatter::directory_resolver::DirectoryResolver;
 use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
-use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::separator::Glyphs;
 use crate::formatter::status_resolver::{StatusResolver, status_symbol};
-use crate::formatter::username_resolver::UsernameResolver;
 use crate::plugin::BuiltinSegment;
 use crate::template::{
     Attr, Color as TemplateColor, RenderContext as TemplateRenderContext, Span as TemplateSpan,
@@ -368,28 +366,6 @@ fn render_segment(
             ctx.position.is_first,
             ctx.position.is_last,
         )),
-        BuiltinSegment::Hostname => {
-            let format = theme.segments.hostname.format.as_deref()?;
-            let resolver = HostnameResolver::new(
-                facts.hostname.clone(),
-                facts.sample_is_ssh,
-                config,
-                theme,
-                ctx.position,
-            );
-            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-        }
-        BuiltinSegment::Username => {
-            let format = theme.segments.username.format_for(facts.sample_is_root)?;
-            let resolver = UsernameResolver::new(
-                facts.username.clone(),
-                facts.sample_is_root,
-                config,
-                theme,
-                ctx.position,
-            );
-            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-        }
     }
 }
 

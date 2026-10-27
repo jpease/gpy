@@ -10,9 +10,6 @@ use crate::config::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-mod identity;
-pub use identity::{HostnameTheme, UsernameTheme};
-
 /// Theme configuration loaded from ~/.config/gpy/themes/{theme}.toml
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThemeConfig {
@@ -48,12 +45,6 @@ pub struct SegmentThemes {
     /// Language segment theme configuration
     #[serde(default)]
     pub language: LanguageTheme,
-    /// Hostname segment theme configuration
-    #[serde(default)]
-    pub hostname: HostnameTheme,
-    /// Username segment theme configuration (Starship `username` module parity)
-    #[serde(default)]
-    pub username: UsernameTheme,
     /// Unknown `[segments.<id>]` tables for community/plugin segments.
     #[serde(flatten)]
     pub plugin: HashMap<String, PluginSegmentTheme>,
@@ -61,26 +52,93 @@ pub struct SegmentThemes {
 
 /// Style for non-built-in segments; unset fields fall back to segment/UI defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(try_from = "RawPluginSegmentTheme", into = "RawPluginSegmentTheme")]
 pub struct PluginSegmentTheme {
     /// Optional icon for the segment.
-    #[serde(default)]
     pub icon: Option<types::Icon>,
     /// Optional open delimiter override.
-    #[serde(default)]
     pub open: Option<DelimiterConfig>,
     /// Optional close delimiter override.
-    #[serde(default)]
     pub close: Option<DelimiterConfig>,
     /// Optional segment background color.
-    #[serde(default)]
     pub bg_color: Option<types::ColorSpec>,
     /// Optional segment text color.
-    #[serde(default)]
     pub text_color: Option<types::ColorSpec>,
     /// Colours per output variant: `<variant>_bg_color` / `<variant>_text_color`.
-    #[serde(flatten)]
     pub variant_colors:
         std::collections::BTreeMap<crate::plugin::VariantColorKey, types::ColorSpec>,
+    /// Icons per output variant (`<variant>_icon`), replacing `icon` while it is shown.
+    pub variant_icons: std::collections::BTreeMap<crate::plugin::VariantName, types::Icon>,
+}
+
+/// [`PluginSegmentTheme`] as written in TOML: variant styles are flat keys.
+#[derive(Serialize, Deserialize)]
+struct RawPluginSegmentTheme {
+    #[serde(default)]
+    icon: Option<types::Icon>,
+    #[serde(default)]
+    open: Option<DelimiterConfig>,
+    #[serde(default)]
+    close: Option<DelimiterConfig>,
+    #[serde(default)]
+    bg_color: Option<types::ColorSpec>,
+    #[serde(default)]
+    text_color: Option<types::ColorSpec>,
+    #[serde(flatten)]
+    variants: std::collections::BTreeMap<crate::plugin::VariantStyleKey, String>,
+}
+
+impl TryFrom<RawPluginSegmentTheme> for PluginSegmentTheme {
+    type Error = crate::Error;
+
+    fn try_from(raw: RawPluginSegmentTheme) -> crate::Result<Self> {
+        use crate::plugin::VariantStyleKey;
+        let mut theme = Self {
+            icon: raw.icon,
+            open: raw.open,
+            close: raw.close,
+            bg_color: raw.bg_color,
+            text_color: raw.text_color,
+            variant_colors: std::collections::BTreeMap::new(),
+            variant_icons: std::collections::BTreeMap::new(),
+        };
+        for (key, value) in raw.variants {
+            let named = |err: crate::Error| crate::Error::invalid(format!("{key}: {err}"));
+            match &key {
+                VariantStyleKey::Color(color_key) => {
+                    let color = types::ColorSpec::new(&value).map_err(named)?;
+                    theme.variant_colors.insert(color_key.clone(), color);
+                }
+                VariantStyleKey::Icon(variant) => {
+                    let icon = types::Icon::new(value).map_err(named)?;
+                    theme.variant_icons.insert(variant.clone(), icon);
+                }
+            }
+        }
+        Ok(theme)
+    }
+}
+
+impl From<PluginSegmentTheme> for RawPluginSegmentTheme {
+    fn from(theme: PluginSegmentTheme) -> Self {
+        use crate::plugin::VariantStyleKey;
+        let colors = theme
+            .variant_colors
+            .into_iter()
+            .map(|(key, color)| (VariantStyleKey::Color(key), color.to_string()));
+        let icons = theme
+            .variant_icons
+            .into_iter()
+            .map(|(variant, icon)| (VariantStyleKey::Icon(variant), icon.as_str().to_owned()));
+        Self {
+            icon: theme.icon,
+            open: theme.open,
+            close: theme.close,
+            bg_color: theme.bg_color,
+            text_color: theme.text_color,
+            variants: colors.chain(icons).collect(),
+        }
+    }
 }
 
 /// UI-level colors (prompt, delimiters)
@@ -701,7 +759,7 @@ pub enum GitTextElement {
 #[cfg(test)]
 mod tests {
 
-    use super::{GitState, GitTextElement, GitTheme, HostnameTheme, SegmentThemes, ThemeConfig};
+    use super::{GitState, GitTextElement, GitTheme, SegmentThemes, ThemeConfig};
     use crate::git::{RepositoryState, RepositoryStatus};
 
     #[test]
@@ -852,39 +910,38 @@ show_stash = true
         assert_eq!(git.show_stash, Some(true));
     }
 
+    /// A plugin section takes `<variant>_icon` beside the variant colours, rejects a
+    /// template `format`, and serializes back to the same flat keys.
     #[test]
-    fn hostname_theme_default_matches_expected_fields() {
-        let theme = HostnameTheme::default();
-        assert!(theme.format.is_none());
-        assert!(theme.icon.is_none());
-        assert_eq!(theme.bg_color, "black");
-        assert_eq!(theme.text_color, "white");
-        assert_eq!(theme.trim_at, ".");
-        assert!(!theme.show_always);
-    }
-
-    #[test]
-    fn hostname_theme_parses_partial_toml_with_defaults_for_rest() {
-        let toml_str = "icon = \"@\"\nshow_always = true\n";
-        let theme: HostnameTheme = toml::from_str(toml_str).expect("parse");
-        assert_eq!(theme.icon.as_deref(), Some("@"));
-        assert!(theme.show_always);
-        // Unspecified fields fall back to defaults.
-        assert!(theme.format.is_none());
-        assert_eq!(theme.bg_color, "black");
-        assert_eq!(theme.text_color, "white");
-        assert_eq!(theme.trim_at, ".");
-    }
-
-    #[test]
-    fn segment_themes_without_hostname_table_defaults_hostname() {
-        let segments: SegmentThemes = toml::from_str("").expect("parse");
+    fn plugin_section_parses_variant_icons_and_round_trips() {
+        let text = "[hostname]\nssh_icon = \"@ \"\nssh_bg_color = \"red\"\n";
+        let segments: SegmentThemes = toml::from_str(text).expect("parse");
+        let hostname = segments.plugin.get("hostname").expect("hostname");
+        let ssh = crate::plugin::VariantName::new("ssh").expect("variant");
         assert_eq!(
-            segments.hostname.bg_color,
-            HostnameTheme::default().bg_color
+            hostname
+                .variant_icons
+                .get(&ssh)
+                .map(crate::config::types::Icon::as_str),
+            Some("@ ")
         );
-        assert!(segments.hostname.format.is_none());
-        assert_eq!(segments.hostname.trim_at, ".");
+        assert_eq!(hostname.variant_colors.len(), 1);
+
+        let round_trip: SegmentThemes =
+            toml::from_str(&toml::to_string(&segments).expect("serialize")).expect("reparse");
+        assert_eq!(
+            round_trip
+                .plugin
+                .get("hostname")
+                .expect("hostname")
+                .variant_icons,
+            hostname.variant_icons
+        );
+
+        let err = toml::from_str::<SegmentThemes>("[hostname]\nformat = \"[$hostname]\"\n")
+            .expect_err("templates are not plugin styles")
+            .to_string();
+        assert!(err.contains("format"), "{err}");
     }
 
     #[test]

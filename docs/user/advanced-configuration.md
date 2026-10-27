@@ -97,7 +97,7 @@ display defaults), the four glyph tables `[ui.prompt_open]`,
 `[ui.recommended]` block that `gpy theme use --force` applies to
 `config.toml`, and one `[segments.<id>]` table per segment (`clock`,
 `duration`, `directory`, `status`, `character`, `git`, `hostname`,
-`username`, `language`) holding that segment's colours and format template.
+`username`, `language`) holding that segment's colours and format template (`hostname` and `username` are bundled script plugins: colours, icons and `<variant>_*` keys only, with their settings under `[plugin.hostname]` / `[plugin.username]` in `config.toml`).
 There is no `[ui.clock]`, `[ui.delimiters]` or `[ui.git]` in a theme file,
 and no colours or templates in `config.toml`; the split is described in
 [Configuration Reference](configuration-reference.md).

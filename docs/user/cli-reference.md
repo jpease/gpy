@@ -571,8 +571,8 @@ A segment renders when it is listed in `ui.enabled_segments`; `git` and `languag
 - `duration` - Command execution time
 - `directory` - Current working directory
 - `status` - Previous command exit status pill (✔/✖); coloured by `segments.status.ok_*`/`fail_*` and drawn by the agent through `segments.status.format`
-- `username` - Current user name; shown only as root, under sudo or over SSH unless `segments.username.show_always` is set (opt-in). Root sessions use the theme's `format` and `bg_color`/`text_color`, others `user_format` and `user_bg_color`/`user_text_color`, like Starship's `style_root`/`style_user`
-- `hostname` - Machine hostname; shown only over SSH unless `segments.hostname.show_always` is set (opt-in). Its icon (`segments.hostname.icon`, Starship's `ssh_symbol`) shows only in SSH sessions
+- `username` - Current user name; a bundled script plugin. Shown only as root, under sudo or over SSH unless `plugin.username.show_always` is set in `config.toml` (opt-in). The plugin prints the variant `root` as root, styled with the theme's `root_bg_color`/`root_text_color` (and `root_icon`), like Starship's `style_root`; other sessions use `bg_color`/`text_color`
+- `hostname` - Machine hostname; a bundled script plugin. Shown only over SSH unless `plugin.hostname.show_always` is set in `config.toml` (opt-in), cut at `plugin.hostname.trim_at`. Its `ssh` variant icon (`ssh_icon` in `[segments.hostname]`, Starship's `ssh_symbol`) shows only in SSH sessions
 
 **Example:**
 ```bash
@@ -934,6 +934,10 @@ Verifies:
 - Configuration file is valid TOML
 - Active theme exists and validates with remediation hints on failure
 - Enabled segments are valid
+- Each enabled script plugin segment runs once the way the shell runner runs it
+  (clean environment, the plugin root as working directory or the current one
+  when `pwd` is declared, killed after `timeout_ms`) and reports the run time,
+  what it would show and why it would be hidden
 - Required binaries are in PATH
 
 **Example:**
@@ -1012,7 +1016,7 @@ shell or through separate requests and are not included. Exits `1` with an
 
 ### Plugin Commands
 
-Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) have a defined, validated contract, but no shell executes them yet; see [Plugin Framework](../dev/plugins.md#script-segments).
+Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) run in Bash, Zsh and Fish; see [Plugin Framework](../dev/plugins.md#script-segments).
 
 #### `gpy plugin list`
 
@@ -1027,9 +1031,11 @@ Useful when:
 
 Create a new plugin scaffold in `~/.config/gpy/plugins/<id>/`.
 
-Creates:
+Creates a script (`entry_type = "script"`) plugin that runs in every shell:
 - `plugin.toml`
-- `segments/<segment>.fish`
+- `segments/<segment>.toml`, the segment manifest (`inputs`, `env`, `ttl_secs`,
+  `timeout_ms`)
+- `bin/<segment>.sh`, a POSIX `sh` script that prints the segment text
 
 If `--segment` is omitted, GPY uses the plugin id as the segment id.
 
@@ -1047,10 +1053,16 @@ Checks:
 - the declared plugin API version is supported
 - `provided_segments` is present and lists at least one segment
 - segment files exist for declared file-based segments
-- for a script plugin, every `segments/<segment>.toml` manifest parses and its
-  `command` (and `require_command`) is a file inside the plugin root; the
-  output lists each segment's command, inputs, env, cache scope, `ttl_secs`,
-  `timeout_ms` and triggers
+- for a script plugin, every `segments/<segment>.toml` manifest parses against
+  the published schema and its `command` (and `require_command`) is a file
+  inside the plugin root; the output lists each segment's description,
+  command, inputs, env, cache scope, `ttl_secs`, `timeout_ms` and triggers
+- each script passes `shellcheck -s sh`, or `dash -n` when ShellCheck is not
+  installed (a lint failure fails validation; with neither tool installed
+  the script is not linted and a warning says so)
+- warnings (not failures) for `$VAR` uses the manifest does not provide:
+  undeclared `env` names, `GPY_*` inputs missing from `inputs`, and
+  undeclared `GPY_OPT_*` settings
 - the running GPY meets `compatibility_constraints.min_gpy_version` (a newer
   minimum fails validation, and discovery skips the plugin with a diagnostic)
 
@@ -1234,7 +1246,7 @@ commands.
 |---|---|
 | `gpy-agent start [--socket <path>]` | Start the daemon in the background (idempotent; evicts an older version). `--socket` overrides the socket path, mainly for tests. |
 | `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
-| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|hostname\|username\|status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
+| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
 | `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
 | `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 

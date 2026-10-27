@@ -1,7 +1,7 @@
 # Fixture theme for the cross-shell segment golden test: ASCII
-# delimiters, no segment templates, so the clock, status, hostname and
-# username are all drawn by the shell itself. Named colors only: every shell
-# maps them to the same SGR codes.
+# delimiters, no segment templates, so the clock, status and the hostname and
+# username script plugins are all drawn by the shell itself. Named colors
+# only: every shell maps them to the same SGR codes.
 
 [ui]
 prompt_icon = ">"
@@ -48,11 +48,9 @@ fail_bg_color = "magenta"
 [segments.hostname]
 text_color = "black"
 bg_color = "yellow"
-icon = "@"
-show_always = true
+ssh_icon = "@"
 
 [segments.username]
 text_color = "white"
 bg_color = "red"
 icon = "~"
-show_always = true

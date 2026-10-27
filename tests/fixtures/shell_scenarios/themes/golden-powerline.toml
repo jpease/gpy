@@ -46,10 +46,8 @@ fail_bg_color = "brred"
 [segments.hostname]
 text_color = "black"
 bg_color = "brblue"
-icon = "🌐"
-show_always = true
+ssh_icon = "🌐"
 
 [segments.username]
 text_color = "white"
 bg_color = "brblack"
-show_always = true

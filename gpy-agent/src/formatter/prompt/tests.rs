@@ -264,6 +264,8 @@ fn error_response_renders_empty() {
     }
 }
 
+/// Replies with no template to fill render nothing: status/ack, and the
+/// `username`/`hostname` replies, which the shells draw as script segments.
 #[test]
 fn non_segment_responses_render_empty() {
     let (config, theme) = ctx();
@@ -275,8 +277,16 @@ fn non_segment_responses_render_empty() {
         registered_clients: 0,
         cache_entries: 0,
     };
+    let hostname = Response::Hostname {
+        hostname: "box".to_owned(),
+        is_ssh: true,
+    };
+    let username = Response::Username {
+        username: "ada".to_owned(),
+        is_root: true,
+    };
     for dialect in PromptDialect::ALL {
-        for response in [&Response::Ack, &status] {
+        for response in [&Response::Ack, &status, &hostname, &username] {
             let got = PromptFormatter::new(dialect)
                 .render(response, &rc)
                 .expect("render");
@@ -476,97 +486,6 @@ fn character_malformed_format_emits_empty() {
 }
 
 #[test]
-fn hostname_format_none_emits_empty() {
-    let formatter = PromptFormatter::default();
-    let (config, theme) = ctx();
-    assert!(theme.segments.hostname.format.is_none());
-    let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let response = Response::Hostname {
-        hostname: "host.example.com".to_owned(),
-        is_ssh: false,
-    };
-    let got = formatter.render(&response, &rc).expect("render");
-    assert_eq!(got, "", "no format → agent emits nothing");
-}
-
-#[test]
-fn hostname_format_some_renders_trimmed_name_with_ansi() {
-    let formatter = PromptFormatter::default();
-    let (config, mut theme) = ctx();
-    theme.segments.hostname.format = Some("on [$symbol$hostname](bold green) ".to_owned());
-    let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let response = Response::Hostname {
-        hostname: "host.example.com".to_owned(),
-        is_ssh: false,
-    };
-    let got = formatter.render(&response, &rc).expect("render");
-    // Default trim_at="." trims the FQDN down to the short name.
-    assert!(
-        got.contains("host"),
-        "expected trimmed hostname, got {got:?}"
-    );
-    assert!(
-        !got.contains("host.example.com"),
-        "expected trimming to have applied, got {got:?}"
-    );
-    assert!(got.contains('\x1b'), "expected ANSI escape, got {got:?}");
-    // Reset lands at the group boundary, before the trailing literal " ".
-    assert_eq!(got, "on \u{1b}[1;32mhost\u{1b}[0m ");
-}
-
-#[test]
-fn hostname_icon_renders_only_over_ssh() {
-    let formatter = PromptFormatter::default();
-    let (config, mut theme) = ctx();
-    theme.segments.hostname.format = Some("[$symbol$hostname](bold green) ".to_owned());
-    theme.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐 ").expect("icon"));
-    let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let render = |is_ssh| {
-        let response = Response::Hostname {
-            hostname: "host".to_owned(),
-            is_ssh,
-        };
-        formatter.render(&response, &rc).expect("render")
-    };
-    assert_eq!(render(true), "\u{1b}[1;32m🌐 \u{1b}[1;32mhost\u{1b}[0m ");
-    assert_eq!(render(false), "\u{1b}[1;32mhost\u{1b}[0m ");
-}
-
-#[test]
-fn hostname_malformed_format_emits_empty() {
-    let formatter = PromptFormatter::default();
-    let (config, mut theme) = ctx();
-    theme.segments.hostname.format = Some("[$hostname(green)".to_owned()); // unbalanced '['
-    let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let response = Response::Hostname {
-        hostname: "host".to_owned(),
-        is_ssh: false,
-    };
-    let got = formatter.render(&response, &rc).expect("render");
-    assert_eq!(got, "", "broken format → silent fallback → empty");
-}
-
-/// Root renders `format`; everyone else `user_format`, or `format` when that is unset.
-#[test]
-fn username_format_follows_root_with_user_format_fallback() {
-    let formatter = PromptFormatter::default();
-    let (config, mut theme) = ctx();
-    theme.segments.username.format = Some("[$username](bold red)".to_owned());
-    let render = |themed: &ThemeConfig, is_root| {
-        let rc = RenderContext::new(&config, themed, SegmentPosition::MIDDLE);
-        let response = Response::Username {
-            username: "ada".to_owned(),
-            is_root,
-        };
-        formatter.render(&response, &rc).expect("render")
-    };
-    assert_eq!(render(&theme, false), "\u{1b}[1;31mada\u{1b}[0m");
-    theme.segments.username.user_format = Some("[$username](bold yellow)".to_owned());
-    assert_eq!(render(&theme, true), "\u{1b}[1;31mada\u{1b}[0m");
-    assert_eq!(render(&theme, false), "\u{1b}[1;33mada\u{1b}[0m");
-}
-
-#[test]
 fn git_format_resolves_through_attached_palette() {
     use crate::template::{Color, Palette};
     use std::collections::HashMap;
@@ -718,14 +637,6 @@ fn separator_bearing_responses() -> Vec<Response> {
         Response::Clock { shell: Shell::Fish },
         Response::Duration { duration_ms: 5000 },
         Response::Character { success: true },
-        Response::Hostname {
-            hostname: "box".to_owned(),
-            is_ssh: false,
-        },
-        Response::Username {
-            username: "ada".to_owned(),
-            is_root: false,
-        },
     ]
 }
 
@@ -829,29 +740,13 @@ fn default_theme_text(
     plain_text(&ansi)
 }
 
-/// Hostname, username and status draw the same pill as the clock: one leading
-/// space inside it, no opening cap when first, the cap otherwise.
+/// Status draws the same pill as the clock: one leading space inside it, no
+/// opening cap when first, the cap otherwise.
 #[test]
 fn default_theme_pills_have_one_leading_space_and_position_caps() {
     let theme = bundled_default_theme();
     let ok_icon = theme.segments.status.ok_icon.as_deref().unwrap().to_owned();
-    let responses = [
-        (
-            Response::Hostname {
-                hostname: "host.example.com".to_owned(),
-                is_ssh: false,
-            },
-            "host".to_owned(),
-        ),
-        (
-            Response::Username {
-                username: "ada".to_owned(),
-                is_root: false,
-            },
-            "ada".to_owned(),
-        ),
-        (Response::ExitStatus { success: true }, ok_icon),
-    ];
+    let responses = [(Response::ExitStatus { success: true }, ok_icon)];
     for (response, content) in &responses {
         let at = |position| default_theme_text(response, &theme, position);
         assert_eq!(
@@ -875,26 +770,6 @@ fn default_theme_pills_have_one_leading_space_and_position_caps() {
             "{response:?} only: no opening cap, closing half circle"
         );
     }
-}
-
-/// `$symbol` carries the SSH icon with its own spacing: a local session reads
-/// `" host"`, an SSH one `" 🌐 host"`, never a doubled leading space.
-#[test]
-fn default_theme_hostname_symbol_adds_no_extra_space_locally() {
-    let mut theme = bundled_default_theme();
-    theme.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐 ").unwrap());
-    let at = |is_ssh| {
-        default_theme_text(
-            &Response::Hostname {
-                hostname: "box".to_owned(),
-                is_ssh,
-            },
-            &theme,
-            SegmentPosition::ONLY,
-        )
-    };
-    assert_eq!(at(false), format!(" box{LAST_CAP}"));
-    assert_eq!(at(true), format!(" 🌐 box{LAST_CAP}"));
 }
 
 /// The pill's colors follow the outcome: ok_* on success, fail_* otherwise.

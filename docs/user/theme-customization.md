@@ -187,16 +187,16 @@ gpy config set ui.show_icons false
 
 `show_icons` lives in `config.toml`, not the theme file. It applies to whichever theme is active.
 
-**Pill formats for `hostname`, `username` and `status`:**
+**Pill formats for `status`, and `hostname` / `username` styling:**
 
-Like `clock`, `directory`, `duration`, `git` and `language`, these three are drawn by the agent from a `format` string in the theme, so a themed pill reads the same in every shell. The built-in `default` theme gives each one a single leading space inside the pill:
+Like `clock`, `directory`, `duration`, `git` and `language`, `status` is drawn by the agent from a `format` string in the theme, so a themed pill reads the same in every shell. `hostname` and `username` are bundled script plugins instead: they have no `format` (or `user_format`) key, and the plugin framework draws their pills. Their `show_always` and `trim_at` settings live in `config.toml` under `[plugin.hostname]` / `[plugin.username]` (see the [Configuration Reference](configuration-reference.md#bundled-hostname-and-username)). In the theme you style them with `bg_color`, `text_color`, `icon`, and per-variant keys `<variant>_bg_color`, `<variant>_text_color` and `<variant>_icon`: `hostname` prints the variant `ssh` over SSH (`ssh_icon`), `username` prints `root` as root (`root_bg_color`, `root_text_color`, `root_icon`). The built-in `default` theme gives `status` a single leading space inside the pill:
 
 ```toml
-[segments.hostname]
-format = "([$sep_open](fg:$bg bg:default))[ $symbol$hostname]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+[segments.status]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 ```
 
-`$symbol` is the segment's `icon`. It is written as-is, so give an icon its own trailing space (`icon = "🌐 "`) and a missing icon leaves no gap. `$style` and `$bg` come from the segment's `text_color` and `bg_color` (for `status`, from `ok_*` or `fail_*` according to the previous command's exit status; for `username`, from `user_text_color`/`user_bg_color` unless the session runs as root), and `$sep_open` is left out on the first pill in the prompt. `status` also has `$symbol` (its `ok_icon`/`fail_icon`, or `✔`/`✖` when unset). `username` shows as root, under sudo or over SSH unless `show_always` is set; like Starship's `style_root`/`style_user`, a non-root session renders `user_format` instead of `format` when the theme sets one. A theme without a `format` for one of these still renders: the shell draws a plain pill, with the same single leading space. The shell draws that pill too whenever the agent gives no reply (down, disabled, or an older agent answering with an error), so the pill never disappears. The plain pill always puts a space between the icon and the text, so an icon without a trailing space looks different there.
+`$symbol` is the segment's icon (for `status`, its `ok_icon`/`fail_icon`, or `✔`/`✖` when unset). It is written as-is, so give an icon its own trailing space (`icon = "🌐 "`) and a missing icon leaves no gap; the same holds for a `<variant>_icon` such as `ssh_icon`. `$style` and `$bg` come from the segment's `text_color` and `bg_color` (for `status`, from `ok_*` or `fail_*` according to the previous command's exit status), and `$sep_open` is left out on the first pill in the prompt. A theme without a `format` for `status` still renders: the shell draws a plain pill, with the same single leading space. The shell draws that pill too whenever the agent gives no reply (down, disabled, or an older agent answering with an error), so the pill never disappears. The plain pill always puts a space between the icon and the text, so an icon without a trailing space looks different there.
 
 > A related trap: `config.toml` has no `ui.delimiter_style`/`ui.delimiters` keys. Segment separators are theme-only — edit the theme file's `[ui.segment_open]` / `[ui.segment_close]` tables or a segment's own `format` string instead — see [Configuration Examples: Build a powerline-style prompt](configuration-examples.md#goal-build-a-powerline-style-prompt) for a worked example.
 

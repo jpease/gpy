@@ -29,20 +29,12 @@ pub enum OneshotKind {
     Duration,
     /// Prompt character rendering.
     Character,
-    /// Hostname rendering.
-    Hostname,
-    /// Username rendering.
-    Username,
     /// Status (exit-status pill) rendering.
     ExitStatus,
 }
 
 /// Oneshot request as parsed from CLI args or JSON.
 #[derive(Debug, Serialize, Deserialize)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent wire-protocol flags, not a state machine"
-)]
 pub struct OneshotRequest {
     /// Which handler should serve this request.
     #[serde(rename = "type")]
@@ -67,18 +59,6 @@ pub struct OneshotRequest {
     /// Whether the last command succeeded; `None` (non-character/status requests) means `false`.
     #[serde(default)]
     pub success: Option<bool>,
-    /// The hostname to render; `None` (non-hostname requests) means empty.
-    #[serde(default)]
-    pub hostname: Option<String>,
-    /// Whether the session is over SSH; gates the theme icon like IPC `is_ssh`.
-    #[serde(default)]
-    pub is_ssh: bool,
-    /// The effective username to render; `None` (non-username requests) means empty.
-    #[serde(default)]
-    pub username: Option<String>,
-    /// Whether the session runs as root; picks the username style like IPC `is_root`.
-    #[serde(default)]
-    pub is_root: bool,
 }
 
 /// Empty language list response body.
@@ -133,14 +113,6 @@ fn response_for(
         }),
         OneshotKind::Character => Some(Response::Character {
             success: request.success.unwrap_or(false),
-        }),
-        OneshotKind::Hostname => Some(Response::Hostname {
-            hostname: request.hostname.clone().unwrap_or_default(),
-            is_ssh: request.is_ssh,
-        }),
-        OneshotKind::Username => Some(Response::Username {
-            username: request.username.clone().unwrap_or_default(),
-            is_root: request.is_root,
         }),
         OneshotKind::ExitStatus => Some(Response::ExitStatus {
             success: request.success.unwrap_or(false),

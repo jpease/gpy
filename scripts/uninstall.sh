@@ -40,6 +40,7 @@ bin_dir="$HOME/.local/bin"
 agent_binary="$bin_dir/gpy-agent"
 cli_binary="$bin_dir/gpy"
 share_dir="$HOME/.local/share/gpy"
+bundled_plugins_dir="$gpy_config_dir/bundled-plugins"
 
 # Absolute XDG_RUNTIME_DIR, else the cache root (as paths.rs).
 runtime_root="$gpy_cache_dir"
@@ -197,7 +198,8 @@ echo "    - Zsh: $gpy_config_dir/zsh"
 echo "    - Fish: $fish_prompt_dir, $fish_conf_d, $fish_completions_dir/gpy*.fish"
 echo "  - Agent binary: $agent_binary (and gpy-agent.backup.* copies)"
 echo "  - CLI binary: $cli_binary (and gpy.backup.* copies)"
-echo "  - Kept shell scripts: $share_dir"
+echo "  - Bundled plugins (username, hostname): $bundled_plugins_dir"
+echo "  - Kept shell scripts and plugins: $share_dir"
 echo "  - Configuration: $gpy_config_dir"
 echo "  - Cache: $gpy_cache_dir"
 echo "  - Runtime: $runtime_root"
@@ -220,6 +222,7 @@ fi
 
 remove_dir "$gpy_config_dir/bash" "Removed bash integration files from $gpy_config_dir/bash"
 remove_dir "$gpy_config_dir/zsh" "Removed zsh integration files from $gpy_config_dir/zsh"
+remove_dir "$bundled_plugins_dir" "Removed bundled plugins from $bundled_plugins_dir"
 
 remove_dir "$fish_prompt_dir" "Removed prompt files from $fish_prompt_dir"
 
@@ -356,7 +359,7 @@ done
 if [ "$removed_backups" -gt 0 ]; then
     echo "Removed $removed_backups binary backup(s) from $bin_dir"
 fi
-remove_dir "$share_dir" "Removed kept shell scripts: $share_dir"
+remove_dir "$share_dir" "Removed kept shell scripts and plugins: $share_dir"
 
 remove_dir "$gpy_config_dir" "Removed configuration: $gpy_config_dir" "Configuration directory not found"
 remove_dir "$gpy_cache_dir" "Removed cache: $gpy_cache_dir" "Cache directory not found"

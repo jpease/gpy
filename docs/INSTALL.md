@@ -305,8 +305,9 @@ On Apple Silicon Macs running macOS 15 or later, and on Linux x86_64, Homebrew
 installs a prebuilt bottle. Anywhere else, Intel Macs included, the formula
 builds `gpy` and `gpy-agent` from the tagged source tarball, which pulls in
 Rust as a build dependency (the curl installer has prebuilt Intel binaries).
-Either way it installs the Fish, Zsh and Bash files under Homebrew's
-`share/gpy/{fish,zsh,bash}`.
+Either way it installs the Fish, Zsh and Bash files and the bundled `username`
+and `hostname` plugins under Homebrew's `share/gpy/{fish,zsh,bash,plugins}`;
+`gpy setup` copies the plugins to `~/.config/gpy/bundled-plugins`.
 It depends on none of the three shells and does not modify your dotfiles.
 Finish with:
 
@@ -327,7 +328,7 @@ the same for Fish, Zsh and Bash:
 ```bash
 gpy setup                    # your login shell ($SHELL)
 gpy setup --shell zsh        # a specific shell
-gpy setup --from <dir>       # script trees from a checkout (fish/, zsh/, bash/)
+gpy setup --from <dir>       # script trees and bundled plugins from a checkout (fish/, zsh/, bash/, plugins/)
 ```
 
 It:

@@ -182,12 +182,14 @@ fn starship_preset_loads_with_format_templates() {
         theme.segments.character.format.is_some(),
         "character format"
     );
-    assert!(theme.segments.hostname.format.is_some(), "hostname format");
-    // SSH-only like Starship; the shell's detect gates visibility.
-    assert!(
-        !theme.segments.hostname.show_always,
-        "starship preset hostname is SSH-only by default"
-    );
+    // `hostname` is a script segment: its globe belongs to the `ssh` variant.
+    let hostname = theme
+        .segments
+        .plugin
+        .get("hostname")
+        .expect("hostname style");
+    assert!(hostname.icon.is_none(), "the globe shows over SSH only");
+    assert_eq!(hostname.variant_icons.len(), 1, "{hostname:?}");
 
     assert!(theme.ui.two_line, "starship preset is two-line");
 

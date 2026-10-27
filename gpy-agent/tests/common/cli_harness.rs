@@ -171,6 +171,12 @@ impl CliTestEnv {
         self.config_dir().join("plugins")
     }
 
+    /// The repo's `plugins` tree (`username`, `hostname`), for
+    /// `GPY_BUNDLED_PLUGIN_DIR` where `gpy setup` would have installed it.
+    pub fn repo_bundled_plugins_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins")
+    }
+
     pub fn write_config(&self, config_toml: &str) -> io::Result<()> {
         fs::write(self.config_path(), config_toml)
     }

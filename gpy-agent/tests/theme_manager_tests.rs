@@ -115,23 +115,6 @@ bg_color = "magenta"
 text_color = "white"
 "#;
 
-// Theme with an explicit hostname format/icon/trim_at for testing the
-// Option-derived hostname exports (format/icon present-but-empty when unset
-// elsewhere; non-empty here).
-const HOSTNAME_THEME: &str = r##"
-[ui]
-prompt_icon = "❯"
-root_prompt_icon = "#"
-
-[segments.hostname]
-format = "[$hostname]($style) "
-icon = "🖥"
-bg_color = "blue"
-text_color = "white"
-trim_at = ""
-show_always = true
-"##;
-
 const PLUGIN_SEGMENT_THEME: &str = r##"
 [ui]
 prompt_icon = "→"
@@ -298,39 +281,6 @@ fn test_theme_manager_export_fish_format() {
     assert!(fish_output.contains("set -gx GPY_AGENT_SUPERVISOR_ENABLED \"1\""));
     assert!(fish_output.contains("set -gx GPY_LANGUAGE_ENABLED \"1\""));
     assert!(fish_output.contains("set -gx GPY_GIT_ENABLED \"1\""));
-}
-
-#[test]
-#[serial]
-fn test_theme_manager_export_hostname_format_and_icon_when_set() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_dir = temp_dir.path().join("gpy");
-
-    create_test_theme_toml(&config_dir, "hostname_export", HOSTNAME_THEME);
-
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    let manager = ThemeManager::new("hostname_export").unwrap();
-    let config = gpy_agent::config::Config::default();
-    let fish_output = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(fish_output.contains("set -g __color_hostname_bg \"blue\""));
-    assert!(fish_output.contains("set -g __color_hostname_fg \"white\""));
-    // trim_at = "" in this theme: disables trim, but must still be emitted.
-    assert!(fish_output.contains("set -g __hostname_trim_at \"\""));
-    assert!(fish_output.contains("set -g __hostname_show_always \"1\""));
-    // __hostname_format is a PRESENCE FLAG only ("1" when a format is
-    // configured), never the raw format string — the agent re-derives the
-    // real template server-side. Exporting the raw string into a
-    // double-quoted, eval'd shell assignment would be a shell-injection /
-    // `set -u` hazard (see manager.rs export comment).
-    assert!(fish_output.contains("set -g __hostname_format \"1\""));
-    assert!(!fish_output.contains("[$hostname]($style)"));
-    assert!(fish_output.contains("set -g __icon_hostname \"🖥\""));
 }
 
 #[test]

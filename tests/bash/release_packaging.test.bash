@@ -89,7 +89,11 @@ for entry in \
     docs/README.md \
     docs/LICENSE \
     docs/INSTALL.md \
-    docs/user/configuration-reference.md; do
+    docs/user/configuration-reference.md \
+    plugins/hostname/plugin.toml \
+    plugins/hostname/bin/hostname.sh \
+    plugins/username/plugin.toml \
+    plugins/username/bin/username.sh; do
     expect_entry "$tar_listing" "gpy-release.tar.gz" "gpy-release/$entry"
     expect_entry "$zip_listing" "gpy-release.zip" "gpy-release/$entry"
 done
@@ -178,21 +182,23 @@ sh -n "$OUT/install-oneline.sh" || fail "the stamped install-oneline.sh does not
 cmp -s "$ROOT/scripts/uninstall.sh" "$OUT/uninstall.sh" || fail "uninstall.sh asset differs from scripts/uninstall.sh"
 
 # gpy-shell-files.tar.gz is what install-oneline.sh unpacks and hands to
-# `gpy setup --from`: the three shell trees at the top level, matching the repo.
+# `gpy setup --from`: the three shell trees and the bundled plugins at the
+# top level, matching the repo.
 shell_listing="$(tar -tzf "$OUT/gpy-shell-files.tar.gz" 2>/dev/null || true)"
 for entry in \
     fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish fish/core/init.fish \
     fish/segments/git.fish fish/completions/gpy-dynamic.fish \
     zsh/gpy.zsh zsh/core/init.zsh zsh/segments/git.zsh zsh/completions/_gpy-dynamic \
-    bash/gpy.bash bash/core/init.bash bash/segments/git.bash bash/completions/gpy-dynamic.bash; do
+    bash/gpy.bash bash/core/init.bash bash/segments/git.bash bash/completions/gpy-dynamic.bash \
+    plugins/hostname/plugin.toml plugins/username/plugin.toml; do
     expect_entry "$shell_listing" "gpy-shell-files.tar.gz" "$entry"
 done
-if grep -vE '^(fish|zsh|bash)/' <<<"$shell_listing" | grep -q .; then
-    fail "gpy-shell-files.tar.gz holds entries outside fish/, zsh/ and bash/: $(grep -vE '^(fish|zsh|bash)/' <<<"$shell_listing")"
+if grep -vE '^(fish|zsh|bash|plugins)/' <<<"$shell_listing" | grep -q .; then
+    fail "gpy-shell-files.tar.gz holds entries outside fish/, zsh/, bash/ and plugins/: $(grep -vE '^(fish|zsh|bash|plugins)/' <<<"$shell_listing")"
 fi
 mkdir -p "$WORKDIR/shell-files"
 tar -xzf "$OUT/gpy-shell-files.tar.gz" -C "$WORKDIR/shell-files"
-for shell_dir in fish zsh bash; do
+for shell_dir in fish zsh bash plugins; do
     diff -r "$ROOT/$shell_dir" "$WORKDIR/shell-files/$shell_dir" >/dev/null ||
         fail "gpy-shell-files.tar.gz's $shell_dir/ differs from the repository's $shell_dir/"
 done

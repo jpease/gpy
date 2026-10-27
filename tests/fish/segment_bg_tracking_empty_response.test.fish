@@ -1,139 +1,88 @@
 #!/usr/bin/env fish
-# Test: hostname/username agent-resolved render paths with no usable agent
-# reply. An empty reply (agent down, disabled or late) or an `{"error":...}`
-# reply (an older agent) must draw the local pill — with its one leading
-# space — and advance __gpy_last_segment_bg to that pill's background, so the
-# segment never vanishes and the next chevron blends against what rendered.
+# Test: hostname/username (bundled G plugins) bg tracking. The plugin's
+# stored output decides visibility: no output hides the segment (detect fails,
+# __gpy_last_segment_bg untouched), so the next chevron never blends against a
+# pill that did not render. Shown, the pill tracks the background it actually
+# drew: the variant's (`ssh` / `root`) colour when one is exported, else the
+# segment's own.
 #
-# Both segments are opt-in (never in a theme's default __enabled_segments),
-# so this sources each segment file directly and drives it with stubbed
-# globals, mirroring hostname_segment.test.fish / username_segment.test.fish.
+# Sources fish/core/script.fish and drives the stored G state directly; the
+# runner itself is covered by script_segment_adapter.test.fish.
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 
-function gpy_section_standalone --argument-names bg fg content is_last
+source "$repo_root/fish/core/script.fish"
+
+function __gpy_section_pill --argument-names bg fg label
     set -g __test_pill_bg "$bg"
-    set -g __test_pill_content "$content"
-    printf LOCAL_PILL
+    set -g __test_pill_label "$label"
+    printf PILL
 end
 
-source "$repo_root/fish/segments/hostname.fish"
-source "$repo_root/fish/segments/username.fish"
+set -g __gpy_script_segments hostname username
+set -g __gpy_script_hostname_name hostname
+set -g __gpy_script_username_name username
+__gpy_g_sync
+__gpy_g_define_segment hostname
+__gpy_g_define_segment username
 
-set -g __gpy_is_ssh 0
-# Empty delimiter: no trim, so the local label is exactly " $hostname".
-set -g __hostname_trim_at ""
-set -g __icon_hostname ""
 set -g __color_hostname_bg blue
 set -g __color_hostname_fg white
+set -g __color_hostname_ssh_bg magenta
+set -g __icon_hostname ""
+set -g __color_username_bg yellow
+set -g __color_username_fg black
+set -g __color_username_root_bg red
 set -g __icon_username ""
-set -g __color_username_bg red
-set -g __color_username_fg white
-set -g USER root
-set -g __gpy_is_root 1
-set -g __hostname_format some-opaque-agent-side-value
-set -g __username_format some-opaque-agent-side-value
 
-# Renders hostname then username; records each output and the tracker after it.
-function __test_render_pair
-    set -g __test_pill_content ""
+# Renders one segment the way the prompt does: detect, then render.
+function __test_render --argument-names seg
+    set -g __test_pill_bg ""
+    set -g __test_pill_label ""
     set -g __gpy_last_segment_bg unchanged
-    set -g __test_host_out (segment_hostname_render "" | string collect)
-    segment_hostname_render "" >/dev/null
-    set -g __test_host_content "$__test_pill_content"
-    set -g __test_host_bg "$__gpy_last_segment_bg"
-
-    set -g __test_pill_content ""
-    set -g __gpy_last_segment_bg unchanged
-    set -g __test_user_out (segment_username_render last | string collect)
-    segment_username_render last >/dev/null
-    set -g __test_user_content "$__test_pill_content"
-    set -g __test_user_bg "$__gpy_last_segment_bg"
-end
-
-function __test_assert_local --argument-names label
-    if test "$__test_host_out" = LOCAL_PILL; and test "$__test_host_content" = " $hostname"
-        check "$label: hostname draws the local pill with one leading space" pass pass
-    else
-        check "$label: hostname draws the local pill with one leading space (got: '$__test_host_out' / '$__test_host_content')" pass fail
-    end
-    if test "$__test_host_bg" = blue
-        check "$label: hostname advances __gpy_last_segment_bg to its pill" pass pass
-    else
-        check "$label: hostname advances __gpy_last_segment_bg to its pill (got: '$__test_host_bg')" pass fail
-    end
-    if test "$__test_user_out" = LOCAL_PILL; and test "$__test_user_content" = " root"
-        check "$label: username draws the local pill with one leading space" pass pass
-    else
-        check "$label: username draws the local pill with one leading space (got: '$__test_user_out' / '$__test_user_content')" pass fail
-    end
-    if test "$__test_user_bg" = red
-        check "$label: username advances __gpy_last_segment_bg to its pill" pass pass
-    else
-        check "$label: username advances __gpy_last_segment_bg to its pill (got: '$__test_user_bg')" pass fail
+    set -g __test_out ""
+    if segment_{$seg}_detect
+        set -g __test_out (segment_{$seg}_render "" | string collect)
+        segment_{$seg}_render "" >/dev/null
     end
 end
 
-# --- no ipc.fish (agent disabled): the request helpers do not exist ---
+# --- no plugin output: hidden, tracker untouched ---
 
-__test_render_pair
-__test_assert_local "agent disabled"
-
-# --- real request helpers, agent unreachable (empty IPC reply) ---
-
-source "$repo_root/fish/core/constants.fish"
-source "$repo_root/fish/core/util.fish"
-source "$repo_root/fish/core/ipc.fish"
-
-function __gpy_ipc_send --argument-names payload timeout_ms
+for seg in hostname username
+    set -g __gpy_g_t_{$seg}_text ""
+    set -g __gpy_g_t_{$seg}_variant ""
+    __test_render $seg
+    check "$seg: empty plugin output hides the segment" "" "$__test_out"
+    check "$seg: empty plugin output leaves __gpy_last_segment_bg alone" unchanged "$__gpy_last_segment_bg"
 end
 
-__test_render_pair
-__test_assert_local "agent unreachable"
+# --- shown without a variant: the segment's own bg ---
 
-# --- real request helpers, older agent answers with an error ---
+set -g __gpy_g_t_hostname_text box
+__test_render hostname
+check "hostname: shown pill is drawn" PILL "$__test_out"
+check "hostname: label has one leading space" " box" "$__test_pill_label"
+check "hostname: tracks its own bg" blue "$__gpy_last_segment_bg"
 
-function __gpy_ipc_send --argument-names payload timeout_ms
-    echo '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'
-end
+set -g __gpy_g_t_username_text bob
+__test_render username
+check "username: tracks its own bg" yellow "$__gpy_last_segment_bg"
 
-__test_render_pair
-__test_assert_local "error reply"
+# --- shown with a variant: the variant's bg is drawn and tracked ---
 
-if not __gpy_request_hostname box "" "" 0 "" >/dev/null
-    check "__gpy_request_hostname: an error reply returns nonzero" pass pass
-else
-    check "__gpy_request_hostname: an error reply returns nonzero" pass fail
-end
-if not __gpy_request_username root "" "" 1 "" >/dev/null
-    check "__gpy_request_username: an error reply returns nonzero" pass pass
-else
-    check "__gpy_request_username: an error reply returns nonzero" pass fail
-end
+set -g __gpy_g_t_hostname_variant ssh
+__test_render hostname
+check "hostname ssh: pill uses the variant bg" magenta "$__test_pill_bg"
+check "hostname ssh: tracks the variant bg" magenta "$__gpy_last_segment_bg"
 
-# --- a rendered reply is still emitted verbatim and tracked ---
+set -g __gpy_g_t_username_text root
+set -g __gpy_g_t_username_variant root
+__test_render username
+check "username root: pill uses the variant bg" red "$__test_pill_bg"
+check "username root: tracks the variant bg" red "$__gpy_last_segment_bg"
 
-function __gpy_ipc_send --argument-names payload timeout_ms
-    echo SENTINEL
-end
-
-__test_render_pair
-if test "$__test_host_out" = SENTINEL; and test -z "$__test_host_content"; and test "$__test_host_bg" = blue
-    check "rendered reply: hostname emits the agent pill and tracks its bg" pass pass
-else
-    check "rendered reply: hostname emits the agent pill and tracks its bg (got: '$__test_host_out' / '$__test_host_content' / '$__test_host_bg')" pass fail
-end
-if test "$__test_user_out" = SENTINEL; and test -z "$__test_user_content"; and test "$__test_user_bg" = red
-    check "rendered reply: username emits the agent pill and tracks its bg" pass pass
-else
-    check "rendered reply: username emits the agent pill and tracks its bg (got: '$__test_user_out' / '$__test_user_content' / '$__test_user_bg')" pass fail
-end
-
-functions -e __gpy_ipc_send gpy_section_standalone
-set -e __hostname_format
-set -e __username_format
-
-test_finish "segment bg tracking (empty response) tests"
+test_finish "segment bg tracking (plugin output) tests"
