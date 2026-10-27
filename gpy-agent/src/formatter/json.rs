@@ -25,12 +25,6 @@ impl Formatter for JsonFormatter {
             Response::Character { success } | Response::ExitStatus { success } => {
                 json!({"success": success})
             }
-            Response::Hostname { hostname, is_ssh } => {
-                json!({"hostname": hostname, "is_ssh": is_ssh})
-            }
-            Response::Username { username, is_root } => {
-                json!({"username": username, "is_root": is_root})
-            }
             Response::Error { message } => json!({"error": message}),
         };
 
@@ -176,20 +170,6 @@ mod tests {
             (
                 Response::ExitStatus { success: true },
                 r#"{"success":true}"#,
-            ),
-            (
-                Response::Hostname {
-                    hostname: "box".to_owned(),
-                    is_ssh: true,
-                },
-                r#"{"hostname":"box","is_ssh":true}"#,
-            ),
-            (
-                Response::Username {
-                    username: "me".to_owned(),
-                    is_root: true,
-                },
-                r#"{"is_root":true,"username":"me"}"#,
             ),
             (
                 Response::Error {

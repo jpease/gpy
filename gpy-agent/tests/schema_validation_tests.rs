@@ -337,7 +337,7 @@ mod schema_files {
         let mut sites = Vec::new();
         collect_format_properties(&schema, &mut sites);
         assert!(
-            sites.len() >= 8,
+            sites.len() >= 7,
             "expected many format sites: {}",
             sites.len()
         );
@@ -391,7 +391,7 @@ mod schema_files {
             .captures_iter(table)
             .map(|c| c[1].to_owned())
             .collect();
-        assert!(ops.len() >= 15, "op table parse found only {ops:?}");
+        assert!(ops.len() >= 14, "op table parse found only {ops:?}");
         ops
     }
 
@@ -549,28 +549,8 @@ mod schema_files {
                 r#"{"op":"character","success":true,"format":"zsh-prompt"}"#,
             ),
             (
-                "hostname",
-                r#"{"op":"hostname","hostname":"box","format":"ansi"}"#,
-            ),
-            (
-                "hostname",
-                r#"{"op":"hostname","hostname":"box","format":"ansi","is_ssh":true}"#,
-            ),
-            (
-                "hostname",
-                r#"{"op":"hostname","hostname":"box","format":"ansi","is_first":true}"#,
-            ),
-            (
                 "exit_status",
                 r#"{"op":"exit_status","success":false,"format":"zsh-prompt","is_last":true,"is_first":true,"prev_bg":"red"}"#,
-            ),
-            (
-                "username",
-                r#"{"op":"username","username":"me","format":"ansi"}"#,
-            ),
-            (
-                "username",
-                r#"{"op":"username","username":"root","format":"ansi","is_root":true}"#,
             ),
             ("ping", r#"{"op":"ping"}"#),
             ("status", r#"{"op":"status"}"#),
@@ -612,8 +592,8 @@ mod schema_files {
         // The retired format name is rejected by the schema and the agent.
         let stale = json(r#"{"op":"git","cwd":".","format":"fish-ansi"}"#);
         assert!(!validate(&schema, &schema, &stale));
-        // `is_ssh` is a bare boolean.
-        let bad = r#"{"op":"hostname","hostname":"box","is_ssh":"yes"}"#;
+        // `success` is a bare boolean.
+        let bad = r#"{"op":"character","success":"yes"}"#;
         assert!(
             !validate(&schema, &schema, &json(bad)),
             "schema accepts {bad}"
@@ -699,20 +679,6 @@ mod schema_files {
             (
                 "exit_status",
                 render_json(&Response::ExitStatus { success: false }),
-            ),
-            (
-                "hostname",
-                render_json(&Response::Hostname {
-                    hostname: "h".to_owned(),
-                    is_ssh: true,
-                }),
-            ),
-            (
-                "username",
-                render_json(&Response::Username {
-                    username: "u".to_owned(),
-                    is_root: true,
-                }),
             ),
             (
                 "clock",

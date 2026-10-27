@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<variant>_text_color`, exported as
   `__gpy_segment_<token>_variant_<variant>_bg_color`/`_text_color` so
   variant `open`/`close` cannot overwrite the cap colours.
+- The agent IPC no longer accepts the `hostname` and `username` ops or
+  produces their `Hostname`/`Username` replies (#1077); both segments are
+  bundled G plugins since #1003. Shells shipped since then never send them,
+  and an older shell that does gets `{"error":...}` and falls back.
 
 ### Changed
 

@@ -192,40 +192,6 @@
     {
       "type": "object",
       "required": [
-        "hostname"
-      ],
-      "properties": {
-        "hostname": {
-          "type": "string"
-        },
-        "is_ssh": {
-          "type": "boolean",
-          "description": "Whether the requesting client's session is over SSH"
-        }
-      },
-      "title": "Hostname",
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
-        "username"
-      ],
-      "properties": {
-        "username": {
-          "type": "string"
-        },
-        "is_root": {
-          "type": "boolean",
-          "description": "Whether the requesting client's session runs as root"
-        }
-      },
-      "title": "Username",
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
         "status"
       ],
       "properties": {

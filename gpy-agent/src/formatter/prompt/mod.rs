@@ -1,7 +1,5 @@
 //! Template-rendered ANSI prompt formatter. Segments without a `format` (or
 //! whose template errors) emit nothing; [`PromptDialect`] selects text escaping.
-//! `username` and `hostname` are script segments the shells draw themselves, so
-//! their protocol replies render nothing here.
 
 use crate::Result;
 use crate::formatter::character_resolver::CharacterResolver;
@@ -90,10 +88,7 @@ impl Formatter for PromptFormatter {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
                 String::new()
             }
-            Response::Ack
-            | Response::AgentStatus { .. }
-            | Response::Hostname { .. }
-            | Response::Username { .. } => String::new(),
+            Response::Ack | Response::AgentStatus { .. } => String::new(),
         };
         Ok(rendered)
     }

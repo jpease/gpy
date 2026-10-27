@@ -10,8 +10,6 @@ pub const CONFIG_RELOAD_JSON: &str = r#"{"op":"config_reload"}"#;
 
 /// Longest accepted `prev_bg` color.
 const MAX_PREV_BG_LEN: usize = 64;
-/// Longest accepted client-supplied hostname or username.
-const MAX_IDENTITY_LEN: usize = 256;
 /// Longest accepted `shell_version`.
 const MAX_SHELL_VERSION_LEN: usize = 64;
 
@@ -125,12 +123,6 @@ pub fn validate_message_content(msg: &Message) -> Result<()> {
         validate_string_field("prev_bg", bg, MAX_PREV_BG_LEN)?;
     }
     match msg {
-        Message::HostnameRequest { hostname, .. } => {
-            validate_string_field("hostname", hostname, MAX_IDENTITY_LEN)
-        }
-        Message::UsernameRequest { username, .. } => {
-            validate_string_field("username", username, MAX_IDENTITY_LEN)
-        }
         Message::RegisterClient {
             shell_version: Some(version),
             ..
@@ -202,10 +194,6 @@ pub fn encode_reply_newlines(payload: &str) -> std::borrow::Cow<'_, str> {
 
 /// Flat shell-side message format keyed by `op`; absent flags read as `false`.
 #[derive(Debug, Deserialize)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each bool is a distinct wire flag of the flat protocol"
-)]
 struct ShellIpcMessage {
     op: String,
     cwd: Option<String>,
@@ -222,12 +210,6 @@ struct ShellIpcMessage {
     #[serde(default)]
     success: bool,
     prev_bg: Option<String>,
-    hostname: Option<String>,
-    #[serde(default)]
-    is_ssh: bool,
-    username: Option<String>,
-    #[serde(default)]
-    is_root: bool,
     virtual_env: Option<String>,
 }
 
@@ -271,16 +253,6 @@ impl ShellIpcMessage {
             }),
             "character" => Ok(Message::CharacterRequest {
                 success: self.success,
-                segment,
-            }),
-            "hostname" => Ok(Message::HostnameRequest {
-                hostname: self.hostname.unwrap_or_default(),
-                is_ssh: self.is_ssh,
-                segment,
-            }),
-            "username" => Ok(Message::UsernameRequest {
-                username: self.username.unwrap_or_default(),
-                is_root: self.is_root,
                 segment,
             }),
             // Not "status": that op is the agent health check.
