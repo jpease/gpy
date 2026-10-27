@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # tests/bash/script_runner_source.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck disable=SC2015  # pass never fails, so A && pass || fail is if/else
+# shellcheck disable=SC2016  # the planted text must stay literal
 #
 # Source rules for the script (G) segment runner, bash/core/g_runner.bash:
 #   (a) zsh/core and fish/core hold byte-identical copies (they run it in a

@@ -344,6 +344,9 @@ mod tests {
         );
     }
 
+    // Unix-only: the fixture PATH uses `:` separators and `/`-rooted entries,
+    // which `split_paths`/`is_absolute` treat differently on Windows.
+    #[cfg(unix)]
     #[test]
     fn clean_env_keeps_only_documented_names() {
         let parent = [

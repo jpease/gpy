@@ -193,7 +193,21 @@ variant that runs it then exceeds its budget, and the script exits 1.
 
 The deadline itself (T + 50 ms grace + 30 ms at p99, with a hung and a
 TERM-ignoring script) is a test, not a benchmark:
-`tests/bash/script_segment_deadline.test.bash`.
+`tests/bash/script_segment_deadline.test.bash`. That p99 bound is the
+quiet-host acceptance of ADR-0011 Spike 2; shared CI runners miss it on load
+alone (macOS runners at load1 ~3: Bash 5 p50 206 ms, p99 286 ms). So the test
+has two modes, set by `GPY_STRICT_DEADLINE`:
+
+- `1` (the default outside CI): the strict p99 bound fails the test.
+- `0` (the default when `CI` is set, so in the gating shell suite): the test
+  prints the p99 as a `NOTE` and fails only on a real hang, any prompt over
+  T + 500 ms. The hard checks hold in both modes: no prompt before T, the fast
+  segment shown, both hung ones hidden, no script process left.
+
+The non-gating Performance job in `.github/workflows/pr-gate.yml` runs the
+test with `GPY_STRICT_DEADLINE=1` on ubuntu, writes the output to the step
+summary and uploads it as `deadline-strict.txt`. Locally, on a quiet machine,
+`bash tests/bash/script_segment_deadline.test.bash` runs strict.
 
 Numbers and their sources:
 

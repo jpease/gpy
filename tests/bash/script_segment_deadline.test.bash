@@ -4,11 +4,18 @@
 #
 # The script (G) segment deadline in every shell's real adapter (ADR-0011
 # item 6): a due prompt whose batch holds a hung script, one that ignores
-# TERM and keeps its stdout, and a fast one, all with timeout_ms T, draws
-# its prompt within T + 50 ms grace + 30 ms at p99 (nearest rank over RUNS
-# due prompts per shell), and never before T (the scripts really ran). The
-# fast segment still shows, both hung ones are hidden, and no script process
-# survives. A latency test, not a benchmark: scripts/ci-bench.sh measures cost.
+# TERM and keeps its stdout, and a fast one, all with timeout_ms T, never
+# draws before T (the scripts really ran), the fast segment still shows, both
+# hung ones are hidden, and no script process survives. A latency test, not a
+# benchmark: scripts/ci-bench.sh measures cost.
+#
+# Two latency bounds. Strict: p99 (nearest rank over RUNS due prompts per
+# shell) within T + 50 ms grace + 30 ms, the quiet-host acceptance of
+# ADR-0011 Spike 2. Hang: every prompt within T + 500 ms, which only a missed
+# deadline breaks. GPY_STRICT_DEADLINE=1 enforces both; 0 enforces the hang
+# bound and only reports strict. The default is 1, or 0 under CI: shared
+# runners (macOS above all) are too noisy for strict. The non-gating
+# Performance job in pr-gate.yml runs this test with GPY_STRICT_DEADLINE=1.
 #
 # Shells: this Bash, /bin/bash when it is another version (macOS 3.2: the
 # timer-group path), Zsh and Fish with their default runner child and, where
@@ -34,6 +41,13 @@ T_MS=100
 GRACE_MS=50
 MARGIN_MS=30
 BOUND_US=$(((T_MS + GRACE_MS + MARGIN_MS) * 1000))
+HANG_MS=500
+HANG_US=$(((T_MS + HANG_MS) * 1000))
+if [[ -n "${CI:-}" ]]; then
+    STRICT="${GPY_STRICT_DEADLINE:-0}"
+else
+    STRICT="${GPY_STRICT_DEADLINE:-1}"
+fi
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-g-deadline.XXXXXX")"
 T="$(cd "$T" && pwd -P)"
@@ -100,6 +114,7 @@ write_export() {
         done
         # shellcheck disable=SC2059
         printf "$list" __gpy_script_segments '"lat_fast" "lat_hung" "lat_ign"'
+        # shellcheck disable=SC2059  # $assign is the per-shell format
         case "$kind" in
             fish) printf 'set -g __enabled_segments lat-fast lat-hung lat-ign\n' ;;
             *) printf "$assign" __enabled_segments "lat-fast lat-hung lat-ign" ;;
@@ -204,13 +219,15 @@ load1() {
     fi
 }
 
+# pgrep -c is not on macOS; the [s] keeps grep from matching itself.
+# shellcheck disable=SC2009
 survivors() {
     ps -axo command= | grep -c "[s]leep $MARK"
 }
 
 # run_shell LABEL CMD...: RUNS due prompts in CMD, timed from here.
 run_shell() {
-    local label="$1" line now t0="" us bad="" load_before
+    local label="$1" line now t0="" bad="" load_before
     shift
     local -a samples=()
     load_before="$(load1)"
@@ -235,13 +252,21 @@ run_shell() {
     mapfile -t sorted < <(printf '%s\n' "${samples[@]}" | sort -n)
     # Nearest rank: the ceil(0.99 * n)-th smallest sample.
     local rank=$(((99 * RUNS + 99) / 100))
-    local p99=${sorted[rank - 1]} p50=${sorted[(RUNS - 1) / 2]} min=${sorted[0]}
+    local p99=${sorted[rank - 1]} p50=${sorted[(RUNS - 1) / 2]} min=${sorted[0]} max=${sorted[RUNS - 1]}
     local stats
-    stats="min $((min / 1000)).$(printf '%03d' $((min % 1000))) ms, p50 $((p50 / 1000)) ms, p99 $((p99 / 1000)).$(printf '%03d' $((p99 % 1000))) ms, n=$RUNS, load1 ${load_before:-?}->$(load1)"
+    stats="min $((min / 1000)).$(printf '%03d' $((min % 1000))) ms, p50 $((p50 / 1000)) ms, p99 $((p99 / 1000)).$(printf '%03d' $((p99 % 1000))) ms, max $((max / 1000)) ms, n=$RUNS, load1 ${load_before:-?}->$(load1)"
     if ((p99 <= BOUND_US)); then
         pass "$label: p99 within T+${GRACE_MS}+${MARGIN_MS} = $((BOUND_US / 1000)) ms ($stats)"
-    else
+    elif [[ "$STRICT" == 1 ]]; then
         fail "$label: p99 over T+${GRACE_MS}+${MARGIN_MS} = $((BOUND_US / 1000)) ms ($stats)"
+    else
+        printf 'NOTE: %s: p99 over T+%s+%s = %s ms, not enforced (GPY_STRICT_DEADLINE=0) (%s)\n' \
+            "$label" "$GRACE_MS" "$MARGIN_MS" "$((BOUND_US / 1000))" "$stats"
+    fi
+    if ((max <= HANG_US)); then
+        pass "$label: every prompt within T+${HANG_MS} = $((HANG_US / 1000)) ms (no hang)"
+    else
+        fail "$label: a prompt took over T+${HANG_MS} = $((HANG_US / 1000)) ms, the deadline was missed ($stats)"
     fi
     if ((min >= T_MS * 1000)); then
         pass "$label: no prompt before T = $T_MS ms (the scripts ran to the deadline)"
@@ -290,4 +315,4 @@ else
     test_skip_part "fish not installed"
 fi
 
-test_finish "script segment deadline: p99 within T + grace + 30 ms in every shell"
+test_finish "script segment deadline: no hang in every shell, p99 within T + grace + 30 ms where strict"

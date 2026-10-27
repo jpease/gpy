@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # tests/bash/script_segment_adapter.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck disable=SC2015  # pass never fails, so A && pass || fail is if/else
+# shellcheck disable=SC2009  # matching the full command line of a leaked sleep; pgrep is not portable here
+# shellcheck disable=SC1003  # the quotes are test data inside a $'...' string
+# shellcheck disable=SC2089,SC2090  # TEST_DECLARED holds hostile quotes as literal test data
 #
 # Script (G) segments in Bash (bash/core/g_segments.bash, g_runner.bash),
 # driven in this process through the real hooks, on whichever Bash runs the

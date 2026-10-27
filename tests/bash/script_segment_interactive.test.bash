@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # tests/bash/script_segment_interactive.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck disable=SC2015  # pass never fails, so A && pass || fail is if/else
+# shellcheck disable=SC2009  # matching the full command line of a leaked sleep; pgrep is not portable here
 #
 # Script (G) segments on a real interactive prompt (pty), in the Bash that
 # runs the test and in /bin/bash when that is another version (macOS 3.2):

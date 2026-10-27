@@ -507,6 +507,7 @@ if [ "${GPY_IS_ROOT:-0}" = 1 ]; then
     printf 'root\n'
 fi
 EOF
+  # shellcheck disable=SC2016  # $ expands in the generated script, not here
   printf '#!/bin/sh\n%s\nprintf '\''%%s gbc%%s\\n'\'' "${GPY_PWD##*/}" "$$"\n' "$delay" >"$p/bin/cwd.sh"
   # Export drops a plugin whose files are group- or world-writable.
   find "$G_DIR/plugins" -type d -exec chmod 755 {} +

@@ -1,4 +1,7 @@
 # shellcheck shell=bash
+# shellcheck disable=SC1007  # the `local s= p` form is intended
+# shellcheck disable=SC2034  # read discards fields into unused names on purpose
+# shellcheck disable=SC2209  # s=exit assigns the word exit, not a command
 # g_runner.bash - Runner for script (G) segments: runs the scripts and the
 # trigger scan under deadlines (ADR-0011 item 6, spike #1006 P2 and P5).
 #
@@ -61,6 +64,7 @@ __gpy_g_clock=
 [[ -n ${EPOCHREALTIME-} ]] && __gpy_g_clock=1
 # Runs in the script process as `sh -c PRO SCRIPT`: reads the exports on fd 3,
 # then sources the script, so $0 is the script path as with `sh SCRIPT`.
+# shellcheck disable=SC2016  # the script text must stay literal for the child sh
 __gpy_g_pro='__gpy_s=
 while IFS= read -r __gpy_l; do __gpy_s="$__gpy_s$__gpy_l
 "; done <&3
@@ -114,6 +118,7 @@ __gpy_g_prod() {
         fi
         if [[ -n $req ]]; then
             (exec -c -a sh "$sh" -c "$__gpy_g_pro" "$req" 3< <(printf '%s' "$pay") >/dev/null)
+            # shellcheck disable=SC2181  # status of the subshell above
             if [[ $? != 0 ]]; then
                 printf '\036%s q\036' "$tok"
                 exit 1
@@ -181,7 +186,7 @@ __gpy_g_batch() {
     while (($# >= 6 && k < 40)); do
         id=$1 ms=$2 cwd=$3 cmd=$4 req=$5 n=$6
         shift 6
-        [[ -n $n && $n != *[!0-9]* ]] && ((10#$n <= $#)) || break
+        if [[ -n $n && $n != *[!0-9]* ]] && ((10#$n <= $#)); then :; else break; fi
         n=$((10#$n))
         pay=$__gpy_g_basev
         for ((i = 0; i < n; i++)); do
@@ -222,7 +227,7 @@ __gpy_g_batch() {
             while :; do
                 if [[ -n $__gpy_g_clock ]]; then
                     left=${EPOCHREALTIME/[.,]/}
-                    left=$((${ds[m]} - 10#$left))
+                    left=$((ds[m] - 10#$left))
                     # Past the deadline: still take what is already in the pipe.
                     if ((left > 0)); then
                         printf -v rem '%d.%06d' $((left / 1000000)) $((left % 1000000))
@@ -306,9 +311,11 @@ __gpy_g_batch() {
                 {
                     trap '' INT HUP PIPE
                     "$__gpy_g_sleep" "$rem"
+                    # shellcheck disable=SC2086  # v may hold several pids
                     kill -KILL $v
                 } </dev/null >/dev/null 2>&1 &
             elif [[ -n $v ]]; then
+                # shellcheck disable=SC2086  # v may hold several pids
                 kill -KILL $v
             fi
         else

@@ -334,7 +334,7 @@ __gpy_g_run_due() {
         ttl=$__gpy_g_s
         __gpy_g_get "$tok" timeout
         ms=$__gpy_g_s
-        __gpy_g_isnum "$ttl" && __gpy_g_isnum "$ms" || continue
+        if __gpy_g_isnum "$ttl" && __gpy_g_isnum "$ms"; then :; else continue; fi
         __gpy_g_key "$tok" || continue
         if ((10#$ttl > 0)); then
             n="__gpy_g_ck_$tok"

@@ -69,6 +69,7 @@ typeset -a vectors=(
 )
 g_segment vec 'printf "$GPY_OPT_bytes"'
 __gpy_script_vec_ttl=0
+lc_all_before=${LC_ALL-unset}
 for loc in C C.UTF-8 en_US.UTF-8; do
     for (( i = 1; i <= ${#vectors}; i += 2 )); do
         oct=""
@@ -81,7 +82,7 @@ for loc in C C.UTF-8 en_US.UTF-8; do
     done
 done
 LC_ALL=C g_command
-check "the shell's own LC_ALL is left as it was" "" "${LC_ALL-}"
+check "the shell's own LC_ALL is left as it was" "$lc_all_before" "${LC_ALL-unset}"
 
 # --- prompt expansion in output ---------------------------------------------
 g_segment esc 'printf "%s" "$GPY_OPT_text"'

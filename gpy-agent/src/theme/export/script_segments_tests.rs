@@ -177,6 +177,8 @@ fn collect_resolves_an_enabled_script_segment_with_its_overrides() {
         require_env: vec!["KUBECONFIG".to_owned()],
     };
     assert_eq!(exports.segments, vec![expected]);
+    // `/bin/sh` is only absolute under Unix path rules.
+    #[cfg(unix)]
     assert!(Path::new(&exports.sh).is_absolute(), "{}", exports.sh);
 }
 

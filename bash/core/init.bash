@@ -215,6 +215,7 @@ __gpy_precmd() {
 # (no `\#` expansion), so it is needed then even without a duration clock.
 __gpy_needs_debug_trap() {
     [[ $__gpy_duration_method != "none" ]] && return 0
+    # shellcheck disable=SC2154  # set by g_segments.bash
     [[ -z "$__gpy_g_cmdno" ]] && ((${#__gpy_g_toks[@]}))
 }
 
@@ -228,6 +229,7 @@ __gpy_segment_would_render() {
     local omit_fn="__gpy_segment_${segment}_omit"
 
     if __gpy_g_word_tok "$segment"; then
+        # shellcheck disable=SC2154  # set by g_segments.bash
         __gpy_g_visible "$__gpy_g_wt"
         return
     fi
@@ -308,6 +310,7 @@ __gpy_render_prompt() {
             ((segment_index == segment_count - 1)) && g_last="true"
             ((segment_index == 0)) && g_first="true"
             __gpy_g_render "$__gpy_g_wt" "$g_last" "$g_first"
+            # shellcheck disable=SC2154  # set by g_segments.bash
             prompt_output+="$__gpy_g_rout"
             [[ -n "$__gpy_g_rbg" ]] && prev_bg="$__gpy_g_rbg"
             ((segment_index += 1))
