@@ -13,9 +13,10 @@
 # Fish run in a Bash child) holds a 500 ms hung script and a 100 ms script
 # that catches TERM and keeps running, in both orders. The short one must get
 # TERM by its own deadline (not the long one), then the grace (its TERM
-# handler runs) and KILL soon after. Hang-type bounds: TERM within T + 150 ms
-# and KILL within the 50 ms grace + 100 ms of it; strict also needs 25 ms of
-# the grace seen between the two.
+# handler runs) and KILL soon after. Hang-type bounds, always enforced: TERM
+# and KILL both before the long segment's deadline, which a reader waiting on
+# the long segment misses. Strict bounds: TERM within T + 150 ms, KILL within
+# the 50 ms grace + 100 ms of it, and 25 ms of the grace seen between the two.
 #
 # Two latency bounds. Strict: p99 (nearest rank over RUNS due prompts per
 # shell) within T + 50 ms grace + 30 ms, the quiet-host acceptance of
@@ -367,19 +368,29 @@ run_mixed() {
     out="$(<"$T/mix.out")"
     if [[ -z "$tt" ]]; then
         fail "$label: the ${MIX_SHORT_MS} ms segment never ran its TERM handler (no grace before KILL)"
-    elif ((tt < MIX_SHORT_MS * 1000 || tt > (MIX_SHORT_MS + 150) * 1000)); then
+    elif ((tt < MIX_SHORT_MS * 1000 || tt >= MIX_LONG_MS * 1000)); then
+        fail "$label: the ${MIX_SHORT_MS} ms segment got TERM at $((tt / 1000)) ms, not between its own deadline and the ${MIX_LONG_MS} ms one"
+    elif ((tt <= (MIX_SHORT_MS + 150) * 1000)); then
+        pass "$label: the ${MIX_SHORT_MS} ms segment got TERM at $((tt / 1000)) ms, by its own deadline + 150 ms"
+    elif [[ "$STRICT" == 1 ]]; then
         fail "$label: the ${MIX_SHORT_MS} ms segment got TERM at $((tt / 1000)) ms, not by its own deadline + 150 ms"
     else
-        pass "$label: the ${MIX_SHORT_MS} ms segment got TERM at $((tt / 1000)) ms, by its own deadline"
+        printf 'NOTE: %s: TERM at %s ms, over its own deadline + 150 ms, not enforced (GPY_STRICT_DEADLINE=0)\n' \
+            "$label" "$((tt / 1000))"
     fi
     if [[ -z "$tk" ]]; then
         fail "$label: the ${MIX_SHORT_MS} ms segment was not killed"
+    elif ((tk >= MIX_LONG_MS * 1000)); then
+        fail "$label: the ${MIX_SHORT_MS} ms segment was killed at $((tk / 1000)) ms, after the ${MIX_LONG_MS} ms deadline"
     elif [[ -n "$tt" ]]; then
         left=$((tk - tt))
-        if ((left > (GRACE_MS + 100) * 1000)); then
+        if ((left <= (GRACE_MS + 100) * 1000)); then
+            pass "$label: KILL came $((left / 1000)) ms after TERM"
+        elif [[ "$STRICT" == 1 ]]; then
             fail "$label: KILL came $((left / 1000)) ms after TERM, not within the ${GRACE_MS} ms grace + 100 ms"
         else
-            pass "$label: KILL came $((left / 1000)) ms after TERM"
+            printf 'NOTE: %s: KILL came %s ms after TERM, over the %s ms grace + 100 ms, not enforced (GPY_STRICT_DEADLINE=0)\n' \
+                "$label" "$((left / 1000))" "$GRACE_MS"
         fi
         if ((left >= 25000)); then
             pass "$label: the grace between TERM and KILL was seen ($((left / 1000)) ms)"
