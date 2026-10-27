@@ -57,6 +57,31 @@
       "max_ms": 39.0,
       "description": "Zsh per-render cost (precmd_functions + PROMPT expansion, agent up)"
     },
+    "script_segments_bash": {
+      "target_ms": 12.0,
+      "max_ms": 30.0,
+      "description": "Bash: added to a due prompt by a cached session segment plus one ttl-0 run (also any hit), paired vs the same prompt without them; Bash 3.2 path includes its DEBUG trap"
+    },
+    "script_segments_zsh": {
+      "target_ms": 16.0,
+      "max_ms": 40.0,
+      "description": "Zsh: added to a due prompt by a cached session segment plus one ttl-0 run (also any hit or empty Enter), paired vs the same prompt without them"
+    },
+    "script_segments_fish": {
+      "target_ms": 14.0,
+      "max_ms": 40.0,
+      "description": "Fish: added to a due prompt by a cached session segment plus one ttl-0 run (also any hit or empty Enter), paired vs the same prompt without them"
+    },
+    "script_segments_shared": {
+      "target_ms": 17.0,
+      "max_ms": 45.0,
+      "description": "Any shell: added by every plugin segment of one prompt due together (both fixture segments run in one batch), paired vs the prompt without them"
+    },
+    "script_segment_scan": {
+      "target_ms": 8.0,
+      "max_ms": 20.0,
+      "description": "Any shell: added by one require_files scan child that misses (no run), paired vs the prompt without the segment"
+    },
     "memory_usage": {
       "target_mb": 15.0,
       "max_mb": 50.0,

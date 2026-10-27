@@ -241,8 +241,13 @@ against the matching Criterion benchmark:
 | Language Detection | `language_detection` | `lang_detect_5k` |
 
 `scripts/ci-bench.sh` enforces the prompt-render budgets (`prompt_render*`),
-`git_status_cold` on a synthetic repository, and the agent's resident memory
-(`memory_usage`, `memory_long_running`); see [benchmarking.md](benchmarking.md).
+the script-segment budgets (`script_segments_bash`, `script_segments_zsh`,
+`script_segments_fish`, the shared `script_segments_shared` for every plugin
+segment of a prompt due at once, and `script_segment_scan`), `git_status_cold`
+on a synthetic repository, and the agent's resident memory (`memory_usage`,
+`memory_long_running`); see [benchmarking.md](benchmarking.md). The
+script-segment budgets are what plugin segments *add* to a prompt (paired
+differences), not a whole render.
 
 ## Detecting Regressions
 
