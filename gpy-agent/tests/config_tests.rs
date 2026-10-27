@@ -121,6 +121,7 @@ fn test_ui_config_creation() {
         },
         enabled_segments: vec!["directory".to_owned(), "git".to_owned()],
         transient_prompt: true,
+        retire_unmodified_themes: true,
     };
 
     assert!(!ui_config.show_icons);
@@ -270,6 +271,7 @@ fn test_ui_config_theme_variations() {
             },
             enabled_segments: vec!["clock".to_owned(), "directory".to_owned()],
             transient_prompt: true,
+            retire_unmodified_themes: true,
         };
 
         assert_eq!(ui_config.theme.as_str(), theme);

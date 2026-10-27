@@ -66,6 +66,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `build-release-binaries.sh` | Build release binaries for every supported platform into `bin/`. |
 | `check-glibc-floor.sh <binary> <floor>` | Fail when a Linux binary needs a `GLIBC_` version above `<floor>`. |
 | `generate-sbom.sh` | CycloneDX SBOM from `Cargo.lock` (needs `jq`). |
+| `gen-released-theme-hashes.sh [--git-dir DIR]...` | Rewrite `gpy-agent/src/theme/released_hashes.rs`, the SHA-256 of every released builtin theme that `gpy setup` retires unedited copies of; run at each release and after a builtin theme change (see `docs/dev/releasing.md`). |
 | `package-release.sh` | Build the release archives and checksums; fails closed on any missing file. |
 | `release-notes.sh` | Release notes from the CHANGELOG section and the built assets. |
 | `smoke-release.sh` | Install and run the binaries a release is about to publish, in a sandboxed `HOME`. |

@@ -293,6 +293,9 @@ pub struct UiSettings {
     pub enabled_segments: Vec<String>,
     /// Collapse submitted prompts in scrollback (Fish 4.2+ and Zsh only).
     pub transient_prompt: bool,
+    /// Let `gpy setup` move a user theme file byte-identical to a released
+    /// builtin of the same name to `<name>.toml.bak`, so the builtin applies.
+    pub retire_unmodified_themes: bool,
 }
 
 impl Default for UiSettings {
@@ -304,6 +307,7 @@ impl Default for UiSettings {
             directory: DirectorySettings::default(),
             enabled_segments: DEFAULT_ENABLED_SEGMENTS.map(str::to_owned).to_vec(),
             transient_prompt: true,
+            retire_unmodified_themes: true,
         }
     }
 }

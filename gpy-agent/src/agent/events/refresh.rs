@@ -28,7 +28,8 @@ pub(super) fn config_refresh_required(old_config: &Config, new_config: &Config) 
         || agent_refresh_required(old_agent, new_agent)
 }
 
-/// All `UiSettings` fields affect rendering; shells learn `transient_prompt` from the theme export.
+/// Every `UiSettings` field but `retire_unmodified_themes` (read by `gpy setup`
+/// only) affects rendering; shells learn `transient_prompt` from the theme export.
 pub(super) fn ui_refresh_required(
     old: &crate::config::UiSettings,
     new: &crate::config::UiSettings,
@@ -40,6 +41,7 @@ pub(super) fn ui_refresh_required(
         directory: old_directory,
         enabled_segments: old_enabled_segments,
         transient_prompt: old_transient_prompt,
+        retire_unmodified_themes: _old_retire_unmodified_themes,
     } = old;
     let crate::config::UiSettings {
         show_icons: new_show_icons,
@@ -48,6 +50,7 @@ pub(super) fn ui_refresh_required(
         directory: new_directory,
         enabled_segments: new_enabled_segments,
         transient_prompt: new_transient_prompt,
+        retire_unmodified_themes: _new_retire_unmodified_themes,
     } = new;
 
     old_theme != new_theme

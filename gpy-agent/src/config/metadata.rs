@@ -318,6 +318,15 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         description: "Collapse submitted prompts to clock, prompt icon and command",
     },
     ConfigKeyMeta {
+        key: "ui.retire_unmodified_themes",
+        get: |c| c.ui.retire_unmodified_themes.to_string(),
+        set: Some(|c, v| {
+            c.ui.retire_unmodified_themes = parse_bool_field(v, "ui.retire_unmodified_themes")?;
+            Ok(())
+        }),
+        description: "Let gpy setup retire user copies of builtin themes that have no edits",
+    },
+    ConfigKeyMeta {
         key: "ui.theme",
         get: |c| c.ui.theme.to_string(),
         set: Some(|c, v| {

@@ -1176,6 +1176,12 @@ then `$SHELL`. `--from` names a directory holding the `fish/`, `zsh/` and
 binary, then the source checkout it was built in are tried. See
 [`gpy setup`](../INSTALL.md#gpy-setup) for the full list of steps.
 
+A theme file under `~/.config/gpy/themes/` named after a builtin theme replaces
+that builtin entirely. Setup moves one that is byte-identical to a released
+version of the builtin to `<name>.toml.bak` and reports it, so the builtin
+applies again; an edited copy or a symlink is kept and listed. Set
+`ui.retire_unmodified_themes` to `false` to keep every copy.
+
 The last step picks `ui.show_icons`: it detects whether a Nerd Font is
 installed and, on a terminal, shows a sample prompt line and asks whether the
 icons render (detection only sets the default answer). An existing config is

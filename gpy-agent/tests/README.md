@@ -44,7 +44,9 @@ to the code in `src/`.
   - `skip.rs` — `skip_test(reason)`.
   - `wait.rs` — `wait_until` / `wait_until_async`: poll a condition with a
     deadline.
-- `fixtures/` — the base16/Starship input files the import golden tests read.
+- `fixtures/` — the base16/Starship input files the import golden tests read,
+  and `released_themes/`, builtin themes as an older release shipped them
+  (theme retirement tests).
 - `snapshots/` — insta snapshots for the help and formatter tests.
 
 ## How the targets run

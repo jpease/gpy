@@ -33,6 +33,21 @@ Everything below runs on `main`, with a clean tree.
 
 2. **Bump the two version-bearing files** listed above to the same `X.Y.Z`.
 
+   Then record the builtin themes this version ships, so `gpy setup` can later
+   retire unedited user copies of them:
+
+   ```sh
+   scripts/gen-released-theme-hashes.sh
+   ```
+
+   It rewrites `gpy-agent/src/theme/released_hashes.rs`, labelling builtin
+   bytes no tag has shipped yet with the new `vX.Y.Z`; commit the result with
+   the bump. Existing entries are kept, including the v0.1.0–v0.3.1 ones read
+   once from the pre-squash mirror (`--git-dir <mirror>.git`). Between
+   releases, a change to `config/themes/*.toml` needs a run too (labelled
+   `unreleased`): `theme::retire`'s
+   `every_current_builtin_is_in_the_released_table` test fails until then.
+
 3. **Close the CHANGELOG section.** Rename `## [Unreleased]` work into a
    `## [X.Y.Z] - YYYY-MM-DD` heading and **replace `YYYY-MM-DD` with the real
    release date** in ISO form. The placeholder is deliberate — it is greppable,
