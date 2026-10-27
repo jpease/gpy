@@ -1,5 +1,6 @@
 //! `gpy doctor`: agent, config, theme, segment, plugin and binary checks.
 
+use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
 use super::utils::agent_binary;
 use crate::commands::output::{self, Status};
 use crate::commands::validation::FailureKind;
@@ -214,12 +215,21 @@ fn check_segments(enabled_segments: &[String], discovery: &crate::plugin::Plugin
         true
     } else {
         output::fail("Unrecognized segments found");
-        for seg in invalid {
+        let bundled_dir = crate::plugin::bundled_plugins_dir();
+        let (uninstalled, unknown): (Vec<_>, Vec<_>) = invalid
+            .into_iter()
+            .partition(|seg| is_uninstalled_bundled(seg, &bundled_dir));
+        for seg in uninstalled.iter().chain(&unknown) {
             output::detail_at(2, format_args!("- '{seg}'"));
         }
-        output::detail(
-            "Remediation: Check for typos in `enabled_segments` or ensure the providing plugin is installed.",
-        );
+        if !uninstalled.is_empty() {
+            output::detail(SETUP_REMEDIATION);
+        }
+        if !unknown.is_empty() {
+            output::detail(
+                "Remediation: Check for typos in `enabled_segments` or ensure the providing plugin is installed.",
+            );
+        }
         false
     }
 }

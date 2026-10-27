@@ -1020,6 +1020,35 @@ enabled_segments = ["language", "directory", "git"]
 }
 
 #[test]
+fn doctor_points_uninstalled_bundled_segments_at_setup() {
+    let env = CliTestEnv::with_config(
+        "[ui]\nenabled_segments = [\"username\", \"usrname\", \"directory\"]\n",
+    )
+    .expect("Failed to create isolated CLI test environment");
+    let empty_bundled = env.config_dir().join("empty-bundled");
+    fs::create_dir_all(&empty_bundled).expect("Failed to create empty bundled dir");
+
+    let output = env
+        .run_gpy_with_env(
+            &["doctor"],
+            &[("GPY_BUNDLED_PLUGIN_DIR", empty_bundled.as_path())],
+        )
+        .expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("Unrecognized segments found"),
+        "missing bundled plugin must stay a failure: {output:?}"
+    );
+    assert!(
+        output.stdout.contains("Remediation: Run `gpy setup`"),
+        "bundled segment must point at `gpy setup`: {output:?}"
+    );
+    assert!(
+        output.stdout.contains("Check for typos"),
+        "a genuinely unknown segment keeps the typo remediation: {output:?}"
+    );
+}
+
+#[test]
 fn doctor_reports_unknown_config_key() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     fs::write(env.config_path(), "[git]\nenabeld = true\n").expect("Failed to write config");
