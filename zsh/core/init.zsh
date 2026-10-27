@@ -84,6 +84,7 @@ function __gpy_load_cache_relay() {
 # Prefer the agent's cached theme-export file over forking `theme export`.
 function __gpy_load_theme() {
     local cache_path
+    __gpy_g_clear_styles
     cache_path=$(__gpy_theme_export_cache_path)
     if [[ -n "$cache_path" && -f "$cache_path" ]]; then
         source "$cache_path"
@@ -100,6 +101,10 @@ function __gpy_load_theme() {
 
 function __gpy_preexec() {
     __gpy_cmd_start_time=$((EPOCHREALTIME * 1000))
+    # preexec fires for a command, never for an empty Enter or Ctrl-C:
+    # script segments are due at the next prompt.
+    __gpy_g_due=1
+    __gpy_g_cmd_seen=1
 }
 
 add-zsh-hook preexec __gpy_preexec
@@ -175,7 +180,13 @@ function __gpy_sync_workspace() {
 # to print nothing (an _omit returning 0) must be rejected here or its
 # neighbour gets a dangling separator.
 function __gpy_segment_would_render() {
-    local seg=$1
+    local seg=$1 tok
+    # A script segment shows when its last run left text (decided here, before
+    # positions are fixed, so no neighbour keeps a dangling separator).
+    if __gpy_g_token "$seg" tok; then
+        [[ -n ${__gpy_g_text[$tok]-} ]]
+        return
+    fi
     if (( ! $+functions[__gpy_segment_$seg] )); then
         return 1
     fi
@@ -211,6 +222,10 @@ function __gpy_precmd() {
     if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
         __gpy_register_with_agent
     fi
+
+    # Script segments: once per command, here in this shell, never in the
+    # render subshell below (it inherits the stored text by fork).
+    __gpy_g_maybe_run
 
     __gpy_update_prompts $ret
 
@@ -253,7 +268,8 @@ function __gpy_render_prompt() {
     local segment_count=${#segments_to_render}
     local segment_index=1
     for seg in $segments_to_render; do
-        if (( $+functions[__gpy_segment_$seg] )); then
+        local g_tok=""
+        if __gpy_g_token "$seg" g_tok || (( $+functions[__gpy_segment_$seg] )); then
             local is_last=""
             if (( segment_index == segment_count )); then
                 is_last="true"
@@ -268,7 +284,10 @@ function __gpy_render_prompt() {
             local seg_out=""
             # Capture `$?` right after each `$(...)`, before any command overwrites it.
             local seg_status=0
-            if [[ "$seg" == "directory" ]]; then
+            if [[ -n "$g_tok" ]]; then
+                seg_out="$(__gpy_g_render "$g_tok" "$is_last" "$prev_bg" "$is_first")"
+                seg_status=$?
+            elif [[ "$seg" == "directory" ]]; then
                 # Memoized; a miss writes through the relay file.
                 local is_last_bool="${is_last:-false}"
                 local is_first_bool="${is_first:-false}"
@@ -296,8 +315,12 @@ function __gpy_render_prompt() {
             p+="$seg_out"
             if [[ -n "$seg_out" ]]; then
                 # Out-var call: no fork on the hot path.
-                local seg_bg=""
-                __gpy_segment_bg "$seg" seg_bg
+                local seg_bg="" seg_fg=""
+                if [[ -n "$g_tok" ]]; then
+                    __gpy_g_colors "$g_tok" seg_bg seg_fg
+                else
+                    __gpy_segment_bg "$seg" seg_bg
+                fi
                 [[ -n "$seg_bg" ]] && prev_bg="$seg_bg"
             fi
         fi

@@ -39,19 +39,6 @@ set -g __clock_format ""
 set -g __duration_threshold_ms "100"
 set -g __color_directory_bg "black"
 set -g __color_duration_bg "black"
-set -g __color_hostname_bg "black"
-set -g __color_hostname_fg "white"
-set -g __hostname_trim_at "."
-set -g __hostname_show_always "0"
-set -g __hostname_format ""
-set -g __icon_hostname ""
-set -g __color_username_bg "red"
-set -g __color_username_fg "white"
-set -g __color_username_user_bg "yellow"
-set -g __color_username_user_fg "black"
-set -g __username_show_always "0"
-set -g __username_format ""
-set -g __icon_username ""
 set -e __icon_status_ok
 set -e __icon_status_fail
 set -g __color_status_ok_bg "green"
@@ -74,5 +61,7 @@ set -g __segment_delimiter_color "white"
 set -g __segment_delimiter_bg "transparent"
 set -g __prompt_base_bg "normal"
 set -g __prompt_base_fg "normal"
+set -g __gpy_script_sh "/bin/sh"
+set -g __gpy_script_segments
 set -g __enabled_segments clock duration language directory git
 set -g __gpy_lang_marker_files .ruby-version CMakeLists.txt Cargo.toml Gemfile Makefile Package.swift Pipfile Rakefile build.gradle build.gradle.kts composer.json go.mod go.sum mix.exs package.json pom.xml pyproject.toml rebar.config requirements.txt setup.cfg setup.py tox.ini tsconfig.json

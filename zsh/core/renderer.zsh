@@ -69,12 +69,19 @@ function __gpy_sgr_pair() {
 }
 
 # CONTENT is PROMPT source; escape data with __gpy_prompt_escape first.
+# Optional $6 names per-segment caps that replace the theme's delimiters at
+# every position: `o` takes the opening cap from $7 (icon), $8 (fg), $9 (bg),
+# `c` the closing cap from $10, $11, $12 (script segments' `open`/`close`).
+# `d` (plugin pills) draws a last segment's theme close cap on the terminal
+# default background instead of the prompt_close bg.
 function __gpy_section_standalone() {
-    local bg=${1:-} fg=${2:-} content=${3-} is_last=${4:-} is_first=${5:-}
+    local bg=${1:-} fg=${2:-} content=${3-} is_last=${4:-} is_first=${5:-} caps=${6-}
     # `${var-default}` without colon: the default theme exports an empty first delimiter.
     local start_delim start_fg start_bg end_delim end_fg end_bg
 
-    if [[ $is_first == true ]]; then
+    if [[ $caps == *o* ]]; then
+        start_delim=${7-} start_fg=${8-} start_bg=${9-}
+    elif [[ $is_first == true ]]; then
         start_delim=${__segment_delim_first-|}
         start_fg=${__prompt_open_color-}
         start_bg=${__prompt_open_bg-}
@@ -85,10 +92,12 @@ function __gpy_section_standalone() {
     fi
     local -i last=0
     [[ $is_last == true || $is_last == last ]] && last=1
-    if ((last)); then
+    if [[ $caps == *c* ]]; then
+        end_delim=${10-} end_fg=${11-} end_bg=${12-}
+    elif ((last)); then
         end_delim=${__segment_delim_last-)}
         end_fg=${__prompt_close_color-}
-        end_bg=${__prompt_close_bg-}
+        if [[ $caps == *d* ]]; then end_bg=""; else end_bg=${__prompt_close_bg-}; fi
     else
         end_delim=${__segment_delim_end-]}
         end_fg=${__segment_delimiter_color-}

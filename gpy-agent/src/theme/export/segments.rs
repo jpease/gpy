@@ -156,8 +156,9 @@ pub(super) fn append_prompt_assignments(
 
 /// Built-in clock, directory, and duration segment settings.
 ///
-/// Directory/duration render from agent ANSI. `__clock_format` is a presence flag only
-/// (see hostname). Threshold and bg colors feed the shell's visibility gate and chevrons.
+/// Directory/duration render from agent ANSI. `__clock_format` is a presence flag only:
+/// the agent re-derives the template, and exporting it raw would allow shell injection.
+/// Threshold and bg colors feed the shell's visibility gate and chevrons.
 pub(super) fn append_builtin_segment_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -214,108 +215,6 @@ pub(super) fn append_builtin_segment_assignments(
             ShellAssignment::local(
                 "__color_duration_bg",
                 colors.resolve(&theme.segments.duration.bg_color),
-            ),
-        ],
-    );
-}
-
-/// Hostname segment colors, trimming, and template-path flags.
-/// `format`/`icon` are always assigned (empty when `None`) so the shell can `test -n`;
-/// [`Glyphs::Plain`] empties a private-use icon.
-pub(super) fn append_hostname_assignments(
-    output: &mut String,
-    colors: ShellColors<'_>,
-    theme: &ThemeConfig,
-    glyphs: Glyphs,
-) {
-    let shell = colors.shell;
-
-    append_shell_assignments(
-        output,
-        shell,
-        [
-            ShellAssignment::local(
-                "__color_hostname_bg",
-                colors.resolve(&theme.segments.hostname.bg_color),
-            ),
-            ShellAssignment::local(
-                "__color_hostname_fg",
-                colors.resolve(&theme.segments.hostname.text_color),
-            ),
-            ShellAssignment::local(
-                "__hostname_trim_at",
-                theme.segments.hostname.trim_at.as_str(),
-            ),
-            ShellAssignment::local(
-                "__hostname_show_always",
-                flag(theme.segments.hostname.show_always),
-            ),
-            // PRESENCE FLAG ONLY: the agent re-derives the template server-side.
-            // Exporting the raw format would allow shell injection and break `set -u`.
-            ShellAssignment::local(
-                "__hostname_format",
-                if theme.segments.hostname.format.is_some() {
-                    "1"
-                } else {
-                    ""
-                },
-            ),
-            ShellAssignment::local(
-                "__icon_hostname",
-                theme
-                    .segments
-                    .hostname
-                    .icon
-                    .as_ref()
-                    .and_then(|icon| glyphs.icon(icon.as_str()))
-                    .unwrap_or(""),
-            ),
-        ],
-    );
-}
-
-/// Username segment colors (root, then user) and template-path flags.
-/// `__username_format` is a presence flag only, same rationale as `__hostname_format`,
-/// set when either the root or the user format exists; the icon is handled as the hostname's.
-pub(super) fn append_username_assignments(
-    output: &mut String,
-    colors: ShellColors<'_>,
-    theme: &ThemeConfig,
-    glyphs: Glyphs,
-) {
-    let shell = colors.shell;
-    let username = &theme.segments.username;
-
-    append_shell_assignments(
-        output,
-        shell,
-        [
-            ShellAssignment::local("__color_username_bg", colors.resolve(&username.bg_color)),
-            ShellAssignment::local("__color_username_fg", colors.resolve(&username.text_color)),
-            ShellAssignment::local(
-                "__color_username_user_bg",
-                colors.resolve(&username.user_bg_color),
-            ),
-            ShellAssignment::local(
-                "__color_username_user_fg",
-                colors.resolve(&username.user_text_color),
-            ),
-            ShellAssignment::local("__username_show_always", flag(username.show_always)),
-            ShellAssignment::local(
-                "__username_format",
-                if username.format.is_some() || username.user_format.is_some() {
-                    "1"
-                } else {
-                    ""
-                },
-            ),
-            ShellAssignment::local(
-                "__icon_username",
-                username
-                    .icon
-                    .as_ref()
-                    .and_then(|icon| glyphs.icon(icon.as_str()))
-                    .unwrap_or(""),
             ),
         ],
     );

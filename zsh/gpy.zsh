@@ -5,7 +5,7 @@ GPY_ROOT=${0%/*}
 
 # Check every core file before sourcing any, so a partial install prints one
 # diagnostic instead of half-loading the prompt on every shell.
-for __gpy_core_file in constants renderer ipc signals supervisor init; do
+for __gpy_core_file in constants renderer ipc signals supervisor script init; do
     if [[ ! -f "$GPY_ROOT/core/$__gpy_core_file.zsh" ]]; then
         print -r -- "gpy[init]: core files not found at $GPY_ROOT - GPY disabled" >&2
         unset __gpy_core_file
@@ -19,11 +19,14 @@ source "$GPY_ROOT/core/renderer.zsh"
 source "$GPY_ROOT/core/ipc.zsh"
 source "$GPY_ROOT/core/signals.zsh"
 source "$GPY_ROOT/core/supervisor.zsh"
+source "$GPY_ROOT/core/script.zsh"
 
 source "$GPY_ROOT/core/init.zsh"
 
-# Load theme from agent (overrides defaults in constants.zsh)
+# Load theme from agent (overrides defaults in constants.zsh); script.zsh
+# cleared the `__gpy_script_*` names it reads first.
 __gpy_load_theme &>/dev/null
+__gpy_g_reload
 
 # Start only after the theme export set the flags; [agent.supervisor]
 # enabled = false disables restarts, not this start.

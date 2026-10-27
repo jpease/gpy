@@ -17,6 +17,7 @@ function __gpy_clear_render_memos() {
 # Runs from TRAPURG when the agent left a `<pid>.reload` flag.
 function __gpy_reload_config() {
     __gpy_load_theme &>/dev/null
+    __gpy_g_reload
     __gpy_clear_render_memos
 }
 

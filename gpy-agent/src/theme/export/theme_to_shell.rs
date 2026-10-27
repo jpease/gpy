@@ -3,10 +3,11 @@
 use super::plugin_segments::{
     append_plugin_segment_assignments, append_plugin_segment_file_assignments,
 };
+use super::script_segments::{ScriptSegmentExports, append_script_segment_assignments};
 use super::segments::{
     append_builtin_segment_assignments, append_delimiter_assignments,
-    append_git_language_color_assignments, append_global_assignments, append_hostname_assignments,
-    append_prompt_assignments, append_status_assignments, append_username_assignments,
+    append_git_language_color_assignments, append_global_assignments, append_prompt_assignments,
+    append_status_assignments,
 };
 use super::shell_assignment::push_line;
 use super::shell_colors::ShellColors;
@@ -84,22 +85,20 @@ fn append_lang_marker_files(output: &mut String, shell: Shell) {
 }
 
 /// Chevron-relevant segments and their `__color_*_bg` var, in Bash/Zsh case-arm order.
-/// `status` and `username` are handled separately: their bg depends on the previous
-/// exit status and on whether the session runs as root.
+/// `status` is handled separately: its bg depends on the previous exit status.
 pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
     ("git", "__color_git_clean_bg"),
     ("language", "__color_language_bg"),
     ("directory", "__color_directory_bg"),
     ("duration", "__color_duration_bg"),
     ("clock", "__color_clock_bg"),
-    ("hostname", "__color_hostname_bg"),
 ];
 
 /// Emit `__gpy_segment_bg` for Bash/Zsh (no-op for Fish).
 ///
 /// `__gpy_segment_bg SEG` prints to stdout; `__gpy_segment_bg SEG VAR` uses
 /// `printf -v` to avoid a subshell fork on the hot path.
-/// `status` picks ok/fail bg by `__gpy_last_status`, `username` root/user bg by `__gpy_is_root`.
+/// `status` picks ok/fail bg by `__gpy_last_status`.
 fn append_segment_bg_function(output: &mut String, shell: Shell) {
     if matches!(shell, Shell::Fish) {
         return;
@@ -115,22 +114,6 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
             format_args!("        {segment}) __gpy_sbg=\"${{{var}:-}}\" ;;"),
         );
     }
-    push_line(output, format_args!("        username)"));
-    push_line(
-        output,
-        format_args!("            if [[ \"${{__gpy_is_root:-0}}\" == \"1\" ]]; then"),
-    );
-    push_line(
-        output,
-        format_args!("                __gpy_sbg=\"${{__color_username_bg:-}}\""),
-    );
-    push_line(output, format_args!("            else"));
-    push_line(
-        output,
-        format_args!("                __gpy_sbg=\"${{__color_username_user_bg:-}}\""),
-    );
-    push_line(output, format_args!("            fi"));
-    push_line(output, format_args!("            ;;"));
     push_line(output, format_args!("        status)"));
     push_line(
         output,
@@ -160,9 +143,20 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
     push_line(output, format_args!("}}"));
 }
 
+/// The plugin data an export writes besides the theme: gathered from plugin
+/// discovery by the caller, so [`theme_to_shell`] stays a pure function.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PluginExports {
+    /// `.fish` segment files of `file` plugins by segment name (Fish only).
+    pub segment_files: BTreeMap<String, String>,
+    /// Enabled script segments, written for every shell.
+    pub scripts: ScriptSegmentExports,
+}
+
 /// Serialize a theme into shell assignments. Call order is the export contract,
 /// pinned by snapshots. Every assigned value is escaped once, in
-/// [`ShellAssignment::render`](super::shell_assignment::ShellAssignment::render), by
+/// [`ShellAssignment::render`](super::shell_assignment::ShellAssignment::render) or
+/// [`append_shell_list`](super::shell_assignment::append_shell_list), by
 /// [`escape_shell_value`](super::shell_assignment::escape_shell_value); colors are validated
 /// upstream and resolved against `palette` (see [`ShellColors`]).
 pub(crate) fn theme_to_shell(
@@ -171,7 +165,7 @@ pub(crate) fn theme_to_shell(
     config: &Config,
     shell: Shell,
     palette: &Palette,
-    plugin_segment_files: &BTreeMap<String, String>,
+    plugins: &PluginExports,
 ) -> String {
     let mut output = String::new();
     let colors = ShellColors { shell, palette };
@@ -182,15 +176,14 @@ pub(crate) fn theme_to_shell(
     append_prompt_assignments(&mut output, colors, theme);
 
     append_builtin_segment_assignments(&mut output, colors, theme);
-    append_hostname_assignments(&mut output, colors, theme, glyphs);
-    append_username_assignments(&mut output, colors, theme, glyphs);
     append_status_assignments(&mut output, colors, theme, glyphs);
     append_git_language_color_assignments(&mut output, colors, theme);
     append_delimiter_assignments(&mut output, colors, theme, glyphs);
 
-    append_plugin_segment_assignments(&mut output, colors, &theme.segments.plugin);
+    append_plugin_segment_assignments(&mut output, colors, glyphs, &theme.segments.plugin);
 
-    append_plugin_segment_file_assignments(&mut output, shell, plugin_segment_files);
+    append_plugin_segment_file_assignments(&mut output, shell, &plugins.segment_files);
+    append_script_segment_assignments(&mut output, shell, &plugins.scripts);
     append_enabled_segments(&mut output, shell, config);
     append_lang_marker_files(&mut output, shell);
     append_segment_bg_function(&mut output, shell);

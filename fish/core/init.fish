@@ -37,6 +37,7 @@ source $__prompt_dir/renderer.fish
 
 source $__prompt_dir/ipc.fish
 source $__prompt_dir/supervisor.fish
+source $__prompt_dir/script.fish
 
 function __gpy_load_default_config
     set -q __enabled_segments; or set -g __enabled_segments clock duration language directory git
@@ -72,7 +73,18 @@ function __gpy_initialize_icons
 end
 
 # Source the cached theme export (no fork), else spawn `gpy-agent theme export`.
+# The script segment list is erased first, so a failed export never leaves an
+# inherited or stale list; __gpy_g_sync adopts whatever the export assigned.
 function __gpy_apply_theme_export --description 'source the theme export cache or spawn the agent to produce it'
+    __gpy_g_clear_styles
+    set -e __gpy_script_segments
+    __gpy_source_theme_export
+    set -l export_status $status
+    __gpy_g_sync
+    return $export_status
+end
+
+function __gpy_source_theme_export
     set -l cache_path (__gpy_theme_export_cache_path)
     if test -n "$cache_path" -a -f "$cache_path"
         set -g __gpy_theme_export_mtime (__gpy_file_mtime "$cache_path")
@@ -106,7 +118,8 @@ function __gpy_plugin_segment_file_var --argument-names segment
     printf '__gpy_plugin_segment_file_%s\n' (string replace -a -- - _ "$segment" | string lower)
 end
 
-# Source one segment's file: built-in first, then the plugin file variable.
+# Source one segment's file: built-in first, then the plugin file variable,
+# then a script segment from the theme export (core/script.fish).
 function __gpy_source_segment --argument-names segment
     set -l segment_file $__gpy_core_dir/../segments/$segment.fish
     if test -f $segment_file
@@ -124,6 +137,8 @@ function __gpy_source_segment --argument-names segment
         __gpy_log_warn init "Plugin segment '$segment' missing file at $plugin_file"
         return 1
     end
+
+    __gpy_g_define_segment "$segment"; and return 0
 
     __gpy_log_warn init "Segment '$segment' not found at $segment_file"
     return 1
