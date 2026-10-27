@@ -129,6 +129,15 @@ function gpy_section_append --argument-names bg fg content
 end
 
 function gpy_section_standalone --argument-names bg fg content is_last
+    __gpy_section_pill "$bg" "$fg" "$content" "$is_last" 0 "" "" "" 0 "" "" ""
+end
+
+# gpy_section_standalone with optional per-segment caps (a theme's
+# `[segments.<id>.open]`/`.close]`): when has_open/has_close is 1, that cap's
+# icon replaces the position's delimiter, and a non-empty colour replaces the
+# delimiter colour. default_close_bg 1 (plugin pills) draws a last segment's
+# theme close cap on the terminal default background.
+function __gpy_section_pill --argument-names bg fg content is_last has_open open_icon open_fg open_bg has_close close_icon close_fg close_bg default_close_bg
     set -l start_delim
     set -l end_delim
     set -l start_fg
@@ -145,29 +154,35 @@ function gpy_section_standalone --argument-names bg fg content is_last
             set start_delim $__segment_delim_first
             set start_fg $__prompt_open_color
             set start_bg $__prompt_open_bg
-            if test "$is_last" = true -o "$is_last" = last
-                set end_delim $__segment_delim_last
-                set end_fg $__prompt_close_color
-                set end_bg $__prompt_close_bg
-            else
-                set end_delim $__segment_delim_end
-                set end_fg $__segment_delimiter_color
-                set end_bg $__segment_delimiter_bg
-            end
             set -g __gpy_segment_position middle
         case '*'
             set start_delim $__segment_delim_start
             set start_fg $__segment_delimiter_color
             set start_bg $__segment_delimiter_bg
-            if test "$is_last" = true -o "$is_last" = last
-                set end_delim $__segment_delim_last
-                set end_fg $__prompt_close_color
-                set end_bg $__prompt_close_bg
-            else
-                set end_delim $__segment_delim_end
-                set end_fg $__segment_delimiter_color
-                set end_bg $__segment_delimiter_bg
-            end
+    end
+    if test "$is_last" = true -o "$is_last" = last
+        set end_delim $__segment_delim_last
+        set end_fg $__prompt_close_color
+        if test "$default_close_bg" = 1
+            set end_bg ""
+        else
+            set end_bg $__prompt_close_bg
+        end
+    else
+        set end_delim $__segment_delim_end
+        set end_fg $__segment_delimiter_color
+        set end_bg $__segment_delimiter_bg
+    end
+
+    if test "$has_open" = 1
+        set start_delim $open_icon
+        test -n "$open_fg"; and set start_fg $open_fg
+        test -n "$open_bg"; and set start_bg $open_bg
+    end
+    if test "$has_close" = 1
+        set end_delim $close_icon
+        test -n "$close_fg"; and set end_fg $close_fg
+        test -n "$close_bg"; and set end_bg $close_bg
     end
 
     switch $start_fg

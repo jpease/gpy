@@ -9,10 +9,11 @@ use crate::import::starship::format::{
 };
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::warn::{WarningKind, Warnings};
+use crate::plugin::{VariantColorKey, VariantColorPart, VariantName};
 use crate::template::ast::Node;
 use crate::theme::{
-    CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, HostnameTheme,
-    RecommendedDirectory, UsernameTheme,
+    CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, PluginSegmentTheme,
+    RecommendedDirectory,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasher;
@@ -536,74 +537,149 @@ pub fn translate_time(table: &toml::value::Table, warnings: &mut Warnings) -> Cl
 /// Starship's default `ssh_symbol` for the `hostname` module.
 const STARSHIP_SSH_SYMBOL: &str = "🌐 ";
 
-/// Translate Starship's `hostname` module into a GPY hostname theme.
-///
-/// `$ssh_symbol` → `$symbol`; `ssh_only` inverts onto `show_always`.
-#[must_use]
-pub fn translate_hostname(table: &toml::value::Table, warnings: &mut Warnings) -> HostnameTheme {
-    let mut theme = HostnameTheme {
-        show_always: !table
-            .get("ssh_only")
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(true),
-        ..Default::default()
-    };
-    let raw_symbol = table
-        .get("ssh_symbol")
+/// `username` and `hostname` are script segments: a pill styled by colours and
+/// icons. A Starship `format` has no equivalent, so it is reported, never kept.
+fn report_format(table: &toml::value::Table, module: &str, warnings: &mut Warnings) {
+    if table.contains_key("format") {
+        warnings.push(
+            WarningKind::LossyMapping,
+            format!("{module}: format is not available to script segments; drawn as a pill"),
+        );
+    }
+}
+
+/// A behaviour option that is a plugin setting (`config.toml [plugin.<module>]`),
+/// which a theme cannot hold: reported with the command that sets it.
+fn report_setting(module: &str, option: &str, setting: &str, value: &str, warnings: &mut Warnings) {
+    warnings.push(
+        WarningKind::UnrepresentableOption,
+        format!(
+            "{module}: {option} is a setting, not a theme style; run `gpy config set plugin.{module}.{setting} {value}`"
+        ),
+    );
+}
+
+/// The pill colours of a Starship `style`: its foreground and background, a
+/// transparent background when it sets none. `None` (with a warning) when a
+/// colour is not representable.
+fn style_colors<S: BuildHasher>(
+    style: &str,
+    palette: Option<&HashMap<String, String, S>>,
+    label: &str,
+    warnings: &mut Warnings,
+) -> Option<(Option<ColorSpec>, ColorSpec)> {
+    match style_color(style, palette) {
+        StyleColor::Resolved { fg, bg } => Some((
+            fg.and_then(|color| ColorSpec::new(&color).ok()),
+            bg.and_then(|color| ColorSpec::new(&color).ok())
+                .unwrap_or_else(|| crate::config::defaults::literal("transparent")),
+        )),
+        StyleColor::Invalid(token) => {
+            warnings.push(
+                WarningKind::InvalidColor,
+                format!("{label} color '{token}' is invalid; kept default"),
+            );
+            None
+        }
+    }
+}
+
+fn module_style<'a>(table: &'a toml::value::Table, key: &str, default: &'a str) -> &'a str {
+    table
+        .get(key)
         .and_then(toml::Value::as_str)
-        .unwrap_or(STARSHIP_SSH_SYMBOL);
-    match Icon::new(raw_symbol) {
-        Ok(icon) => theme.icon = Some(icon),
-        Err(_) => warnings.push(
+        .unwrap_or(default)
+}
+
+/// Translate Starship's `hostname` module into the `hostname` script segment's style.
+///
+/// `ssh_symbol` becomes `ssh_icon` (the segment prints the variant `ssh` over
+/// SSH) and `style` the pill colours. `ssh_only = false` and `trim_at` are
+/// settings and `format` has no pill equivalent: each is reported.
+#[must_use]
+pub fn translate_hostname<S: BuildHasher>(
+    table: &toml::value::Table,
+    palette: Option<&HashMap<String, String, S>>,
+    warnings: &mut Warnings,
+) -> PluginSegmentTheme {
+    let mut theme = PluginSegmentTheme::default();
+    let raw_symbol = module_style(table, "ssh_symbol", STARSHIP_SSH_SYMBOL);
+    match (Icon::new(raw_symbol), VariantName::new("ssh")) {
+        (Ok(icon), Ok(ssh)) => {
+            theme.variant_icons.insert(ssh, icon);
+        }
+        _ => warnings.push(
             WarningKind::UnrepresentableOption,
             format!("hostname: ssh_symbol '{raw_symbol}' is invalid; skipped"),
         ),
     }
-    if let Some(trim_at) = table.get("trim_at").and_then(toml::Value::as_str) {
-        trim_at.clone_into(&mut theme.trim_at);
+    let style = module_style(table, "style", "bold dimmed green");
+    if let Some((fg, bg)) = style_colors(style, palette, "hostname", warnings) {
+        theme.text_color = fg;
+        theme.bg_color = Some(bg);
     }
-    let raw = table
-        .get("format")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("[$ssh_symbol$hostname]($style) in ");
-    let renamed = rename_vars(raw, &[("ssh_symbol", "symbol")]);
-    let inlined = inline_style_vars(
-        &renamed,
-        &with_default_style(table, "style", "bold dimmed green"),
-    );
-    let mapped = retain_known_vars(&inlined, &["hostname", "symbol"], "hostname", warnings);
-    theme.format = Some(mapped);
+    report_format(table, "hostname", warnings);
+    if table.get("ssh_only").and_then(toml::Value::as_bool) == Some(false) {
+        report_setting(
+            "hostname",
+            "ssh_only = false",
+            "show_always",
+            "true",
+            warnings,
+        );
+    }
+    if let Some(trim_at) = table.get("trim_at").and_then(toml::Value::as_str)
+        && trim_at != "."
+    {
+        report_setting(
+            "hostname",
+            "trim_at",
+            "trim_at",
+            &format!("'{trim_at}'"),
+            warnings,
+        );
+    }
     theme
 }
 
-/// Translate Starship's `username` module into a GPY username theme.
+/// Translate Starship's `username` module into the `username` script segment's style.
 ///
-/// `$user` → `$username`; `$style` is inlined from `style_root` into `format` and from
-/// `style_user` into `user_format`, the shell telling the agent which session it is.
+/// `style_user` becomes the pill colours and `style_root` the colours of the
+/// variant `root`, which the segment prints as root. `show_always` is a setting
+/// and `format` has no pill equivalent: each is reported.
 #[must_use]
-pub fn translate_username(table: &toml::value::Table, warnings: &mut Warnings) -> UsernameTheme {
-    let raw = table
-        .get("format")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("[$user]($style) in ");
-    let renamed = rename_vars(raw, &[("user", "username")]);
-    // `$style` is `style_root` in `format` and `style_user` in `user_format`.
-    let styled_with = |key: &str, default: &str, sink: &mut Warnings| {
-        let mut styles = table.clone();
-        let style = table.get(key).cloned().unwrap_or_else(|| default.into());
-        styles.insert("style".to_owned(), style);
-        let inlined = inline_style_vars(&renamed, &styles);
-        retain_known_vars(&inlined, &["username", "symbol"], "username", sink)
-    };
-    let format = styled_with("style_root", "bold red", warnings);
-    // Same template, so the same dropped-variable warnings: report them once.
-    let user_format = styled_with("style_user", "bold yellow", &mut Warnings::new());
-    UsernameTheme {
-        show_always: table.get("show_always").and_then(toml::Value::as_bool) == Some(true),
-        format: Some(format),
-        user_format: Some(user_format),
-        ..Default::default()
+pub fn translate_username<S: BuildHasher>(
+    table: &toml::value::Table,
+    palette: Option<&HashMap<String, String, S>>,
+    warnings: &mut Warnings,
+) -> PluginSegmentTheme {
+    let mut theme = PluginSegmentTheme::default();
+    let user_style = module_style(table, "style_user", "bold yellow");
+    if let Some((fg, bg)) = style_colors(user_style, palette, "username", warnings) {
+        theme.text_color = fg;
+        theme.bg_color = Some(bg);
     }
+    let root_style = module_style(table, "style_root", "bold red");
+    if let (Some((fg, bg)), Ok(root)) = (
+        style_colors(root_style, palette, "username root", warnings),
+        VariantName::new("root"),
+    ) {
+        let key = |part| VariantColorKey {
+            variant: root.clone(),
+            part,
+        };
+        if let Some(text) = fg {
+            theme
+                .variant_colors
+                .insert(key(VariantColorPart::Text), text);
+        }
+        theme.variant_colors.insert(key(VariantColorPart::Bg), bg);
+    }
+    report_format(table, "username", warnings);
+    if table.get("show_always").and_then(toml::Value::as_bool) == Some(true) {
+        report_setting("username", "show_always", "show_always", "true", warnings);
+    }
+    theme
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ Proposed (2026-10). This is the security design for the G script segments of [AD
 
 ## Context
 
-A review of the proof of concept behind ADR-0011 found defects that break promises [SECURITY.md](../../../SECURITY.md) already makes. This addendum is not part of SECURITY.md because SECURITY.md describes shipped behaviour to users and to people reporting vulnerabilities. Rules for code that does not exist yet would be false there until the adapters ship. For now SECURITY.md only says script segments are planned and links here. The adapters PR then moves the [user-facing statement](#securitymd-when-the-adapters-ship) into it.
+A review of the proof of concept behind ADR-0011 found defects that break promises [SECURITY.md](../../../SECURITY.md) already makes. This addendum is not part of SECURITY.md because SECURITY.md describes shipped behaviour to users and to people reporting vulnerabilities. With the adapters (#997) the [user-facing statement](#securitymd-when-the-adapters-ship) moved into SECURITY.md, section "Script Segment Trust Model".
 
 **Reproductions (macOS only).** Run on macOS (arm64) with `/bin/bash` 3.2.57, Homebrew Bash 5.3.20, Zsh 5.9.2 and Fish 4.9.3. Every run used a temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and `XDG_RUNTIME_DIR`, with no agent and no real GPY configuration. None of these forms was run on Linux (glibc or musl), Bash 4.x or Fish 3.x.
 
@@ -41,9 +41,9 @@ Not reproduced: the review's full PoC run under an interactive prompt (only the 
 
   The clean environment keeps the cache key complete and keeps credentials out of scripts by default. It is not a confidentiality boundary: a script running as the user can still read `~/.aws` and `~/.ssh`, find the SSH agent socket, or read other processes' environments where the system allows it. stdin is `/dev/null` and stderr is discarded. The working directory is the plugin root, or `$PWD` only when the segment declares the `pwd` input. The interpreter is `/bin/sh`, run by an absolute path resolved once per shell (on macOS, the shell `/private/var/select/sh` points to, run as `sh`), never a bare `sh` looked up on `PATH`. `require_command` gets the same environment, working directory, interpreter and process rules as `command`.
 - **Declared values never in argv.** Declared values reach the script through its environment (`env -i` shape), never as arguments of its `sh`, so other local users cannot read them with `ps`. This costs +0.5 to +1.0 ms more per uncached run on macOS than the cheapest priced shape (`cxls`, which leaves each `NAME=value` in argv for the whole run); the maintainer chose it on 2026-10-25. `script_segment_clean_env` checks that no declared value appears in the script process's argv.
-- **Process group.** The script runs in its own process group (Bash and Zsh: a new group in the same session; Linux Fish: a new session through `setsid(1)`) and is never given the foreground group. Where it keeps a controlling terminal it can still open `/dev/tty`; text written there bypasses the strip. On timeout or Ctrl-C the group gets TERM, then CONT, then KILL after a 50 ms grace or as soon as the script exits. The runner never waits for pipe EOF. Fish's `none` wrapper mode (no `setsid(1)` and no `/bin/bash`) signals only the direct child, so the group rules do not hold there; it was not run.
-- **Background processes.** After a normal exit, if members remain in the script's group, the runner sends TERM and CONT, polls `kill -0 -PGID` for at most the 50 ms grace, then sends KILL. It does this synchronously, before the prompt, and waits only when members remain. The spike runners sent TERM and CONT only; this KILL step is not built or measured. A process that leaves the group (`setsid`, a daemonizing double fork) is outside this guarantee, on macOS and on Linux. In a container whose PID 1 does not reap, every timed-out run can leave zombies (1 to 3 per run in the spike) until the PID limit is reached; run containers with `--init`.
-- **Ctrl-C.** In Fish and Zsh the runner child is a Bash 4 or later found at init, else `/bin/bash`. Bash 3.2 ignores SIGINT inside `<( )` and runs traps only after `read -t` returns, so with the 3.2 fallback (stock macOS) Ctrl-C during a slow script waits for the timeout; the run still reports 130 and the group is killed. With Bash 4 or later, and in Bash itself, Ctrl-C reaches the prompt at once (at most 58 ms on Linux in the spike).
+- **Process group.** The script runs in its own process group (a new group in the same session, started by the Bash runner with `set -m`, in all three shells) and is never given the foreground group. `require_command` runs first in the same group under the same deadline. Where it keeps a controlling terminal it can still open `/dev/tty`; text written there bypasses the strip. On timeout or Ctrl-C the group gets TERM, then CONT, then KILL after a 50 ms grace or as soon as the script exits. The runner never waits for pipe EOF.
+- **Background processes.** After a normal exit, if members remain in the script's group, the runner sends TERM and CONT, polls `kill -0 -PGID` for at most the 50 ms grace, then sends KILL. It does this synchronously, before the prompt, and waits only when members remain. The spike runners sent TERM and CONT only; the adapters (#997) build the KILL step. A process that leaves the group (`setsid`, a daemonizing double fork) is outside this guarantee, on macOS and on Linux. In a container whose PID 1 does not reap, every timed-out run can leave zombies (1 to 3 per run in the spike) until the PID limit is reached; run containers with `--init`.
+- **Ctrl-C.** Bash runs the runner in a subshell of itself; Fish and Zsh run it in a Bash child, the first Bash 4 or later on `PATH` found once per shell, else `/bin/bash`. With no Bash at all, script segments are disabled (a debug-level warning). Bash 3.2 ignores SIGINT inside `<( )` and runs traps only after `read -t` returns, so with Bash 3.2 (stock macOS) Ctrl-C during a slow script waits for the timeout; the run still ends and the group is killed. With Bash 4 or later Ctrl-C reaches the prompt at once (at most 58 ms on Linux in the spike). Fish leaves the terminal as the runner child's stdin so Fish makes it the foreground group and it receives the INT; the scripts still get `/dev/null`.
 - **What GPY protects.** GPY does not protect the user from the script. It protects the interactive shell and the terminal from the script's output and from the manifest's names, and keeps directory names from reaching shell code. In order: script output never executes, and reaches the terminal with no C0 control, no DEL and no UTF-8-encoded C1 control (a lone byte `0x80`–`0x9F` is the residual in step 4); manifest names never execute; the executed files are the `command` and `require_command` scripts inside the plugin directory; no state outside the shell can feed the prompt.
 - **What GPY does not protect.**
   - A malicious plugin, or a benign script that runs repository-local tools on an untrusted checkout. For example, `git` in a cloned repository may run repository-configured hooks or `core.fsmonitor` (inferred, not tested). Plugin documentation must say so.
@@ -116,8 +116,8 @@ Values the shell passes to the script (`GPY_PWD` and the other `GPY_*` inputs, d
 - The manifest's `command` and `require_command` must be relative paths with no `..` component (`ScriptPath`, which also rejects control characters and backslashes). `plugin.root.join(path)` alone is not a check: an absolute path replaces the root.
 - `ScriptSegmentManifest::load` canonicalizes the plugin root and both scripts and requires each to be a regular file whose canonical path starts with the canonical root. A symlink leading out of the root is rejected. `gpy plugin validate` and discovery, which theme export uses, both call it, so containment that only `validate` checks cannot happen.
 - Export writes the canonical path, quoted for the target shell.
-- Export refuses a script, or any directory from it up to the plugin root, that is group- or world-writable or owned by a user other than the current user or root. Another user who can write there could otherwise run code as this user on every command. The merged code does not check this; the adapters PR adds it.
-- Once checked, the path is trusted like the plugin's other files. Swapping the file afterwards needs write access to a directory the user owns, which is outside this design (see "No defence against a compromised account" in SECURITY.md).
+- Export refuses a script, or any directory from it up to the plugin root, that is group- or world-writable or owned by a user other than the current user or root (`check_owned_and_not_shared` in `gpy-agent/src/plugin/script.rs`, run on every export). Another user who can write there could otherwise run code as this user on every command.
+- Once checked, the path is trusted like the plugin's other files, and the adapters run the exported absolute path without resolving it again (decided on #997, answering the #1012 audit comment). A symlink swap between export and run needs write access to the script or a directory on its path, and the ownership rule has just shown that only the user or root has it. An attacker with that access already runs code as the user, which is outside this design (see "No defence against a compromised account" in SECURITY.md); a run-time re-check would cost a `readlink`/`stat` per run and close no gap another user can reach.
 
 ### No files, no `/tmp`, no PID-keyed state
 
@@ -127,6 +127,19 @@ Values the shell passes to the script (`GPY_PWD` and the other `GPY_*` inputs, d
 - No path under `/tmp` or `$TMPDIR`. The runtime root is not an option either: `__gpy_runtime_root` falls back to `/tmp/gpy` (`bash/core/ipc.bash:107`, `zsh/core/ipc.zsh:112`, `fish/core/ipc.fish:28`). If a later item needs a file, it needs a new security review.
 - No state keyed by `$$` or any PID. Ages come from a clock in the same shell, and nothing outlives it. Signalling a process group the runner obtained in the same run is not state: the PGID is never stored past that run. Its one exposure is a reuse window between the script's exit and the final signal (0 to 550 ms); reuse inside it needs the PID counter to wrap (inferred, not measured).
 - The cache key is the plugin id and version, the segment, the `command` path, the resolved `GPY_OPT_*` values, the values of the declared inputs and the values of the declared `env` names (ADR-0011 item 3). It is compared in memory, so a newline in `$PWD` cannot shift any framing. The comparison quotes its right side (`[[ $stored == "$key" ]]`, or `case` with a quoted pattern): unquoted, the key is a glob, and a directory named `*` would match another folder's entry.
+
+### As built (#997)
+
+Where this differs from the rules above, the shipped adapters (`bash/core/g_runner.bash`, with byte-identical copies in `zsh/core` and `fish/core`; `bash/core/g_segments.bash`, `zsh/core/script.zsh`, `fish/core/script.fish`) behave as follows:
+
+- **Start.** The interpreter runs as `sh -c PROLOGUE SCRIPT` after `exec -c` (empty environment). The prologue reads `export NAME='value'` lines on descriptor 3, closes it and sources the script. No value is in any argv; for a folder-scoped segment the runner gets an empty working-directory argument and keeps the one it inherited, so `$PWD` is not in argv either.
+- **Fish output.** Fish does not cap, strip or check output itself: the Bash runner does steps 1 to 4 for all three shells, so the Fish forms in step 4 and the `head -c` cap are not used.
+- **Deadline.** All due segments start together and each is killed `timeout_ms` after that shared start; there is no separate skip of segments past a 500 ms prompt deadline. The runner reads at most 40 due segments per call.
+- **Triggers.** `require_env`, then one scan child for files, folders and extensions (names matched literally; files and folders searched through `../` paths, so physical parents; on Linux stopping at the mount), then the cache, then `require_command` in the run.
+- **Results.** A non-zero exit, a failed `require_command` and C1 output are cached as hidden for `ttl_secs`; a timeout, over-cap output and Ctrl-C are not cached; a failed trigger drops the cache entry.
+- **Breaker.** Separate counters for consecutive scan timeouts and consecutive run timeouts or over-cap outputs; either reaching two disables the segment for the shell. Ctrl-C never counts.
+- **Clock.** Bash ages use `EPOCHSECONDS`, `printf '%(%s)T'`, or `$SECONDS` on Bash 3.2 to 4.1 (shell-relative, enough because the cache lives in that shell); Zsh `EPOCHSECONDS`; Fish the mtime of `/` plus its age.
+- **Declared `env`.** A name is forwarded when it is set as a variable in the interactive shell, exported or not.
 
 ### Approval boundaries
 
@@ -144,10 +157,11 @@ The agent gains no process execution and no `Message`/`Response` change, and `se
 
 ### Open decisions
 
-These need the maintainer before the adapters PR picks an implementation:
+Decided by the maintainer for the adapters PR (#997):
 
 - ~~Declared values in argv~~: decided 2026-10-25, environment only (see "Declared values never in argv").
-- **Strip and escape cost at the cap in Bash 3.2.** The strip and escape now grow about linearly (see step 5). Keep the 4096-byte cap in Bash 3.2, or set a smaller one there, from a quiet-machine measurement of the 4096-byte worst cases (#1010).
+- ~~Strip and escape cost at the cap in Bash 3.2~~: decided in #997, the 4096-byte cap applies in every shell, Bash 3.2 included, using the linear strip and escape forms (#54).
+- ~~Run-time re-resolution of the script path~~: decided in #997, not done. Containment and the ownership rule are enforced at export, and the adapters run the exported canonical path (see [Script containment](#script-containment)).
 
 ### Named tests for the adapters item
 
@@ -181,7 +195,7 @@ The adapters PR replaces "Plugin segment files run as you" with a statement of t
 - "Prompt data is escaped … so neither can emit escape sequences": the shells keep a lone byte `0x80`–`0x9F`, and text written to `/dev/tty` is not sanitized.
 - The documented gaps: lone C1 bytes, Unicode format characters, a `setsid` or daemonizing escapee, zombies under a non-reaping PID 1, and Ctrl-C bounded by the timeout in Fish and Zsh on a stock macOS (Bash 3.2 runner child).
 
-Until then, SECURITY.md says script segments are planned and links here.
+Done with #997: SECURITY.md "Script Segment Trust Model" holds this statement, and the four corrections are in "Not Covered by This Design", "File System Access" and the prompt-escaping paragraph.
 
 ## Consequences
 

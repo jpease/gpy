@@ -67,23 +67,25 @@ if [[ -n "${SUDO_USER:-}" ]]; then
 fi
 
 # Prefer the agent's cached theme-export file; fork `gpy-agent theme export`
-# only when it is absent.
+# only when it is absent. The script segment list is unset first, so a list
+# left from an earlier load or the parent environment never outlives an
+# export that fails to load; __gpy_g_sync then takes what this load set.
 __gpy_load_theme() {
-    local cache_path
+    local cache_path rc=1
+    __gpy_g_clear_styles
+    unset __gpy_script_segments
     cache_path="$(__gpy_theme_export_cache_path)"
     if [[ -n "$cache_path" && -f "$cache_path" ]]; then
         # Generated at runtime by `gpy-agent theme export`; not in the tree.
         # shellcheck source=/dev/null
         source "$cache_path"
-        return $?
-    fi
-
-    if command -v gpy-agent &>/dev/null; then
+        rc=$?
+    elif command -v gpy-agent &>/dev/null; then
         eval "$(gpy-agent theme export --format bash 2>/dev/null)"
-        return $?
-    else
-        return 1
+        rc=$?
     fi
+    __gpy_g_sync
+    return "$rc"
 }
 
 __gpy_preexec() {
@@ -185,6 +187,10 @@ __gpy_precmd() {
     # Before rendering, so a reload shows in this prompt.
     __gpy_consume_shell_flags
 
+    # Script (G) segments: once per command, here in the parent shell,
+    # before __gpy_render_prompt fixes positions.
+    __gpy_g_maybe_run
+
     __gpy_render_prompt "$exit_code"
 
     # Retry until registered (agent started late or restarted); one `test -S`
@@ -199,10 +205,18 @@ __gpy_precmd() {
     __gpy_supervisor_check
 
     __gpy_cmd_start_time=""
-    if [[ $__gpy_duration_method != "none" ]]; then
-        __gpy_keep_arm_hook_last
+    if __gpy_needs_debug_trap; then
+        __gpy_setup_debug_hooks
     fi
     return "$exit_code"
+}
+
+# Bash < 4.4 learns "a command ran" for script segments from the DEBUG trap
+# (no `\#` expansion), so it is needed then even without a duration clock.
+__gpy_needs_debug_trap() {
+    [[ $__gpy_duration_method != "none" ]] && return 0
+    # shellcheck disable=SC2154  # set by g_segments.bash
+    [[ -z "$__gpy_g_cmdno" ]] && ((${#__gpy_g_toks[@]}))
 }
 
 # Positions are baked into agent output before rendering, so a segment certain
@@ -214,6 +228,11 @@ __gpy_segment_would_render() {
     local detect_fn="__gpy_segment_${segment}_detect"
     local omit_fn="__gpy_segment_${segment}_omit"
 
+    if __gpy_g_word_tok "$segment"; then
+        # shellcheck disable=SC2154  # set by g_segments.bash
+        __gpy_g_visible "$__gpy_g_wt"
+        return
+    fi
     declare -f "$segment_fn" &>/dev/null || return 1
     if declare -f "$detect_fn" &>/dev/null; then
         "$detect_fn" || return 1
@@ -286,6 +305,17 @@ __gpy_render_prompt() {
     local segment_count="${#segments_to_render[@]}"
     local segment_index=0
     for segment in "${segments_to_render[@]}"; do
+        if __gpy_g_word_tok "$segment"; then
+            local g_last="" g_first=""
+            ((segment_index == segment_count - 1)) && g_last="true"
+            ((segment_index == 0)) && g_first="true"
+            __gpy_g_render "$__gpy_g_wt" "$g_last" "$g_first"
+            # shellcheck disable=SC2154  # set by g_segments.bash
+            prompt_output+="$__gpy_g_rout"
+            [[ -n "$__gpy_g_rbg" ]] && prev_bg="$__gpy_g_rbg"
+            ((segment_index += 1))
+            continue
+        fi
         local segment_fn="__gpy_segment_${segment}"
 
         if declare -f "$segment_fn" &>/dev/null; then
@@ -441,12 +471,16 @@ __gpy_sync_workspace() {
 # shellcheck disable=SC2016
 __gpy_debug_oneshot='__gpy_dbg_s=$?; __gpy_dbg_seen="$(trap -p DEBUG)"; __gpy_install_debug_trap "$__gpy_dbg_s"'
 
+# Set once gpy's DEBUG trap is in place, so the oneshot is queued only once.
+__gpy_debug_installed=""
+
 # Chain any prior DEBUG trap (never gpy's own, which would recurse).
 __gpy_install_debug_trap() {
     if [[ -n "$__gpy_dbg_seen" && "$__gpy_dbg_seen" != *"__gpy_debug_trap"* ]]; then
         __gpy_prev_debug_trap="$(__gpy_trap_body "$__gpy_dbg_seen")"
     fi
     trap '__gpy_debug_trap "$_"' DEBUG
+    __gpy_debug_installed=1
     local x
     if [[ -n "$__gpy_prompt_command_arrays" && "${PROMPT_COMMAND@a}" == *a* ]]; then
         local -a kept=()
@@ -474,6 +508,10 @@ __gpy_debug_trap() {
 
     if [[ -n "$__gpy_preexec_armed" ]]; then
         __gpy_preexec_armed=""
+        # The first DEBUG after arming is the user's command or, on an empty
+        # Enter or Ctrl-C, the first PROMPT_COMMAND command.
+        local pc="${PROMPT_COMMAND-}"
+        [[ "$BASH_COMMAND" == "${pc%%;*}" ]] || __gpy_g_ran=1
         __gpy_preexec
     fi
 
@@ -495,12 +533,19 @@ __gpy_setup_hooks() {
     fi
 
     # DEBUG trap is installed from the first prompt (see __gpy_debug_oneshot).
-    if [[ $__gpy_duration_method != "none" ]]; then
-        __gpy_keep_arm_hook_last
-        if [[ "${PROMPT_COMMAND:-}" != *"$__gpy_debug_oneshot"* ]]; then
-            # shellcheck disable=SC2128,SC2178
-            PROMPT_COMMAND="$__gpy_debug_oneshot${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
-        fi
+    if __gpy_needs_debug_trap; then
+        __gpy_setup_debug_hooks
+    fi
+}
+
+# Keeps the arm hook last and queues the oneshot until the trap is in place.
+# Also runs after each prompt, so a theme reload that lists the first script
+# segment on Bash < 4.4 installs the trap from the next prompt.
+__gpy_setup_debug_hooks() {
+    __gpy_keep_arm_hook_last
+    if [[ -z "$__gpy_debug_installed" && "${PROMPT_COMMAND:-}" != *"$__gpy_debug_oneshot"* ]]; then
+        # shellcheck disable=SC2128,SC2178
+        PROMPT_COMMAND="$__gpy_debug_oneshot${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
     fi
 }
 

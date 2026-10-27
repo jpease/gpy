@@ -7,11 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Script plugin segments (`entry_type = "script"`) now render in Bash, Zsh
+  and Fish (#997). One Bash runner (`bash/core/g_runner.bash`, copied
+  byte-identically to Zsh and Fish) runs them: inside the shell in Bash, in
+  a Bash child in Zsh and Fish (the first Bash 4 or later on `PATH`, else
+  `/bin/bash`; without any Bash, script segments are disabled). Each script
+  starts as `sh -c PROLOGUE SCRIPT` from a clean environment, with declared
+  values read on descriptor 3 (never argv; a folder-scoped segment's `$PWD`
+  is never in argv either). Output is capped at 4096 bytes, C0/DEL stripped
+  locale-independently, hidden on a C1 control and escaped once for the
+  shell before it is cached in shell variables (no cache files). Scripts run
+  at most once per command (repaints reuse the text), after `require_env`,
+  the trigger scan (30 ms bound, names matched literally) and the cache;
+  `require_command` shares the script's process group and deadline. Each
+  segment has its `timeout_ms` from one shared start (at most 500 ms, at
+  most 40 segments per prompt), with TERM/CONT/KILL of its process group and
+  of leftovers after a normal exit. Failed scripts are cached as hidden;
+  timeouts and Ctrl-C are not. Two consecutive scan timeouts, or two
+  consecutive run timeouts or over-cap outputs, disable a segment for the
+  shell. With Bash 3.2 (stock macOS) Ctrl-C during a slow script waits for
+  its timeout. See SECURITY.md "Script Segment Trust Model".
+- Theme export writes a script-segment block (`__gpy_script_sh`,
+  `__gpy_script_segments` and 15 `__gpy_script_<tok>_*` variables per
+  segment) for Bash, Zsh and Fish, the contract the shell runners consume.
+  Export re-resolves `command` and `require_command` each time and skips a
+  segment whose script, or any directory up to the plugin root, is not owned
+  by you or root or is group- or world-writable; the shells run the exported
+  canonical path without resolving it again.
+
 ### Changed (BREAKING)
 
-- Script plugin segments (`entry_type = "script"`): the contract is defined and
-  validated, but no shell executes script segments yet. It is documented in
-  `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
+- The `username` and `hostname` segments are now bundled G (script) plugins
+  (`plugins/username`, `plugins/hostname`, #1003, part of #994). The built-in
+  segments, resolvers, `__gpy_request_hostname`/`__gpy_request_username`, the
+  per-shell `hostname`/`username` segment files and
+  `gpy-agent oneshot hostname|username` are removed. The plugins are found in
+  `$GPY_BUNDLED_PLUGIN_DIR`, default `$XDG_CONFIG_HOME/gpy/bundled-plugins`,
+  which `gpy setup` (and so every installer) fills from `<source>/plugins`;
+  release archives, `gpy-shell-files.tar.gz` and the Homebrew formula ship
+  that tree, and `scripts/uninstall.sh` removes it. **Upgrading:** hostname
+  `show_always` and `trim_at` and username `show_always` move from the theme
+  to `config.toml` `[plugin.hostname]` / `[plugin.username]`; the theme keys
+  `format` and `user_format` for these segments are gone (pills are drawn by
+  the plugin framework, so the Starship theme's hostname and username are
+  flat pills); a variant icon is set with the new `<variant>_icon` key (for
+  example `ssh_icon`). Run `gpy setup` after upgrading.
+- On Bash 5 the grace KILL after a script segment's timeout is now
+  asynchronous, as it already was on Bash 3.2: the leftover KILL can run up
+  to 50 ms after the prompt is drawn instead of delaying it.
+- A script segment that is the last segment now draws its closing cap on the
+  terminal default background (as the old username/hostname pills did), not
+  on the `ui.prompt_close` background; built-in segments are unchanged. A
+  theme reload unsets the previous script segments' style variables
+  (`__gpy_segment_<tok>_*`, `__color_<tok>_*`, `__icon_<tok>*`) before the
+  export is sourced, so a dropped style field no longer lingers.
+- `gpy plugin new` now scaffolds a script plugin (`plugin.toml`,
+  `segments/<segment>.toml`, `bin/<segment>.sh`) instead of a Fish file.
+  `gpy plugin validate` lints each script with `shellcheck -s sh` or
+  `dash -n` (a failure fails validation) and warns about undeclared `$VAR`
+  uses; `gpy plugin list` shows script segments; `gpy doctor` runs each
+  enabled script segment once with the runner's clean environment, working
+  directory and `timeout_ms` kill and reports the time. Example plugins
+  (Kubernetes context, username, hostname) are in
+  `docs/dev/examples/plugins/`.
 - `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` now follow one rule
   in Bash, Zsh and Fish: a flag is off only when set to `0` or `false`.
   `false` now disables the agent in Fish (it stayed on before), and values

@@ -34,9 +34,6 @@ type Cells = Vec<(char, Look)>;
 /// Name the imported theme and palette are installed under.
 const IMPORT_NAME: &str = "parity";
 
-/// The `SSH_CONNECTION` value of the SSH scenarios.
-const SSH_CONNECTION: &str = "192.0.2.1 50000 192.0.2.2 22";
-
 /// What is rendered for a row.
 #[derive(Debug, Clone, Copy)]
 enum Scenario {
@@ -44,15 +41,6 @@ enum Scenario {
     Directory(&'static str),
     /// The `cmd_duration` module after a command that took this many ms.
     Duration(u64),
-    /// The `hostname` module, on this machine's hostname, in a local session.
-    Hostname,
-    /// The `hostname` module in an SSH session: `SSH_CONNECTION` for
-    /// Starship, `--is-ssh` for the agent (the shells' `__gpy_is_ssh`).
-    HostnameSsh,
-    /// The `username` module in an SSH session: `SSH_CONNECTION` for Starship,
-    /// which then shows the user it runs as; the shells' predicate shows it too,
-    /// and passes `--is-root` only as root, as Starship decides by euid.
-    UsernameSsh,
     /// The `character` module after a command that exited with this status.
     Character(i32),
     /// Blank-line-before and two-line layout: Starship's `starship prompt` vs the
@@ -69,8 +57,6 @@ impl Scenario {
         match self {
             Self::Directory(_) => "directory",
             Self::Duration(_) => "cmd_duration",
-            Self::Hostname | Self::HostnameSsh => "hostname",
-            Self::UsernameSsh => "username",
             Self::Character(_) => "character",
             Self::Layout => "prompt",
             Self::Git => "git_branch",
@@ -78,7 +64,7 @@ impl Scenario {
     }
 
     /// The `gpy-agent oneshot` arguments rendering this scenario as ANSI.
-    fn agent_args(self, cwd: &Path, hostname: &str) -> Vec<String> {
+    fn agent_args(self, cwd: &Path) -> Vec<String> {
         let mut args = vec!["oneshot".to_owned()];
         match self {
             Self::Directory(_) => args.extend([
@@ -91,24 +77,6 @@ impl Scenario {
                 "--duration-ms".to_owned(),
                 millis.to_string(),
             ]),
-            Self::Hostname => args.extend([
-                "hostname".to_owned(),
-                "--hostname".to_owned(),
-                hostname.to_owned(),
-            ]),
-            Self::HostnameSsh => args.extend([
-                "hostname".to_owned(),
-                "--hostname".to_owned(),
-                hostname.to_owned(),
-                "--is-ssh".to_owned(),
-            ]),
-            Self::UsernameSsh => {
-                args.extend(["username".to_owned(), "--username".to_owned()]);
-                args.push(id_output("-un"));
-                if id_output("-u") == "0" {
-                    args.push("--is-root".to_owned());
-                }
-            }
             Self::Character(status) => args.extend([
                 "character".to_owned(),
                 "--exit-code".to_owned(),
@@ -146,23 +114,6 @@ fn starship_is_installed() -> bool {
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
-}
-
-/// This machine's hostname, which Starship's `hostname` module reads itself.
-fn machine_hostname(home: &Path) -> String {
-    let output = scrubbed("hostname", home).output().expect("run `hostname`");
-    assert!(output.status.success(), "`hostname` failed");
-    String::from_utf8(output.stdout)
-        .expect("hostname is UTF-8")
-        .trim()
-        .to_owned()
-}
-
-/// `id <flag>`, trimmed: the user Starship's `username` module reads and its euid.
-fn id_output(flag: &str) -> String {
-    let output = Command::new("id").arg(flag).output().expect("run `id`");
-    assert!(output.status.success(), "`id {flag}` failed");
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 /// Render `scenario` with the real `starship` binary using `config`.
@@ -204,13 +155,6 @@ fn render_with_starship(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd
     if let Scenario::Character(status) = scenario {
         command.args(["--status", &status.to_string()]);
     }
-    if matches!(scenario, Scenario::HostnameSsh | Scenario::UsernameSsh) {
-        command.env("SSH_CONNECTION", SSH_CONNECTION);
-    }
-    if matches!(scenario, Scenario::UsernameSsh) {
-        let user = id_output("-un");
-        command.env("USER", &user).env("LOGNAME", &user);
-    }
     let output = command.output().expect("run starship");
     assert!(
         output.status.success(),
@@ -240,7 +184,7 @@ fn render_with_gpy(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd: &Pa
             .expect("run gpy")
             .assert_success(&args.join(" "));
     }
-    let owned = scenario.agent_args(cwd, &machine_hostname(env.root()));
+    let owned = scenario.agent_args(cwd);
     let args: Vec<&str> = owned.iter().map(String::as_str).collect();
     let result = env.run_gpy_agent(&args).expect("run gpy-agent");
     result.assert_success(&args.join(" "));
@@ -304,13 +248,9 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
     fs::write(&config_path, config).expect("write starship config");
     let cwd = match scenario {
         Scenario::Directory(relative) => env.root().join(relative),
-        Scenario::Duration(_)
-        | Scenario::Hostname
-        | Scenario::HostnameSsh
-        | Scenario::UsernameSsh
-        | Scenario::Character(_)
-        | Scenario::Layout
-        | Scenario::Git => env.root().to_path_buf(),
+        Scenario::Duration(_) | Scenario::Character(_) | Scenario::Layout | Scenario::Git => {
+            env.root().to_path_buf()
+        }
     };
     fs::create_dir_all(&cwd).expect("create fixture directory");
     if matches!(scenario, Scenario::Git) {
@@ -392,7 +332,7 @@ fn check_layout_row(name: &str, env: &CliTestEnv, config_path: &Path, config: &s
             .expect("run gpy")
             .assert_success(&args.join(" "));
     }
-    let owned = Scenario::Layout.agent_args(cwd, "");
+    let owned = Scenario::Layout.agent_args(cwd);
     let args: Vec<&str> = owned.iter().map(String::as_str).collect();
     let result = env.run_gpy_agent(&args).expect("run gpy-agent");
     result.assert_success(&args.join(" "));
@@ -427,15 +367,8 @@ parity_rows! {
     // A present module table without `style` takes Starship's default.
     directory_without_style: Scenario::Directory("work/proj"), "[directory]\ntruncation_length = 3\n";
     cmd_duration_without_style: Scenario::Duration(5_000), "[cmd_duration]\nmin_time = 500\n";
-    // With `ssh_only = false` the imported default globe (Starship's
-    // `ssh_symbol`) shows over SSH and not locally, as in Starship.
-    hostname_without_style: Scenario::Hostname, "[hostname]\nssh_only = false\n";
-    hostname_not_ssh_only_over_ssh: Scenario::HostnameSsh, "[hostname]\nssh_only = false\n";
-    // Starship's default `ssh_symbol` (a globe) shows over SSH.
-    hostname_default_ssh_symbol_over_ssh: Scenario::HostnameSsh, "[hostname]\nstyle = \"bold green\"\n";
-    // Over SSH Starship shows the username, in `style_user` unless running as root.
-    username_default_styles_over_ssh: Scenario::UsernameSsh, "[username]\n";
-    username_custom_styles_over_ssh: Scenario::UsernameSsh, "[username]\nstyle_user = \"bold green\"\nstyle_root = \"italic red\"\nformat = \"[$user]($style) on \"\n";
+    // `hostname` and `username` are script segments drawn as pills by the
+    // shells, not rendered by `oneshot`, so they have no parity rows.
     // Character symbols with trailing text or several groups.
     character_success_capitalized_bold: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](Bold green)\"\nerror_symbol = \"[✗](Bold red)\"\n";
     character_success_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";

@@ -94,26 +94,6 @@ check "character payload: failure, not-last" \
     '{"op":"character","success":false,"format":"ansi"}' \
     (__gpy_request_character 0 "" "")
 
-check "hostname payload: last, prev_bg" \
-    '{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"prev_bg":"green"}' \
-    (__gpy_request_hostname myhost true green)
-
-check "hostname payload: not-last, no prev_bg" \
-    '{"op":"hostname","hostname":"myhost","format":"ansi"}' \
-    (__gpy_request_hostname myhost "" "")
-
-check "hostname payload: prev_bg needing escaping" \
-    '{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"prev_bg":"weird\"bg\\\\path"}' \
-    (__gpy_request_hostname myhost true 'weird"bg\path')
-
-check "username payload: last, prev_bg" \
-    '{"op":"username","username":"bob","format":"ansi","is_last":true,"prev_bg":"red"}' \
-    (__gpy_request_username bob true red)
-
-check "username payload: not-last, no prev_bg" \
-    '{"op":"username","username":"bob","format":"ansi"}' \
-    (__gpy_request_username bob "" "")
-
 check "build_data_payload: not-last, not-first, no prev_bg" \
     '{"op":"git","cwd":"/tmp/proj","format":"ansi"}' \
     (__gpy_build_data_payload git /tmp/proj ansi "" "" "")

@@ -7,12 +7,8 @@ fn make_facts() -> PreviewFacts {
     PreviewFacts {
         repository_status: None,
         languages: Vec::new(),
-        hostname: "host.example.com".to_owned(),
-        username: "tester".to_owned(),
         sample_duration_ms: 128,
         sample_character_success: true,
-        sample_is_ssh: true,
-        sample_is_root: true,
     }
 }
 
@@ -661,42 +657,12 @@ fn render_segment_clock_renders_fixed_demo_time() {
     let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let spans = render_segment("clock", &config, &theme, &facts, &ctx)
-        .expect("clock should always render a demo, unlike hostname/username with no format");
+        .expect("clock should always render a demo");
     let text: String = spans.iter().map(|s| s.text.as_str()).collect();
     assert!(
         text.contains("9:41"),
         "expected the fixed demo time in clock output, got {text:?}"
     );
-}
-
-/// The SSH-only hostname icon shows with the SSH sample, not without it.
-#[test]
-fn render_segment_hostname_icon_follows_sample_ssh_state() {
-    let config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
-    let mut theme = ThemeConfig::default();
-    theme.segments.hostname.format = Some("[$symbol$hostname](green)".to_owned());
-    theme.segments.hostname.icon = Some(Icon::new("🌐 ").expect("valid icon"));
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let text_for = |facts: &PreviewFacts| -> String {
-        render_segment("hostname", &config, &theme, facts, &ctx)
-            .expect("hostname with a format renders")
-            .iter()
-            .map(|s| s.text.as_str())
-            .collect()
-    };
-
-    assert_eq!(text_for(&make_facts()), "🌐 host");
-    let local = PreviewFacts {
-        sample_is_ssh: false,
-        ..make_facts()
-    };
-    assert_eq!(text_for(&local), "host");
 }
 
 fn delimiter(icon: &str, icon_color: &str, bg_color: &str) -> crate::config::DelimiterConfig {
@@ -1006,8 +972,8 @@ fn preview_status_pill_drops_private_use_icon_when_icons_are_off() {
     }
 }
 
-/// Hostname, username and status draw like every default-theme pill: first in
-/// the chain they start with exactly one space and no opening cap.
+/// Status draws like every default-theme pill: first in the chain it starts
+/// with exactly one space and no opening cap.
 #[test]
 fn preview_default_theme_pills_lead_with_one_space_when_first() {
     let theme = crate::theme::ThemeManager::builtin("default")
@@ -1021,11 +987,8 @@ fn preview_default_theme_pills_lead_with_one_space_when_first() {
         },
     );
     let facts = make_facts();
-    for (segment, content) in [
-        ("hostname", "host"),
-        ("username", "tester"),
-        ("status", "\u{f058}"),
-    ] {
+    {
+        let (segment, content) = ("status", "\u{f058}");
         let first = FormatterRenderContext::new(&config, &theme, SegmentPosition::FIRST);
         let first_text: String = render_segment(segment, &config, &theme, &facts, &first)
             .unwrap_or_else(|| panic!("{segment} renders with the default theme"))

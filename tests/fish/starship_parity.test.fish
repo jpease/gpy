@@ -25,28 +25,17 @@
 # GATING (must hold; any drift fails the suite)
 #   Full module-line parity AND character parity (text + colour) for every
 #   built-in fixture (plain dir, clean git repo, dirty git repo). GPY's starship
-#   theme reproduces Starship's hostname, directory, git (branch spacing +
-#   `[!?]`-style status with no counts), language (symbol shown even without a
-#   version; fish excluded), command-duration, and character output
-#   identically — same visible text and same per-character colour.
-#
-#   Hostname is a special case: both Starship and GPY hide it off-SSH by
-#   default (`ssh_only`/`show_always`), so the fixture sets `ssh_only = false`
-#   and the isolated GPY config is patched to `show_always = true` for this
-#   comparison only (see `__sp_patch_hostname_visible`). The preset's icon is
-#   kept: like Starship's `ssh_symbol`, GPY draws it only in SSH sessions, so
-#   a local run exercises `<hostname> in ` with the icon suppressed on both
-#   sides.
-#
-#   SSH pass: every fixture is compared again with SSH_CONNECTION set for both
-#   tools. Starship then shows `username` (style_user for a non-root run) and
-#   the hostname's ssh_symbol; the GPY side applies the shells' visibility
-#   predicates with is_ssh=1 and passes `--is-ssh` / `--is-root` the way the
-#   shells' IPC requests carry them. The off-SSH pass stays the baseline.
+#   theme reproduces Starship's directory, git (branch spacing + `[!?]`-style
+#   status with no counts), language (symbol shown even without a version;
+#   fish excluded), command-duration, and character output identically — same
+#   visible text and same per-character colour.
 #
 # DELIBERATE EXCLUSION
 #   * package module: Starship shows `is 📦 v1.2.3`; GPY does not emulate it, so
 #     the baseline config disables it (see the fixture header).
+#   * username/hostname: rendered by the bundled username/hostname plugins as
+#     flat pills, not Starship's `<name> in ` text (accepted difference), so the
+#     baseline config disables both and the GPY side leaves them out.
 #
 # KNOWN REMAINING DIVERGENCE (only on repos that exercise it; not in fixtures)
 #   * git stash: Starship's git_status shows `$` for stashed changes; GPY does
@@ -94,53 +83,21 @@ set -g SP_STATUS 0
 set -g SP_DURATION 5000 # > Starship's 2s threshold so the duration module shows
 
 # --- Isolated GPY config: apply the starship theme without touching real config ---
-# Override the isolated copy's [segments.hostname] block so the segment is
-# visible for this comparison.
-#
-# The shipped preset is SSH-only (show_always = false) with an icon set to
-# Starship's ssh_symbol default. This harness never runs over SSH, so it forces
-# the segment on. The icon stays: the shell reports its SSH state to the agent,
-# which draws the icon only over SSH, matching real Starship, which
-# suppresses `ssh_symbol` off-SSH even with `ssh_only = false` (see
-# fixtures/starship_match.toml). Only the isolated test copy is patched.
-function __sp_patch_hostname_visible --argument-names theme_path
-    set -l in_hostname 0
-    set -l out_lines
-    for ln in (cat $theme_path)
-        if string match -qr '^\[' -- $ln
-            set in_hostname 0
-            test "$ln" = '[segments.hostname]'; and set in_hostname 1
-        end
-        if test "$in_hostname" = 1; and test "$ln" = 'show_always = false'
-            set -a out_lines 'show_always = true'
-        else
-            set -a out_lines $ln
-        end
-    end
-    printf '%s\n' $out_lines >$theme_path
-end
-
 set -g SP_ISO (mktemp -d)
 mkdir -p $SP_ISO/gpy/themes
 cp $repo_root/config/themes/starship.toml $SP_ISO/gpy/themes/starship.toml
-__sp_patch_hostname_visible $SP_ISO/gpy/themes/starship.toml
+# Bundled username/hostname plugins, as `gpy setup` installs them (go-w: the
+# agent refuses group/world-writable plugin trees).
+cp -R $repo_root/plugins $SP_ISO/bundled-plugins
+chmod -R go-w $SP_ISO/bundled-plugins
+set -gx GPY_BUNDLED_PLUGIN_DIR $SP_ISO/bundled-plugins
 
 set -gx XDG_CONFIG_HOME $SP_ISO
 set -gx HOME $SP_ISO
 # Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
-# Off-SSH baseline: Starship shows the username and ssh_symbol whenever
-# SSH_CONNECTION is set, and GPY keys its SSH state on all three variables.
-# The SSH pass re-adds SSH_CONNECTION to Starship's env only (see __sp_starship).
 set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
-set -g SP_SSH 0
-# euid 0 picks Starship's style_root / GPY's root style, as the shells do.
-set -g SP_IS_ROOT 0
-test (id -u) = 0; and set -g SP_IS_ROOT 1
-# The shells' visibility predicate, so the GPY side gates username exactly as
-# segment_username_detect does.
-source $repo_root/fish/segments/username.fish
 # Pinned Rust toolchain view for the `clean-rust` fixture. Starship resolves
 # rustc through $RUSTUP_TOOLCHAIN, $RUSTUP_HOME and `rustup`, GPY runs `rustc`
 # from PATH, so a caller's toolchain pin or shim manager (e.g. a mise shim that
@@ -212,19 +169,8 @@ function __sp_seg --argument-names seg dir
             set out ($agent_bin oneshot $seg --cwd $dir --format ansi --not-last 2>/dev/null | string collect)
         case duration
             set out ($agent_bin oneshot duration --duration-ms $SP_DURATION --format ansi --not-last 2>/dev/null | string collect)
-        case hostname
-            # Fish's builtin $hostname; native starship reads the same machine
-            # hostname, so both sides render identical text.
-            set -l ssh_flag
-            test "$SP_SSH" = 1; and set ssh_flag --is-ssh
-            set out ($agent_bin oneshot hostname --hostname $hostname $ssh_flag --format ansi --not-last 2>/dev/null | string collect)
-        case username
-            # The shell-side gate (segment_username_detect): root, SSH, or the
-            # theme's show_always (false in the shipped preset). No sudo here.
-            __gpy_username_should_show $SP_IS_ROOT 0 $SP_SSH 0; or return 0
-            set -l root_flag
-            test "$SP_IS_ROOT" = 1; and set root_flag --is-root
-            set out ($agent_bin oneshot username --username $USER $root_flag --format ansi --not-last 2>/dev/null | string collect)
+        case '*'
+            return 0
     end
     test -n "$out"; or return 0
     # Skip JSON error responses (e.g. "Not in a git repository").
@@ -237,7 +183,7 @@ end
 # directly (`set x $x(sub)`) would collapse the whole value to empty in fish.
 function __sp_gpy_modules --argument-names dir
     set -l parts
-    for seg in username hostname directory git lang duration
+    for seg in directory git lang duration
         set -l part (__sp_seg $seg $dir)
         test -n "$part"; and set -a parts $part
     end
@@ -256,9 +202,7 @@ end
 # fish `pushd` so changing directory does not fire fish PWD-change hooks (e.g.
 # mise) that would spam the report with unrelated errors.
 function __sp_starship --argument-names dir
-    set -l ssh_env
-    test "$SP_SSH" = 1; and set ssh_env SSH_CONNECTION='10.0.0.1 22 10.0.0.2 22'
-    env $ssh_env sh -c 'cd "$1" || exit 1; term="${TERM:-xterm-256color}"; [ "$term" != "dumb" ] || term="xterm-256color"; TERM="$term" STARSHIP_CONFIG="$2" starship prompt --status "$3" --cmd-duration "$4" --terminal-width 80' \
+    sh -c 'cd "$1" || exit 1; term="${TERM:-xterm-256color}"; [ "$term" != "dumb" ] || term="xterm-256color"; TERM="$term" STARSHIP_CONFIG="$2" starship prompt --status "$3" --cmd-duration "$4" --terminal-width 80' \
         sh $dir $match_cfg $SP_STATUS $SP_DURATION 2>/dev/null
 end
 
@@ -373,27 +317,16 @@ echo new >$fx_dirty/untracked.txt
 # --- Run ---
 #
 # Gating invariants (must hold; any drift fails the suite): full module-line
-# parity AND character parity for every built-in fixture. The starship theme's
-# [segments.git]/[segments.language] settings make GPY render Starship-exact
-# output for directory, git (branch spacing + `[!?]`-style status), language
-# (symbol shown without a version; fish excluded), command-duration, and
-# character. The only deliberate exclusion is Starship's `package` module, which
-# GPY does not emulate and which the baseline config disables.
+# parity AND character parity for every built-in fixture (see GATING above).
 
 echo "=== Gating fixtures ==="
-for ssh in 0 1
-    set -g SP_SSH $ssh
-    set -l pass_label off-SSH
-    test $ssh = 1; and set pass_label SSH
-    for pair in "plain non-git dir|$fx_plain" "clean git repo|$fx_clean" "dirty git repo|$fx_dirty"
-        set -l label (string split -m1 '|' -- $pair)[1]
-        set -l dir (string split -m1 '|' -- $pair)[2]
-        __sp_compare "$label ($pass_label)" $dir
-        test "$SP_MOD_MATCH" = 1; and __sp_gate ok "module parity"; or __sp_gate fail "module parity"
-        test "$SP_CHR_MATCH" = 1; and __sp_gate ok "character parity"; or __sp_gate fail "character parity"
-    end
+for pair in "plain non-git dir|$fx_plain" "clean git repo|$fx_clean" "dirty git repo|$fx_dirty"
+    set -l label (string split -m1 '|' -- $pair)[1]
+    set -l dir (string split -m1 '|' -- $pair)[2]
+    __sp_compare "$label" $dir
+    test "$SP_MOD_MATCH" = 1; and __sp_gate ok "module parity"; or __sp_gate fail "module parity"
+    test "$SP_CHR_MATCH" = 1; and __sp_gate ok "character parity"; or __sp_gate fail "character parity"
 end
-set -g SP_SSH 0
 
 if test (count $argv) -gt 0
     echo

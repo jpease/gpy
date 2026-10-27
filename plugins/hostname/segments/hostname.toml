@@ -1,0 +1,18 @@
+description = "Host name over SSH, cut at `trim_at`; prints the variant `ssh` over SSH"
+command = "bin/hostname.sh"
+
+# No `pwd`: one run per shell session, then cache hits while `is_ssh` stays the same.
+inputs = ["is_ssh"]
+
+ttl_secs = 3600
+timeout_ms = 200
+
+[settings.show_always]
+type = "bool"
+default = false
+description = "Show the host name in every session, not only over SSH"
+
+[settings.trim_at]
+type = "string"
+default = "."
+description = "Cut the host name at the first occurrence of this text; empty keeps it whole"

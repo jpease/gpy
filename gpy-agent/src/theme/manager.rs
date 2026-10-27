@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::config::defaults::{DEFAULT_THEME_CONTENT, STARSHIP_THEME_CONTENT, TEXT_THEME_CONTENT};
 use crate::config::discovery::{self, Discovered, Source};
 use crate::debug_log;
-use crate::plugin::discover_plugins;
+use crate::plugin::{PluginDiscovery, discover_plugins};
 use crate::shell::Shell;
 use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::Palette;
@@ -489,30 +489,27 @@ impl ThemeManager {
     }
 
     /// Export the theme for `shell` from one consistent state snapshot, with
-    /// palette roles resolved through `palette`.
+    /// palette roles resolved through `palette`. Discovers plugins once for
+    /// the Fish segment files and the enabled script segments.
     #[must_use]
     pub fn export(&self, shell: Shell, config: &Config, palette: &Palette) -> String {
         let state = self.state();
-        let plugin_files = if matches!(shell, Shell::Fish) {
-            Self::collect_plugin_segment_files()
-        } else {
-            BTreeMap::new()
+        let discovery = discover_plugins();
+        let plugins = export::PluginExports {
+            segment_files: if matches!(shell, Shell::Fish) {
+                Self::collect_plugin_segment_files(&discovery)
+            } else {
+                BTreeMap::new()
+            },
+            scripts: export::collect_script_segments(&discovery, config),
         };
-        export::theme_to_shell(
-            &state.theme,
-            &state.name,
-            config,
-            shell,
-            palette,
-            &plugin_files,
-        )
+        export::theme_to_shell(&state.theme, &state.name, config, shell, palette, &plugins)
     }
 
-    /// Discover third-party `.fish` plugin segment file paths, keyed by segment name.
-    fn collect_plugin_segment_files() -> BTreeMap<String, String> {
-        let discovery = discover_plugins();
+    /// Third-party `.fish` plugin segment file paths, keyed by segment name.
+    fn collect_plugin_segment_files(discovery: &PluginDiscovery) -> BTreeMap<String, String> {
         let mut files = BTreeMap::new();
-        for plugin in discovery.plugins {
+        for plugin in &discovery.plugins {
             if matches!(plugin.source, crate::plugin::PluginSource::FirstParty)
                 || !matches!(plugin.manifest.entry_type, crate::plugin::EntryType::File)
             {
@@ -521,7 +518,7 @@ impl ThemeManager {
             let Some(root) = &plugin.root else {
                 continue;
             };
-            for provided_segment in plugin.manifest.provided_segments {
+            for provided_segment in &plugin.manifest.provided_segments {
                 let segment_name = provided_segment.to_string();
                 let segment_file = root.join("segments").join(format!("{segment_name}.fish"));
                 files
@@ -763,11 +760,16 @@ mod tests {
 
     #[test]
     fn export_escapes_injected_theme_value() {
-        // End-to-end through the real `export` path: an unvalidated `trim_at`
-        // value must be emitted with an escaped `$`, not raw.
+        // End-to-end through the real `export` path: an unvalidated plugin icon
+        // must be emitted with an escaped `$`, not raw.
         let base = ThemeManager::builtin("default").expect("default theme should load");
         let mut theme = (*base.get()).clone();
-        theme.segments.hostname.trim_at = "$(touch /tmp/gpy_pwned)".to_owned();
+        theme
+            .segments
+            .plugin
+            .entry("hostname".to_owned())
+            .or_default()
+            .icon = Some(crate::config::types::Icon::new("$(touch /tmp/gpy_pwned)").expect("icon"));
         let manager = manager_with("default", theme);
 
         let output = manager.export(
@@ -777,11 +779,11 @@ mod tests {
         );
 
         assert!(
-            output.contains("__hostname_trim_at=\"\\$(touch /tmp/gpy_pwned)\""),
-            "trim_at must be exported with an escaped dollar. Got:\n{output}"
+            output.contains("__icon_hostname=\"\\$(touch /tmp/gpy_pwned)\""),
+            "the icon must be exported with an escaped dollar. Got:\n{output}"
         );
         assert!(
-            !output.contains("__hostname_trim_at=\"$(touch"),
+            !output.contains("__icon_hostname=\"$(touch"),
             "raw unescaped command substitution must not appear. Got:\n{output}"
         );
     }
@@ -841,8 +843,10 @@ mod tests {
         );
     }
 
+    /// `username` and `hostname` are script segments: the default theme styles
+    /// them as plugin pills (the `root` variant for root), with no template flag.
     #[test]
-    fn theme_export_includes_hostname_vars_for_default_theme() {
+    fn theme_export_includes_identity_pill_styles_for_default_theme() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
         let output = manager.export(
             Shell::Fish,
@@ -850,93 +854,33 @@ mod tests {
             &crate::template::Palette::default(),
         );
 
-        assert!(
-            output.contains("__color_hostname_bg"),
-            "export should include __color_hostname_bg. Got:\n{output}"
-        );
-        assert!(
-            !output.contains("__color_hostname_bg \"\""),
-            "export should not emit empty __color_hostname_bg. Got:\n{output}"
-        );
-        assert!(
-            output.contains("__color_hostname_fg"),
-            "export should include __color_hostname_fg. Got:\n{output}"
-        );
-        assert!(
-            !output.contains("__color_hostname_fg \"\""),
-            "export should not emit empty __color_hostname_fg. Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __hostname_trim_at \".\""),
-            "export should include default __hostname_trim_at of \".\". Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __hostname_show_always \"0\""),
-            "default theme should export __hostname_show_always as 0. Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __hostname_format \"1\""),
-            "__hostname_format must be the presence flag \"1\" for the default theme. Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __icon_hostname \"\""),
-            "__icon_hostname must be present but empty when icon is None. Got:\n{output}"
-        );
-    }
-
-    #[test]
-    fn theme_export_includes_username_vars_for_default_theme() {
-        let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(
-            Shell::Fish,
-            &Config::default(),
-            &crate::template::Palette::default(),
-        );
-
-        assert!(
-            output.contains("set -g __color_username_bg \"red\""),
-            "default theme should export __color_username_bg of \"red\". Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __color_username_fg \"white\""),
-            "default theme should export __color_username_fg of \"white\". Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __username_show_always \"0\""),
-            "default theme should export __username_show_always as 0. Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __username_format \"1\""),
-            "__username_format must be the presence flag \"1\" for the default theme. Got:\n{output}"
-        );
-        assert!(
-            output.contains("set -g __icon_username \"\""),
-            "__icon_username must be present but empty when icon is None. Got:\n{output}"
-        );
-    }
-
-    #[test]
-    fn theme_export_username_format_presence_flag_for_starship_theme() {
-        let manager = ThemeManager::builtin("starship").expect("starship theme should load");
-        let output = manager.export(
-            Shell::Fish,
-            &Config::default(),
-            &crate::template::Palette::default(),
-        );
-
-        // Presence flag only; the raw format string is never exported.
-        assert!(
-            output.contains("set -g __username_format \"1\""),
-            "starship preset sets a username format -> presence flag \"1\". Got:\n{output}"
-        );
-        assert!(
-            !output.contains("$username"),
-            "the raw username format string must never be exported. Got:\n{output}"
-        );
+        for line in [
+            "set -g __color_hostname_bg \"black\"",
+            "set -g __color_hostname_fg \"white\"",
+            "set -g __color_username_bg \"yellow\"",
+            "set -g __color_username_fg \"black\"",
+            "set -g __color_username_root_bg \"red\"",
+            "set -g __color_username_root_fg \"white\"",
+        ] {
+            assert!(
+                output.lines().any(|l| l == line),
+                "missing {line:?}. Got:\n{output}"
+            );
+        }
+        for gone in [
+            "__hostname_format",
+            "__username_format",
+            "__hostname_trim_at",
+        ] {
+            assert!(
+                !output.contains(gone),
+                "{gone} is no longer exported. Got:\n{output}"
+            );
+        }
     }
 
     /// The default theme is fully agent-rendered; a theme without formats keeps the
-    /// presence flags empty so the shells draw the pills locally.
+    /// presence flag empty so the shells draw the pill locally.
     #[test]
     fn theme_export_format_presence_flags_follow_the_theme() {
         let export = |name: &str| {
@@ -950,16 +894,15 @@ mod tests {
         };
         let default = export("default");
         let text = export("text");
-        for flag in ["__hostname_format", "__username_format", "__status_format"] {
-            assert!(
-                default.contains(&format!("set -g {flag} \"1\"")),
-                "default theme has a {flag} format -> presence flag \"1\". Got:\n{default}"
-            );
-            assert!(
-                text.contains(&format!("set -g {flag} \"\"")),
-                "text theme has no {flag} format -> empty flag. Got:\n{text}"
-            );
-        }
+        let flag = "__status_format";
+        assert!(
+            default.contains(&format!("set -g {flag} \"1\"")),
+            "default theme has a {flag} format -> presence flag \"1\". Got:\n{default}"
+        );
+        assert!(
+            text.contains(&format!("set -g {flag} \"\"")),
+            "text theme has no {flag} format -> empty flag. Got:\n{text}"
+        );
     }
 
     /// Every `BUILTIN_THEMES` entry loads via `builtin`, the loader fallback, and discovery.

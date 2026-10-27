@@ -54,24 +54,19 @@
 #   files in one process) or manual `source`-ing both files interactively.
 #
 # GATING (must hold; any drift fails the suite)
-#   Per-segment text+colour parity for username, hostname, directory, git,
-#   duration, language (python), and character, for every built-in fixture
-#   (plain non-git dir, clean git repo, dirty git repo) — EXCEPT the one
-#   documented, empirically-confirmed divergence point below, which is
-#   reported (with exact escapes) but never gated.
+#   Per-segment text+colour parity for directory, git, duration, language
+#   (python), and character, for every built-in fixture (plain non-git dir,
+#   clean git repo, dirty git repo) — EXCEPT the one documented,
+#   empirically-confirmed divergence point below, which is reported (with
+#   exact escapes) but never gated.
 #
-# VISIBILITY (username/hostname)
-#   The agent renders username/hostname whenever it is asked; whether the
-#   segment shows at all is the shell's segment_username_detect /
-#   segment_hostname_detect (root/sudo/SSH, or the theme's show_always). The
-#   GPY side applies those same predicates for this harness's local, non-SSH,
-#   non-sudo session, with show_always read from the imported theme, so
-#   both renderers are compared as a user would see them.
-#
-# DELIBERATE EXCLUSION (inherited from the preset itself, nothing to gate)
+# DELIBERATE EXCLUSION
 #   * Pure Preset's format has no `package` module (unlike starship_parity.
 #     test.fish's baseline, which explicitly disables it) — nothing to
 #     exclude here.
+#   * username/hostname: rendered by the bundled username/hostname plugins as
+#     flat pills, not Starship's `<name> in ` text (accepted difference), so
+#     they are not compared.
 #
 # KNOWN REMAINING DIVERGENCE (exempted from gating; reported every run)
 #
@@ -150,20 +145,21 @@ end
 # Fixed inputs so both renderers see identical dynamic context.
 set -g SPI_STATUS 0
 set -g SPI_DURATION 5000 # > Starship's 2s threshold so the duration module shows
-set -g spi_hostname $hostname
-set -g spi_username (whoami)
 
 # --- Isolated GPY config ---
 # Run the real import pipeline end to end, exactly as a user would after
 # downloading a third-party preset. Never touches the real user config.
 set -g SPI_ISO (mktemp -d)
 set -gx XDG_CONFIG_HOME $SPI_ISO
+# Bundled username/hostname plugins, as `gpy setup` installs them (go-w: the
+# agent refuses group/world-writable plugin trees).
+cp -R $spi_repo_root/plugins $SPI_ISO/bundled-plugins
+chmod -R go-w $SPI_ISO/bundled-plugins
+set -gx GPY_BUNDLED_PLUGIN_DIR $SPI_ISO/bundled-plugins
 set -gx HOME $SPI_ISO
 # Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
-# Off-SSH baseline: Starship shows the username and ssh_symbol whenever
-# SSH_CONNECTION is set, and GPY keys its SSH state on all three variables.
 set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
 
 if not $spi_gpy_bin theme import $spi_match_cfg --name pure-preset --force --apply-layout >/dev/null 2>&1
@@ -181,13 +177,6 @@ if not $spi_gpy_bin palette use pure-preset >/dev/null 2>&1
     rm -rf $SPI_ISO
     exit 1
 end
-
-# Shell-side visibility predicates for username/hostname (see VISIBILITY).
-source $spi_repo_root/fish/segments/username.fish
-source $spi_repo_root/fish/segments/hostname.fish
-set -g spi_theme_file $SPI_ISO/gpy/themes/pure-preset.toml
-set -g spi_is_root 0
-test (id -u) -eq 0; and set spi_is_root 1
 
 # --- Helpers ---
 
@@ -231,24 +220,6 @@ function __spi_color_sig --argument-names raw
     end
 end
 
-# Echo 1 when `key = true` is set in the imported theme's [segments.<seg>]
-# table, else 0 (an absent key takes the theme model's default, false).
-function __spi_theme_flag --argument-names seg key
-    set -l in_section 0
-    for line in (cat $spi_theme_file)
-        if string match -qr '^\s*\[' -- $line
-            set in_section 0
-            test (string trim -- $line) = "[segments.$seg]"; and set in_section 1
-            continue
-        end
-        if test $in_section -eq 1; and string match -qr "^\s*$key\s*=\s*true\b" -- $line
-            echo 1
-            return
-        end
-    end
-    echo 0
-end
-
 # Render one GPY segment for a directory. Echoes the raw (ANSI) output, or
 # nothing when the segment does not apply (empty or JSON error response).
 function __spi_gpy_seg --argument-names seg dir
@@ -258,15 +229,6 @@ function __spi_gpy_seg --argument-names seg dir
             set out ($spi_agent_bin oneshot $seg --cwd $dir --format ansi --not-last 2>/dev/null | string collect)
         case duration
             set out ($spi_agent_bin oneshot duration --duration-ms $SPI_DURATION --format ansi --not-last 2>/dev/null | string collect)
-        case hostname
-            __gpy_hostname_should_show 0 (__spi_theme_flag hostname show_always); or return 0
-            set out ($spi_agent_bin oneshot hostname --hostname $spi_hostname --format ansi --not-last 2>/dev/null | string collect)
-        case username
-            # Local session: is_ssh=0, no sudo.
-            __gpy_username_should_show $spi_is_root 0 0 (__spi_theme_flag username show_always); or return 0
-            set -l root_flag
-            test "$spi_is_root" = 1; and set root_flag --is-root
-            set out ($spi_agent_bin oneshot username --username $spi_username $root_flag --format ansi --not-last 2>/dev/null | string collect)
         case character
             set out ($spi_agent_bin oneshot character --exit-code $SPI_STATUS --format ansi 2>/dev/null | string collect)
     end
@@ -281,16 +243,10 @@ end
 # per-segment rendering is equivalent). cwd-dependent modules run inside a
 # child `sh -c` so cd doesn't fire fish PWD hooks (mirrors
 # starship_parity.test.fish's `__sp_starship`); cwd-independent ones
-# (username/hostname/duration/character) run directly with STARSHIP_CONFIG
+# (duration/character) run directly with STARSHIP_CONFIG
 # scoped via `set -lx`.
 function __spi_sp_seg --argument-names seg dir
     switch $seg
-        case username
-            set -lx STARSHIP_CONFIG $spi_match_cfg
-            starship module username 2>/dev/null | string collect
-        case hostname
-            set -lx STARSHIP_CONFIG $spi_match_cfg
-            starship module hostname 2>/dev/null | string collect
         case duration
             set -lx STARSHIP_CONFIG $spi_match_cfg
             starship module cmd_duration -d $SPI_DURATION 2>/dev/null | string collect
@@ -410,7 +366,7 @@ for pair in "plain non-git dir|$fx_plain" "clean git repo|$fx_clean" "dirty git 
     set -l dir (string split -m1 '|' -- $pair)[2]
     echo
     echo "=== $label ($dir) ==="
-    for seg in username hostname directory git duration lang character
+    for seg in directory git duration lang character
         __spi_compare_segment $label $seg $dir
         if __spi_exempt_text $label $seg
             echo "     ⏭  text exempt (KNOWN REMAINING DIVERGENCE — see file header)"
@@ -434,7 +390,7 @@ if test (count $argv) -gt 0
             echo "── (skipped: not a directory) ── ($dir)"
             continue
         end
-        for seg in username hostname directory git duration lang character
+        for seg in directory git duration lang character
             __spi_compare_segment "user dir" $seg $abs
         end
     end

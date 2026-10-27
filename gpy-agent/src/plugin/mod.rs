@@ -19,13 +19,14 @@ pub use manifest::{
     SegmentName, SegmentTokenCollision, first_token_collision,
 };
 pub use registry::{
-    DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource, discover_plugins,
-    user_plugins_dir,
+    BUNDLED_PLUGINS_DIR_NAME, DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource,
+    bundled_plugins_dir, discover_plugins, user_plugins_dir,
 };
 pub use script::{
     CacheScope, EnvName, Extension, InputName, RESERVED_SETTING_KEYS, ScanName, ScriptPath,
     ScriptSegmentManifest, TIMEOUT_MS_KEY, TTL_SECS_KEY, TimeoutMs, TtlSecs, VariantColorKey,
-    VariantColorPart, VariantName, script_segment_manifest_path,
+    VariantColorPart, VariantName, VariantStyleKey, check_owned_and_not_shared,
+    script_segment_manifest_path,
 };
 pub use settings::{SettingDecl, SettingKey, SettingValue};
 

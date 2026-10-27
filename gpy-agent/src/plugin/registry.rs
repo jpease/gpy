@@ -110,18 +110,25 @@ pub fn user_plugins_dir() -> PathBuf {
     crate::paths::config_root().join("plugins")
 }
 
-fn bundled_plugins_dir() -> Option<PathBuf> {
-    crate::env_config::env_string("GPY_BUNDLED_PLUGIN_DIR")
-        .map(|dir| crate::paths::absolutize(std::path::Path::new(&dir)))
+/// Return the bundled plugin root: `GPY_BUNDLED_PLUGIN_DIR` when set, else
+/// `bundled-plugins` beside the user root, where `gpy setup` installs the
+/// plugins GPY ships (`username`, `hostname`).
+#[must_use]
+pub fn bundled_plugins_dir() -> PathBuf {
+    crate::env_config::env_string("GPY_BUNDLED_PLUGIN_DIR").map_or_else(
+        || crate::paths::config_root().join(BUNDLED_PLUGINS_DIR_NAME),
+        |dir| crate::paths::absolutize(std::path::Path::new(&dir)),
+    )
 }
 
+/// Directory name of the default bundled plugin root under the config root.
+pub const BUNDLED_PLUGINS_DIR_NAME: &str = "bundled-plugins";
+
 fn plugin_roots() -> Vec<(PluginSource, PathBuf)> {
-    let mut roots = Vec::new();
-    if let Some(path) = bundled_plugins_dir() {
-        roots.push((PluginSource::Bundled, path));
-    }
-    roots.push((PluginSource::User, user_plugins_dir()));
-    roots
+    vec![
+        (PluginSource::Bundled, bundled_plugins_dir()),
+        (PluginSource::User, user_plugins_dir()),
+    ]
 }
 
 /// Plugin id of the built-in segment metadata.

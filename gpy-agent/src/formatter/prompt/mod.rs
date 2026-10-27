@@ -1,5 +1,7 @@
 //! Template-rendered ANSI prompt formatter. Segments without a `format` (or
 //! whose template errors) emit nothing; [`PromptDialect`] selects text escaping.
+//! `username` and `hostname` are script segments the shells draw themselves, so
+//! their protocol replies render nothing here.
 
 use crate::Result;
 use crate::formatter::character_resolver::CharacterResolver;
@@ -7,10 +9,8 @@ use crate::formatter::clock_resolver::ClockResolver;
 use crate::formatter::directory_resolver::DirectoryResolver;
 use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
-use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::status_resolver::StatusResolver;
-use crate::formatter::username_resolver::UsernameResolver;
 use crate::formatter::{Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition};
 use crate::ipc::{LanguageInfo, Response};
 use crate::template::VariableResolver;
@@ -85,26 +85,15 @@ impl Formatter for PromptFormatter {
                 dialect,
                 || StatusResolver::new(*success, config, theme, pos),
             ),
-            Response::Hostname { hostname, is_ssh } => render_resolved(
-                "hostname segment",
-                segments.hostname.format.as_deref(),
-                ctx,
-                dialect,
-                || HostnameResolver::new(hostname.clone(), *is_ssh, config, theme, pos),
-            ),
-            Response::Username { username, is_root } => render_resolved(
-                "username segment",
-                segments.username.format_for(*is_root),
-                ctx,
-                dialect,
-                || UsernameResolver::new(username.clone(), *is_root, config, theme, pos),
-            ),
             // The reply is printed verbatim into the prompt, so protocol JSON must never reach it.
             Response::Error { message } => {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
                 String::new()
             }
-            Response::Ack | Response::AgentStatus { .. } => String::new(),
+            Response::Ack
+            | Response::AgentStatus { .. }
+            | Response::Hostname { .. }
+            | Response::Username { .. } => String::new(),
         };
         Ok(rendered)
     }

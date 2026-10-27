@@ -39,19 +39,6 @@ __clock_format="1"
 __duration_threshold_ms="2500"
 __color_directory_bg="cyan"
 __color_duration_bg="yellow"
-__color_hostname_bg="green"
-__color_hostname_fg="black"
-__hostname_trim_at=".local\""
-__hostname_show_always="1"
-__hostname_format="1"
-__icon_hostname="host\\"
-__color_username_bg="red"
-__color_username_fg="white"
-__color_username_user_bg="yellow"
-__color_username_user_fg="black"
-__username_show_always="1"
-__username_format="1"
-__icon_username="user\`x\`"
 __icon_status_ok="ok\$1"
 __icon_status_fail="fail\`2\`"
 __color_status_ok_bg="green"
@@ -87,6 +74,13 @@ __gpy_segment_aws_profile_open_bg_color="black"
 __gpy_segment_aws_profile_close_icon=">"
 __gpy_segment_aws_profile_close_icon_color="black"
 __gpy_segment_aws_profile_close_bg_color="white"
+__gpy_segment_hostname_id="hostname"
+__gpy_segment_hostname_bg_color="green"
+__color_hostname_bg="green"
+__gpy_segment_hostname_text_color="black"
+__color_hostname_fg="black"
+__gpy_segment_hostname_variant_ssh_icon="host\\"
+__icon_hostname_ssh="host\\"
 __gpy_segment_kubernetes_id="kubernetes"
 __gpy_segment_kubernetes_bg_color="blue"
 __color_kubernetes_bg="blue"
@@ -98,6 +92,34 @@ __gpy_segment_kubernetes_variant_warn_bg_color="brblue"
 __color_kubernetes_warn_bg="brblue"
 __gpy_segment_kubernetes_variant_warn_text_color="black"
 __color_kubernetes_warn_fg="black"
+__gpy_segment_username_id="username"
+__gpy_segment_username_bg_color="yellow"
+__color_username_bg="yellow"
+__gpy_segment_username_text_color="black"
+__color_username_fg="black"
+__gpy_segment_username_icon="user\`x\`"
+__icon_username="user\`x\`"
+__gpy_segment_username_variant_root_bg_color="red"
+__color_username_root_bg="red"
+__gpy_segment_username_variant_root_text_color="white"
+__color_username_root_fg="white"
+__gpy_script_sh="/bin/sh"
+__gpy_script_k8s_ctx_name="k8s-ctx"
+__gpy_script_k8s_ctx_root="/opt/gpy plugins/k8s\$tools"
+__gpy_script_k8s_ctx_command="/opt/gpy plugins/k8s\$tools/bin/ctx\`id\`.sh"
+__gpy_script_k8s_ctx_reqcommand="/opt/gpy plugins/k8s\$tools/bin/check.sh"
+__gpy_script_k8s_ctx_inputs=("pwd" "is_ssh")
+__gpy_script_k8s_ctx_env=("KUBECONFIG")
+__gpy_script_k8s_ctx_opts=("GPY_OPT_label=say \"hi\" \$(id) \\")
+__gpy_script_k8s_ctx_ttl="5"
+__gpy_script_k8s_ctx_timeout="300"
+__gpy_script_k8s_ctx_scope="folder"
+__gpy_script_k8s_ctx_reqfiles=("Chart.yaml" "*")
+__gpy_script_k8s_ctx_reqfolders=(".kube")
+__gpy_script_k8s_ctx_reqexts=("tf" "tar.gz")
+__gpy_script_k8s_ctx_reqenv=()
+__gpy_script_k8s_ctx_key="9:k8s-tools5:1.2.07:k8s-ctx41:/opt/gpy plugins/k8s\$tools/bin/ctx\`id\`.sh30:GPY_OPT_label=say \"hi\" \$(id) \\"
+__gpy_script_segments=("k8s_ctx")
 __enabled_segments="clock username hostname directory git duration status"
 __gpy_lang_marker_files=(.ruby-version CMakeLists.txt Cargo.toml Gemfile Makefile Package.swift Pipfile Rakefile build.gradle build.gradle.kts composer.json go.mod go.sum mix.exs package.json pom.xml pyproject.toml rebar.config requirements.txt setup.cfg setup.py tox.ini tsconfig.json)
 
@@ -109,14 +131,6 @@ __gpy_segment_bg() {
         directory) __gpy_sbg="${__color_directory_bg:-}" ;;
         duration) __gpy_sbg="${__color_duration_bg:-}" ;;
         clock) __gpy_sbg="${__color_clock_bg:-}" ;;
-        hostname) __gpy_sbg="${__color_hostname_bg:-}" ;;
-        username)
-            if [[ "${__gpy_is_root:-0}" == "1" ]]; then
-                __gpy_sbg="${__color_username_bg:-}"
-            else
-                __gpy_sbg="${__color_username_user_bg:-}"
-            fi
-            ;;
         status)
             if [[ "${__gpy_last_status:-0}" -eq 0 ]]; then
                 __gpy_sbg="${__color_status_ok_bg:-green}"

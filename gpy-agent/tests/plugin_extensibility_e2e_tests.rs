@@ -319,6 +319,30 @@ impl FishSandbox {
             .env("PATH", &self.path)
     }
 
+    /// Install a v1 `.fish` plugin `id` providing `segment`, shaped like the
+    /// scaffold `gpy plugin new` used to write.
+    fn install_fish_plugin(&self, id: &str, segment: &str) {
+        let root = self.xdg_config().join("gpy").join("plugins").join(id);
+        fs::create_dir_all(root.join("segments")).expect("create plugin dirs");
+        fs::write(
+            root.join("plugin.toml"),
+            format!(
+                "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
+                 entry_type = \"file\"\nprovided_segments = [\"{segment}\"]\n"
+            ),
+        )
+        .expect("write manifest");
+        fs::write(
+            root.join("segments").join(format!("{segment}.fish")),
+            format!(
+                "function segment_{segment}_detect\n    return 0\nend\n\n\
+                 function segment_{segment}_render --argument-names is_last\n    \
+                 gpy_section_standalone blue white \"* {segment}\" $is_last\nend\n"
+            ),
+        )
+        .expect("write segment");
+    }
+
     /// Run the real `gpy` CLI in the sandbox.
     fn gpy(&self, args: &[&str]) -> std::process::Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_gpy"));
@@ -367,10 +391,7 @@ fn e2e_scaffolded_segments_with_repeated_or_edge_separators_load_in_fish() {
     }
     for segment in ["my-seg", "my--seg", "my__seg", "seg_"] {
         let sandbox = FishSandbox::new();
-        assert_success(
-            &sandbox.gpy(&["plugin", "new", "audit-plugin", "--segment", segment]),
-            &format!("gpy plugin new --segment {segment}"),
-        );
+        sandbox.install_fish_plugin("audit-plugin", segment);
 
         write_config(&sandbox.xdg_config(), "default", &[segment]);
         let initial = sandbox.fish(FISH_RENDER_PROBE, segment);
@@ -400,14 +421,8 @@ fn e2e_scaffolded_segments_with_repeated_or_edge_separators_load_in_fish() {
 #[serial]
 fn e2e_colliding_segment_tokens_are_rejected_not_redirected() {
     let sandbox = FishSandbox::new();
-    assert_success(
-        &sandbox.gpy(&["plugin", "new", "ctx-a", "--segment", "k8s-ctx"]),
-        "gpy plugin new ctx-a",
-    );
-    assert_success(
-        &sandbox.gpy(&["plugin", "new", "ctx-b", "--segment", "k8s_ctx"]),
-        "gpy plugin new ctx-b",
-    );
+    sandbox.install_fish_plugin("ctx-a", "k8s-ctx");
+    sandbox.install_fish_plugin("ctx-b", "k8s_ctx");
 
     let list = sandbox.gpy(&["plugin", "list"]);
     assert_success(&list, "gpy plugin list");

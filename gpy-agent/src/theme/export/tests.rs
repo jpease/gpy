@@ -1,5 +1,6 @@
+use super::script_segments::tests::golden_scripts;
 use super::shell_assignment::escape_shell_value;
-use super::theme_to_shell::{SEGMENT_BG_VARS, theme_to_shell};
+use super::theme_to_shell::{PluginExports, SEGMENT_BG_VARS, theme_to_shell};
 use crate::config::Config;
 use crate::shell::Shell;
 use crate::template::Palette;
@@ -58,19 +59,16 @@ text_color = "black"
 show_if_exceeds_ms = 2500
 
 [segments.hostname]
-format = "on [$hostname]($style)"
-icon = "host\\"
+ssh_icon = "host\\"
 bg_color = "green"
 text_color = "black"
-trim_at = ".local\""
-show_always = true
 
 [segments.username]
-format = "[$user]($style)"
 icon = "user`x`"
-bg_color = "red"
-text_color = "white"
-show_always = true
+bg_color = "yellow"
+text_color = "black"
+root_bg_color = "red"
+root_text_color = "white"
 
 [segments.status]
 ok_icon = "ok$1"
@@ -168,6 +166,15 @@ fn golden_plugin_segment_files() -> BTreeMap<String, String> {
     ])
 }
 
+/// The golden plugin data: segment files plus one script segment whose paths and
+/// setting value hold shell metacharacters.
+fn golden_plugins() -> PluginExports {
+    PluginExports {
+        segment_files: golden_plugin_segment_files(),
+        scripts: golden_scripts(),
+    }
+}
+
 fn golden_export(shell: Shell) -> String {
     theme_to_shell(
         &golden_theme(),
@@ -175,7 +182,7 @@ fn golden_export(shell: Shell) -> String {
         &golden_config(),
         shell,
         &Palette::default(),
-        &golden_plugin_segment_files(),
+        &golden_plugins(),
     )
 }
 
@@ -232,7 +239,7 @@ fn export_drops_private_use_delimiters_when_icons_are_off() {
                 config,
                 shell,
                 &Palette::default(),
-                &golden_plugin_segment_files(),
+                &golden_plugins(),
             )
         };
         let line_of = |script: &str, name: &str| {
@@ -291,7 +298,7 @@ fn export_erases_private_use_status_icons_when_icons_are_off() {
             &config,
             shell,
             &Palette::default(),
-            &BTreeMap::new(),
+            &PluginExports::default(),
         )
     };
     for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
@@ -318,15 +325,16 @@ fn export_erases_private_use_status_icons_when_icons_are_off() {
     }
 }
 
-/// `ui.show_icons = false` exports a Nerd Font hostname/username icon empty, which
-/// the shells read as "no icon"; with icons on it is exported as written.
+/// `ui.show_icons = false` exports a Nerd Font plugin segment icon, a variant
+/// icon and open/close cap icons empty, which the shells read as "no icon";
+/// with icons on they are exported as written.
 #[test]
-fn export_empties_private_use_hostname_and_username_icons_when_icons_are_off() {
-    use crate::config::types::Icon;
+fn export_empties_private_use_plugin_segment_icons_when_icons_are_off() {
     let has_private_use = |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
-    let mut theme = ThemeConfig::default();
-    theme.segments.hostname.icon = Some(Icon::new("\u{f108}").expect("valid icon"));
-    theme.segments.username.icon = Some(Icon::new("\u{f007}").expect("valid icon"));
+    let theme: ThemeConfig = toml::from_str(
+        "[segments.hostname]\nssh_icon = \"\u{f108}\"\n[segments.username]\nicon = \"\u{f007}\"\n[segments.username.open]\nicon = \"\u{e0b6}\"\n[segments.username.close]\nicon = \"\u{e0b4}\"\n",
+    )
+    .expect("theme parses");
     let export = |show_icons: bool, shell: Shell| {
         let mut config = Config::default();
         config.ui.show_icons = show_icons;
@@ -336,13 +344,20 @@ fn export_empties_private_use_hostname_and_username_icons_when_icons_are_off() {
             &config,
             shell,
             &Palette::default(),
-            &BTreeMap::new(),
+            &PluginExports::default(),
         )
     };
     for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
         let on = export(true, shell);
         let off = export(false, shell);
-        for name in ["__icon_hostname", "__icon_username"] {
+        for name in [
+            "__icon_hostname_ssh",
+            "__gpy_segment_hostname_variant_ssh_icon",
+            "__icon_username",
+            "__gpy_segment_username_icon",
+            "__gpy_segment_username_open_icon",
+            "__gpy_segment_username_close_icon",
+        ] {
             let line_of = |script: &str| {
                 script
                     .lines()
@@ -415,7 +430,7 @@ ok_bg_color = "blue"
         &Config::default(),
         Shell::Bash,
         &Palette::default(),
-        &BTreeMap::new(),
+        &PluginExports::default(),
     );
     let names: Vec<&str> = script
         .lines()
@@ -512,12 +527,12 @@ fn default_theme_export_matches_golden() {
         &Config::default(),
         Shell::Fish,
         &Palette::default(),
-        &BTreeMap::new(),
+        &PluginExports::default(),
     );
     insta::assert_snapshot!("default_theme_fish_export", export);
 }
 
-fn shell_bin(shell: Shell) -> &'static str {
+pub(super) fn shell_bin(shell: Shell) -> &'static str {
     match shell {
         Shell::Fish => "fish",
         Shell::Bash => "bash",
@@ -527,7 +542,7 @@ fn shell_bin(shell: Shell) -> &'static str {
 
 /// Skip guard for hosts missing a shell. Checks exit status, not just spawn: a
 /// broken `bash.exe` on Windows CI otherwise passes. Diagnostics show on failure.
-fn shell_available(shell: Shell) -> bool {
+pub(super) fn shell_available(shell: Shell) -> bool {
     let bin = shell_bin(shell);
     match Command::new(bin).arg("--version").output() {
         Ok(output) if output.status.success() => {
@@ -551,7 +566,7 @@ fn shell_available(shell: Shell) -> bool {
 }
 
 /// Skip a missing shell locally; fail under `CI` unless `GPY_CI_NO_SHELLS=1`.
-fn skip_shell_or_fail_under_ci(shell: Shell) {
+pub(super) fn skip_shell_or_fail_under_ci(shell: Shell) {
     eprintln!("SKIP: {shell:?} is not available");
     let ci = std::env::var_os("CI").is_some_and(|value| !value.is_empty());
     let no_shells_declared = std::env::var_os("GPY_CI_NO_SHELLS").is_some();
@@ -562,7 +577,7 @@ fn skip_shell_or_fail_under_ci(shell: Shell) {
 }
 
 /// A collision-free marker path a successful injection would `touch`.
-fn unique_marker(tag: &str) -> std::path::PathBuf {
+pub(super) fn unique_marker(tag: &str) -> std::path::PathBuf {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -779,7 +794,7 @@ fn optional_shell_vars_reset_on_resource() {
                 &config,
                 shell,
                 &Palette::default(),
-                &BTreeMap::new(),
+                &PluginExports::default(),
             )
         };
         let path_a = dir
@@ -834,7 +849,7 @@ fn exported_index_and_role_colors_reach_real_set_color() {
             &Config::default(),
             shell,
             &palette,
-            &BTreeMap::new(),
+            &PluginExports::default(),
         )
     };
     let dir = tempfile::tempdir().expect("tempdir");
@@ -928,7 +943,7 @@ fn exported_ansi_names_follow_the_palette_and_indices_do_not() {
             &Config::default(),
             shell,
             &palette,
-            &BTreeMap::new(),
+            &PluginExports::default(),
         )
     };
     let dir = tempfile::tempdir().expect("tempdir");

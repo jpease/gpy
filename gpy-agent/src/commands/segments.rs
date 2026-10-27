@@ -210,12 +210,15 @@ fn remove_from_enabled_segments(segment: &str) -> Result<()> {
 }
 
 pub(crate) fn available_segments() -> Vec<String> {
-    available_segments_with_user_dir(&crate::plugin::user_plugins_dir())
+    available_segments_with_plugin_dirs(&[
+        crate::plugin::bundled_plugins_dir(),
+        crate::plugin::user_plugins_dir(),
+    ])
 }
 
-/// Core of [`available_segments`], parameterized on the user plugin directory
-/// so tests need not mutate the environment.
-fn available_segments_with_user_dir(user_plugin_dir: &std::path::Path) -> Vec<String> {
+/// Core of [`available_segments`], parameterized on the plugin roots so tests
+/// need not mutate the environment.
+fn available_segments_with_plugin_dirs(plugin_dirs: &[std::path::PathBuf]) -> Vec<String> {
     let mut ordered = Vec::new();
     ordered.extend(
         BUILTIN_ORDER
@@ -223,10 +226,10 @@ fn available_segments_with_user_dir(user_plugin_dir: &std::path::Path) -> Vec<St
             .map(|builtin| builtin.as_str().to_owned()),
     );
 
-    // First-party plugins are skipped below, so only user plugins can add
-    // segments; without that directory the builtins are complete. Keeps
+    // First-party plugins are skipped below, so only bundled and user plugins
+    // can add segments; without either root the builtins are complete. Keeps
     // `gpy __complete segment` cheap on every TAB.
-    if !user_plugin_dir.exists() {
+    if !plugin_dirs.iter().any(|dir| dir.exists()) {
         return ordered;
     }
 
@@ -391,12 +394,15 @@ mod tests {
     }
 
     #[test]
-    fn available_segments_returns_builtins_only_when_no_user_plugin_dir() {
+    fn available_segments_returns_builtins_only_without_plugin_dirs() {
         let temp = TempDir::new().expect("tempdir");
-        let missing_user_dir = temp.path().join("gpy").join("plugins");
+        let missing = [
+            temp.path().join("gpy").join("bundled-plugins"),
+            temp.path().join("gpy").join("plugins"),
+        ];
 
         // The fast path must return exactly the builtins.
-        let segments = available_segments_with_user_dir(&missing_user_dir);
+        let segments = available_segments_with_plugin_dirs(&missing);
 
         assert_eq!(
             segments,
@@ -406,23 +412,21 @@ mod tests {
                 "language",
                 "directory",
                 "git",
-                "status",
-                "username",
-                "hostname"
+                "status"
             ],
-            "with no user plugin dir, available_segments() must equal BUILTIN_ORDER exactly"
+            "with no plugin dir, available_segments() must equal BUILTIN_ORDER exactly"
         );
     }
 
     #[test]
-    fn available_segments_takes_slow_path_when_user_dir_exists() {
+    fn available_segments_takes_slow_path_when_a_plugin_dir_exists() {
         let temp = TempDir::new().expect("tempdir");
         let user_dir = temp.path().join("gpy").join("plugins");
         std::fs::create_dir_all(&user_dir).expect("create user plugin dir");
 
         // `discover_plugins()` reads the ambient environment, so only assert
         // the builtins survive; end-to-end coverage is in `gpy_cli_tests.rs`.
-        let segments = available_segments_with_user_dir(&user_dir);
+        let segments = available_segments_with_plugin_dirs(&[user_dir]);
 
         for builtin in BUILTIN_ORDER {
             assert!(

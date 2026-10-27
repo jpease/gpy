@@ -17,8 +17,6 @@ macro_rules! builtin_segments {
         }
 
         /// Canonical ordering for the builtin segments.
-        ///
-        /// `username` and `hostname` are listed but not enabled by default.
         pub const BUILTIN_ORDER: &[BuiltinSegment] = &[$(BuiltinSegment::$variant),+];
 
         impl BuiltinSegment {
@@ -57,10 +55,6 @@ builtin_segments! {
     Git => "git",
     /// Last command's exit status.
     Status => "status",
-    /// Current user name.
-    Username => "username",
-    /// Host name.
-    Hostname => "hostname",
 }
 
 impl fmt::Display for BuiltinSegment {

@@ -75,6 +75,35 @@ pub(super) fn append_shell_assignments(
     }
 }
 
+/// Append a global list assignment, every element double-quoted and escaped
+/// once with [`escape_shell_value`]: a Bash indexed array (`name=("a" "b")`),
+/// a Zsh array (`typeset -g -a name=("a" "b")`) or a Fish list
+/// (`set -g name "a" "b"`). An empty list assigns zero elements.
+pub(super) fn append_shell_list<'a>(
+    output: &mut String,
+    shell: Shell,
+    name: &str,
+    values: impl IntoIterator<Item = &'a str>,
+) {
+    let (prefix, open, close, mut separator) = match shell {
+        Shell::Fish => ("set -g ", "", "", " "),
+        Shell::Zsh => ("typeset -g -a ", "=(", ")", ""),
+        Shell::Bash => ("", "=(", ")", ""),
+    };
+    output.push_str(prefix);
+    output.push_str(name);
+    output.push_str(open);
+    for value in values {
+        output.push_str(separator);
+        separator = " ";
+        output.push('"');
+        output.push_str(&escape_shell_value(value, shell));
+        output.push('"');
+    }
+    output.push_str(close);
+    output.push('\n');
+}
+
 /// Escape a theme value for a double-quoted shell assignment.
 ///
 /// Theme values are attacker-influenceable and only checked for control chars upstream.

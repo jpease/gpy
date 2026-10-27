@@ -109,30 +109,24 @@ untracked_only_bg_color = "cyan"
 in_progress_text_color = "white"
 in_progress_bg_color = "magenta"
 
+# Hostname: a script segment (the bundled `hostname` plugin), drawn as a pill
+# like the others. Shown over SSH, or always with `plugin.hostname.show_always`;
+# `ssh_icon` (unset) would show before the name over SSH only.
 [segments.hostname]
-# One leading space inside the pill, like every other powerline segment.
-# `$symbol` is the theme `icon` over SSH only (it carries its own trailing
-# space, if any), so a local session reads " host" with no double space.
-format = "([$sep_open](fg:$bg bg:default))[ $symbol$hostname]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 bg_color = "black"
 text_color = "white"
-# icon, trim_at, show_always: defaults
 
-# Username. Opt-in — not in the default
-# enabled_segments; add "username" to config.ui.enabled_segments to show it.
-# Shown as root, under sudo or over SSH (show_always defaults to false), as
-# Starship's `username`: a red pill flags a root session (Starship's bold-red
-# `style_root`), a yellow one everyone else (`style_user`). `$style` and `$bg`
-# follow the session; `user_format` (unset) would replace `format` for non-root.
+# Username: a script segment (the bundled `username` plugin). Opt-in, not in
+# the default enabled_segments; add "username" to config.ui.enabled_segments to
+# show it. Shown as root, under sudo or over SSH (or always with
+# `plugin.username.show_always`), as Starship's `username`: a yellow pill for
+# everyone (Starship's `style_user`), a red one for the `root` variant the
+# plugin prints as root (`style_root`).
 [segments.username]
-# One leading space inside the pill, like every other powerline segment.
-# `$symbol` is the theme `icon` (it carries its own trailing space, if any).
-format = "([$sep_open](fg:$bg bg:default))[ $symbol$username]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
-bg_color = "red"
-text_color = "white"
-user_bg_color = "yellow"
-user_text_color = "black"
-# icon, show_always: defaults
+bg_color = "yellow"
+text_color = "black"
+root_bg_color = "red"
+root_text_color = "white"
 
 [segments.language]
 format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([ $version]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"

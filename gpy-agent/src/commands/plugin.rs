@@ -1,6 +1,7 @@
 //! `gpy plugin` command handlers.
 
-use crate::commands::output;
+use super::script_lint::{Lint, Undeclared, lint_script, undeclared_vars};
+use crate::commands::output::{self, Status};
 use crate::plugin::{
     DiscoveredPlugin, EntryType, GpyVersion, PluginApiVersion, PluginManifest, PluginSource,
     ScriptSegmentManifest, SegmentName, discover_plugins, script_segment_manifest_path,
@@ -13,6 +14,9 @@ use std::{fs, path::PathBuf};
 
 /// Validated segment manifests of a script plugin, keyed by segment.
 type ScriptSegments = BTreeMap<SegmentName, ScriptSegmentManifest>;
+
+/// Cap on the script text read for the `$VAR` scan.
+const SCRIPT_READ_CAP: usize = 1_048_576;
 
 const PUBLIC_PLUGIN_HELPERS: &[&str] = &[
     "gpy_section_start",
@@ -293,6 +297,124 @@ fn print_min_version(compatibility_constraints: Option<&crate::plugin::Compatibi
     }
 }
 
+/// One line for `gpy plugin list`: cache behaviour and the description.
+fn script_summary(segment: &ScriptSegmentManifest) -> String {
+    let mut summary = format!(
+        "{} scope, ttl_secs {}, timeout_ms {}",
+        segment.cache_scope().as_str(),
+        segment.ttl_secs,
+        segment.timeout_ms
+    );
+    if let Some(description) = &segment.description {
+        summary.push_str(" - ");
+        summary.push_str(&crate::template::sanitize_control_chars(description));
+    }
+    summary
+}
+
+/// What `validate` found in one script of a segment.
+struct ScriptCheck {
+    /// The script as written in the segment manifest.
+    script: String,
+    lint: Lint,
+    undeclared: Vec<Undeclared>,
+}
+
+/// The checks of every script (`command`, `require_command`) of one segment.
+struct SegmentCheck {
+    segment: SegmentName,
+    scripts: Vec<ScriptCheck>,
+}
+
+/// Lint each script and scan it for `$VAR` uses the manifest does not provide.
+fn check_scripts(root: &Path, segments: &ScriptSegments) -> Vec<SegmentCheck> {
+    segments
+        .iter()
+        .map(|(segment, manifest)| SegmentCheck {
+            segment: segment.clone(),
+            scripts: std::iter::once(&manifest.command)
+                .chain(manifest.require_command.as_ref())
+                .filter_map(|script| {
+                    // Containment was checked when the manifest loaded.
+                    let resolved = script.resolve(root).ok()?;
+                    let text = crate::fs_util::read_small_file(&resolved, SCRIPT_READ_CAP)
+                        .unwrap_or_default();
+                    Some(ScriptCheck {
+                        script: script.as_str().to_owned(),
+                        lint: lint_script(&resolved),
+                        undeclared: undeclared_vars(&text, manifest),
+                    })
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Print every lint failure and fail; nothing is printed when all scripts pass.
+fn ensure_lints_pass(checks: &[SegmentCheck]) -> Result<()> {
+    let mut failed = 0_usize;
+    for check in checks {
+        for script in &check.scripts {
+            if let Lint::Failed { tool, report } = &script.lint {
+                failed = failed.saturating_add(1);
+                output::fail(format_args!(
+                    "segment {}: {} failed {tool}",
+                    check.segment, script.script
+                ));
+                for line in report.lines() {
+                    output::detail(crate::template::sanitize_control_chars(line));
+                }
+            }
+        }
+    }
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(Error::invalid(format!(
+            "{failed} script(s) failed the shell lint; fix the findings above"
+        )))
+    }
+}
+
+/// Print the lint verdict and the `$VAR` warnings of each script.
+fn print_script_checks(checks: &[SegmentCheck]) {
+    for check in checks {
+        for script in &check.scripts {
+            let prefix = format!("segment {}: {}", check.segment, script.script);
+            match &script.lint {
+                Lint::Clean(tool) => {
+                    output::detail_status(
+                        1,
+                        Status::Ok,
+                        format_args!("{prefix}: {tool} found no problems"),
+                    );
+                }
+                Lint::Unavailable => output::detail_status(
+                    1,
+                    Status::Warn,
+                    format_args!("{prefix}: not linted; install shellcheck or dash"),
+                ),
+                Lint::Failed { .. } => {}
+            }
+            for var in &script.undeclared {
+                output::detail_status(
+                    1,
+                    Status::Warn,
+                    format_args!(
+                        "{prefix}: uses ${}, which is not provided: {}",
+                        var.name, var.fix
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Plugin-relative path of the scaffold's script.
+fn scaffold_script_path(segment: &SegmentName) -> String {
+    format!("bin/{segment}.sh")
+}
+
 fn scaffold_manifest(plugin_id: &crate::plugin::PluginId, segment: &SegmentName) -> String {
     format!(
         r#"# GPY plugin manifest
@@ -300,7 +422,7 @@ id = "{plugin_id}"
 name = "{plugin_id}"
 version = "0.1.0"
 api_version = "{api_version}"
-entry_type = "file"
+entry_type = "script"
 provided_segments = ["{segment}"]
 description = "Describe what this plugin shows"
 
@@ -312,22 +434,41 @@ min_gpy_version = "{min_gpy_version}"
     )
 }
 
-fn scaffold_segment(segment: &SegmentName) -> String {
-    let segment_token = segment.variable_token();
+fn scaffold_segment_manifest(segment: &SegmentName) -> String {
     format!(
-        r#"# SPDX-License-Identifier: GPL-3.0-or-later
+        r#"# Script segment manifest; schema: gpy-agent/schemas/script-segment-manifest.json
+description = "Describe what this segment shows"
+command = "{script}"
 
-function segment_{segment}_detect
-    return 0
-end
+# Public shell values the script reads as GPY_<NAME>: pwd, is_root, is_sudo,
+# is_ssh, cmd_duration, prompt_icons. Declaring "pwd" runs the script in the
+# shell's directory and caches its result per folder.
+inputs = []
 
-function segment_{segment}_render --argument-names is_last
-    set -l bg_color (set -q __gpy_segment_{segment_token}_bg_color; and echo $__gpy_segment_{segment_token}_bg_color; or echo blue)
-    set -l fg_color (set -q __gpy_segment_{segment_token}_text_color; and echo $__gpy_segment_{segment_token}_text_color; or echo white)
-    set -l icon (set -q __gpy_segment_{segment_token}_icon; and echo $__gpy_segment_{segment_token}_icon; or echo "*")
+# Extra environment variables the script may read. They also key the cache.
+env = []
 
-    gpy_section_standalone $bg_color $fg_color "$icon {segment}" $is_last
-end
+# Seconds a result is reused; keep it short. 0 runs on every due prompt.
+ttl_secs = 5
+# The script is killed after this many milliseconds (at most 500).
+timeout_ms = 300
+"#,
+        script = scaffold_script_path(segment),
+    )
+}
+
+fn scaffold_script(segment: &SegmentName) -> String {
+    format!(
+        r#"#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Line 1 is the segment text (empty output hides the segment). Line 2 may name
+# a colour variant. Rules: POSIX sh only; at most 4 KiB of output; exit fast;
+# no background jobs. The environment is clean: only PATH, HOME, USER, LOGNAME,
+# LANG, LC_*, TERM, TZ, TMPDIR, the names in `env` and the GPY_* values for the
+# declared `inputs` reach the script. Check it with `gpy plugin validate`.
+
+printf '%s\n' "{segment}"
 "#
     )
 }
@@ -363,6 +504,9 @@ pub fn list() {
                 "segments: {}",
                 segment_list(&plugin.manifest.provided_segments)
             ));
+            for (name, segment) in &plugin.script_segments {
+                output::detail(format_args!("segment {name}: {}", script_summary(segment)));
+            }
         }
     }
 
@@ -388,7 +532,10 @@ pub fn validate(path_or_id: &str) -> Result<()> {
     let path = Path::new(path_or_id);
     if path.exists() {
         let (manifest, root, segments) = load_manifest_from_path(path)?;
+        let checks = check_scripts(&root, &segments);
+        ensure_lints_pass(&checks)?;
         print_manifest_validation(&manifest, &root, &segments);
+        print_script_checks(&checks);
         return Ok(());
     }
 
@@ -399,8 +546,11 @@ pub fn validate(path_or_id: &str) -> Result<()> {
         .find(|plugin| plugin.manifest.id.as_str() == path_or_id)
     {
         if let Some(root) = &plugin.root {
-            validate_plugin_root(root, &plugin.manifest)?;
+            let segments = validate_plugin_root(root, &plugin.manifest)?;
+            let checks = check_scripts(root, &segments);
+            ensure_lints_pass(&checks)?;
             print_discovered_plugin_validation(plugin, root);
+            print_script_checks(&checks);
         } else {
             validate_first_party_metadata(&plugin.manifest)?;
             print_first_party_validation(plugin);
@@ -476,9 +626,11 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     }
     fs::create_dir(&plugin_root).map_err(create_failed)?;
     fs::create_dir_all(plugin_root.join("segments")).map_err(create_failed)?;
+    fs::create_dir_all(plugin_root.join("bin")).map_err(create_failed)?;
 
     let manifest_path = plugin_root.join("plugin.toml");
-    let segment_path = plugin_segment_file(&plugin_root, &segment);
+    let segment_manifest_path = script_segment_manifest_path(&plugin_root, &segment);
+    let script_path = plugin_root.join(scaffold_script_path(&segment));
 
     let write_new = |path: &Path, contents: String, what: &str| {
         crate::fs_util::create_new(path, contents.as_bytes()).map_err(|e| {
@@ -497,13 +649,22 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
         scaffold_manifest(&plugin_id, &segment),
         "manifest",
     )?;
-    write_new(&segment_path, scaffold_segment(&segment), "segment")?;
+    write_new(
+        &segment_manifest_path,
+        scaffold_segment_manifest(&segment),
+        "segment manifest",
+    )?;
+    write_new(&script_path, scaffold_script(&segment), "script")?;
 
     println!("Created plugin scaffold");
     output::detail(format_args!("plugin: {}", plugin_id.as_str()));
     output::detail(format_args!("root: {}", plugin_root.display()));
     output::detail(format_args!("manifest: {}", manifest_path.display()));
-    output::detail(format_args!("segment file: {}", segment_path.display()));
+    output::detail(format_args!(
+        "segment manifest: {}",
+        segment_manifest_path.display()
+    ));
+    output::detail(format_args!("script: {}", script_path.display()));
     println!("\nNext steps:");
     output::detail("1. Edit the generated files");
     output::detail(format_args!(
@@ -511,7 +672,6 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
         plugin_root.display()
     ));
     output::detail(format_args!("3. Run `gpy enable {segment}`"));
-    println!("\nNote: {FISH_ONLY_NOTE}");
     Ok(())
 }
 

@@ -239,6 +239,89 @@ fn load_rejects_a_symlink_out_of_the_root() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("outside the plugin root"), "{err}");
+
+    fs::write(
+        script_segment_manifest_path(temp.path(), &segment),
+        "command = \"bin/seg.sh\"\nrequire_command = \"bin/link.sh\"\n",
+    )
+    .unwrap();
+    let err = ScriptSegmentManifest::load(temp.path(), &segment)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("require_command:") && err.contains("outside the plugin root"),
+        "{err}"
+    );
+}
+
+#[test]
+fn resolve_returns_the_canonical_path() {
+    let (temp, _) = plugin_root();
+    let resolved = ScriptPath::new("./bin/seg.sh")
+        .unwrap()
+        .resolve(temp.path())
+        .unwrap();
+    assert!(resolved.is_absolute(), "{resolved:?}");
+    assert_eq!(
+        resolved,
+        temp.path().canonicalize().unwrap().join("bin/seg.sh")
+    );
+}
+
+/// The script and every directory up to the plugin root must be writable by
+/// the user only: a group- or world-writable one is refused, naming the path.
+#[cfg(unix)]
+#[test]
+fn resolve_refuses_a_script_or_directory_others_can_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (temp, _) = plugin_root();
+    let script = ScriptPath::new("bin/seg.sh").unwrap();
+    let set_mode = |relative: &str, mode: u32| {
+        fs::set_permissions(temp.path().join(relative), fs::Permissions::from_mode(mode)).unwrap();
+    };
+    set_mode("", 0o700);
+    set_mode("bin", 0o755);
+    set_mode("bin/seg.sh", 0o644);
+    script.resolve(temp.path()).unwrap();
+
+    for (relative, mode, restore) in [
+        ("bin/seg.sh", 0o664, 0o644),
+        ("bin/seg.sh", 0o646, 0o644),
+        ("bin", 0o775, 0o755),
+        ("", 0o777, 0o700),
+    ] {
+        set_mode(relative, mode);
+        let err = script.resolve(temp.path()).unwrap_err().to_string();
+        assert!(
+            err.contains("bin/seg.sh") && err.contains("group- or world-writable"),
+            "{relative:?} {mode:o}: {err}"
+        );
+        set_mode(relative, restore);
+    }
+    script.resolve(temp.path()).unwrap();
+}
+
+/// Only the plugin root and below are checked: a shared parent of the root
+/// (such as a world-writable temp directory) is not the plugin's to fix.
+#[cfg(unix)]
+#[test]
+fn resolve_stops_the_writability_check_at_the_plugin_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = TempDir::new().unwrap();
+    fs::set_permissions(outer.path(), fs::Permissions::from_mode(0o777)).unwrap();
+    let root = outer.path().join("plugin");
+    fs::create_dir_all(root.join("bin")).unwrap();
+    for dir in [&root, &root.join("bin")] {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(root.join("bin/seg.sh"), "echo hi\n").unwrap();
+    fs::set_permissions(root.join("bin/seg.sh"), fs::Permissions::from_mode(0o644)).unwrap();
+    ScriptPath::new("bin/seg.sh")
+        .unwrap()
+        .resolve(&root)
+        .unwrap();
 }
 
 /// Rejected values are echoed `{:?}`-escaped: ESC and CSI (U+009B) from a

@@ -161,7 +161,8 @@ display_inner!(EnvName);
 /// A plugin-relative path to a POSIX `sh` script (`command`, `require_command`).
 ///
 /// Syntax is checked at parse; [`ScriptPath::resolve`] checks that it names a
-/// file that stays inside the plugin root after symlinks.
+/// file that stays inside the plugin root after symlinks and that only the
+/// user (or root) can change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
@@ -197,10 +198,13 @@ impl ScriptPath {
         &self.0
     }
 
-    /// Resolve under `root`, requiring a regular file inside it after symlinks.
+    /// Resolve under `root`, requiring a regular file inside it after symlinks
+    /// whose canonical path a shell can be given (UTF-8, no control character)
+    /// and that passes [`check_owned_and_not_shared`] up to the plugin root.
     ///
     /// # Errors
-    /// Returns an error if the file is missing or escapes the plugin root.
+    /// Returns an error if the file is missing, escapes the plugin root, has an
+    /// unusable path, or it or a directory up to the root is writable by others.
     pub fn resolve(&self, root: &Path) -> Result<PathBuf> {
         let canonical_root = root.canonicalize().map_err(|e| {
             Error::invalid(format!(
@@ -224,8 +228,72 @@ impl ScriptPath {
                 self.0
             )));
         }
+        if canonical
+            .to_str()
+            .is_none_or(|text| text.chars().any(char::is_control))
+        {
+            return Err(Error::invalid(format!(
+                "Script '{}' resolves to '{}', which is not UTF-8 or holds a control \
+                 character; move the plugin to a plain path",
+                self.0,
+                canonical.to_string_lossy().escape_debug()
+            )));
+        }
+        let mut checked = canonical.as_path();
+        loop {
+            check_owned_and_not_shared(checked)
+                .map_err(|e| Error::invalid(format!("Script '{}': {}", self.0, detail(e))))?;
+            if checked == canonical_root {
+                break;
+            }
+            let Some(parent) = checked.parent() else {
+                break;
+            };
+            checked = parent;
+        }
         Ok(canonical)
     }
+}
+
+/// Refuse a file or directory that someone other than the user (or root) owns
+/// or can write: such a user could otherwise make a script segment run their
+/// code as this user on every command. Not followed through a final symlink;
+/// callers pass canonical paths.
+///
+/// # Errors
+/// Returns an error naming `path` if it cannot be inspected, is owned by
+/// another non-root user, or is group- or world-writable.
+#[cfg(unix)]
+pub fn check_owned_and_not_shared(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let shown = path.to_string_lossy().escape_debug().to_string();
+    let meta = path
+        .symlink_metadata()
+        .map_err(|e| Error::invalid(format!("cannot inspect '{shown}': {e}")))?;
+    let user = nix::unistd::getuid().as_raw();
+    if meta.uid() != user && meta.uid() != 0 {
+        return Err(Error::invalid(format!(
+            "'{shown}' is owned by uid {}, not by you (uid {user}) or root",
+            meta.uid()
+        )));
+    }
+    if meta.mode() & 0o022 != 0 {
+        return Err(Error::invalid(format!(
+            "'{shown}' is group- or world-writable (mode {:o}); run `chmod go-w` on it",
+            meta.mode() & 0o7777
+        )));
+    }
+    Ok(())
+}
+
+/// Windows builds the CLI only and runs no script segments: nothing to check.
+///
+/// # Errors
+/// Never.
+#[cfg(not(unix))]
+pub fn check_owned_and_not_shared(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 deserialize_via_new!(ScriptPath);
@@ -391,9 +459,9 @@ bounded_u32!(
     TIMEOUT_MS_KEY
 );
 
-/// The optional second output line: a colour variant chosen by the script
-/// (`^[a-z0-9_]{1,32}$`), styled by the theme's `<variant>_bg_color` and
-/// `<variant>_text_color`.
+/// The optional second output line: a variant chosen by the script
+/// (`^[a-z0-9_]{1,32}$`), styled by the theme's `<variant>_bg_color`,
+/// `<variant>_text_color` and `<variant>_icon`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct VariantName(String);
@@ -468,13 +536,7 @@ impl VariantColorKey {
                     part,
                 })
             });
-        parsed.ok_or_else(|| {
-            Error::invalid(format!(
-                "unknown plugin segment style key {key:?}: use icon, open, close, bg_color, \
-                 text_color or <variant>_bg_color / <variant>_text_color \
-                 (behaviour settings belong in config.toml [plugin.<segment>])"
-            ))
-        })
+        parsed.ok_or_else(|| unknown_style_key(key))
     }
 }
 
@@ -488,7 +550,42 @@ impl fmt::Display for VariantColorKey {
     }
 }
 
-impl Serialize for VariantColorKey {
+/// A plugin segment theme key that styles one variant: a colour
+/// (`<variant>_bg_color`, `<variant>_text_color`) or `<variant>_icon`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum VariantStyleKey {
+    /// `<variant>_bg_color` or `<variant>_text_color`.
+    Color(VariantColorKey),
+    /// `<variant>_icon`: replaces the segment icon while the variant is shown.
+    Icon(VariantName),
+}
+
+impl VariantStyleKey {
+    /// Parse a theme key.
+    ///
+    /// # Errors
+    /// Returns an error listing the accepted plugin segment style keys.
+    pub fn new(key: &str) -> Result<Self> {
+        if let Some(variant) = key.strip_suffix("_icon") {
+            return VariantName::new(variant)
+                .ok()
+                .map(Self::Icon)
+                .ok_or_else(|| unknown_style_key(key));
+        }
+        VariantColorKey::new(key).map(Self::Color)
+    }
+}
+
+impl fmt::Display for VariantStyleKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Color(key) => key.fmt(f),
+            Self::Icon(variant) => write!(f, "{variant}_icon"),
+        }
+    }
+}
+
+impl Serialize for VariantStyleKey {
     fn serialize<S: serde::Serializer>(
         &self,
         serializer: S,
@@ -497,7 +594,15 @@ impl Serialize for VariantColorKey {
     }
 }
 
-deserialize_via_new!(VariantColorKey);
+deserialize_via_new!(VariantStyleKey);
+
+fn unknown_style_key(key: &str) -> Error {
+    Error::invalid(format!(
+        "unknown plugin segment style key {key:?}: use icon, open, close, bg_color, \
+         text_color or <variant>_bg_color / <variant>_text_color / <variant>_icon \
+         (behaviour settings belong in config.toml [plugin.<segment>])"
+    ))
+}
 
 /// A script segment manifest, `segments/<id>.toml` in a script plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -304,7 +304,7 @@ fn check_plugin_performance(
 
     output::detail("Enabled community plugin segments:");
     for (segment, plugin) in enabled_plugin_segments {
-        print_plugin_performance_hint(segment, plugin);
+        print_plugin_performance_hint(segment, plugin, cfg);
     }
 }
 
@@ -371,7 +371,11 @@ fn plugin_segment_file(
     }
 }
 
-fn print_plugin_performance_hint(segment: &str, plugin: &crate::plugin::DiscoveredPlugin) {
+fn print_plugin_performance_hint(
+    segment: &str,
+    plugin: &crate::plugin::DiscoveredPlugin,
+    cfg: &config::Config,
+) {
     let segment_path = match plugin_segment_file(segment, plugin) {
         Ok(path) => path,
         Err(reason) => {
@@ -403,6 +407,78 @@ fn print_plugin_performance_hint(segment: &str, plugin: &crate::plugin::Discover
                 format_args!("heuristic: unable to inspect file ({error})"),
             );
         }
+    }
+    if matches!(plugin.manifest.entry_type, crate::plugin::EntryType::Script) {
+        print_script_trial(segment, plugin, &segment_path, cfg);
+    }
+}
+
+/// Run a script segment once with the runner's rules and report the time.
+fn print_script_trial(
+    segment: &str,
+    plugin: &crate::plugin::DiscoveredPlugin,
+    script: &std::path::Path,
+    cfg: &config::Config,
+) {
+    use super::script_run::{Outcome, run_trial};
+    use crate::plugin::SegmentName;
+
+    let Some(root) = plugin.root.as_deref() else {
+        return;
+    };
+    let Ok(name) = SegmentName::new(segment) else {
+        return;
+    };
+    let Some(manifest) = plugin.script_segments.get(&name) else {
+        return;
+    };
+    let resolved = match config::plugin_segments::resolve(&name, manifest, cfg.plugin.get(&name)) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            output::detail_status(3, Status::Fail, format_args!("trial: {error}"));
+            return;
+        }
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| root.to_path_buf());
+    let timeout_ms = resolved.timeout_ms.get();
+    let trial = match run_trial(script, root, manifest, &resolved, &cwd, cfg.ui.show_icons) {
+        Ok(trial) => trial,
+        Err(error) => {
+            output::detail_status(3, Status::Fail, format_args!("trial: cannot run ({error})"));
+            return;
+        }
+    };
+    let millis = trial.elapsed.as_millis();
+    let (status, message) = match &trial.outcome {
+        Outcome::Shown { text, variant } => (
+            Status::Ok,
+            format!(
+                "trial: ran in {millis} ms (timeout_ms {timeout_ms}); shows {:?}{}",
+                crate::template::sanitize_control_chars(text),
+                variant
+                    .as_ref()
+                    .map_or_else(String::new, |v| format!(" with variant {v}"))
+            ),
+        ),
+        Outcome::Hidden(reason) => (
+            Status::Warn,
+            format!(
+                "trial: ran in {millis} ms (timeout_ms {timeout_ms}); segment hidden: {reason}"
+            ),
+        ),
+        Outcome::TimedOut => (
+            Status::Fail,
+            format!("trial: killed after timeout_ms {timeout_ms}; the segment is hidden"),
+        ),
+    };
+    output::detail_status(3, status, message);
+    if matches!(trial.outcome, Outcome::Shown { .. })
+        && trial.elapsed.as_millis().saturating_mul(2) > u128::from(timeout_ms)
+    {
+        output::detail_at(
+            3,
+            "hint: more than half of timeout_ms; speed the script up or lower its cost",
+        );
     }
 }
 

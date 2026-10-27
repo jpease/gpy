@@ -75,26 +75,25 @@ bg_color = "transparent"
 time_format = "12"
 show_leading_zero = false
 
-# Username — Starship: `[$user]($style) in `. Shown as root, under sudo or over
-# SSH (gated shell-side by segment_username_detect; show_always = false matches
-# Starship's default). `format` carries Starship's `style_root` (bold red) and
-# `user_format` its `style_user` (bold yellow); the shell tells the agent which.
+# Username — a script segment (bundled `username` plugin), so a flat pill rather
+# than Starship's `[$user]($style) in ` template. Shown as root, under sudo or
+# over SSH (Starship's default; `plugin.username.show_always` shows it always).
+# Starship's `style_user` (yellow) colours it, `style_root` (red) the `root`
+# variant the plugin prints as root.
 [segments.username]
-format = "[$username](bold red) in "
-user_format = "[$username](bold yellow) in "
-show_always = false
+text_color = "yellow"
+bg_color = "transparent"
+root_text_color = "red"
+root_bg_color = "transparent"
 
-# Hostname — Starship: `[$ssh_symbol$hostname]($style) in `, bold dimmed green.
-# SSH-only by default (show_always = false), matching Starship's ssh_only = true
-# default: the shell's segment_hostname_detect hides this segment off-SSH. The
-# icon is Starship's default `ssh_symbol` (globe + trailing space); like
-# Starship, `$symbol` resolves to it only in SSH sessions (the shell reports
-# its SSH state to the agent), so a theme that sets show_always = true
-# shows the bare hostname locally and the globe only over SSH.
+# Hostname — a script segment (bundled `hostname` plugin), Starship's bold
+# dimmed green as a flat pill. SSH-only by default, as Starship's ssh_only =
+# true (`plugin.hostname.show_always` shows it always). The globe is Starship's
+# default `ssh_symbol`: the icon of the `ssh` variant, printed over SSH only.
 [segments.hostname]
-format = "[$symbol$hostname](bold dimmed green) in "
-icon = "🌐 "
-show_always = false
+text_color = "green"
+bg_color = "transparent"
+ssh_icon = "🌐 "
 
 # Directory — Starship: `[$path]($style)[$read_only]($read_only_style) `, bold cyan path and red read-only marker.
 [segments.directory]

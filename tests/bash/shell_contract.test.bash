@@ -73,6 +73,10 @@ write_config() {
     # The supervisor is off unless the row configures it itself.
     [[ "$row_config" == *"[agent.supervisor]"* ]] ||
         printf '\n[agent.supervisor]\nenabled = false\n' >>"$sandbox/config/gpy/config.toml"
+    # The golden rows draw hostname and username in every session; ssh_icon
+    # and the root variant still follow SSH_CONNECTION and the root flag.
+    printf '\n[plugin.hostname]\nshow_always = true\n\n[plugin.username]\nshow_always = true\n' \
+        >>"$sandbox/config/gpy/config.toml"
     [[ "$row_config" == - ]] || printf '\n%b\n' "$row_config" >>"$sandbox/config/gpy/config.toml"
 }
 
@@ -163,6 +167,12 @@ run_shell() {
     rm -rf "$sandbox"
     mkdir -p "$sandbox/config/gpy/themes" "$sandbox/cache" "$sandbox/runtime" "$sandbox/home"
     cp "$SCN_FIXTURES"/themes/*.toml "$sandbox/config/gpy/themes/"
+    # The bundled username/hostname plugins, where `gpy setup` puts them
+    # (the default bundled root). Plugin files must not be group/world
+    # writable, which a umask of 002 would leave them.
+    cp -R "$ROOT/plugins" "$sandbox/config/gpy/bundled-plugins"
+    chmod -R go-w "$sandbox/config/gpy/bundled-plugins"
+    unset GPY_BUNDLED_PLUGIN_DIR
     if [[ "$row_theme" == variant-git ]]; then
         # The stock theme does not vary the git cap by prev_bg: read it from
         # the previous segment so a context-free cache entry draws wrong.

@@ -380,64 +380,6 @@ function __gpy_request_character --argument-names success is_last prev_bg --desc
     printf '%s\n' $result
 end
 
-# Send a hostname render request to the agent via IPC.
-#
-# Unlike character/duration, there is NO oneshot fallback here. A `oneshot
-# hostname` CLI subcommand does exist (added for the starship-parity test
-# harness), but this segment intentionally does not call it: under the
-# starship theme with a dead daemon, the hostname segment draws its local pill
-# until the daemon comes back up, rather than paying a per-prompt subprocess
-# cost as a fallback. If IPC is unavailable (or the agent replies with an
-# error) this returns 1 and the caller draws the local pill.
-#
-# Arguments:
-#   host     — the hostname string ($hostname, fish's builtin variable). Named
-#              `host` rather than `hostname` because `$hostname` is a
-#              read-only electric variable in fish — using it as an
-#              --argument-names binding is a hard error.
-#   is_last  — "true" if this is the last prompt segment, "" otherwise.
-#   prev_bg  — the previous segment's background, for the powerline chevron.
-#   is_ssh   — "1" in an SSH session ($__gpy_is_ssh), anything else otherwise.
-#              Sent as "is_ssh":true so the agent draws the theme icon only
-#              over SSH; omitted (agent default false) otherwise.
-#   is_first — "true" if this is the first prompt segment, "" otherwise (no opening cap).
-function __gpy_request_hostname --argument-names host is_last prev_bg is_ssh is_first --description 'Send hostname render request to agent'
-    set -l format ansi
-    set -l escaped_host (__gpy_json_escape "$host")
-
-    set -l payload (string join '' '{"op":"hostname","hostname":"' $escaped_host '","format":"' $format '"')
-    set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg"))
-    test "$is_ssh" = 1; and set payload (string join '' $payload ',"is_ssh":true')
-    set payload (string join '' $payload '}')
-
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
-
-    if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
-        return 1
-    end
-    printf '%s\n' $result
-end
-
-# is_root "1" ($__gpy_is_root) is sent as "is_root":true so the agent picks the
-# root style; omitted (agent default false, the user style) otherwise.
-# No oneshot fallback: no reply (or an error) returns 1 and the caller draws the local pill.
-function __gpy_request_username --argument-names user is_last prev_bg is_root is_first --description 'Send username render request to agent'
-    set -l format ansi
-    set -l escaped_user (__gpy_json_escape "$user")
-
-    set -l payload (string join '' '{"op":"username","username":"' $escaped_user '","format":"' $format '"')
-    set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg"))
-    test "$is_root" = 1; and set payload (string join '' $payload ',"is_root":true')
-    set payload (string join '' $payload '}')
-
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
-
-    if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
-        return 1
-    end
-    printf '%s\n' $result
-end
-
 # Clock request; the reply carries the bare strftime spec, which
 # segment_clock_render fills. No oneshot fallback: it renders locally instead.
 function __gpy_request_clock --argument-names is_last is_first prev_bg --description 'Send clock render request to agent'

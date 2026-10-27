@@ -1,0 +1,10 @@
+id = "hostname-example"
+name = "Hostname example"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "script"
+provided_segments = ["host-name"]
+description = "The host name, optionally cut at a separator, with the variant `ssh` over SSH"
+
+[compatibility_constraints]
+min_gpy_version = "0.6.0"

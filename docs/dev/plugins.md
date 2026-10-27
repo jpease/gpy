@@ -13,7 +13,8 @@ For an end-to-end contributor workflow (plugin + theme), see:
 
 Plugins are discovered from:
 - User root: `$XDG_CONFIG_HOME/gpy/plugins/<plugin-id>/plugin.toml`
-- Bundled root: `$GPY_BUNDLED_PLUGIN_DIR/<plugin-id>/plugin.toml` (optional)
+- Bundled root: `$GPY_BUNDLED_PLUGIN_DIR/<plugin-id>/plugin.toml`, default
+  `$XDG_CONFIG_HOME/gpy/bundled-plugins` (see [Bundled Plugins](#bundled-plugins))
 
 Required fields:
 - `id`
@@ -24,8 +25,8 @@ Required fields:
   - `file`: one Fish file per segment, loaded by Fish only (see
     [Segment Runtime Contract](#segment-runtime-contract)).
   - `script`: one POSIX `sh` script per segment, declared in
-    `segments/<segment>.toml`. The contract is defined and validated; no shell
-    executes script segments yet (see [Script Segments](#script-segments)).
+    `segments/<segment>.toml`, run by Bash, Zsh and Fish (see
+    [Script Segments](#script-segments)).
   - `command` is reserved and is rejected by `gpy plugin validate` and plugin
     discovery (reported as an "unsupported entry_type" diagnostic).
 - `provided_segments` (array)
@@ -86,6 +87,35 @@ Discovery is deterministic and isolated:
 
 Implementation: `gpy-agent/src/plugin/registry.rs`.
 
+## Bundled Plugins
+
+The `username` and `hostname` segments are ordinary script plugins that ship
+with GPY, not built-in code. Their sources are the `plugins/` tree of the
+repository (`plugins/username`, `plugins/hostname`); there is no built-in
+renderer, IPC request or `gpy-agent oneshot` mode for either.
+
+- **Where they live.** Discovery reads the bundled root from
+  `$GPY_BUNDLED_PLUGIN_DIR`, default `$XDG_CONFIG_HOME/gpy/bundled-plugins`
+  (`~/.config/gpy/bundled-plugins`). A user plugin with the same id in
+  `plugins/` overrides a bundled one.
+- **How they get there.** Release archives (`gpy-release.tar.gz`,
+  `gpy-release.zip`) and `gpy-shell-files.tar.gz` carry `plugins/`, and the
+  Homebrew formula installs it under `share/gpy/plugins`. `gpy setup` (run by
+  `install.sh`, `install-oneline.sh`, `install-dev.fish` and by hand after a
+  Homebrew install) replaces the bundled root with the source's `plugins/`
+  tree and clears the group and world write bits, because script segments
+  refuse a script that others can write (see [Trust](#trust)). Given `--from`
+  or `GPY_SHARE_DIR`, setup also keeps a copy in `share/gpy/plugins` beside
+  the binary. `scripts/uninstall.sh` removes the bundled root.
+- **Settings.** Both are configured under `config.toml`
+  `[plugin.hostname]` (`show_always`, `trim_at`) and `[plugin.username]`
+  (`show_always`), not in the theme.
+- **Styling.** Theme `[segments.hostname]` / `[segments.username]` take the
+  usual style keys plus per-variant keys: `<variant>_bg_color`,
+  `<variant>_text_color` and `<variant>_icon` (for example `ssh_icon` for the
+  hostname's `ssh` variant, `root_icon` for the username's `root` variant).
+  The old `format` and `user_format` keys no longer exist.
+
 ## Segment Runtime Contract
 
 Plugin segments use the same Fish detect/render contract as built-ins:
@@ -111,11 +141,13 @@ A plugin with `entry_type = "script"` provides, for each segment in
 a POSIX `sh` script it names. No `.fish` file is needed.
 
 The contract is defined and validated (`gpy plugin validate`, `gpy config`, the
-JSON schema below); no shell executes script segments yet. A script plugin is
-discovered and checked, but its segments do not render. This section is the
-contract the shell adapters will implement. JSON schema:
+JSON schema below), and theme export writes every enabled script segment for
+Bash, Zsh and Fish (see [Theme export](#theme-export)); each shell runs the
+exported scripts with its own runner (`bash/core`, `zsh/core`, `fish/core`)
+under the rules below. JSON schema:
 [`gpy-agent/schemas/script-segment-manifest.json`](../../gpy-agent/schemas/script-segment-manifest.json).
-Implementation: `gpy-agent/src/plugin/script.rs` and `settings.rs`.
+Implementation: `gpy-agent/src/plugin/script.rs`, `settings.rs` and
+`gpy-agent/src/theme/export/script_segments.rs`.
 
 ```toml
 # segments/k8s.toml
@@ -138,7 +170,7 @@ description = "Text weight"
 
 | Field | Type | Default | Rule |
 |---|---|---|---|
-| `command` | string | required | Path relative to the plugin root, without `..`; must be a regular file inside the root after symlinks. Run as `/bin/sh <command>`. |
+| `command` | string | required | Path relative to the plugin root, without `..`; must be a regular file inside the root after symlinks, at a UTF-8 path without control characters, and pass the [ownership rule](#theme-export). Run by `/bin/sh`. |
 | `description` | string | none | Shown by `gpy plugin validate`. |
 | `inputs` | array | `[]` | Public shell values, below. Only declared inputs are set and keyed. |
 | `env` | array | `[]` | Extra variables forwarded to the script and keyed in the cache. Names match `^[A-Za-z_][A-Za-z0-9_]*$` (ASCII); `GPY_*` is reserved. |
@@ -238,35 +270,157 @@ with an earlier one's in sorted order, so no variable is assigned twice.
 - **Environment.** The script starts from a clean environment: `PATH`
   (without empty, `.` or other relative entries), `HOME`, `USER`, `LOGNAME`,
   `LANG`, every set `LC_*`, `TERM`, `TZ` and
-  `TMPDIR` (each only when set), plus the declared `env` names, plus the
-  `GPY_*` inputs and `GPY_OPT_*` settings the runner sets. Nothing else is
+  `TMPDIR` (each only when set), plus each declared `env` name that is set as
+  a variable in the interactive shell (exported or not; an empty value is
+  passed, an unset name is not), plus the `GPY_*` inputs and `GPY_OPT_*`
+  settings the runner sets. Nothing else is
   passed: no credentials, `SSH_AUTH_SOCK` or exported shell functions unless
   declared, and a `GPY_OPT_*` exported by the user never reaches it. `/bin/sh`
   itself adds `PWD`, `SHLVL` and `_`. A `require_command` script gets the same
   environment and the same process rules as `command`.
+- **How it starts.** The interpreter runs as `sh -c PROLOGUE SCRIPT` with an
+  empty environment (`exec -c`): the prologue reads the `export NAME='value'`
+  lines on descriptor 3, closes it, and sources the script, so `$0` is the
+  script path as with `sh SCRIPT`. Values are never in any argv; only the
+  names travel as arguments of the runner.
 - **Working directory**: the plugin root, or the shell's directory when `pwd`
-  is declared.
+  is declared (folder scope). For folder scope the runner gets an empty
+  directory argument and keeps the working directory it inherited, so `$PWD`
+  never appears in an argv.
 - **stdin** is `/dev/null`; the script never gets the terminal.
-- **Process group.** The script runs in its own process group (or session).
-  On timeout or Ctrl-C the group gets TERM, then CONT, then KILL after a 50 ms
-  grace (or as soon as the script exits). Processes the script leaves behind
-  after a normal exit are killed the same way. A `setsid` or daemonizing
+- **Process group.** `require_command` and `command` run one after the other
+  in one process group, under one deadline. On timeout or Ctrl-C the group
+  gets TERM, then CONT, then KILL after a 50 ms grace (or as soon as the
+  script exits). Processes the script leaves behind after a normal exit get
+  TERM and CONT, then KILL within the grace. A `setsid` or daemonizing
   escapee is outside this guarantee; do not start background jobs.
-- **Timeout.** A script still running after `timeout_ms` is killed and the
-  segment is hidden for that prompt. All script segments of one prompt share
-  one 500 ms deadline; a segment not finished before it is skipped for that
-  prompt and due again on the next.
-- **Circuit breaker.** Two consecutive timeouts (of the script,
-  `require_command` or the trigger scan) or over-cap outputs disable the
-  segment for that shell, with one line on stderr. A success, a completed
-  scan, the reload doorbell or a new shell resets it. Deadline-skipped runs,
-  Ctrl-C and a non-zero exit do not count.
+- **Timeout.** All due segments of one prompt start together and each is
+  killed `timeout_ms` (at most 500) after that shared start, so the run takes
+  at most 500 ms plus the grace. A timed-out segment is hidden for that
+  prompt. The runner takes at most 40 due segments per prompt; the rest stay
+  hidden.
+- **Results.** A non-zero exit, a failed `require_command` and output holding
+  a C1 control hide the segment, and that empty result is cached for
+  `ttl_secs` like a success. A timeout, over-cap output or Ctrl-C hides it
+  without caching. A failed trigger hides it and drops its cache entry.
+- **Circuit breaker.** Each segment has two counters: consecutive scan
+  timeouts and consecutive run failures (timeout or over-cap output). When
+  either reaches two, the segment is disabled for that shell, with one line
+  on stderr. A completed scan resets the scan counter, a successful run the
+  run counter; the reload doorbell or a new shell resets both. Ctrl-C, a
+  non-zero exit and a failed `require_command` do not count.
+
+### Theme export
+
+Theme export writes what a shell needs to run each enabled script segment
+without calling GPY, to Bash, Zsh and Fish alike. Only names in
+`ui.enabled_segments` are written, in that order; a built-in name (even if a
+plugin provides it), a name no script plugin provides and a second spelling of
+an already written token are skipped. Export resolves `command` and
+`require_command` again, with the containment and ownership checks, and
+applies `[plugin.<segment>]`; a segment that fails either is left out (one
+debug log line) and never runs.
+
+**Ownership rule.** The script, and every directory from it up to and
+including the plugin root, must be owned by you or root and must not be group-
+or world-writable (fix with `chmod go-w`). Another user who can write there
+could make the segment run their code as you on every command. Discovery,
+`gpy plugin validate` and export all refuse a script that fails it. Directories
+above the plugin root are not checked.
+
+The variable names are private to GPY's integrations, like
+`__gpy_plugin_segment_file_*`; plugin authors must not rely on them. `<tok>` is
+the segment token. Every per-segment suffix is one word without `_`, so no
+two segments, and no segment and the two globals, share a variable.
+
+| Variable | Kind | Value |
+|---|---|---|
+| `__gpy_script_sh` | scalar | Absolute interpreter path, run as `sh`: `/bin/sh`, or on macOS the shell `/private/var/select/sh` links to, when it is an executable regular file owned by root or you and not writable by others (this skips the `/bin/sh` launcher). |
+| `__gpy_script_<tok>_name` | scalar | The segment name. |
+| `__gpy_script_<tok>_root` | scalar | Canonical plugin root: the working directory unless `pwd` is an input. |
+| `__gpy_script_<tok>_command` | scalar | Canonical absolute `command` path. |
+| `__gpy_script_<tok>_reqcommand` | scalar | Canonical absolute `require_command` path, or empty. |
+| `__gpy_script_<tok>_inputs` | list | Declared inputs, manifest spelling (`pwd`, `is_root`, ...), manifest order. |
+| `__gpy_script_<tok>_env` | list | Declared `env` names, manifest order. |
+| `__gpy_script_<tok>_opts` | list | `GPY_OPT_<key>=<value>` for every declared setting, override applied, sorted by key. Split at the first `=`. |
+| `__gpy_script_<tok>_ttl` | scalar | Effective `ttl_secs`, decimal. |
+| `__gpy_script_<tok>_timeout` | scalar | Effective `timeout_ms`, decimal. |
+| `__gpy_script_<tok>_scope` | scalar | `session` or `folder`. |
+| `__gpy_script_<tok>_reqfiles` | list | `require_files`. |
+| `__gpy_script_<tok>_reqfolders` | list | `require_folders`. |
+| `__gpy_script_<tok>_reqexts` | list | `require_extensions`, without the dot. |
+| `__gpy_script_<tok>_reqenv` | list | `require_env`. |
+| `__gpy_script_<tok>_key` | scalar | The static part of the cache key: `<n>:<field>` for the plugin id, the plugin version, the segment name, the `command` path and then each `opts` entry, concatenated, where `<n>` is the field's length in UTF-8 bytes. |
+| `__gpy_script_segments` | list | Tokens of the written segments, assigned after their variables. |
+
+Each segment's variables are written in table order, then
+`__gpy_script_segments`; `__gpy_script_sh` comes first. Both globals are
+assigned by every export, with or without script segments. A list is a Bash
+indexed array (`name=("a" "b")`), a Zsh array (`typeset -g -a name=("a" "b")`)
+or a Fish list (`set -g name "a" "b"`); an empty list has no elements. Every
+value is double-quoted, with `\`, `$` and `"` (and the backtick in Bash and
+Zsh) escaped once, so sourcing it never expands anything. Values hold no
+control characters: export refuses a path, version or setting value with one.
+
+An integration unsets `__gpy_script_segments` before it first sources the
+export, reads per-segment variables only for tokens in that list, and checks
+each name it builds against `^[A-Za-z_][A-Za-z0-9_]*$` before indirection. A
+segment dropped by a later export keeps its old `__gpy_script_<tok>_*`
+variables until the shell exits; it is no longer in the list, so nothing reads
+them. Before each export is sourced, the integration unsets the style
+variables (`__gpy_segment_<tok>_*`, `__color_<tok>_*`, `__icon_<tok>` and
+`__icon_<tok>_*`) of the segments listed by the previous export, so a style
+field the new theme drops does not linger.
 
 ### Trust
 
 A script runs as you, once per command that passes its triggers, including in
 untrusted directories whose names and files it receives through `pwd`.
 Install a script plugin only if you would trust it as a shell startup file.
+
+Containment is enforced at export, not at run time. Export runs the script
+path checks (canonical path inside the canonical plugin root, regular file)
+and the ownership rule: the script and every directory from it up to the
+plugin root must be owned by you or root and not be group- or
+world-writable. The shells then run the exported absolute path as is.
+Swapping the file or a directory on its path after that needs your own write
+access, so a run-time re-check would only guard against code that already
+runs as you. See [SECURITY.md](../../SECURITY.md#script-segment-trust-model) for the full
+model.
+
+### Runner
+
+Bash runs `bash/core/g_runner.bash` inside `$( )` in the interactive shell.
+Zsh and Fish run a byte-identical copy in one Bash child per prompt: the first
+Bash 4 or later on `PATH`, else `/bin/bash`, resolved once per shell. With no
+Bash at all, script segments are disabled (one warning, shown only with
+`GPY_DEBUG`/`GPY_VERBOSE`).
+
+- **Once per command.** Triggers are evaluated in this order before the
+  script: `require_env` (set and non-empty, no fork), then
+  `require_files`/`require_folders`/`require_extensions` in one scan child,
+  then the cache, then `require_command` in the run itself. A repaint (Fish
+  SIGURG, Zsh `reset-prompt`, a Bash redraw) reuses the stored text.
+- **Trigger scan.** Names are matched literally, never as globs. Files and
+  folders are looked up in the working directory and its parents through
+  `../` paths, so the search follows physical parents (not a symlinked
+  `$PWD`'s logical ones); on Linux it stops at the mount holding the
+  directory. Extensions must match a regular file in the working directory.
+  The scan child has 30 ms, then SIGKILL.
+- **Cache in shell variables.** Keyed by `__gpy_script_<tok>_key` plus the
+  current values of the declared inputs and `env` names, expiring after
+  `ttl_secs` (`0` = no cache). Ages come from a clock in the same shell:
+  `EPOCHSECONDS` or `printf %(%s)T` in Bash, `$SECONDS` in Bash 3.2 to 4.1;
+  `EPOCHSECONDS` in Zsh; the mtime of `/` plus its age in Fish. No file is
+  ever written.
+- **Output.** Capped at 4096 bytes, C0/DEL stripped independently of the
+  locale, hidden on a C1 control, escaped for the shell, then stored. Raw
+  output is never kept.
+- **Ctrl-C** ends a run at once with a Bash 4 or later runner. Fish keeps the
+  terminal as the runner child's stdin, so the child is the foreground group
+  and gets the INT (the scripts still get `/dev/null`). With only `/bin/bash`
+  3.2 (stock macOS), Ctrl-C ends the run at the script's timeout; the run
+  still ends and the group is killed. Ctrl-C never counts toward the breaker.
 
 ## Segment Ordering Semantics
 
@@ -284,6 +438,8 @@ Built-in segments are represented in registry metadata as a first-party plugin e
 Important distinction:
 - First-party entries are metadata only
 - Built-in runtime execution still uses existing optimized local code paths
+- `username` and `hostname` are the exception: they are real script plugins
+  (see [Bundled Plugins](#bundled-plugins)) and no longer part of `gpy-core`
 
 For community examples, the best current references are first-party segment implementations such as:
 
@@ -339,9 +495,50 @@ Avoid:
 - assuming bundled first-party metadata implies an external plugin package exists
 - overloading one plugin with unrelated segment ids unless they clearly belong together
 
+## Example Plugins
+
+[`docs/dev/examples/plugins/`](examples/plugins/) holds script plugins you can
+copy into `~/.config/gpy/plugins/`; each passes `gpy plugin validate`:
+
+| Plugin | Segment | Teaches |
+|---|---|---|
+| [`k8s-context`](examples/plugins/k8s-context/) | `k8s` | A segment that is not built in. `env = ["KUBECONFIG"]` and no `pwd`, so the result is cached once per session; reads the kubeconfig instead of running `kubectl`; prints the variant `prod`. |
+| [`username-example`](examples/plugins/username-example/) | `whoami-user` | The `is_root` input and the `root` variant. |
+| [`hostname-example`](examples/plugins/hostname-example/) | `host-name` | A typed setting (`trim_at` as `GPY_OPT_trim_at`) and the `is_ssh` input. |
+
+All use a `ttl_secs` of 5. A long TTL hides changes (a context switch shows up
+only after the TTL), so raise it only for a value that really is static.
+
+## Authoring Script Plugins
+
+`gpy plugin new <id> [--segment <segment>]` writes `plugin.toml`,
+`segments/<segment>.toml` and `bin/<segment>.sh`. The script is POSIX `sh`: it
+declares what it reads in `inputs` and `env`, starts no background jobs,
+prints at most 4 KiB and exits fast.
+
+`gpy plugin validate <path-or-id>`:
+
+- parses each segment manifest against the published schema and checks that
+  `command` and `require_command` stay inside the plugin root;
+- lints each script with `shellcheck -s sh`, else `dash -n`; macOS `sh -n` is
+  not used because it is Bash 3.2 and accepts bashisms. A failure fails the
+  validation. When neither tool is installed, a warning says the script was
+  not linted;
+- prints each segment's description, command, inputs, env, cache scope and
+  times;
+- warns about `$VAR` uses the manifest does not provide. The scan is
+  heuristic (quoting is tracked, `eval` and indirect expansion are not) and
+  never fails validation.
+
+`gpy plugin list` shows each script segment's cache scope, `ttl_secs`,
+`timeout_ms` and description. `gpy doctor` runs each enabled script segment
+once with the runner's rules (clean environment, working directory, the
+`timeout_ms` kill) and prints the run time and result; it does not evaluate
+the `require_*` triggers or use the cache.
+
 ## Validation Workflow
 
 Use CLI checks during authoring:
 - `gpy plugin validate <plugin-path-or-id>`
 - `gpy theme validate [theme-name-or-path]`
-- `gpy doctor`
+- `gpy doctor` (times enabled script segments)

@@ -1,0 +1,13 @@
+description = "Host name cut at `trim_at`; prints the variant `ssh` over SSH"
+command = "bin/host-name.sh"
+
+# `is_ssh` selects the variant; no `pwd`, so the result is cached per session.
+inputs = ["is_ssh"]
+
+ttl_secs = 5
+timeout_ms = 100
+
+[settings.trim_at]
+type = "string"
+default = "."
+description = "Cut the host name at the first occurrence of this text; empty keeps it whole"

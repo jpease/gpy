@@ -135,36 +135,6 @@ enum OneshotCommands {
         #[command(flatten)]
         segment: SegmentArgs,
     },
-    /// Render the hostname segment (when a format template is configured).
-    ///
-    /// The caller resolves the hostname and decides SSH-only visibility.
-    Hostname {
-        /// The hostname string to render (defaults to the machine hostname,
-        /// or empty when that cannot be determined).
-        #[arg(long, default_value_t = default_hostname_arg())]
-        hostname: String,
-        #[command(flatten)]
-        segment: SegmentArgs,
-        /// Mark the session as SSH, so the theme icon (Starship's
-        /// `ssh_symbol`) renders.
-        #[arg(long)]
-        is_ssh: bool,
-    },
-    /// Render the username segment (when a format template is configured).
-    ///
-    /// The caller resolves the username and decides root/sudo/SSH visibility.
-    Username {
-        /// The username string to render (defaults to `$USER`/`$USERNAME`,
-        /// or empty when that cannot be determined).
-        #[arg(long, default_value_t = default_username_arg())]
-        username: String,
-        #[command(flatten)]
-        segment: SegmentArgs,
-        /// Mark the session as root, so the root format and colors (Starship's
-        /// `style_root`) render instead of the user ones.
-        #[arg(long)]
-        is_root: bool,
-    },
     /// Render the status segment (exit-status pill, when a format template is configured).
     Status {
         /// Last command exit code (0 = success, non-zero = failure).
@@ -173,18 +143,6 @@ enum OneshotCommands {
         #[command(flatten)]
         segment: SegmentArgs,
     },
-}
-
-/// `$USER`/`$USERNAME`, or empty. The shells always pass `--username`.
-fn default_username_arg() -> String {
-    gpy_agent::paths::user_name().unwrap_or_default()
-}
-
-/// `$HOSTNAME`/`$COMPUTERNAME`, or empty. The shells always pass `--hostname`.
-fn default_hostname_arg() -> String {
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("COMPUTERNAME"))
-        .unwrap_or_default()
 }
 
 #[derive(Subcommand, Debug)]
@@ -224,10 +182,6 @@ const fn base_oneshot_request(
         benchmark_mode: false,
         duration_ms: 0_u64,
         success: None,
-        hostname: None,
-        is_ssh: false,
-        username: None,
-        is_root: false,
     }
 }
 
@@ -258,24 +212,6 @@ impl From<OneshotCommands> for OneshotRequest {
             OneshotCommands::Character { exit_code, segment } => Self {
                 success: Some(exit_code == 0_i32),
                 ..base_oneshot_request(OneshotKind::Character, String::new(), segment)
-            },
-            OneshotCommands::Hostname {
-                hostname,
-                segment,
-                is_ssh,
-            } => Self {
-                hostname: Some(hostname),
-                is_ssh,
-                ..base_oneshot_request(OneshotKind::Hostname, String::new(), segment)
-            },
-            OneshotCommands::Username {
-                username,
-                segment,
-                is_root,
-            } => Self {
-                username: Some(username),
-                is_root,
-                ..base_oneshot_request(OneshotKind::Username, String::new(), segment)
             },
             OneshotCommands::Status { exit_code, segment } => Self {
                 success: Some(exit_code == 0_i32),

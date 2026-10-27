@@ -1,0 +1,10 @@
+id = "username-example"
+name = "Username example"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "script"
+provided_segments = ["whoami-user"]
+description = "The login name, with the variant `root` as root"
+
+[compatibility_constraints]
+min_gpy_version = "0.6.0"

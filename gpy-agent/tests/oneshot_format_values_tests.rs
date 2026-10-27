@@ -41,15 +41,7 @@ fn value_variants_are_all_renderable() {
 #[test]
 fn oneshot_help_lists_only_working_formats() {
     let home = tempfile::tempdir().unwrap();
-    for sub in [
-        "git",
-        "lang",
-        "directory",
-        "duration",
-        "character",
-        "hostname",
-        "username",
-    ] {
+    for sub in ["git", "lang", "directory", "duration", "character"] {
         let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
             .args(["oneshot", sub, "--help"])
             .env("HOME", home.path())

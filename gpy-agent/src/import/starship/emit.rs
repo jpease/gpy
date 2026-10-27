@@ -85,10 +85,12 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
         segments.clock = translate_time(table, &mut warnings);
     }
     if let Some(table) = model.module_table("hostname") {
-        segments.hostname = translate_hostname(table, &mut warnings);
+        let theme = translate_hostname(table, selected, &mut warnings);
+        segments.plugin.insert("hostname".to_owned(), theme);
     }
     if let Some(table) = model.module_table("username") {
-        segments.username = translate_username(table, &mut warnings);
+        let theme = translate_username(table, selected, &mut warnings);
+        segments.plugin.insert("username".to_owned(), theme);
     }
 
     let ui = build_ui(model, &mut warnings);

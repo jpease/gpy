@@ -153,7 +153,7 @@
       "type": "string"
     },
     "ScriptPath": {
-      "description": "A plugin-relative path to a POSIX `sh` script (`command`, `require_command`).\n\nSyntax is checked at parse; [`ScriptPath::resolve`] checks that it names a\nfile that stays inside the plugin root after symlinks.",
+      "description": "A plugin-relative path to a POSIX `sh` script (`command`, `require_command`).\n\nSyntax is checked at parse; [`ScriptPath::resolve`] checks that it names a\nfile that stays inside the plugin root after symlinks and that only the\nuser (or root) can change.",
       "type": "string"
     },
     "SettingDecl": {

@@ -40,9 +40,6 @@ pub fn validate_segment_templates(
         ("duration", "format", &s.duration.format),
         ("character", "format", &s.character.format),
         ("clock", "format", &s.clock.format),
-        ("hostname", "format", &s.hostname.format),
-        ("username", "format", &s.username.format),
-        ("username", "user_format", &s.username.user_format),
         ("status", "format", &s.status.format),
     ] {
         if let Some(template) = format.as_deref() {
@@ -466,96 +463,6 @@ mod tests {
         // With palette role -> ok
         let mut map = HashMap::new();
         map.insert("custom_accent".to_owned(), Color::Named("cyan".to_owned()));
-        let palette = Palette::new(map);
-        assert!(validate_segment_templates(&theme, &palette).is_ok());
-    }
-
-    #[test]
-    fn ok_for_hostname_none_and_valid() {
-        let mut theme = ThemeConfig::default();
-        assert!(theme.segments.hostname.format.is_none());
-        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
-
-        theme.segments.hostname.format = Some("[$hostname](fg:white)".to_owned());
-        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
-    }
-
-    #[test]
-    fn err_for_broken_hostname_format() {
-        let mut theme = ThemeConfig::default();
-        theme.segments.hostname.format = Some("[$hostname(white)".to_owned());
-        let syntax_err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
-        assert_eq!(syntax_err.field_path, "segments.hostname.format");
-        assert!(syntax_err.to_string().contains("hostname"));
-
-        theme.segments.hostname.format = Some("[$hostname](fg:nonsuch)".to_owned());
-        let color_err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
-        assert_eq!(color_err.field_path, "segments.hostname.format");
-        assert!(color_err.to_string().contains("hostname"));
-        assert!(color_err.to_string().contains("nonsuch"));
-    }
-
-    #[test]
-    fn hostname_palette_color_and_conditional() {
-        use crate::template::Color;
-        use std::collections::HashMap;
-
-        let mut theme = ThemeConfig::default();
-        theme.segments.hostname.format = Some("([$hostname](fg:host_color))".to_owned());
-
-        // Without palette role -> error
-        let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
-        assert_eq!(err.field_path, "segments.hostname.format");
-        assert!(err.to_string().contains("host_color"));
-
-        // With palette role -> ok
-        let mut map = HashMap::new();
-        map.insert("host_color".to_owned(), Color::Named("yellow".to_owned()));
-        let palette = Palette::new(map);
-        assert!(validate_segment_templates(&theme, &palette).is_ok());
-    }
-
-    #[test]
-    fn ok_for_username_none_and_valid() {
-        let mut theme = ThemeConfig::default();
-        assert!(theme.segments.username.format.is_none());
-        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
-
-        theme.segments.username.format = Some("[$username](fg:white)".to_owned());
-        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
-    }
-
-    #[test]
-    fn err_for_broken_username_format() {
-        let mut theme = ThemeConfig::default();
-        theme.segments.username.format = Some("[$username(white)".to_owned());
-        let syntax_err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
-        assert_eq!(syntax_err.field_path, "segments.username.format");
-        assert!(syntax_err.to_string().contains("username"));
-
-        theme.segments.username.format = Some("[$username](fg:nonsuch)".to_owned());
-        let color_err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
-        assert_eq!(color_err.field_path, "segments.username.format");
-        assert!(color_err.to_string().contains("username"));
-        assert!(color_err.to_string().contains("nonsuch"));
-    }
-
-    #[test]
-    fn username_palette_color_and_conditional() {
-        use crate::template::Color;
-        use std::collections::HashMap;
-
-        let mut theme = ThemeConfig::default();
-        theme.segments.username.format = Some("([$username](fg:user_color))".to_owned());
-
-        // Without palette role -> error
-        let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
-        assert_eq!(err.field_path, "segments.username.format");
-        assert!(err.to_string().contains("user_color"));
-
-        // With palette role -> ok
-        let mut map = HashMap::new();
-        map.insert("user_color".to_owned(), Color::Named("magenta".to_owned()));
         let palette = Palette::new(map);
         assert!(validate_segment_templates(&theme, &palette).is_ok());
     }

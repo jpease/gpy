@@ -67,6 +67,17 @@ ahead_behind_bg_color = "yellow"
 conflicts_text_color = "white"
 conflicts_bg_color = "red"
 
+# Script segments (the bundled `hostname` and `username` plugins).
+[segments.hostname]
+text_color = "white"
+bg_color = "black"
+
+[segments.username]
+text_color = "black"
+bg_color = "yellow"
+root_text_color = "white"
+root_bg_color = "red"
+
 [segments.language]
 format = "[$symbol]($style)([ $version]($style))"
 text_color = "white"

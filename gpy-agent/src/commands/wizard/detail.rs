@@ -49,20 +49,6 @@ fn segment_detail(segment: &str) -> SegmentDetail {
             preview_contribution: "Shows the previous command's exit status as a pill (✔/✖) in the segment chain.",
             caveat: Some("Preview uses a representative sample status, not a real command result."),
         },
-        Ok(BuiltinSegment::Hostname) => SegmentDetail {
-            config_field: "ui.enabled_segments",
-            preview_contribution: "Shows the machine's hostname.",
-            caveat: Some(
-                "Shown only over SSH unless `segments.hostname.show_always` is set; its icon shows only over SSH.",
-            ),
-        },
-        Ok(BuiltinSegment::Username) => SegmentDetail {
-            config_field: "ui.enabled_segments",
-            preview_contribution: "Shows the current user name.",
-            caveat: Some(
-                "Shown only as root, under sudo or over SSH unless `segments.username.show_always` is set; the preview uses the root style.",
-            ),
-        },
         Err(_) => SegmentDetail {
             config_field: "ui.enabled_segments",
             preview_contribution: "Provided by a plugin.",
@@ -159,12 +145,7 @@ fn segment_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>>
         Ok(crate::plugin::BuiltinSegment::Git) => {
             lines.extend(git_display_lines(state, theme));
         }
-        Ok(
-            crate::plugin::BuiltinSegment::Status
-            | crate::plugin::BuiltinSegment::Username
-            | crate::plugin::BuiltinSegment::Hostname,
-        )
-        | Err(_) => {}
+        Ok(crate::plugin::BuiltinSegment::Status) | Err(_) => {}
     }
     lines
 }

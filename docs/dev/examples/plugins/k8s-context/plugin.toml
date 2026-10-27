@@ -1,0 +1,10 @@
+id = "k8s-context"
+name = "Kubernetes context"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "script"
+provided_segments = ["k8s"]
+description = "Shows the current kubectl context"
+
+[compatibility_constraints]
+min_gpy_version = "0.6.0"

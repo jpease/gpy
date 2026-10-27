@@ -5,8 +5,7 @@
 # own literal fallback) so the NEXT segment's opening chevron blends
 # correctly.
 #
-# Sources the segment file directly and stubs gpy_section_standalone, mirroring
-# hostname_segment.test.fish / username_segment.test.fish.
+# Sources the segment file directly and stubs gpy_section_standalone.
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 

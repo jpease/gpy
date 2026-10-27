@@ -1045,185 +1045,6 @@ theme = "default"
     );
 }
 
-/// `oneshot hostname` with a theme `format` template set renders the supplied
-/// hostname through the template engine as pre-formatted ANSI.
-#[test]
-fn test_cli_oneshot_hostname_renders_via_format_template() {
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-    let theme_content = r#"
-[ui]
-
-[segments.hostname]
-format = "[$symbol$hostname](bold dimmed green) in "
-"#;
-    fs::write(env.themes_dir().join("default.toml"), theme_content)
-        .expect("failed to write hostname-format theme");
-
-    let output = env
-        .run_gpy_agent(&[
-            "oneshot",
-            "hostname",
-            "--hostname",
-            "myhost",
-            "--format",
-            "ansi",
-        ])
-        .expect("failed to run gpy-agent oneshot hostname");
-
-    output.assert_success("oneshot hostname");
-    assert!(
-        output.stdout.contains("myhost"),
-        "expected the supplied hostname in output: {}",
-        output.stdout
-    );
-    assert!(
-        output.stdout.contains('\u{1b}'),
-        "expected ANSI escape codes in output: {}",
-        output.stdout
-    );
-}
-
-/// `oneshot hostname --is-ssh` draws the theme icon (Starship's `ssh_symbol`);
-/// without the flag the same theme renders the bare hostname.
-#[test]
-fn test_cli_oneshot_hostname_icon_only_with_is_ssh() {
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-    let theme_content = r#"
-[ui]
-
-[segments.hostname]
-format = "[$symbol$hostname](green)"
-icon = "🌐 "
-show_always = true
-"#;
-    fs::write(env.themes_dir().join("default.toml"), theme_content)
-        .expect("failed to write hostname-icon theme");
-
-    let render = |extra: &[&str]| {
-        let mut args = vec![
-            "oneshot",
-            "hostname",
-            "--hostname",
-            "myhost",
-            "--format",
-            "ansi",
-        ];
-        args.extend_from_slice(extra);
-        let output = env
-            .run_gpy_agent(&args)
-            .expect("failed to run gpy-agent oneshot hostname");
-        output.assert_success("oneshot hostname");
-        output.stdout
-    };
-
-    let ssh = render(&["--is-ssh"]);
-    assert!(
-        ssh.contains("🌐 ") && ssh.contains("myhost"),
-        "expected the icon and hostname over SSH: {ssh:?}"
-    );
-    let local = render(&[]);
-    assert!(local.contains("myhost"), "expected the hostname: {local}");
-    assert!(!local.contains('🌐'), "expected no icon locally: {local}");
-}
-
-/// Without a `format` template, `oneshot hostname` renders nothing; the shell
-/// renders the segment itself.
-#[test]
-fn test_cli_oneshot_hostname_empty_without_format_template() {
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-    fs::write(
-        env.themes_dir().join("default.toml"),
-        "[ui]\n\n[segments.hostname]\ntext_color = \"white\"\n",
-    )
-    .expect("failed to write format-less hostname theme");
-
-    let output = env
-        .run_gpy_agent(&[
-            "oneshot",
-            "hostname",
-            "--hostname",
-            "myhost",
-            "--format",
-            "ansi",
-        ])
-        .expect("failed to run gpy-agent oneshot hostname");
-
-    output.assert_success("oneshot hostname");
-    assert!(
-        output.stdout.trim().is_empty(),
-        "expected empty output with no format template configured: {}",
-        output.stdout
-    );
-}
-
-/// `oneshot username` with a theme `format` template set renders the supplied
-/// username through the template engine as pre-formatted ANSI.
-#[test]
-fn test_cli_oneshot_username_renders_via_format_template() {
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-    let theme_content = r#"
-[ui]
-
-[segments.username]
-format = "[$username](bold red) in "
-"#;
-    fs::write(env.themes_dir().join("default.toml"), theme_content)
-        .expect("failed to write username-format theme");
-
-    let output = env
-        .run_gpy_agent(&[
-            "oneshot",
-            "username",
-            "--username",
-            "root",
-            "--format",
-            "ansi",
-        ])
-        .expect("failed to run gpy-agent oneshot username");
-
-    output.assert_success("oneshot username");
-    assert!(
-        output.stdout.contains("root"),
-        "expected the supplied username in output: {}",
-        output.stdout
-    );
-    assert!(
-        output.stdout.contains('\u{1b}'),
-        "expected ANSI escape codes in output: {}",
-        output.stdout
-    );
-}
-
-/// Without a `format` template, `oneshot username` renders nothing; the shell
-/// renders the segment itself.
-#[test]
-fn test_cli_oneshot_username_empty_without_format_template() {
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-    fs::write(
-        env.themes_dir().join("default.toml"),
-        "[ui]\n\n[segments.username]\ntext_color = \"white\"\n",
-    )
-    .expect("failed to write format-less username theme");
-
-    let output = env
-        .run_gpy_agent(&[
-            "oneshot",
-            "username",
-            "--username",
-            "root",
-            "--format",
-            "ansi",
-        ])
-        .expect("failed to run gpy-agent oneshot username");
-
-    output.assert_success("oneshot username");
-    assert!(
-        output.stdout.trim().is_empty(),
-        "expected empty output with no format template configured: {}",
-        output.stdout
-    );
-}
-
 /// Plain text of a default-theme `oneshot <segment>` render with `extra` flags.
 fn default_theme_pill_text(env: &CliTestEnv, args: &[&str], extra: &[&str]) -> String {
     let mut all = vec!["oneshot"];
@@ -1245,9 +1066,7 @@ fn test_cli_oneshot_default_theme_pills_have_one_leading_space() {
     let open = '\u{e0ba}';
     let close = '\u{e0bc}';
     let gap = ' ';
-    let cases: [(&[&str], &str); 5] = [
-        (&["hostname", "--hostname", "myhost.example.com"], "myhost"),
-        (&["username", "--username", "root"], "root"),
+    let cases: [(&[&str], &str); 3] = [
         (&["status", "--exit-code", "0"], "\u{f058}"),
         (&["status", "--exit-code", "2"], "\u{f057}"),
         // A negative value parses as a value, not a flag, and is a failure.
@@ -1267,21 +1086,6 @@ fn test_cli_oneshot_default_theme_pills_have_one_leading_space() {
             "non-first pill opens with the cap then one space ({args:?})"
         );
     }
-}
-
-/// The SSH icon rides in `$symbol`, so a local session has no double space.
-#[test]
-fn test_cli_oneshot_hostname_leading_space_not_doubled_by_empty_symbol() {
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-    let local = default_theme_pill_text(
-        &env,
-        &["hostname", "--hostname", "box"],
-        &["--first", "--not-last"],
-    );
-    assert!(
-        local.starts_with(" box") && !local.starts_with("  "),
-        "local first pill must read ' box': {local:?}"
-    );
 }
 
 #[test]

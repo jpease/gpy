@@ -1,0 +1,13 @@
+description = "Login name as root, under sudo or over SSH; prints the variant `root` as root"
+command = "bin/username.sh"
+
+# No `pwd`: one run per shell session, then cache hits while these stay the same.
+inputs = ["is_root", "is_sudo", "is_ssh"]
+
+ttl_secs = 3600
+timeout_ms = 200
+
+[settings.show_always]
+type = "bool"
+default = false
+description = "Show the name in every session, not only as root, under sudo or over SSH"

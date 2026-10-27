@@ -82,10 +82,11 @@ these three:
 privileges, when the segment is enabled. Only the Fish theme export carries
 their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source these
 `.fish` files. Installing a plugin means trusting its code like a shell startup
-file. Planned script segments, which Bash, Zsh and Fish would all execute, are
-not shipped; their trust model and hardening rules are in
-[ADR-0011 Addendum: Script Segment Security](docs/dev/adr/adr-0011-addendum-script-segment-security.md),
-and this paragraph changes when they ship.
+file.
+
+**Script segments run as you, in all three shells.** Bash, Zsh and Fish
+execute script plugins (`entry_type = "script"`) as you, once per command; see
+[Script Segment Trust Model](#script-segment-trust-model).
 
 **Prompt data is escaped for the shell that draws it.** Bash and Zsh paste the
 agent's prompt output into `PS1`/`PROMPT`, and both shells expand prompt
@@ -102,7 +103,9 @@ that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
 prints its prompt literally and receives the unescaped `ansi` format. In every
 format the agent also strips terminal control characters (ESC, BEL and the other
 C0/C1 controls) from resolved values and from theme template text, so neither
-can emit escape sequences; theme template text keeps only newline, and
+can emit escape sequences (script segment output is sanitized by the shells;
+see [Script Segment Trust Model](#script-segment-trust-model) for its gaps);
+theme template text keeps only newline, and
 `gpy theme validate` rejects themes whose templates contain any other control
 character (`gpy-agent/src/template/eval.rs`).
 
@@ -138,21 +141,122 @@ world-writable `/tmp`. A local attacker can then neither guess the path nor
 pre-create a file whose contents would be read back into `$PROMPT`, which would
 be a terminal-escape and prompt-injection vector. If `mktemp` is unavailable the
 memoization disables itself and every prompt does a full IPC round trip
-(`zsh/core/init.zsh`). The planned script segments, which are not shipped, are
-designed to add no files: the cache stays in shell variables, with no `/tmp`
-path and no PID-keyed state (see the
-[script segment security addendum](docs/dev/adr/adr-0011-addendum-script-segment-security.md)).
+(`zsh/core/init.zsh`). Script segments add no files: their cache stays in
+shell variables, with no `/tmp` path and no PID-keyed state (see
+[Script Segment Trust Model](#script-segment-trust-model)).
 
 **Downloaded release artifacts are trusted only after verification.** What the
 installers enforce, and how to check a download by hand, is in
 [Release Integrity and Supply Chain](#release-integrity-and-supply-chain).
+
+## Script Segment Trust Model
+
+A plugin with
+`entry_type = "script"` ships one POSIX `sh` script per segment. Bash, Zsh and
+Fish execute it (they never source it) as you, once per command that passes
+the segment's triggers, in every directory you enter, including untrusted ones
+(a cloned repository, an unpacked archive) whose names and files reach the
+script when it declares the `pwd` input. Its `require_command`, if any, runs
+the same way. Installing a script plugin means trusting it like a shell
+startup file, in all three shells. GPY does not protect you from the script;
+it protects the shell and the terminal from the script's output and from the
+manifest's names. The design record is
+[ADR-0011 Addendum: Script Segment Security](docs/dev/adr/adr-0011-addendum-script-segment-security.md).
+
+*Which file runs (containment and ownership).* `gpy theme export` re-resolves
+`command` and `require_command` on every export (`ScriptPath::resolve` and
+`check_owned_and_not_shared` in `gpy-agent/src/plugin/script.rs`). Each must be
+a relative path without `..`, canonicalize (all symlinks resolved) to a regular
+file inside the canonical plugin root, and sit at a UTF-8 path without control
+characters. The script, and every directory from it up to the plugin root,
+must be owned by you or by root and must not be group- or world-writable. A
+segment failing any check is not exported, so no shell runs it. The export
+writes the canonical absolute path, and the shells run exactly that path
+without resolving it again. Re-resolving at run time would add no protection:
+after export, replacing the script or a directory on its path with a symlink
+or another file needs write access to a file or directory that the ownership
+rule has just shown only you (or root) can write. Anyone able to do that
+already runs code as you, which is outside this design (see "No defence
+against a compromised account" below). The ownership rule is what keeps other
+local users out: without it, a user who could write the plugin directory could
+run code as you on every command. The interpreter is `/bin/sh` by an absolute
+path the agent resolves at export time (on macOS, the target of
+`/private/var/select/sh` when it passes the same ownership and mode checks),
+never a bare `sh` looked up on `PATH`.
+
+*What the script gets.* A clean environment, not the shell's: `PATH` without
+empty, `.` or other relative entries, `HOME`, `USER`, `LOGNAME`, `LANG`,
+`LC_*`, `TERM`, `TZ` and `TMPDIR` (each only when set), the names the manifest
+declares in `env` (when set as a variable in your shell), and the `GPY_*`
+inputs and `GPY_OPT_*` settings the runner sets itself. Credentials, tokens,
+`SSH_AUTH_SOCK` and exported shell functions are absent unless declared. The
+interpreter starts as `sh -c PROLOGUE SCRIPT` from an empty environment; the
+prologue reads the values on descriptor 3 and exports them, so declared
+values are never arguments of any process and `ps` does not show them to
+other users. For a segment that declares `pwd` the runner keeps its inherited
+working directory instead of taking it as an argument, so the directory name
+is not in argv either. This keeps
+credentials out of scripts by default; it is not a confidentiality boundary,
+since a script running as you can still read your files. stdin is
+`/dev/null`, stderr is discarded, and the working directory is the plugin root
+(or `$PWD` when `pwd` is declared).
+
+*What reaches the prompt.* Output is sanitized once, at the runner, before any
+shell variable holds it; raw output is never stored. More than 4096 bytes hides
+the segment. C0 controls and DEL are stripped without depending on the locale
+(also under `LC_ALL=C`); output that still holds a UTF-8-encoded C1 control
+(U+0080 to U+009F) hides the segment. The remaining text is escaped for the
+drawing shell (`\`, `$` and backticks in Bash; those plus `%` in Zsh; Fish
+prints it with `printf '%s'` and needs no escape). Manifest
+names (segment tokens, `env` and `require_env` names) are checked against
+`^[A-Za-z_][A-Za-z0-9_]*$`-style patterns before any indirection, so a name
+such as `a[$(cmd)]` never executes; `require_files`, `require_folders` and
+`require_extensions` names with glob characters are matched literally.
+
+*Time and processes.* Triggers run in a fixed order: `require_env`, then the
+`require_files`/`require_folders`/`require_extensions` scan, then the cache,
+then `require_command`. `require_command` and the script run in one process
+group under the script's `timeout_ms` deadline (at most 500 ms); all due
+segments of one prompt start together, so one prompt waits at most 500 ms
+plus the grace, and at most 40 segments run per prompt. On timeout or Ctrl-C
+the group gets TERM, CONT,
+then KILL after a 50 ms grace; members left behind after a normal exit are
+killed the same way, and the runner never waits for a grandchild that holds
+the output pipe open. The scan runs in a child with a 30 ms deadline and is
+killed with SIGKILL when it overruns; it walks up through physical parents.
+Two consecutive scan timeouts, or two consecutive run timeouts or over-cap
+outputs (separate counters), disable the segment for that shell. Bash runs
+the runner in a subshell of itself; Fish and Zsh run it in a Bash child, the
+first Bash 4 or later found once at shell start, else `/bin/bash`. Without
+any Bash, script segments are disabled. With Bash 3.2 (stock macOS) Ctrl-C
+during a slow script returns to the prompt only when the script's timeout
+expires, and the group is still killed.
+
+*No files.* The cache and the once-per-command guard live in shell variables,
+keyed by the segment's fixed key plus the current values of its declared
+inputs and `env` names, and expire after `ttl_secs`. A non-zero exit, a
+failed `require_command` or C1 output is cached as hidden; a timeout,
+over-cap output or Ctrl-C is not cached, and a failed trigger drops the
+entry. No cache, relay, marker or
+output file is written, nothing under `/tmp`, and no state is keyed by a PID.
+A repaint (Fish SIGURG, Zsh `reset-prompt`) reuses the cached text; the
+script runs at most once per command.
+
+*Known gaps.* A process that leaves the group (`setsid`, a daemonizing double
+fork) escapes the kill. In a container whose PID 1 does not reap, timed-out
+runs can leave zombies; run containers with `--init`. Text a script writes to
+`/dev/tty` bypasses the sanitizer. A lone non-UTF-8 byte `0x80`–`0x9F` is kept
+by the shells. Unicode format characters (bidi controls, zero-width marks) are
+not controls and pass. A script run in `$PWD` may run repository-local tools
+(`git` hooks, `core.fsmonitor`) and they may write to the repository.
 
 ## Not Covered by This Design
 
 - **No sandbox.** The agent runs with the full authority of the user who started
   it. There is no seccomp filter, no namespace confinement, and no macOS
   entitlement restriction. Running as your own user is not a sandbox: the agent
-  can read anything you can read and write anywhere you can write.
+  can read anything you can read and write anywhere you can write. Script
+  segments have no CPU, memory, file or process limit beyond their timeout.
 - **No defence against a compromised account.** Every mitigation above rests on
   file ownership and permissions. Code already running as you defeats all of it.
 - **No code signing.** Binaries are not signed or notarized on any platform; see
@@ -177,7 +281,9 @@ installers enforce, and how to check a download by hand, is in
 ### File System Access
 
 - **Repositories are read, never written.** GPY reads git state and language
-  metadata from your working tree and puts nothing back into it. The file
+  metadata from your working tree and puts nothing back into it. A script
+  segment that declares `pwd` is the exception: it runs in the repository, and
+  tools it calls (such as `git`) may write index and lock files there. The file
   watcher's liveness probe does write a sentinel file, but into a private
   directory under the system temp dir, outside every watched repository
   (`gpy-agent/src/watcher/filesystem/mod.rs`).

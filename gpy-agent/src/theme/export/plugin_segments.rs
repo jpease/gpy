@@ -1,4 +1,4 @@
-//! Assignments for plugin and community segments: styles, delimiters, variant colours and file paths.
+//! Assignments for plugin and community segments: styles, delimiters, variant styles and file paths.
 //!
 //! [`plugin_segment_variables`] is the one place that names plugin segment
 //! variables; export and theme validation ([`first_plugin_variable_collision`])
@@ -7,6 +7,7 @@
 use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
 use crate::debug_log;
+use crate::formatter::separator::Glyphs;
 use crate::plugin::{SegmentName, VariantColorPart};
 use crate::shell::Shell;
 use crate::theme::model::PluginSegmentTheme;
@@ -15,11 +16,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::BuildHasher;
 
-/// A plugin segment variable's value: verbatim, or a theme colour resolved per shell.
+/// A plugin segment variable's value: verbatim, a theme colour resolved per shell,
+/// or an icon drawn with the export's glyph set.
 #[derive(Clone, Copy)]
 enum PluginValue<'a> {
     Literal(&'a str),
     Color(&'a str),
+    Icon(&'a str),
 }
 
 /// One shell variable a plugin segment theme exports, and the theme field it comes from.
@@ -31,10 +34,12 @@ struct PluginVariable<'a> {
 }
 
 impl PluginVariable<'_> {
-    fn into_assignment(self, colors: ShellColors<'_>) -> ShellAssignment {
+    /// [`Glyphs::Plain`] exports a private-use icon empty, which the shells read as "no icon".
+    fn into_assignment(self, colors: ShellColors<'_>, glyphs: Glyphs) -> ShellAssignment {
         let value = match self.value {
             PluginValue::Literal(value) => Cow::Borrowed(value),
             PluginValue::Color(color) => colors.resolve(color),
+            PluginValue::Icon(icon) => Cow::Borrowed(glyphs.icon(icon).unwrap_or("")),
         };
         ShellAssignment::local(self.name, value)
     }
@@ -44,11 +49,12 @@ impl PluginVariable<'_> {
 /// namespaced `__gpy_segment_<token>_*` contract plus the flat `__color_<token>_*`
 /// and `__icon_<token>` aliases built-ins use.
 ///
-/// Variant colours sort by key: `__gpy_segment_<token>_variant_<variant>_{bg,text}_color`
-/// and `__color_<token>_<variant>_{bg,fg}`. The `variant_` namespace keeps variant
-/// `open`/`close` off the delimiter variables. Names are distinct within one
-/// section; across sections `_` joins are ambiguous (segment `a` variant `x` vs
-/// segment `a_variant_x`), which [`Claims`] rejects.
+/// Variant styles sort by key: colours as `__gpy_segment_<token>_variant_<variant>_{bg,text}_color`
+/// and `__color_<token>_<variant>_{bg,fg}`, then icons as
+/// `__gpy_segment_<token>_variant_<variant>_icon` and `__icon_<token>_<variant>`. The
+/// `variant_` namespace keeps variant `open`/`close` off the delimiter variables. Names
+/// are distinct within one section; across sections `_` joins are ambiguous (segment
+/// `a` variant `x` vs segment `a_variant_x`), which [`Claims`] rejects.
 fn plugin_segment_variables<'a>(
     segment_name: &'a str,
     segment_token: &str,
@@ -92,7 +98,7 @@ fn plugin_segment_variables<'a>(
         );
     }
     if let Some(icon) = theme.icon.as_deref() {
-        let value = PluginValue::Literal(icon);
+        let value = PluginValue::Icon(icon);
         push(format!("{prefix}_icon"), Cow::Borrowed("icon"), value);
         push(
             format!("__icon_{segment_token}"),
@@ -119,7 +125,7 @@ fn plugin_segment_variables<'a>(
         push(
             format!("{prefix}_{side}_icon"),
             icon_field,
-            PluginValue::Literal(&delimiter.icon),
+            PluginValue::Icon(&delimiter.icon),
         );
         push(
             format!("{prefix}_{side}_icon_color"),
@@ -132,24 +138,47 @@ fn plugin_segment_variables<'a>(
             PluginValue::Color(&delimiter.bg_color),
         );
     }
+    push_variant_variables(&mut variables, &prefix, segment_token, theme);
+    variables
+}
+
+/// Variant colour then variant icon variables, each sorted by key.
+fn push_variant_variables<'a>(
+    variables: &mut Vec<PluginVariable<'a>>,
+    prefix: &str,
+    segment_token: &str,
+    theme: &'a PluginSegmentTheme,
+) {
     for (key, color) in &theme.variant_colors {
         let flat_suffix = match key.part {
             VariantColorPart::Bg => "bg",
             VariantColorPart::Text => "fg",
         };
         let field: Cow<'static, str> = Cow::Owned(key.to_string());
-        push(
-            format!("{prefix}_variant_{key}"),
-            field.clone(),
-            PluginValue::Color(color),
-        );
-        push(
-            format!("__color_{segment_token}_{}_{flat_suffix}", key.variant),
+        variables.push(PluginVariable {
+            name: format!("{prefix}_variant_{key}"),
+            field: field.clone(),
+            value: PluginValue::Color(color),
+        });
+        variables.push(PluginVariable {
+            name: format!("__color_{segment_token}_{}_{flat_suffix}", key.variant),
             field,
-            PluginValue::Color(color),
-        );
+            value: PluginValue::Color(color),
+        });
     }
-    variables
+    for (variant, icon) in &theme.variant_icons {
+        let field: Cow<'static, str> = Cow::Owned(format!("{variant}_icon"));
+        variables.push(PluginVariable {
+            name: format!("{prefix}_variant_{variant}_icon"),
+            field: field.clone(),
+            value: PluginValue::Icon(icon),
+        });
+        variables.push(PluginVariable {
+            name: format!("__icon_{segment_token}_{variant}"),
+            field,
+            value: PluginValue::Icon(icon),
+        });
+    }
 }
 
 /// Two theme fields that would export the same shell variable.
@@ -256,6 +285,7 @@ pub fn first_plugin_variable_collision<S: BuildHasher>(
 pub(super) fn append_plugin_segment_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
+    glyphs: Glyphs,
     plugins: &HashMap<String, PluginSegmentTheme>,
 ) {
     let mut claims = Claims::default();
@@ -270,7 +300,7 @@ pub(super) fn append_plugin_segment_assignments(
             colors.shell,
             variables
                 .into_iter()
-                .map(|variable| variable.into_assignment(colors)),
+                .map(|variable| variable.into_assignment(colors, glyphs)),
         );
     }
 }

@@ -6,14 +6,12 @@ pub(crate) mod clock_resolver;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
 pub(crate) mod git_resolver;
-pub(crate) mod hostname_resolver;
 mod json;
 pub(crate) mod language_resolver;
 mod prompt;
 pub(crate) mod separator;
 pub(crate) mod status_resolver;
 mod style_encoder;
-pub(crate) mod username_resolver;
 
 pub use directory_resolver::DirectoryEnv;
 pub use json::JsonFormatter;

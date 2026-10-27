@@ -216,6 +216,28 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The quiet-host acceptance of ADR-0011 Spike 2 (p99 within T + 80 ms).
+      # The shell gate runs the same test with only the hang bound enforced.
+      - name: Install shells for the strict deadline test
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/install-shells
+
+      - name: Script segment deadline, strict p99
+        if: ${{ !cancelled() }}
+        env:
+          GPY_STRICT_DEADLINE: "1"
+        run: |
+          status=0
+          bash tests/bash/script_segment_deadline.test.bash >deadline-strict.txt 2>&1 || status=$?
+          cat deadline-strict.txt
+          {
+            echo '### script segment deadline (strict p99)'
+            echo '```'
+            cat deadline-strict.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
       - name: Upload performance results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -224,6 +246,7 @@ jobs:
           path: |
             bench-results.json
             perf-canary.txt
+            deadline-strict.txt
           if-no-files-found: warn
 
   fresh-install:
