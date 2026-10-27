@@ -147,6 +147,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Script segments with different `timeout_ms` values in one prompt: each
+  script now gets TERM at its own deadline and KILL 50 ms later, instead of
+  waiting on the longest segment (Bash 5 runner, also used by Zsh and Fish;
+  #1080).
 - Theme validation rejects a plugin segment whose exported theme variables
   collide with a built-in theme export (for example `git_clean` with
   `bg_color` writing `__color_git_clean_bg`, or `status_fail` with `icon`
