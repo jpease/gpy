@@ -1,6 +1,7 @@
 //! Theme loading, shell export, and hot-reload behind an `Arc<RwLock<Arc<ThemeState>>>`.
 
 pub mod export;
+mod locate;
 pub mod manager;
 pub mod model;
 mod parse;
