@@ -147,6 +147,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gpy doctor` adds a warning with a `chmod -R go-w` hint when a plugin, a
+  bundled one included, is dropped because a script or directory is group-
+  or world-writable (for example a checkout made under umask 002). The shell
+  test harnesses set explicit modes, so they pass under umask 002 (#1081).
 - Script segments with different `timeout_ms` values in one prompt: each
   script now gets TERM at its own deadline and KILL 50 ms later, instead of
   waiting on the longest segment (Bash 5 runner, also used by Zsh and Fish;

@@ -272,6 +272,20 @@ fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
                 format_args!("{} [{}]", diag.plugin_dir.display(), diag.source),
             );
             output::detail_at(3, format_args!("Error: {}", diag.message));
+            if is_shared_writable(diag) {
+                let dropped = if matches!(diag.source, crate::plugin::PluginSource::Bundled) {
+                    "this bundled plugin is dropped, so its segments never render"
+                } else {
+                    "this plugin is dropped, so its segments never render"
+                };
+                output::detail_at(
+                    3,
+                    format_args!(
+                        "Warning: {dropped}; run `chmod -R go-w {}` (or reinstall with `gpy setup`)",
+                        diag.plugin_dir.display()
+                    ),
+                );
+            }
         }
         output::detail(
             "Remediation: Review the plugin manifests (plugin.toml) for the reported errors.",
@@ -279,6 +293,12 @@ fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
     }
 
     all_plugins_ok
+}
+
+/// Whether a diagnostic comes from the ownership check that refuses a script
+/// or directory others can write (see `check_owned_and_not_shared`).
+fn is_shared_writable(diag: &crate::plugin::PluginDiagnostic) -> bool {
+    diag.message.contains("group- or world-writable")
 }
 
 fn check_plugin_performance(
@@ -653,5 +673,46 @@ mod tests {
             slow_pattern_reasons(script),
             vec!["network call", "subprocess git call", "interpreter spawn"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_writable_script_diagnostic_is_recognised() {
+        use super::is_shared_writable;
+        use crate::plugin::{PluginDiagnostic, PluginSource, ScriptSegmentManifest, SegmentName};
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let plugin = temp.path().join("demo");
+        std::fs::create_dir_all(plugin.join("segments")).expect("segments");
+        std::fs::write(plugin.join("segments/demo.toml"), "command = \"run.sh\"\n")
+            .expect("segment");
+        std::fs::write(plugin.join("run.sh"), "echo hi\n").expect("script");
+        let mode = |path: &std::path::Path, bits| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits)).expect("chmod");
+        };
+        for dir in [temp.path(), &plugin, &plugin.join("segments")] {
+            mode(dir, 0o755);
+        }
+        let segment = SegmentName::new("demo").expect("segment name");
+        let diagnostic = |error: crate::Error| PluginDiagnostic {
+            plugin_dir: plugin.clone(),
+            source: PluginSource::Bundled,
+            message: error.to_string(),
+        };
+
+        mode(&plugin.join("run.sh"), 0o644);
+        ScriptSegmentManifest::load(&plugin, &segment).expect("private script loads");
+
+        mode(&plugin.join("run.sh"), 0o664);
+        let error = ScriptSegmentManifest::load(&plugin, &segment).expect_err("shared script");
+        assert!(is_shared_writable(&diagnostic(error)));
+
+        let other = PluginDiagnostic {
+            plugin_dir: plugin.clone(),
+            source: PluginSource::Bundled,
+            message: "missing field `id`".to_owned(),
+        };
+        assert!(!is_shared_writable(&other));
     }
 }
