@@ -294,7 +294,7 @@ gpy config get plugin.k8s.style   # the override, or the declared default
 
 ### Bundled `hostname` and `username`
 
-`hostname` and `username` are bundled script plugins (installed by `gpy setup` into `$XDG_CONFIG_HOME/gpy/bundled-plugins`, see [Bundled Plugins](../dev/plugins.md#bundled-plugins)), so their settings live here and no longer in the theme. These replace the theme keys `show_always` and `trim_at` (hostname) and `show_always` (username) of earlier versions; move them when upgrading, since the theme no longer reads them.
+`hostname` and `username` are bundled script plugins (installed by `gpy setup` into `$XDG_CONFIG_HOME/gpy/bundled-plugins`, see [Bundled Plugins](../dev/plugins.md#bundled-plugins)), so their settings live here and no longer in the theme. These replace the theme keys `show_always` and `trim_at` (hostname) and `show_always` (username) of earlier versions; move them when upgrading, since the theme no longer reads them. `gpy theme migrate <theme>` does this for you (see [CLI reference](cli-reference.md#gpy-theme-migrate-name)).
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

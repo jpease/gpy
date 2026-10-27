@@ -1642,6 +1642,372 @@ fn test_theme_validate_rejects_nonexistent_name() {
     );
 }
 
+// `gpy theme diff|reset|migrate`: user copies of builtin themes.
+
+const BUILTIN_STARSHIP: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../config/themes/starship.toml"
+));
+
+/// The current starship theme with the keys 0.6 accepted on `username` and
+/// `hostname` (removed by #1003) put back, as an old `gpy theme save` left it.
+fn stale_starship_copy() -> String {
+    let stale = BUILTIN_STARSHIP
+        .replacen(
+            "[segments.username]\n",
+            "[segments.username]\nformat = \"[$username](bold red) in \"\nuser_format = \"[$username](bold yellow) in \"\nshow_always = true\n",
+            1,
+        )
+        .replacen(
+            "[segments.hostname]\n",
+            "[segments.hostname]\nformat = \"[$symbol$hostname](bold dimmed green) in \"\nshow_always = true\ntrim_at = \"-\"\nicon = \"🌐 \"\n",
+            1,
+        )
+        .replacen("ssh_icon = \"🌐 \"\n", "", 1);
+    for removed_key in ["user_format = ", "trim_at = \"-\"", "\nicon = \"🌐 \""] {
+        assert!(stale.contains(removed_key), "fixture lost {removed_key}");
+    }
+    assert!(!stale.contains("ssh_icon"), "fixture kept ssh_icon");
+    stale
+}
+
+fn write_theme_file(env: &CliTestEnv, name: &str, content: &str) -> std::path::PathBuf {
+    fs::create_dir_all(env.themes_dir()).expect("Failed to create themes dir");
+    let path = env.themes_dir().join(format!("{name}.toml"));
+    fs::write(&path, content).expect("Failed to write theme file");
+    path
+}
+
+#[test]
+fn test_theme_diff_shows_how_a_stale_copy_differs_from_the_builtin() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let path = write_theme_file(&env, "starship", &stale_starship_copy());
+
+    let output = env
+        .run_gpy(&["theme", "diff", "starship"])
+        .expect("Failed to run gpy theme diff");
+
+    output.assert_success("gpy theme diff starship");
+    let stdout = output.stdout;
+    assert!(
+        stdout.contains("--- builtin:starship (embedded)")
+            && stdout.contains(&format!("+++ {}", path.display())),
+        "{stdout}"
+    );
+    for expected in [
+        "\n+show_always = true\n",
+        "\n+trim_at = \"-\"\n",
+        "\n+icon = \"🌐 \"\n",
+        "\n-ssh_icon = \"🌐 \"\n",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in {stdout}"
+        );
+    }
+}
+
+#[test]
+fn test_theme_diff_reports_an_identical_copy() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_theme_file(&env, "starship", BUILTIN_STARSHIP);
+
+    let output = env
+        .run_gpy(&["theme", "diff", "starship"])
+        .expect("Failed to run gpy theme diff");
+
+    output.assert_success("gpy theme diff starship");
+    assert!(
+        output.stdout.contains("identical to the builtin"),
+        "{output:?}"
+    );
+    assert!(!output.stdout.contains("@@"), "{output:?}");
+}
+
+#[test]
+fn test_theme_diff_without_a_copy_says_so() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy(&["theme", "diff", "starship"])
+        .expect("Failed to run gpy theme diff");
+
+    output.assert_success("gpy theme diff starship");
+    assert!(
+        output.stdout.contains("No user copy of 'starship'"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn test_theme_diff_and_reset_reject_non_builtin_themes() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let custom = write_theme_file(&env, "my-own", &stale_starship_copy());
+
+    for verb in ["diff", "reset"] {
+        let output = env
+            .run_gpy(&["theme", verb, "my-own"])
+            .expect("Failed to run gpy theme");
+        assert_ne!(output.exit_code, 0_i32, "{verb}: {output:?}");
+        assert!(
+            output.stderr.contains("not a builtin theme") && output.stderr.contains("starship"),
+            "{verb}: {output:?}"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(&custom).expect("Failed to read custom theme"),
+        stale_starship_copy(),
+        "a non-builtin theme must never be moved aside"
+    );
+    assert!(!custom.with_extension("toml.bak").exists());
+}
+
+#[test]
+fn test_theme_reset_moves_the_copy_aside_so_the_builtin_takes_over() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let stale = stale_starship_copy();
+    let path = write_theme_file(&env, "starship", &stale);
+
+    let output = env
+        .run_gpy(&["theme", "reset", "starship"])
+        .expect("Failed to run gpy theme reset");
+
+    output.assert_success("gpy theme reset starship");
+    let backup = env.themes_dir().join("starship.toml.bak");
+    assert!(!path.exists(), "the copy must be moved, not left in place");
+    assert_eq!(
+        fs::read_to_string(&backup).expect("Failed to read backup"),
+        stale
+    );
+    assert!(
+        output.stdout.contains(&backup.display().to_string()),
+        "{output:?}"
+    );
+    let diff = env
+        .run_gpy(&["theme", "diff", "starship"])
+        .expect("Failed to run gpy theme diff");
+    assert!(diff.stdout.contains("No user copy"), "{diff:?}");
+    assert!(
+        !output.stdout.contains("Agent not reloaded"),
+        "starship is not the active theme, so no reload is attempted: {output:?}"
+    );
+}
+
+#[test]
+fn test_theme_reset_keeps_older_backups() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_theme_file(&env, "text", "# first\n");
+    env.run_gpy(&["theme", "reset", "text"])
+        .expect("Failed to run gpy theme reset")
+        .assert_success("first reset");
+    write_theme_file(&env, "text", "# second\n");
+
+    env.run_gpy(&["theme", "reset", "text"])
+        .expect("Failed to run gpy theme reset")
+        .assert_success("second reset");
+
+    let read = |file: &str| fs::read_to_string(env.themes_dir().join(file)).expect("backup exists");
+    assert_eq!(read("text.toml.bak"), "# first\n");
+    assert_eq!(read("text.toml.bak.1"), "# second\n");
+}
+
+#[test]
+fn test_theme_reset_of_the_active_theme_without_an_agent_still_succeeds() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_theme_file(&env, "default", "# stale\n");
+
+    let output = env
+        .run_gpy(&["theme", "reset", "default"])
+        .expect("Failed to run gpy theme reset");
+
+    output.assert_success("gpy theme reset default");
+    assert!(
+        output.stdout.contains("Agent not reloaded"),
+        "the active theme changed, so a reload is attempted: {output:?}"
+    );
+    assert!(env.themes_dir().join("default.toml.bak").is_file());
+}
+
+#[test]
+fn test_theme_reset_without_a_copy_is_an_error() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy(&["theme", "reset", "starship"])
+        .expect("Failed to run gpy theme reset");
+
+    assert_ne!(output.exit_code, 0_i32, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("No user copy of builtin theme 'starship'"),
+        "{output:?}"
+    );
+}
+
+fn plugin_setting(env: &CliTestEnv, segment: &str, key: &str) -> Option<toml::Value> {
+    let text = fs::read_to_string(env.config_path()).expect("Failed to read config.toml");
+    let config: toml::Table = toml::from_str(&text).expect("config.toml parses");
+    config.get("plugin")?.get(segment)?.get(key).cloned()
+}
+
+#[test]
+fn test_theme_migrate_turns_a_0_6_copy_into_one_that_loads() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let stale = stale_starship_copy();
+    let path = write_theme_file(&env, "starship", &stale);
+    let config_before = fs::read_to_string(env.config_path()).expect("Failed to read config");
+    let broken = env
+        .run_gpy(&["theme", "validate", "starship"])
+        .expect("Failed to run gpy theme validate");
+    assert_ne!(
+        broken.exit_code, 0_i32,
+        "the 0.6-era copy must fail before migrating: {broken:?}"
+    );
+
+    let output = env
+        .run_gpy(&["theme", "migrate", "starship"])
+        .expect("Failed to run gpy theme migrate");
+
+    output.assert_success("gpy theme migrate starship");
+    let migrated = fs::read_to_string(&path).expect("Failed to read migrated theme");
+    let segments: toml::Table = toml::from_str::<toml::Table>(&migrated)
+        .expect("migrated theme parses")
+        .remove("segments")
+        .and_then(|value| value.try_into().ok())
+        .expect("migrated theme has [segments]");
+    let keys = |segment: &str| -> Vec<String> {
+        let mut keys: Vec<String> = segments
+            .get(segment)
+            .and_then(toml::Value::as_table)
+            .map(|table| table.keys().cloned().collect())
+            .expect("segment table present");
+        keys.sort();
+        keys
+    };
+    assert_eq!(
+        keys("username"),
+        ["bg_color", "root_bg_color", "root_text_color", "text_color"]
+    );
+    assert_eq!(keys("hostname"), ["bg_color", "ssh_icon", "text_color"]);
+    assert!(migrated.contains("ssh_icon = \"🌐 \""), "{migrated}");
+    assert_eq!(
+        plugin_setting(&env, "hostname", "show_always"),
+        Some(toml::Value::Boolean(true))
+    );
+    assert_eq!(
+        plugin_setting(&env, "hostname", "trim_at"),
+        Some(toml::Value::String("-".to_owned()))
+    );
+    assert_eq!(
+        plugin_setting(&env, "username", "show_always"),
+        Some(toml::Value::Boolean(true))
+    );
+    assert_eq!(
+        fs::read_to_string(env.themes_dir().join("starship.toml.bak")).expect("theme backup"),
+        stale
+    );
+    assert_eq!(
+        fs::read_to_string(env.config_dir().join("config.toml.bak")).expect("config backup"),
+        config_before
+    );
+    for rewrite in [
+        "removed `format`",
+        "moved `trim_at`",
+        "renamed `icon` to `ssh_icon`",
+    ] {
+        assert!(
+            output.stdout.contains(rewrite),
+            "missing {rewrite:?}: {output:?}"
+        );
+    }
+    env.run_gpy(&["theme", "validate", "starship"])
+        .expect("Failed to run gpy theme validate")
+        .assert_success("the migrated theme loads");
+
+    let again = env
+        .run_gpy(&["theme", "migrate", "starship"])
+        .expect("Failed to run gpy theme migrate");
+    again.assert_success("second gpy theme migrate starship");
+    assert!(again.stdout.contains("Nothing to migrate"), "{again:?}");
+    assert_eq!(
+        fs::read_to_string(&path).expect("Failed to read theme"),
+        migrated
+    );
+    assert!(!env.themes_dir().join("starship.toml.bak.1").exists());
+}
+
+#[test]
+fn test_theme_migrate_keeps_a_setting_already_in_config_toml() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let config = fs::read_to_string(env.config_path()).expect("Failed to read config");
+    env.write_config(&format!(
+        "# keep me\n{config}\n[plugin.hostname]\nshow_always = false\n"
+    ))
+    .expect("Failed to write config");
+    write_theme_file(&env, "starship", &stale_starship_copy());
+
+    let output = env
+        .run_gpy(&["theme", "migrate", "starship"])
+        .expect("Failed to run gpy theme migrate");
+
+    output.assert_success("gpy theme migrate starship");
+    assert_eq!(
+        plugin_setting(&env, "hostname", "show_always"),
+        Some(toml::Value::Boolean(false)),
+        "an existing config.toml value must win over the theme's"
+    );
+    assert_eq!(
+        plugin_setting(&env, "hostname", "trim_at"),
+        Some(toml::Value::String("-".to_owned()))
+    );
+    assert!(
+        output
+            .stdout
+            .contains("kept plugin.hostname.show_always = false"),
+        "{output:?}"
+    );
+    let config_after = fs::read_to_string(env.config_path()).expect("Failed to read config");
+    assert!(config_after.starts_with("# keep me\n"), "{config_after}");
+}
+
+#[test]
+fn test_theme_migrate_reports_a_theme_that_still_fails_and_keeps_the_backup() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let theme = "[ui]\nprompt_icon = \"❯\"\nprompt_color = \"not-a-color\"\n\n[segments.hostname]\nshow_always = true\n";
+    write_theme_file(&env, "custom", theme);
+
+    let output = env
+        .run_gpy(&["theme", "migrate", "custom"])
+        .expect("Failed to run gpy theme migrate");
+
+    assert_ne!(output.exit_code, 0_i32, "{output:?}");
+    let combined = format!("{}{}", output.stdout, output.stderr);
+    assert!(
+        combined.contains("Invalid color") && combined.contains("still does not validate"),
+        "{combined}"
+    );
+    assert_eq!(
+        fs::read_to_string(env.themes_dir().join("custom.toml.bak")).expect("backup"),
+        theme
+    );
+}
+
+#[test]
+fn test_theme_migrate_without_a_theme_file_is_an_error() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy(&["theme", "migrate", "starship"])
+        .expect("Failed to run gpy theme migrate");
+
+    assert_ne!(output.exit_code, 0_i32, "{output:?}");
+    assert!(
+        output.stderr.contains("No user theme file for 'starship'"),
+        "{output:?}"
+    );
+}
+
 #[test]
 fn test_doctor_reports_missing_configured_theme() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");

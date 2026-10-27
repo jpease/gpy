@@ -207,6 +207,18 @@ gpy theme validate mytheme
 gpy theme use mytheme
 ```
 `gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all nine supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`, `status`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Format templates and style strings may not contain terminal control characters (ESC, BEL, carriage return, …); newline is the only control character a format may carry, and the agent strips any other control character from template text at render time. Both `theme validate` and `theme use` share this validator.
+### Your copy of a builtin theme after an upgrade
+
+A file `~/.config/gpy/themes/<name>.toml` with the name of a builtin theme (`default`, `text`, `starship`) completely replaces the builtin, so it keeps its old keys while the builtin moves on. A stale copy can fail to load after an upgrade (the 0.7 release moved `show_always`/`trim_at` and the `format` keys of `username` and `hostname` out of the theme). Three commands deal with it, none of which overwrites a copy without a backup:
+
+```bash
+gpy theme diff starship     # '-' = only in the builtin, '+' = only in your copy
+gpy theme migrate starship  # rewrite keys removed by breaking changes, backing up first
+gpy theme reset starship    # or drop the copy: moved to starship.toml.bak
+```
+
+`migrate` moves the removed settings into `config.toml` (`[plugin.username]`, `[plugin.hostname]`) without replacing values already there, and checks that the result loads. Use `reset` when you have no customizations worth keeping; use `diff` to see what you would lose.
+
 ### Already using Starship?
 
 If you're migrating from [Starship](https://starship.rs/) and want to start from your existing look rather than the GPY default theme, `gpy theme import` converts a `starship.toml` into a matching GPY palette + theme pair in one step:

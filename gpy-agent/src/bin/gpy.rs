@@ -175,6 +175,21 @@ enum ThemeAction {
         /// Optional theme name or direct path to a theme TOML file
         target: Option<String>,
     },
+    /// Show how your copy of a builtin theme differs from the current builtin
+    Diff {
+        /// Builtin theme name (`default`, `text` or `starship`)
+        name: String,
+    },
+    /// Move your copy of a builtin theme to `.bak` so the builtin takes over
+    Reset {
+        /// Builtin theme name (`default`, `text` or `starship`)
+        name: String,
+    },
+    /// Rewrite a user theme file for keys removed by breaking changes (backs up first)
+    Migrate {
+        /// Name of a theme file in the themes directory
+        name: String,
+    },
     /// Import a `starship.toml` into a GPY palette + prompt theme
     Import {
         /// Path to the source `starship.toml`
@@ -323,6 +338,9 @@ fn run_theme(action: ThemeAction) -> Result<()> {
         ThemeAction::New { name, from } => commands::theme::new(&name, from.as_deref()),
         ThemeAction::Save { name } => commands::theme::save(name.as_deref()),
         ThemeAction::Validate { target } => commands::theme::validate(target.as_deref()),
+        ThemeAction::Diff { name } => commands::theme_override::diff(&name),
+        ThemeAction::Reset { name } => commands::theme_override::reset(&name),
+        ThemeAction::Migrate { name } => commands::theme_migrate::migrate(&name),
         ThemeAction::Import {
             path,
             name,

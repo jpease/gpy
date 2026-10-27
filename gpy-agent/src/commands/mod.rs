@@ -38,6 +38,14 @@ pub mod setup;
 pub mod theme;
 /// `gpy theme import` (starship.toml converter).
 pub mod theme_import;
+/// `gpy theme migrate`: rewrite keys removed by breaking changes.
+pub mod theme_migrate;
+/// Versioned rewrite rules for `gpy theme migrate`.
+mod theme_migrate_rules;
+/// `gpy theme diff` and `gpy theme reset` for user copies of builtin themes.
+pub mod theme_override;
+/// Unified line diff for `gpy theme diff`.
+mod unified_diff;
 /// Shared utility functions for commands.
 pub mod utils;
 /// Shared resolve/validate/report plumbing for theme and palette validation.

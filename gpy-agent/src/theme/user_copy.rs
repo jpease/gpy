@@ -24,6 +24,11 @@ pub fn builtin_content(name: &str) -> Option<&'static str> {
         .map(|(_, content)| *content)
 }
 
+/// The names of the embedded builtin themes.
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTIN_THEMES.iter().map(|(name, _)| *name)
+}
+
 /// Path of the user theme file for `name` (it may not exist).
 #[must_use]
 pub fn user_copy_path(name: &str) -> PathBuf {
@@ -82,16 +87,7 @@ pub fn annotate_load_error(path: &Path, error: Error) -> Error {
 /// # Errors
 /// Returns an error when `path` has no file name or the rename fails.
 pub fn move_aside(path: &Path) -> Result<PathBuf> {
-    let file_name = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .ok_or_else(|| Error::config(format!("Invalid theme path {}", path.display())))?;
-    let mut target = path.with_file_name(format!("{file_name}.bak"));
-    let mut n: u32 = 0;
-    while target.exists() {
-        n = n.saturating_add(1);
-        target = path.with_file_name(format!("{file_name}.bak.{n}"));
-    }
+    let target = free_backup_path(path)?;
     std::fs::rename(path, &target).map_err(|e| {
         Error::config(format!(
             "Failed to move {} to {}: {e}",
@@ -99,6 +95,38 @@ pub fn move_aside(path: &Path) -> Result<PathBuf> {
             target.display()
         ))
     })?;
+    Ok(target)
+}
+
+/// Copy `path` to the first free `<file>.bak`, `<file>.bak.1`, ... in the same
+/// directory, leaving `path` in place, and return the backup path.
+///
+/// # Errors
+/// Returns an error when `path` has no file name or the copy fails.
+pub fn copy_aside(path: &Path) -> Result<PathBuf> {
+    let target = free_backup_path(path)?;
+    std::fs::copy(path, &target).map_err(|e| {
+        Error::config(format!(
+            "Failed to back up {} to {}: {e}",
+            path.display(),
+            target.display()
+        ))
+    })?;
+    Ok(target)
+}
+
+/// The first of `<file>.bak`, `<file>.bak.1`, ... beside `path` that does not exist.
+fn free_backup_path(path: &Path) -> Result<PathBuf> {
+    let file_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| Error::config(format!("Invalid file path {}", path.display())))?;
+    let mut target = path.with_file_name(format!("{file_name}.bak"));
+    let mut n: u32 = 0;
+    while target.exists() {
+        n = n.saturating_add(1);
+        target = path.with_file_name(format!("{file_name}.bak.{n}"));
+    }
     Ok(target)
 }
 

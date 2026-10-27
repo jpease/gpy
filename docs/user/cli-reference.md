@@ -26,6 +26,9 @@ gpy theme show               # Show current theme
 gpy theme new <name> [--from <base>]  # Create new theme, optionally cloning <base>
 gpy theme save [name]        # Save the active theme's contents to a theme file
 gpy theme validate [target]  # Validate active theme, name, or file path
+gpy theme diff <name>        # Compare your copy of a builtin theme with the builtin
+gpy theme reset <name>       # Move your copy of a builtin theme to .bak
+gpy theme migrate <name>     # Rewrite keys removed by breaking changes (backs up first)
 
 # Palette management
 gpy palette list                 # List available palettes
@@ -415,6 +418,66 @@ gpy theme validate ~/.config/gpy/themes/mytheme.toml
    reason: Configuration error: Invalid color 'not-a-color' for field ui.prompt_color in theme /home/user/.config/gpy/themes/mytheme.toml
    remediation:
    - Use named colors, ANSI 0-255, or #RRGGBB values.
+```
+
+---
+
+#### `gpy theme diff <name>`
+
+Show how your copy of a builtin theme differs from the builtin that ships with this version of GPY.
+
+A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. The output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. The command always exits 0 when `<name>` is a builtin; it says so when there is no copy to compare or the copy is identical. Any other `<name>` is an error, because only the builtin themes (`default`, `text`, `starship`) have an upstream version.
+
+**Arguments:**
+- `<name>` - Builtin theme name
+
+**Example:**
+```bash
+gpy theme diff starship
+```
+
+---
+
+#### `gpy theme reset <name>`
+
+Move your copy of a builtin theme aside so the builtin takes over again.
+
+The file `~/.config/gpy/themes/<name>.toml` is renamed to `<name>.toml.bak`; an existing backup is never overwritten, so later resets use `.bak.1`, `.bak.2`, and so on. When `<name>` is the active theme the running agent is reloaded. `reset` refuses a `<name>` that is not a builtin theme, and fails when there is no copy to reset.
+
+**Arguments:**
+- `<name>` - Builtin theme name
+
+**Example:**
+```bash
+gpy theme reset starship
+```
+
+**Output:**
+```
+Moved /home/user/.config/gpy/themes/starship.toml to /home/user/.config/gpy/themes/starship.toml.bak
+The builtin theme 'starship' is in use again.
+```
+
+---
+
+#### `gpy theme migrate <name>`
+
+Rewrite a theme file in `~/.config/gpy/themes/` for keys removed by breaking changes, keeping your other customizations and comments.
+
+Rules are grouped by the release that removed the keys. The 0.7 rules (the `username` and `hostname` segments became bundled plugins):
+
+- `format` (and `user_format`) are removed from `[segments.username]` and `[segments.hostname]`.
+- `show_always` and `trim_at` move to `config.toml` `[plugin.username]` / `[plugin.hostname]`. A value already set there is kept.
+- `icon` of `[segments.hostname]` is renamed `ssh_icon` unless `ssh_icon` is already set.
+
+Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. Unlike `diff` and `reset`, `migrate` accepts any theme file in the themes directory, including copies made with `gpy theme new --from`.
+
+**Arguments:**
+- `<name>` - Name of a theme file in the themes directory
+
+**Example:**
+```bash
+gpy theme migrate starship
 ```
 
 ---
@@ -1130,7 +1193,7 @@ Tab-completion for the `gpy` CLI is installed automatically by the standard inst
 - `gpy <TAB>` completes subcommands and flags
 
 **Dynamic completion** (live from what's installed):
-- `gpy theme use <TAB>` and `gpy theme validate <TAB>` — installed theme names
+- `gpy theme use <TAB>`, `gpy theme validate <TAB>`, `gpy theme diff <TAB>`, `gpy theme reset <TAB>` and `gpy theme migrate <TAB>` — installed theme names
 - `gpy palette use <TAB>` and `gpy palette validate <TAB>` — installed palette names
 - `gpy enable <TAB>` and `gpy disable <TAB>` — available segment names
 
