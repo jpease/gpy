@@ -110,7 +110,11 @@ documented="$(
 if [ -z "$documented" ]; then
     fail "found no Valid Segments list under \`gpy enable\` in docs/user/cli-reference.md"
 else
-    compare_sets "the builtin segment registry" "$registry" "docs/user/cli-reference.md (gpy enable)" "$documented"
+    # Bundled script plugins (plugins/<id>/segments/<name>.toml) are enabled
+    # with `gpy enable` too, but are not builtin registry entries.
+    bundled="$(for f in "$ROOT"/plugins/*/segments/*.toml; do basename "$f" .toml; done)"
+    enableable="$(printf '%s\n%s\n' "$registry" "$bundled" | sort -u)"
+    compare_sets "builtin segments plus bundled plugins" "$enableable" "docs/user/cli-reference.md (gpy enable)" "$documented"
 fi
 
 test_finish "builtin segments, shipped shell segment files and documented segments agree"

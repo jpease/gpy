@@ -109,7 +109,7 @@ end
 # stderr are the caller's.
 function run_fish --argument-names code
     set -l envs HOME=$case_dir/home XDG_CACHE_HOME=$case_dir/home/.cache XDG_CONFIG_HOME=$case_dir/home/.config \
-        XDG_RUNTIME_DIR=$case_dir/home/run TMPDIR=$case_dir/tmp PATH=(string join : -- $test_path) \
+        XDG_RUNTIME_DIR=$case_dir/runtime TMPDIR=$case_dir/tmp PATH=(string join : -- $test_path) \
         GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_TEST_SEGMENTS=(string trim -- $run_segments) \
         GPY_T_ROOT=$__gpy_root TERM=dumb
     set -q LANG; and set -a envs LANG=$LANG
