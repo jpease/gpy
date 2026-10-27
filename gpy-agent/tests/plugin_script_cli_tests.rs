@@ -2,8 +2,11 @@
 //! plus the example plugins under `docs/dev/examples/plugins`.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] fns fail loudly on setup errors"
+)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
