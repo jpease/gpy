@@ -6,6 +6,7 @@
 
 use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
+use super::theme_to_shell::builtin_export_names;
 use crate::debug_log;
 use crate::formatter::separator::Glyphs;
 use crate::plugin::{SegmentName, VariantColorPart};
@@ -181,14 +182,16 @@ fn push_variant_variables<'a>(
     }
 }
 
-/// Two theme fields that would export the same shell variable.
+/// Two theme fields that would export the same shell variable, or a plugin
+/// field that would overwrite a built-in theme export.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginVariableCollision {
     /// The shared shell variable name.
     pub variable: String,
-    /// The theme field that claimed `variable` first, e.g. `segments.a.open.icon`.
-    pub first: String,
-    /// The later theme field, e.g. `segments.a_open.icon`.
+    /// The theme field that claimed `variable` first, e.g. `segments.a.open.icon`;
+    /// `None` when `variable` is a built-in theme export.
+    pub first: Option<String>,
+    /// The later (plugin) theme field, e.g. `segments.a_open.icon`.
     pub second: String,
 }
 
@@ -198,11 +201,18 @@ impl fmt::Display for PluginVariableCollision {
         reason = "theme keys and variable names are quoted `{:?}`-escaped in this error text"
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:?} and {:?} both export shell variable {:?}; rename one of the segments or variants",
-            self.first, self.second, self.variable
-        )
+        match &self.first {
+            Some(first) => write!(
+                f,
+                "{first:?} and {:?} both export shell variable {:?}; rename one of the segments or variants",
+                self.second, self.variable
+            ),
+            None => write!(
+                f,
+                "{:?} exports shell variable {:?}, which is a built-in theme export; rename the segment or variant",
+                self.second, self.variable
+            ),
+        }
     }
 }
 
@@ -229,13 +239,23 @@ impl<'a> Claims<'a> {
         section: &'a str,
         variables: &[PluginVariable<'_>],
     ) -> Result<(), PluginVariableCollision> {
+        if let Some(variable) = variables
+            .iter()
+            .find(|variable| builtin_export_names().contains(&variable.name))
+        {
+            return Err(PluginVariableCollision {
+                variable: variable.name.clone(),
+                first: None,
+                second: field_path(section, &variable.field),
+            });
+        }
         if let Some((variable, (first_section, first_field))) = variables
             .iter()
             .find_map(|variable| Some((variable, self.owners.get(&variable.name)?)))
         {
             return Err(PluginVariableCollision {
                 variable: variable.name.clone(),
-                first: field_path(first_section, first_field),
+                first: Some(field_path(first_section, first_field)),
                 second: field_path(section, &variable.field),
             });
         }

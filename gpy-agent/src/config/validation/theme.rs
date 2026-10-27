@@ -21,7 +21,8 @@ pub fn validate_theme_config(theme: &ThemeConfig, source: &str) -> Result<()> {
 /// # Errors
 /// Returns a configuration error if a section name is not a segment name, two
 /// sections share a shell variable token, two fields would export the same
-/// shell variable, or a variant colour is invalid.
+/// shell variable, a field would overwrite a built-in theme export, or a
+/// variant colour is invalid.
 fn validate_plugin_segment_themes(
     plugins: &std::collections::HashMap<String, crate::theme::PluginSegmentTheme>,
     source: &str,
@@ -130,6 +131,32 @@ mod tests {
             assert!(
                 err.contains(first) && err.contains(second),
                 "error must quote {first} and {second}: {err}"
+            );
+        }
+    }
+
+    /// #1067: a plugin segment must not overwrite a built-in export; the error
+    /// names the plugin field and the built-in variable.
+    #[test]
+    fn plugin_sections_exporting_builtin_variables_are_rejected() {
+        for (sections, field, variable) in [
+            (
+                "[segments.git_clean]\nbg_color = \"red\"\n",
+                "\"segments.git_clean.bg_color\"",
+                "\"__color_git_clean_bg\"",
+            ),
+            (
+                "[segments.status_fail]\nicon = \"x\"\n",
+                "\"segments.status_fail.icon\"",
+                "\"__icon_status_fail\"",
+            ),
+        ] {
+            let err = validate_theme_config(&theme_with_sections(sections), "test")
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(field) && err.contains(variable) && err.contains("built-in"),
+                "error must name {field}, {variable} and the built-in: {err}"
             );
         }
     }

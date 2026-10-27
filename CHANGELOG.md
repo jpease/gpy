@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Theme validation rejects a plugin segment whose exported theme variables
+  collide with a built-in theme export (for example `git_clean` with
+  `bg_color` writing `__color_git_clean_bg`, or `status_fail` with `icon`
+  writing `__icon_status_fail`), naming both; before, the plugin silently
+  overwrote the built-in value (#1067).
 - Serialization and UTF-8 decoding failures, debug-command socket I/O
   failures and an over-long socket path now report as JSON, I/O and
   configuration errors, and request-validation failures (paths, PIDs, message

@@ -16,7 +16,8 @@ use crate::formatter::separator::Glyphs;
 use crate::shell::Shell;
 use crate::template::Palette;
 use crate::theme::model::ThemeConfig;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::LazyLock;
 
 /// Emit the provenance header. `theme_name` is raw: it sits in a `#` comment, never expanded.
 fn append_header(output: &mut String, shell: Shell, theme_name: &str) {
@@ -153,6 +154,68 @@ pub(crate) struct PluginExports {
     pub scripts: ScriptSegmentExports,
 }
 
+/// The built-in assignments: global settings, prompt, built-in segments, status,
+/// git/language colours and delimiters. Everything [`theme_to_shell`] writes
+/// before the plugin segments, shared with [`builtin_export_names`].
+fn append_builtin_assignments(
+    output: &mut String,
+    theme: &ThemeConfig,
+    theme_name: &str,
+    config: &Config,
+    colors: ShellColors<'_>,
+    glyphs: Glyphs,
+) {
+    append_global_assignments(output, colors.shell, theme, theme_name, config);
+    append_prompt_assignments(output, colors, theme);
+    append_builtin_segment_assignments(output, colors, theme);
+    append_status_assignments(output, colors, theme, glyphs);
+    append_git_language_color_assignments(output, colors, theme);
+    append_delimiter_assignments(output, colors, theme, glyphs);
+}
+
+/// Every variable name the built-in assignments write, derived by running
+/// [`append_builtin_assignments`] itself so the set cannot drift from the emitter.
+/// Each built-in assignment is unconditional (values vary, names do not), so a
+/// default theme and config name them all. Plugin segment themes must not export
+/// any of these.
+pub(crate) fn builtin_export_names() -> &'static HashSet<String> {
+    static NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
+        let palette = Palette::default();
+        let colors = ShellColors {
+            shell: Shell::Bash,
+            palette: &palette,
+        };
+        let mut output = String::new();
+        append_builtin_assignments(
+            &mut output,
+            &ThemeConfig::default(),
+            "",
+            &Config::default(),
+            colors,
+            Glyphs::Nerd,
+        );
+        output
+            .lines()
+            .filter_map(assigned_name)
+            .map(str::to_owned)
+            .collect()
+    });
+    &NAMES
+}
+
+/// The variable a Bash export line (`NAME=…`, `export NAME=…`, `unset NAME`) assigns.
+pub(super) fn assigned_name(line: &str) -> Option<&str> {
+    let statement = line
+        .strip_prefix("export ")
+        .or_else(|| line.strip_prefix("unset "))
+        .unwrap_or(line);
+    let name = statement
+        .split_once('=')
+        .map_or(statement, |(name, _)| name);
+    (!name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .then_some(name)
+}
+
 /// Serialize a theme into shell assignments. Call order is the export contract,
 /// pinned by snapshots. Every assigned value is escaped once, in
 /// [`ShellAssignment::render`](super::shell_assignment::ShellAssignment::render) or
@@ -172,13 +235,7 @@ pub(crate) fn theme_to_shell(
     let glyphs = Glyphs::from(&config.ui);
 
     append_header(&mut output, shell, theme_name);
-    append_global_assignments(&mut output, shell, theme, theme_name, config);
-    append_prompt_assignments(&mut output, colors, theme);
-
-    append_builtin_segment_assignments(&mut output, colors, theme);
-    append_status_assignments(&mut output, colors, theme, glyphs);
-    append_git_language_color_assignments(&mut output, colors, theme);
-    append_delimiter_assignments(&mut output, colors, theme, glyphs);
+    append_builtin_assignments(&mut output, theme, theme_name, config, colors, glyphs);
 
     append_plugin_segment_assignments(&mut output, colors, glyphs, &theme.segments.plugin);
 
