@@ -4,6 +4,7 @@ pub mod export;
 pub mod manager;
 pub mod model;
 mod parse;
+pub mod user_copy;
 
 pub use manager::{ThemeManager, ThemeSource};
 pub use model::{
