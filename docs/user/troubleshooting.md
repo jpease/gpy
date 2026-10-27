@@ -123,6 +123,8 @@ Bash differs in two ways: duration-segment precision varies by Bash version (dis
 
 A file at `<config>/themes/<name>.toml` fully shadows the built-in theme of the same name, so an old copy keeps its old keys after GPY changes the theme format. When such a file fails to load, the error says it overrides the builtin theme `<name>` and lists the recovery commands (`gpy theme diff|migrate|reset <name>`). Moving the file aside lets the built-in take over.
 
+`gpy doctor` lists every such override under **Theme overrides** and loads each one. A broken override that is not the active theme is a warning with the same recovery commands, and does not make `gpy doctor` exit non-zero; a broken active theme fails as usual.
+
 ## IPC/Socket Issues
 
 The agent communicates over a Unix domain socket, resolved in priority order (`$XDG_RUNTIME_DIR` → `$XDG_CACHE_HOME` → `~/.cache/gpy/gpy.sock`) — see [Advanced Configuration § Socket Location](advanced-configuration.md#socket-location) for the full priority list and how to find the active path with `gpy status`.

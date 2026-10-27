@@ -13,6 +13,7 @@ pub mod debug_paths;
 /// System health checks.
 pub mod doctor;
 mod doctor_bundled;
+mod doctor_themes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
 /// Language configuration commands.

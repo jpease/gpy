@@ -1,6 +1,7 @@
 //! `gpy doctor`: agent, config, theme, segment, plugin and binary checks.
 
 use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
+use super::doctor_themes::check_theme_overrides;
 use super::utils::agent_binary;
 use crate::commands::output::{self, Status};
 use crate::commands::validation::FailureKind;
@@ -38,6 +39,7 @@ pub fn run() -> Result<()> {
 
     let discovery = discover_plugins();
     all_ok &= check_config_and_theme(&loaded_config, &discovery);
+    check_theme_overrides(loaded_config.as_ref().ok().map(|cfg| cfg.ui.theme.as_str()));
     output::blank();
 
     all_ok &= check_plugins(&discovery);

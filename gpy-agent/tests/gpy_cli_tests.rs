@@ -1061,6 +1061,72 @@ fn doctor_reports_unknown_config_key() {
     );
 }
 
+/// 0.6-era `starship` override: `format`/`show_always` on a segment that became a plugin.
+const STALE_STARSHIP_THEME: &str =
+    "[ui]\nseparator = \" \"\n\n[segments.username]\nformat = \"{value}\"\nshow_always = true\n";
+
+#[test]
+fn doctor_warns_on_broken_inactive_builtin_override_without_failing() {
+    let baseline_env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let baseline = baseline_env
+        .run_gpy(&["doctor"])
+        .expect("Failed to run gpy doctor");
+
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    fs::write(env.themes_dir().join("starship.toml"), STALE_STARSHIP_THEME)
+        .expect("Failed to write stale override");
+
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    let stdout = &output.stdout;
+    assert!(
+        stdout.contains("override 'starship'") && stdout.contains("starship.toml"),
+        "doctor must list the override by name and path: {output:?}"
+    );
+    assert!(
+        stdout.contains("Fails to load (inactive, not blocking)"),
+        "a broken inactive override is a warning: {output:?}"
+    );
+    assert_eq!(
+        stdout.matches("gpy theme reset starship").count(),
+        1,
+        "the recovery hint appears exactly once: {output:?}"
+    );
+    assert_eq!(
+        output.exit_code, baseline.exit_code,
+        "an inactive override warning must not change doctor's exit status: {output:?}"
+    );
+    assert_eq!(
+        stdout.matches("Issues were found").count(),
+        baseline.stdout.matches("Issues were found").count(),
+        "the overall verdict is unchanged by the warning: {output:?}"
+    );
+}
+
+#[test]
+fn doctor_lists_valid_builtin_override_as_ok() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    fs::write(
+        env.themes_dir().join("starship.toml"),
+        include_str!("../../config/themes/starship.toml"),
+    )
+    .expect("Failed to write override");
+
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    let line = output
+        .stdout
+        .lines()
+        .find(|l| l.contains("override 'starship'"))
+        .expect("doctor must list the override");
+    assert!(
+        line.contains("starship.toml") && line.contains("ok: Loaded successfully"),
+        "a valid override loads OK: {output:?}"
+    );
+    assert!(
+        !output.stdout.contains("Fails to load"),
+        "a valid override raises no warning: {output:?}"
+    );
+}
+
 #[test]
 fn test_doctor_checks_config() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
