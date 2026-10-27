@@ -1,0 +1,10 @@
+description = "Current kubectl context; prints the variant `prod` for contexts named like production"
+command = "bin/k8s.sh"
+
+# No `pwd`: the context belongs to the session, not the folder, so the result
+# is cached once per shell (and per KUBECONFIG value).
+env = ["KUBECONFIG"]
+
+# Short on purpose: `kubectl config use-context` shows up within seconds.
+ttl_secs = 5
+timeout_ms = 100

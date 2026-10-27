@@ -24,6 +24,10 @@ pub mod output;
 pub mod palette;
 /// Plugin discovery and validation commands.
 pub mod plugin;
+/// Static checks of script segment files for `gpy plugin validate`.
+mod script_lint;
+/// Timed trial run of a script segment for `gpy doctor`.
+mod script_run;
 /// Prompt segment management.
 pub mod segments;
 /// `gpy setup` — install and wire the per-shell scripts.

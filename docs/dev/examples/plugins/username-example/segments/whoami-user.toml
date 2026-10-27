@@ -1,0 +1,9 @@
+description = "Login name; prints the variant `root` when the shell runs as root"
+command = "bin/whoami-user.sh"
+
+# `is_root` is the only input, so the result is cached once per session.
+inputs = ["is_root"]
+
+# The name never changes inside a session; 5 seconds is still plenty of reuse.
+ttl_secs = 5
+timeout_ms = 100
