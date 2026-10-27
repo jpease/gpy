@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `gpy theme diff|reset|migrate <name>` for user copies of builtin themes
+  (#1089). `diff` compares your copy with the current builtin, `reset`
+  moves it to `<name>.toml.bak` so the builtin takes over, and `migrate`
+  rewrites keys removed in 0.7 (drops `format`/`user_format` on
+  username/hostname, moves `show_always`/`trim_at` to `config.toml`
+  `[plugin.<segment>]`, renames hostname `icon` to `ssh_icon`) after
+  backing up the theme and `config.toml`.
+- `gpy setup` retires a user theme copy that is byte-identical to any
+  released version of the builtin of the same name, moving it to
+  `<name>.toml.bak` so the builtin takes over and receives future fixes
+  (#1088). Edited copies are never touched. Opt out with
+  `ui.retire_unmodified_themes = false`.
+- `gpy doctor` lists every user theme that shadows a builtin, validates
+  it, and warns (without failing) with recovery commands when an inactive
+  one does not load (#1086).
+- ADR-0012 (Proposed): theme overlays that extend a builtin so customised
+  themes keep receiving upstream changes (#1091).
+
+### Changed
+
+- A theme load error for a user file that shadows a builtin now says it
+  overrides the builtin and points to `gpy theme diff|migrate|reset`
+  (#1085).
+
+### Fixed
+
+- Theme parse errors for plugin segment tables (for example a stale
+  `format` on `[segments.username]`) named the first `[segments.*]` table;
+  they now name `segments.<segment>.<key>` and its line and column
+  (#1084).
+- `gpy doctor` no longer blames typos when `username`/`hostname` are
+  enabled but the bundled plugins were never installed after an upgrade;
+  it says to run `gpy setup` (#1087).
+
 ## [0.7.1] - 2026-10-27
 
 v0.7.0 was tagged but never published: its release workflow did not install

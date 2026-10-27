@@ -119,6 +119,22 @@ Bash differs in two ways: duration-segment precision varies by Bash version (dis
 
 ---
 
+## Theme Fails to Load After an Upgrade
+
+A file at `<config>/themes/<name>.toml` fully shadows the built-in theme of the same name, so an old copy keeps its old keys after GPY changes the theme format (for example `format` or `show_always` on `[segments.username]` / `[segments.hostname]`, removed in 0.7). When such a file fails to load, the error says it overrides the builtin theme `<name>` and lists the recovery commands. Fix it with:
+
+```bash
+gpy theme diff starship     # what differs from the current builtin
+gpy theme migrate starship  # rewrite the removed keys (backs up the theme and config.toml first)
+gpy theme reset starship    # or move the copy to starship.toml.bak and use the builtin
+```
+
+See [`gpy theme migrate`](cli-reference.md#gpy-theme-migrate-name) for the rewrite rules.
+
+`gpy doctor` lists every such override under **Theme overrides** and loads each one. A broken override that is not the active theme is a warning with the same recovery commands, and does not make `gpy doctor` exit non-zero; a broken active theme fails as usual.
+
+---
+
 ## IPC/Socket Issues
 
 The agent communicates over a Unix domain socket, resolved in priority order (`$XDG_RUNTIME_DIR` → `$XDG_CACHE_HOME` → `~/.cache/gpy/gpy.sock`) — see [Advanced Configuration § Socket Location](advanced-configuration.md#socket-location) for the full priority list and how to find the active path with `gpy status`.

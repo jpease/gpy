@@ -335,9 +335,20 @@ pub fn load_theme(theme_name: &str) -> Result<crate::theme::ThemeConfig> {
 
 /// Load a theme from a path, falling back to the builtin with that stem.
 ///
+/// This is the single funnel for theme load errors (CLI, daemon, oneshot,
+/// export, `doctor`). When the failing file is the user copy of an embedded
+/// builtin, the returned error already ends with
+/// [`user_copy::recovery_hint`](crate::theme::user_copy::recovery_hint) (it
+/// says the file overrides the builtin). Callers MUST NOT append the hint again.
+///
 /// # Errors
 /// Returns an error if the file can't be read or parsed, or matches no builtin.
 pub fn load_theme_from_path(path: &Path) -> Result<crate::theme::ThemeConfig> {
+    load_theme_from_path_inner(path)
+        .map_err(|error| crate::theme::user_copy::annotate_load_error(path, error))
+}
+
+fn load_theme_from_path_inner(path: &Path) -> Result<crate::theme::ThemeConfig> {
     use crate::theme::manager::BUILTIN_THEMES;
 
     // `file_stem`, not a `/` suffix match: Windows paths use `\`.

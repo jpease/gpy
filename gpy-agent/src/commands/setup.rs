@@ -150,6 +150,7 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
     if options.from.is_some() || env.share_dir.is_some() {
         keep_shell_trees(&source_root, &env);
     }
+    super::setup_themes::retire_unmodified_themes();
     if let Err(err) = init::run(InitOptions {
         non_interactive: options.non_interactive,
         redetect: false,

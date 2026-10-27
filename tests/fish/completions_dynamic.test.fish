@@ -117,6 +117,15 @@ else
     fail "'gpy theme validate <TAB>' did not complete installed theme names: $theme_validate_names"
 end
 
+for verb in diff reset migrate
+    set -l verb_names (__cd_test_names (complete -C "gpy theme $verb "))
+    if contains starship $verb_names
+        pass "'gpy theme $verb <TAB>' completes installed theme names"
+    else
+        fail "'gpy theme $verb <TAB>' did not complete installed theme names: $verb_names"
+    end
+end
+
 # Dynamic value completions: palette
 set -l palette_use_names (__cd_test_names (complete -C 'gpy palette use '))
 if contains default $palette_use_names

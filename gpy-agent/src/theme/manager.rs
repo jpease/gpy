@@ -314,10 +314,13 @@ impl ThemeManager {
             return Ok((Self::load_from_path(&location.path)?, None));
         }
         let source = location.path.display().to_string();
+        let annotate = |e| super::user_copy::annotate_load_error(&location.path, e);
         let content = std::fs::read_to_string(&location.path)
-            .map_err(|e| Error::config(format!("Failed to read theme file {source}: {e}")))?;
+            .map_err(|e| Error::config(format!("Failed to read theme file {source}: {e}")))
+            .map_err(annotate)?;
         let fingerprint = bytes_fingerprint(content.as_bytes());
-        Ok((crate::theme::parse(&content, &source)?, Some(fingerprint)))
+        let theme = crate::theme::parse(&content, &source).map_err(annotate)?;
+        Ok((theme, Some(fingerprint)))
     }
 
     /// Re-arm the source watches from a non-watcher thread.

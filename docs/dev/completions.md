@@ -11,7 +11,7 @@ The dynamic positions are:
 
 | Command | Source |
 | --- | --- |
-| `gpy theme use <TAB>`, `gpy theme validate <TAB>` | `gpy __complete theme` |
+| `gpy theme use <TAB>`, `gpy theme validate <TAB>`, `gpy theme diff <TAB>`, `gpy theme reset <TAB>`, `gpy theme migrate <TAB>` | `gpy __complete theme` |
 | `gpy palette use <TAB>`, `gpy palette validate <TAB>` | `gpy __complete palette` |
 | `gpy enable <TAB>`, `gpy disable <TAB>` | `gpy __complete segment` |
 

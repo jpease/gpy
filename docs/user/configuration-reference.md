@@ -236,6 +236,7 @@ Controls top-level layout: theme selection and which segments render.
 | `palette` | string | `"default"` | any palette file stem under `~/.config/gpy/palettes/` (same naming rules as `theme`) | Selects the named-color set (e.g. `nord`, `catppuccin-mocha`, `gruvbox-dark-medium`) used when a theme references colors by name. |
 | `enabled_segments` | array of strings | `["clock", "duration", "language", "directory", "git"]` | segment names, alphanumeric/underscore/hyphen only; names that differ only by `-` vs `_` (e.g. `a-b` and `a_b`) may not both appear | The segments to render, in order. Names are trimmed and lowercased on load (`"Directory"` and `" git "` mean `directory` and `git`), and `gpy config get`, `gpy doctor` and every shell see that canonical form. A name listed more than once, in any spelling, keeps only its first position. Segment names not on the built-in list must still pass the naming check (a plugin can register additional segment names). |
 | `transient_prompt` | bool | `true` | — | After Enter, collapses the prompt to the clock's time (when `clock` is enabled), the prompt symbol and the command, e.g. ` 12:46 AM ❯ nvim mix.exs`. Root shows `root_prompt_icon`. Fish 4.2+ and Zsh only; Bash keeps the full prompt. With `false`, Fish 4.2+ and Zsh redraw the full prompt at Enter, so the clock still shows when Enter was pressed. |
+| `retire_unmodified_themes` | bool | `true` | — | Read by `gpy setup` only. A file under `~/.config/gpy/themes/` named after a builtin theme (`default`, `text`, `starship`) replaces that builtin entirely, so a copy an older GPY or installer left there stops receiving fixes. When the file is byte-identical to a released version of that builtin, setup moves it to `<name>.toml.bak` and reports it; the builtin then applies. A file with any edit, even whitespace, and a symlink are left alone. Set `false` to keep every copy. |
 
 Delimiters (prompt/segment open and close icons and colors) are not a `config.toml` setting — they're defined per-theme. See [Advanced Configuration](advanced-configuration.md) and `docs/dev/create-theme.md` to customize them.
 
@@ -258,6 +259,7 @@ theme = "default"
 palette = "default"
 enabled_segments = ["clock", "duration", "language", "directory", "git"]
 transient_prompt = true
+retire_unmodified_themes = true
 
 [ui.directory]
 display = "basename"
@@ -294,7 +296,7 @@ gpy config get plugin.k8s.style   # the override, or the declared default
 
 ### Bundled `hostname` and `username`
 
-`hostname` and `username` are bundled script plugins (installed by `gpy setup` into `$XDG_CONFIG_HOME/gpy/bundled-plugins`, see [Bundled Plugins](../dev/plugins.md#bundled-plugins)), so their settings live here and no longer in the theme. These replace the theme keys `show_always` and `trim_at` (hostname) and `show_always` (username) of earlier versions; move them when upgrading, since the theme no longer reads them.
+`hostname` and `username` are bundled script plugins (installed by `gpy setup` into `$XDG_CONFIG_HOME/gpy/bundled-plugins`, see [Bundled Plugins](../dev/plugins.md#bundled-plugins)), so their settings live here and no longer in the theme. These replace the theme keys `show_always` and `trim_at` (hostname) and `show_always` (username) of earlier versions; move them when upgrading, since the theme no longer reads them. `gpy theme migrate <theme>` does this for you (see [CLI reference](cli-reference.md#gpy-theme-migrate-name)).
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

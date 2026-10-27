@@ -341,7 +341,12 @@ It:
    `${ZDOTDIR:-~}/.zshrc`, or `~/.bashrc` plus a login-shell loader), only if
    it is not already there. For Fish it also links `fish_prompt`, moving any
    existing one aside.
-4. Picks an icon style for a fresh install (see [Icons and Nerd Fonts](#icons-and-nerd-fonts)).
+4. Moves a theme file in `~/.config/gpy/themes/` that is an unedited copy of a
+   released builtin theme (`default.toml`, `text.toml`, `starship.toml`, byte
+   for byte) to `<name>.toml.bak`, so the builtin and its later fixes apply
+   again, and says so. Edited copies and symlinks are kept and listed on one
+   line. `ui.retire_unmodified_themes = false` turns this off.
+5. Picks an icon style for a fresh install (see [Icons and Nerd Fonts](#icons-and-nerd-fonts)).
 
 It is safe to re-run, and after an upgrade it refreshes the copied files: those
 of the shell it sets up, and those of every other shell set up earlier (their

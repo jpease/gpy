@@ -286,6 +286,104 @@ fn re_running_replaces_files_a_package_manager_left_read_only() {
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 }
 
+/// `<home>/.config/gpy/themes`, created.
+fn themes_dir(home: &Path) -> PathBuf {
+    let dir = home.join(".config/gpy/themes");
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// The bytes of the builtin theme `name` this build embeds.
+fn current_builtin(name: &str) -> Vec<u8> {
+    fs::read(repo_root().join(format!("config/themes/{name}.toml"))).unwrap()
+}
+
+/// Stale copies of builtin themes (from an older release or the current one)
+/// shadow every later fix, so setup moves them aside and says so; an edited
+/// copy is the user's and stays. A second run has nothing left to move.
+#[test]
+fn setup_retires_unedited_builtin_theme_copies_and_keeps_edited_ones() {
+    let home = TempDir::new().unwrap();
+    let themes = themes_dir(home.path());
+    let old_text = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/released_themes/text-v0.6.0.toml"),
+    )
+    .unwrap();
+    assert_ne!(
+        old_text,
+        current_builtin("text"),
+        "fixture must be an older release"
+    );
+    fs::write(themes.join("text.toml"), &old_text).unwrap();
+    fs::write(themes.join("starship.toml"), current_builtin("starship")).unwrap();
+    let mut edited = current_builtin("default");
+    edited.extend_from_slice(b"# mine\n");
+    fs::write(themes.join("default.toml"), &edited).unwrap();
+
+    let first = setup(home.path(), &["--shell", "zsh"]);
+    assert_ok(&first);
+    let stdout = String::from_utf8_lossy(&first.stdout);
+    for name in ["text", "starship"] {
+        assert!(
+            !themes.join(format!("{name}.toml")).exists(),
+            "{name}.toml should be retired"
+        );
+        assert!(
+            stdout.contains(&format!(
+                "Retired {}",
+                themes.join(format!("{name}.toml")).display()
+            )),
+            "setup must report the move of {name}.toml: {stdout}"
+        );
+    }
+    assert_eq!(fs::read(themes.join("text.toml.bak")).unwrap(), old_text);
+    assert_eq!(
+        fs::read(themes.join("starship.toml.bak")).unwrap(),
+        current_builtin("starship")
+    );
+    assert_eq!(fs::read(themes.join("default.toml")).unwrap(), edited);
+    assert!(
+        stdout.contains("Kept your theme files that override builtins")
+            && stdout.contains("default.toml"),
+        "setup must mention the kept copy: {stdout}"
+    );
+
+    let second = setup(home.path(), &["--shell", "zsh"]);
+    assert_ok(&second);
+    let rerun_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        !rerun_stdout.contains("Retired"),
+        "nothing is left to retire: {rerun_stdout}"
+    );
+    assert!(!themes.join("text.toml.bak.1").exists());
+    assert_eq!(fs::read(themes.join("text.toml.bak")).unwrap(), old_text);
+    assert_eq!(fs::read(themes.join("default.toml")).unwrap(), edited);
+}
+
+#[test]
+fn setup_keeps_unedited_theme_copies_when_retirement_is_off() {
+    let home = TempDir::new().unwrap();
+    let themes = themes_dir(home.path());
+    fs::write(
+        home.path().join(".config/gpy/config.toml"),
+        "[ui]\nretire_unmodified_themes = false\n",
+    )
+    .unwrap();
+    fs::write(themes.join("starship.toml"), current_builtin("starship")).unwrap();
+
+    let output = setup(home.path(), &["--shell", "zsh"]);
+    assert_ok(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("Retired"), "{stdout}");
+    assert_eq!(
+        fs::read(themes.join("starship.toml")).unwrap(),
+        current_builtin("starship")
+    );
+    assert!(!themes.join("starship.toml.bak").exists());
+}
+
 fn doctor(home: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .arg("doctor")

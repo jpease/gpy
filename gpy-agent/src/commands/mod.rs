@@ -12,6 +12,8 @@ pub mod debug;
 pub mod debug_paths;
 /// System health checks.
 pub mod doctor;
+mod doctor_bundled;
+mod doctor_themes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
 /// Language configuration commands.
@@ -32,10 +34,20 @@ mod script_run;
 pub mod segments;
 /// `gpy setup` — install and wire the per-shell scripts.
 pub mod setup;
+/// `gpy setup` step that retires unedited copies of builtin themes.
+mod setup_themes;
 /// Theme management commands.
 pub mod theme;
 /// `gpy theme import` (starship.toml converter).
 pub mod theme_import;
+/// `gpy theme migrate`: rewrite keys removed by breaking changes.
+pub mod theme_migrate;
+/// Versioned rewrite rules for `gpy theme migrate`.
+mod theme_migrate_rules;
+/// `gpy theme diff` and `gpy theme reset` for user copies of builtin themes.
+pub mod theme_override;
+/// Unified line diff for `gpy theme diff`.
+mod unified_diff;
 /// Shared utility functions for commands.
 pub mod utils;
 /// Shared resolve/validate/report plumbing for theme and palette validation.

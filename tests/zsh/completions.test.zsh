@@ -176,6 +176,11 @@ check_candidates() {
 echo "Checking gpy theme use <TAB>..."
 check_candidates "gpy theme use" "gpy theme use " default starship text
 
+echo "Checking gpy theme diff, reset and migrate <TAB>..."
+check_candidates "gpy theme diff" "gpy theme diff " default starship text
+check_candidates "gpy theme reset" "gpy theme reset " default starship text
+check_candidates "gpy theme migrate" "gpy theme migrate " default starship text
+
 echo "Checking gpy palette use <TAB>..."
 check_candidates "gpy palette use" "gpy palette use " default nord
 
