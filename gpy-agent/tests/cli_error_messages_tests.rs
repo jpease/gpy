@@ -241,3 +241,67 @@ fn over_long_socket_path_is_refused_with_the_length_and_the_fix() {
         "gpy debug paths prints the over-long socket: {debug_result:?}"
     );
 }
+
+/// 0.6-era `starship` override: `format`/`show_always` on a segment that became a plugin.
+const STALE_THEME: &str =
+    "[ui]\nseparator = \" \"\n\n[segments.username]\nformat = \"{value}\"\nshow_always = true\n";
+
+fn write_stale_theme(env: &CliTestEnv, name: &str) {
+    std::fs::create_dir_all(env.themes_dir()).expect("create themes dir");
+    std::fs::write(env.themes_dir().join(format!("{name}.toml")), STALE_THEME)
+        .expect("write stale theme");
+}
+
+#[test]
+fn broken_user_copy_of_builtin_theme_names_the_override_and_recovery_once() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    write_stale_theme(&env, "starship");
+
+    for args in [
+        ["theme", "use", "starship"],
+        ["theme", "validate", "starship"],
+    ] {
+        let result = env.run_gpy(&args).expect("spawn gpy");
+        let label = args.join(" ");
+        let output = format!("{}{}", result.stdout, result.stderr);
+
+        assert_ne!(result.exit_code, 0_i32, "gpy {label}: {result:?}");
+        assert_eq!(
+            output
+                .matches("overrides the builtin theme 'starship'")
+                .count(),
+            1,
+            "gpy {label}: override statement exactly once: {result:?}"
+        );
+        assert_eq!(
+            output.matches("gpy theme reset starship").count(),
+            1,
+            "gpy {label}: reset hint exactly once: {result:?}"
+        );
+        assert_eq!(
+            output.matches("gpy theme diff starship").count(),
+            1,
+            "gpy {label}: diff hint exactly once: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn broken_user_theme_without_a_builtin_has_no_override_hint() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    write_stale_theme(&env, "my-custom");
+
+    for args in [
+        ["theme", "use", "my-custom"],
+        ["theme", "validate", "my-custom"],
+    ] {
+        let result = env.run_gpy(&args).expect("spawn gpy");
+        let output = format!("{}{}", result.stdout, result.stderr);
+
+        assert_ne!(result.exit_code, 0_i32, "{args:?}: {result:?}");
+        assert!(
+            output.contains("my-custom") && !output.contains("overrides the builtin"),
+            "{args:?}: no builtin-override hint for a non-builtin theme: {result:?}"
+        );
+    }
+}

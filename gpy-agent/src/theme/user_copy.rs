@@ -54,6 +54,28 @@ pub fn recovery_hint(name: &str) -> String {
     )
 }
 
+/// Append [`recovery_hint`] to a load `error` when `path` is the existing user
+/// copy of an embedded builtin; any other error passes through unchanged.
+///
+/// Every user-theme load path (`config::loader::load_theme_from_path` and
+/// `ThemeManager`'s on-disk load) applies this exactly once, so callers must not
+/// add the hint again.
+#[must_use]
+pub fn annotate_load_error(path: &Path, error: Error) -> Error {
+    let builtin = path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|name| is_builtin(name))
+        .filter(|name| path.is_file() && path == user_copy_path(name));
+    match (builtin, error) {
+        (Some(name), Error::Config { message, source }) => Error::Config {
+            message: format!("{message}\n  {}", recovery_hint(name)),
+            source,
+        },
+        (_, other) => other,
+    }
+}
+
 /// Move `path` aside to `<file>.bak` in the same directory and return the new path.
 /// An existing `.bak` is never overwritten: later moves get `.bak.1`, `.bak.2`, ...
 ///
