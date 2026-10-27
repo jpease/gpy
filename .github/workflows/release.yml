@@ -104,10 +104,10 @@ jobs:
         with:
           workspaces: gpy-agent
 
-      - name: Install Rust tooling (nextest, audit, deny)
+      - name: Install Rust tooling (nextest, audit, deny, machete)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,just,shellcheck
+          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just,shellcheck
 
       - name: Install shells and shell-suite prerequisites
         uses: ./.github/actions/install-shells
