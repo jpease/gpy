@@ -308,6 +308,51 @@ envdump="$(cat "$SANDBOX/marks/env")"
 [[ ! -e "$PWNED" ]] && pass "the declared value ran nothing" || fail "declared value ran a command"
 unset TEST_SECRET GPY_OPT_mode TEST_DECLARED
 
+echo "=== a declared PATH never restores relative entries ==="
+PLANT="$SANDBOX/plant"
+mkdir -p "$PLANT/rel"
+for d in "$PLANT" "$PLANT/rel"; do
+    printf '#!/bin/sh\necho x >>"%s/marks/planted"\n' "$SANDBOX" >"$d/plantedtool"
+    chmod 755 "$d/plantedtool"
+done
+mkscript pathrun 'echo x >>"'"$SANDBOX"'/marks/pathcount"; printf "%s" "$PATH" >"'"$SANDBOX"'/marks/path_$1"; plantedtool; echo done'
+mkscript pathreq 'printf "%s" "$PATH" >"'"$SANDBOX"'/marks/reqpath"; plantedtool; exit 0'
+# The undeclared run records the base PATH.
+reset_seg pathrun
+activate
+saved_path=$PATH
+cd "$PLANT" || exit 1
+PATH=".:rel::/usr/bin:/bin"
+due
+PATH=$saved_path
+check "the script ran" "done" "$(out)"
+base_path="$(cat "$SANDBOX/marks/path_")"
+check "an undeclared PATH is cleaned, absolute entries in order" "/usr/bin:/bin" "$base_path"
+[[ ! -e "$SANDBOX/marks/planted" ]] && pass "no planted tool ran without PATH declared" || fail "planted tool ran"
+reset_seg pathrun
+__gpy_script_seg_env=(PATH)
+__gpy_script_seg_ttl=60
+__gpy_script_seg_reqcommand="$PLUG/bin/pathreq.sh"
+activate
+PATH=".:rel::/usr/bin:/bin"
+due
+PATH=$saved_path
+check "a declared PATH runs the script" "done" "$(out)"
+check "the script sees the same PATH as when undeclared" "$base_path" "$(cat "$SANDBOX/marks/path_")"
+check "require_command sees the cleaned PATH" "$base_path" "$(cat "$SANDBOX/marks/reqpath")"
+[[ ! -e "$SANDBOX/marks/planted" ]] && pass "a declared PATH never ran a planted tool (command, require_command)" ||
+    fail "planted tool ran with PATH declared"
+PATH=".:rel::/usr/bin:/bin"
+due
+PATH=$saved_path
+check "an unchanged declared PATH is a cache hit" "2" "$(runs pathcount)"
+PATH="/bin:.:rel:/usr/bin"
+due
+PATH=$saved_path
+check "a changed declared PATH is a cache miss" "3" "$(runs pathcount)"
+check "the changed PATH is cleaned in order" "/bin:/usr/bin" "$(cat "$SANDBOX/marks/path_")"
+cd "$ROOT" || exit 1
+
 echo "=== (f) once per command, ttl and key ==="
 # A non-interactive Bash moves `\#` on every command, so this section drives
 # the DEBUG-mark guard (Bash < 4.4); script_segment_interactive covers `\#`

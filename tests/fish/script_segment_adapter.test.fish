@@ -531,6 +531,41 @@ if test -s $argvout
     end
 end
 
+# --- A declared PATH never restores relative entries ---------------------
+print_test_header "declared PATH keeps the cleaned value"
+new_case declpath
+set -l plant $case_dir/work/plant
+mkdir -p $plant/rel
+for d in $plant $plant/rel
+    write_script $d/plantedtool "echo x >>'$case_dir/out/planted'"
+end
+set -l cnt $case_dir/out/count
+set -l pathout $case_dir/out/path
+set -l reqout $case_dir/out/reqpath
+set F_ttl 60
+add_seg plain "printf '%s' \"\$PATH\" >'$pathout'.plain; plantedtool; echo plain"
+set F_env PATH
+set F_ttl 60
+set F_req "printf '%s' \"\$PATH\" >'$reqout'; plantedtool; exit 0"
+add_seg decl "echo run >>'$cnt'; printf '%s' \"\$PATH\" >'$pathout'; plantedtool; echo decl"
+write_export
+set -g run_extra_env GPY_T_PLANT=$plant
+set -l out (run_fish '
+    cd $GPY_T_PLANT
+    set -gx PATH . rel "" /usr/bin /bin
+    p
+    show plain decl
+    c
+    set -gx PATH /bin . rel /usr/bin
+    c
+')
+check "the declared-PATH script ran" "decl=[decl]" "$out[2]"
+check "an undeclared PATH is cleaned, absolute entries in order" "/usr/bin:/bin" (string collect <$pathout.plain)
+check "require_command sees the cleaned PATH" "/bin:/usr/bin" (string collect <$reqout)
+test -e $case_dir/out/planted; and fail "a declared PATH never ran a planted tool (command, require_command)"; or pass "a declared PATH never ran a planted tool (command, require_command)"
+check "an unchanged declared PATH is a cache hit, a changed one a miss" 2 (runs $cnt)
+check "the changed PATH is cleaned in order" "/bin:/usr/bin" (string collect <$pathout)
+
 # --- Rendering with exported styles -------------------------------------
 print_test_header "render with exported styles"
 new_case render
