@@ -164,9 +164,10 @@ SHELL_TEST_XDG_ROOT=""
 SHELL_TEST_AGENT_DIR=""
 
 # The parts --shell-only runs: `checks` (repo checks, Fish lint, shellcheck)
-# and one entry per suite. CI shards the shell gate by part; the shard list
-# in pr-gate.yml must cover every part (tests/bash/ci_gate_shape).
-SHELL_PARTS_ALL="checks,fish,bash,zsh"
+# and one entry per suite; the Bash suite is two shards, bash1 and bash2
+# (`bash` on the command line means both). CI shards the shell gate by part;
+# the shard list in pr-gate.yml must cover every part (tests/bash/ci_gate_shape).
+SHELL_PARTS_ALL="checks,fish,bash1,bash2,zsh"
 SHELL_PARTS="$SHELL_PARTS_ALL"
 
 shell_part() { [[ ",$SHELL_PARTS," == *",$1,"* ]]; }
@@ -179,14 +180,23 @@ shell_test_root_end() {
     SHELL_TEST_XDG_ROOT=""
 }
 
-# Runs each test file matching $3 with interpreter $2. Every file gets its own
-# XDG root, so a developer's theme cache cannot leak in and whatever agent the
-# file autostarted is stopped as soon as it ends.
+# Runs each test file matching $3 with interpreter $2. $4 (K/N) keeps only the
+# files at positions K, K+N, ... of the C-locale sorted list, so N shards on
+# separate runners split the suite without sharing a file. Every file gets its
+# own XDG root, so a developer's theme cache cannot leak in and whatever agent
+# the file autostarted is stopped as soon as it ends.
 run_shell_suite() {
-    local label="$1" runner="$2" pattern="$3" test_file base xdg
+    local label="$1" runner="$2" pattern="$3" shard="${4:-}" test_file base xdg
+    local -i position=0
     local -a files=()
-    for test_file in $pattern; do
-        [[ -e "$test_file" ]] && files+=("$test_file")
+    # shellcheck disable=SC2086 # the pattern is a glob on purpose
+    for test_file in $(printf '%s\n' $pattern | LC_ALL=C sort); do
+        [[ -e "$test_file" ]] || continue
+        position=$((position + 1))
+        if [[ -n "$shard" ]] && (( (position - 1) % ${shard#*/} != ${shard%/*} - 1 )); then
+            continue
+        fi
+        files+=("$test_file")
     done
     [[ ${#files[@]} -gt 0 ]] || return 0
     if ! command -v "$runner" &>/dev/null; then
@@ -208,7 +218,7 @@ run_shell_suite() {
 # Fish, Bash and Zsh suites against this checkout's debug agent. They run
 # whenever the shells or the agent change, since they check rendered output.
 run_shell_tests() {
-    shell_part fish || shell_part bash || shell_part zsh || return 0
+    shell_part fish || shell_part bash1 || shell_part bash2 || shell_part zsh || return 0
     # The suites must never touch this repo; fail loudly if they did.
     local head_before worktrees_before head_after worktrees_after
     head_before="$(git rev-parse HEAD 2>/dev/null || echo none)"
@@ -226,8 +236,11 @@ run_shell_tests() {
     trap 'shell_test_root_end' EXIT
     trap 'shell_test_root_end; exit 130' INT
     trap 'shell_test_root_end; exit 143' TERM
-    if shell_part bash; then
-        run_shell_suite "Bash" "$GPY_BASH" "tests/bash/*.test.bash"
+    if shell_part bash1; then
+        run_shell_suite "Bash" "$GPY_BASH" "tests/bash/*.test.bash" 1/2
+    fi
+    if shell_part bash2; then
+        run_shell_suite "Bash" "$GPY_BASH" "tests/bash/*.test.bash" 2/2
     fi
     if shell_part zsh; then
         run_shell_suite "Zsh" "zsh" "tests/zsh/*.test.zsh"
@@ -362,8 +375,8 @@ Usage: $0 [OPTION]
     --shell-only [PARTS]
                   Fish lint, shellcheck and the Fish/Bash/Zsh suites (no Rust
                   checks). PARTS limits it to a comma-separated subset of
-                  $SHELL_PARTS_ALL; \`checks\` is the repo checks, Fish lint
-                  and shellcheck
+                  $SHELL_PARTS_ALL, where \`bash\` means bash1 and bash2;
+                  \`checks\` is the repo checks, Fish lint and shellcheck
     --fish-only   Fish syntax and formatting
     --clippy      Clippy only: the exact commands the gate runs (also \`just lint\`)
     --fix         Apply fish_indent, cargo fmt and clippy fixes, then run the full gate
@@ -429,13 +442,18 @@ case "${1:-}" in
     --shell-only)
         if [[ -n "${2:-}" ]]; then
             IFS=, read -r -a parts <<<"$2"
+            SHELL_PARTS=""
             for part in "${parts[@]}"; do
-                if [[ ",$SHELL_PARTS_ALL," != *",$part,"* ]]; then
-                    echo "Unknown --shell-only part: '$part' (one of $SHELL_PARTS_ALL)" >&2
-                    exit 1
-                fi
+                # `bash` is the whole Bash suite: both of its shards.
+                [[ "$part" != bash ]] || part="bash1,bash2"
+                for each in ${part//,/ }; do
+                    if [[ ",$SHELL_PARTS_ALL," != *",$each,"* ]]; then
+                        echo "Unknown --shell-only part: '$each' (one of $SHELL_PARTS_ALL, or bash for both Bash shards)" >&2
+                        exit 1
+                    fi
+                    SHELL_PARTS="${SHELL_PARTS:+$SHELL_PARTS,}$each"
+                done
             done
-            SHELL_PARTS="$2"
         fi
         if shell_part checks; then
             run_repo_checks

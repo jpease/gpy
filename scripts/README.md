@@ -13,7 +13,7 @@ The local quality gate.
 ./scripts/quality-check.sh --rust-only   # fmt, clippy, tests, doc tests, audit, deny, machete, release build
 ./scripts/quality-check.sh --clippy      # clippy only, exactly as the gate runs it (`just lint`)
 ./scripts/quality-check.sh --shell-only  # Fish lint, shellcheck, Fish/Bash/Zsh suites
-./scripts/quality-check.sh --shell-only bash,zsh  # a subset of checks,fish,bash,zsh (CI shards by it)
+./scripts/quality-check.sh --shell-only bash,zsh  # a subset of checks,fish,bash,zsh; bash1 and bash2 are its halves (CI shards by them)
 ./scripts/quality-check.sh --fish-only   # Fish syntax and formatting
 ./scripts/quality-check.sh --fix         # fish_indent, cargo fmt, clippy --fix, then the full gate
 ```
