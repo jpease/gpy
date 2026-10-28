@@ -115,10 +115,11 @@ check_dynamic "gpy theme use" "text" gpy theme use "" -- 3 gpy "" use
 echo "Checking theme validate..."
 check_dynamic "gpy theme validate" "default" gpy theme validate "" -- 3 gpy "" validate
 
-echo "Checking theme diff, reset and migrate..."
+echo "Checking theme diff, reset, migrate and rebase..."
 check_dynamic "gpy theme diff" "starship" gpy theme diff "" -- 3 gpy "" diff
 check_dynamic "gpy theme reset" "starship" gpy theme reset "" -- 3 gpy "" reset
 check_dynamic "gpy theme migrate" "starship" gpy theme migrate "" -- 3 gpy "" migrate
+check_dynamic "gpy theme rebase" "starship" gpy theme rebase "" -- 3 gpy "" rebase
 
 echo "Checking palette use..."
 check_dynamic "gpy palette use" "default" gpy palette use "" -- 3 gpy "" use

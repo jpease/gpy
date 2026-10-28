@@ -10,9 +10,8 @@ use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::Palette;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
-use crate::watcher::hot_reload::{
-    HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget, bytes_fingerprint,
-};
+use crate::theme::overlay::{self, ChainLink, LoadedTheme, ThemeChain};
+use crate::watcher::hot_reload::{HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
@@ -27,56 +26,95 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     ("starship", STARSHIP_THEME_CONTENT),
 ];
 
-/// Where a theme name resolves (user, then plugin, then builtin): its file path,
-/// and whether a file exists there (otherwise the embedded builtin is loaded).
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ThemeLocation {
-    path: PathBuf,
-    on_disk: bool,
+/// The link the theme `name` resolves to as the requested theme (user, then
+/// plugin, then builtin). Unresolvable names get the embedded link; the
+/// loader reports the error.
+fn resolve_top(name: &str) -> ChainLink {
+    overlay::resolve_top(name).unwrap_or_else(|| ChainLink::embedded(name))
 }
 
-impl ThemeLocation {
-    fn resolve(theme_name: &str) -> Self {
-        let path = ThemeManager::theme_path(theme_name);
-        let on_disk = path.exists();
-        Self { path, on_disk }
-    }
-
-    /// Watches this source needs beyond the always-watched user themes dir: a
-    /// source directory outside it (a plugin's), and the file itself, since some
-    /// notify backends report truncate/write saves only on a file watch.
-    fn watch_paths(&self, user_themes_dir: &Path) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-        if let Some(parent) = self.path.parent()
-            && parent != user_themes_dir
+/// Watches `chain` needs beyond the always-watched user themes dir: the
+/// directory of each file outside it (a plugin's `themes/`), and each file on
+/// disk, since some notify backends report truncate/write saves only on a
+/// file watch.
+fn watch_paths(chain: &ThemeChain, user_themes_dir: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for link in chain.iter() {
+        if let Some(dir) = link.path.parent()
+            && dir != user_themes_dir
         {
-            paths.push(parent.to_path_buf());
+            push_unique(&mut paths, dir);
         }
-        if self.on_disk {
-            paths.push(self.path.clone());
+        if link.on_disk {
+            push_unique(&mut paths, &link.path);
         }
-        paths
+    }
+    paths
+}
+
+/// The files the poll fallback fingerprints for the active name, re-resolving
+/// its chain now. A chain that no longer loads is polled at the file its name
+/// resolves to and at the files of the chain last loaded, so fixing any of
+/// them reloads.
+fn poll_paths(active: &ThemeState) -> Vec<PathBuf> {
+    let top = resolve_top(&active.name);
+    let top_path = top.path.clone();
+    overlay::load_link(top).map_or_else(
+        |_| chain_files(&active.chain, vec![top_path]),
+        |loaded| chain_files(&loaded.chain, Vec::new()),
+    )
+}
+
+/// `paths` plus every file of `chain` on disk and the requested file's path,
+/// where an override appears even while the embedded builtin is loaded.
+fn chain_files(chain: &ThemeChain, mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    push_unique(&mut paths, &chain.top().path);
+    for link in chain.iter().filter(|link| link.on_disk) {
+        push_unique(&mut paths, &link.path);
+    }
+    paths
+}
+
+/// Append `path` unless `paths` already holds it.
+fn push_unique(paths: &mut Vec<PathBuf>, path: &Path) {
+    if !paths.iter().any(|known| known == path) {
+        paths.push(path.to_path_buf());
     }
 }
 
-/// Active theme name, source, and content behind one lock so readers never see a torn pairing.
+/// Active theme name, chain, and content behind one lock so readers never see a torn pairing.
 #[derive(Debug, Clone)]
 struct ThemeState {
     name: String,
-    location: ThemeLocation,
-    /// Fingerprint of the file bytes the theme was parsed from; `None` when embedded.
+    /// The files the theme was merged from, one link per file (path, source,
+    /// on disk): the requested file first, then each base it extends.
+    chain: ThemeChain,
+    /// Fingerprint of the bytes of every file of the chain on disk; `None`
+    /// when every link is an embedded builtin.
     fingerprint: Option<u64>,
     theme: Arc<ThemeConfig>,
+}
+
+impl ThemeState {
+    fn new(name: String, loaded: LoadedTheme) -> Self {
+        Self {
+            name,
+            chain: loaded.chain,
+            fingerprint: loaded.fingerprint,
+            theme: Arc::new(loaded.theme),
+        }
+    }
 }
 
 /// What a reload of the active name found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reloaded {
-    /// Same source, same content: nothing was swapped.
+    /// Same chain, same content: nothing was swapped.
     Unchanged,
-    /// Same source with new content.
+    /// Same chain with new content in one of its files (the overlay or a base).
     Content,
-    /// The name now resolves to a different source (an override appeared or went away).
+    /// The name now resolves to a different chain: an override or overlay
+    /// appeared or went away, or a base moved to another source.
     Source,
 }
 
@@ -98,7 +136,7 @@ pub struct ThemeManager {
     watch_debounce: Arc<Mutex<Duration>>,
     /// Registry last armed with, so `switch_theme` re-arms on the shared one.
     watch_registry: Arc<Mutex<Option<Arc<WatchRegistry>>>>,
-    /// Watches armed for the active source (see [`ThemeLocation::watch_paths`]).
+    /// Watches armed for the active chain (see [`watch_paths`]).
     /// Lock order: the watcher slot first, then this.
     source_watches: Arc<Mutex<Vec<PathBuf>>>,
     /// Serializes resolve-load-swap, so a slow reload never installs a source
@@ -130,7 +168,7 @@ impl ReloadTarget {
         }
     }
 
-    /// Reload the active name from its current source, logging failures, and
+    /// Reload the active name from its current chain, logging failures, and
     /// re-arm the source watches if the theme changed. Returns whether it did.
     fn reload_step(&self, context: &str) -> bool {
         match ThemeManager::reload_state(&self.state, &self.reload_gate) {
@@ -148,17 +186,16 @@ impl ReloadTarget {
         true
     }
 
-    /// Point the source watches at the active location, leaving the user themes
+    /// Point the source watches at the active chain, leaving the user themes
     /// dir alone. Best-effort: a watch that fails is retried on the next re-arm.
     fn rearm(&self, slot: &mut Option<WatchCoordinator>) {
         let Some(coordinator) = slot.as_mut() else {
             return;
         };
-        let wanted = self
-            .state
-            .read_or_recover()
-            .location
-            .watch_paths(&ThemeManager::user_themes_dir());
+        let wanted = watch_paths(
+            &self.state.read_or_recover().chain,
+            &ThemeManager::user_themes_dir(),
+        );
         let mut armed = self.source_watches.lock_or_recover();
         ThemeManager::rearm_source_watches(coordinator, &mut armed, wanted);
     }
@@ -177,24 +214,16 @@ impl ThemeManager {
     /// Returns an error if the theme file cannot be loaded or parsed.
     pub fn new(theme_name: &str) -> Result<Self> {
         discovery::validate_config_name("theme", theme_name)?;
-        let location = ThemeLocation::resolve(theme_name);
-        let (theme, fingerprint) = Self::load_source(&location)?;
-        Ok(Self::with_state(theme_name, location, fingerprint, theme))
+        let loaded = Self::load_name(theme_name)?;
+        Ok(Self::with_state(theme_name, loaded))
     }
 
-    fn with_state(
-        name: &str,
-        location: ThemeLocation,
-        fingerprint: Option<u64>,
-        theme: ThemeConfig,
-    ) -> Self {
+    fn with_state(name: &str, loaded: LoadedTheme) -> Self {
         Self {
-            state: Arc::new(RwLock::new(Arc::new(ThemeState {
-                name: name.to_owned(),
-                location,
-                fingerprint,
-                theme: Arc::new(theme),
-            }))),
+            state: Arc::new(RwLock::new(Arc::new(ThemeState::new(
+                name.to_owned(),
+                loaded,
+            )))),
             // A removed override falls back to a lower-priority source, so a
             // vanished file is a change for the poller too.
             hot_reload: HotReloadSlot::new().reloading_on_missing(),
@@ -207,12 +236,13 @@ impl ThemeManager {
     }
 
     /// Construct a manager from embedded builtin content, ignoring on-disk overrides.
-    /// The recorded path is still the user location so reload/watch match [`new`](Self::new).
+    /// Builtins are full themes, never overlays. The recorded path is still the
+    /// user location so reload/watch match [`new`](Self::new).
     ///
     /// # Errors
     /// Returns an error if `theme_name` is not a builtin or fails to parse.
     pub fn builtin(theme_name: &str) -> Result<Self> {
-        let Some((_, content)) = BUILTIN_THEMES.iter().find(|(name, _)| *name == theme_name) else {
+        if !BUILTIN_THEMES.iter().any(|(name, _)| *name == theme_name) {
             let expected = BUILTIN_THEMES
                 .iter()
                 .map(|(name, _)| *name)
@@ -221,17 +251,13 @@ impl ThemeManager {
             return Err(Error::config(format!(
                 "Unknown builtin theme: {theme_name} (expected one of: {expected})"
             )));
-        };
+        }
 
-        let theme = crate::theme::parse(content, theme_name)?;
-        let location = ThemeLocation {
-            path: Self::user_theme_path(theme_name),
-            on_disk: false,
-        };
-        Ok(Self::with_state(theme_name, location, None, theme))
+        let loaded = overlay::load_link(ChainLink::embedded(theme_name))?;
+        Ok(Self::with_state(theme_name, loaded))
     }
 
-    /// Consistent snapshot of name, location, and content.
+    /// Consistent snapshot of name, chain, and content.
     fn state(&self) -> Arc<ThemeState> {
         let guard = self.state.read_or_recover();
         Arc::clone(&guard)
@@ -251,12 +277,12 @@ impl ThemeManager {
     }
 
     /// Reload the active theme from wherever its name now resolves (user, then
-    /// plugin, then builtin), re-arming the watcher if that source moved.
+    /// plugin, then builtin), re-arming the watcher if its chain changed.
     ///
-    /// Returns whether the loaded theme changed: a different source, or new
-    /// content in the same file. Identical content swaps nothing, so a reload
-    /// after the watcher already applied an edit reports `false`. The current
-    /// theme is kept on error.
+    /// Returns whether the loaded theme changed: a different chain, or new
+    /// content in one of its files. Identical content swaps nothing, so a
+    /// reload after the watcher already applied an edit reports `false`. The
+    /// current theme is kept on error.
     ///
     /// # Errors
     /// Returns an error if the resolved theme can't be read or parsed.
@@ -268,8 +294,8 @@ impl ThemeManager {
         Ok(reloaded != Reloaded::Unchanged)
     }
 
-    /// Re-resolve and load the active name, swapping it in unless unchanged.
-    /// A no-op if a concurrent `switch_theme` replaced the name meanwhile.
+    /// Re-resolve and load the active name's chain, swapping it in unless
+    /// unchanged. A no-op if a concurrent `switch_theme` replaced the name meanwhile.
     ///
     /// # Errors
     /// Returns an error if the resolved theme can't be read or parsed.
@@ -279,48 +305,35 @@ impl ThemeManager {
     ) -> Result<Reloaded> {
         let _serialized = reload_gate.lock_or_recover();
         let name = state_lock.read_or_recover().name.clone();
-        let location = ThemeLocation::resolve(&name);
-        let (theme, fingerprint) = Self::load_source(&location)?;
+        let loaded = Self::load_name(&name)?;
 
         let mut guard = state_lock.write_or_recover();
         let reloaded = if guard.name != name {
             Reloaded::Unchanged
-        } else if guard.location != location {
+        } else if guard.chain != loaded.chain {
             Reloaded::Source
-        } else if guard.fingerprint != fingerprint {
+        } else if guard.fingerprint != loaded.fingerprint {
             Reloaded::Content
         } else {
             Reloaded::Unchanged
         };
         if reloaded != Reloaded::Unchanged {
-            *guard = Arc::new(ThemeState {
-                name,
-                location,
-                fingerprint,
-                theme: Arc::new(theme),
-            });
+            *guard = Arc::new(ThemeState::new(name, loaded));
         }
         drop(guard);
         Ok(reloaded)
     }
 
-    /// Load the theme at `location`, with the fingerprint of the file bytes
-    /// parsed (`None` for an embedded builtin).
+    /// Load the theme `name` resolves to now (user, then plugin, then
+    /// builtin), merging an overlay's chain.
     ///
     /// # Errors
-    /// Returns an error if the file can't be read or the theme can't be parsed.
-    fn load_source(location: &ThemeLocation) -> Result<(ThemeConfig, Option<u64>)> {
-        if !location.on_disk {
-            return Ok((Self::load_from_path(&location.path)?, None));
-        }
-        let source = location.path.display().to_string();
-        let annotate = |e| super::user_copy::annotate_load_error(&location.path, e);
-        let content = std::fs::read_to_string(&location.path)
-            .map_err(|e| Error::config(format!("Failed to read theme file {source}: {e}")))
-            .map_err(annotate)?;
-        let fingerprint = bytes_fingerprint(content.as_bytes());
-        let theme = crate::theme::parse(&content, &source).map_err(annotate)?;
-        Ok((theme, Some(fingerprint)))
+    /// Returns an error if a file of the chain can't be read or the theme
+    /// can't be parsed.
+    fn load_name(name: &str) -> Result<LoadedTheme> {
+        let top = resolve_top(name);
+        let path = top.path.clone();
+        overlay::load_link(top).map_err(|e| super::user_copy::annotate_load_error(&path, e))
     }
 
     /// Re-arm the source watches from a non-watcher thread.
@@ -336,14 +349,8 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the theme can't be found/parsed or a lock is poisoned.
     pub fn switch_theme(&self, new_theme_name: &str) -> Result<()> {
-        let location = ThemeLocation::resolve(new_theme_name);
-        let (new_theme, fingerprint) = Self::load_source(&location)?;
-        let new_state = Arc::new(ThemeState {
-            name: new_theme_name.to_owned(),
-            location,
-            fingerprint,
-            theme: Arc::new(new_theme),
-        });
+        let loaded = Self::load_name(new_theme_name)?;
+        let new_state = Arc::new(ThemeState::new(new_theme_name.to_owned(), loaded));
 
         self.stop_watching();
 
@@ -384,8 +391,8 @@ impl ThemeManager {
     /// Start watching the theme's sources, sharing `watch_registry` with the caller.
     ///
     /// The user themes dir is always watched, since an override created there
-    /// outranks any plugin or builtin source; the active source's own watches
-    /// follow it as it moves.
+    /// outranks any plugin or builtin source; the watches of the active chain's
+    /// files (an overlay's plugin base included) follow it as it changes.
     ///
     /// # Errors
     /// Returns an error if the watcher can't start or a lock is poisoned.
@@ -416,7 +423,7 @@ impl ThemeManager {
             )?;
             let user_themes_dir = Self::user_themes_dir();
             // Best-effort: a read-only config tree only loses override detection;
-            // the active source is still watched below.
+            // the active chain is still watched below.
             if let Err(e) = std::fs::create_dir_all(&user_themes_dir)
                 .map_err(Error::from)
                 .and_then(|()| watcher.watch_directory(&user_themes_dir))
@@ -429,7 +436,7 @@ impl ThemeManager {
             }
             let mut armed = self.source_watches.lock_or_recover();
             armed.clear();
-            let wanted = self.state().location.watch_paths(&user_themes_dir);
+            let wanted = watch_paths(&self.state().chain, &user_themes_dir);
             Self::rearm_source_watches(&mut watcher, &mut armed, wanted);
             drop(armed);
             Ok(watcher)
@@ -491,6 +498,13 @@ impl ThemeManager {
         self.watch_registry.lock_or_recover().clone()
     }
 
+    /// Test-only: the chain the active theme was merged from.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn chain_for_test(&self) -> ThemeChain {
+        self.state().chain.clone()
+    }
+
     /// Export the theme for `shell` from one consistent state snapshot, with
     /// palette roles resolved through `palette`. Discovers plugins once for
     /// the Fish segment files and the enabled script segments.
@@ -544,111 +558,10 @@ impl ThemeManager {
         merged.into_values().collect()
     }
 
-    /// Raw TOML source of a discovered theme, verbatim, for use as a clone base.
-    ///
-    /// # Errors
-    /// Returns an error if the theme isn't discoverable or its file can't be read.
-    pub fn theme_source_content(theme_name: &str) -> Result<String> {
-        discovery::validate_config_name("theme", theme_name)?;
-
-        let Some(discovered) = Self::discover_available_themes()
-            .into_iter()
-            .find(|theme| theme.name == theme_name)
-        else {
-            return Err(Error::config(format!(
-                "No discovered theme named '{theme_name}'"
-            )));
-        };
-
-        if discovered.source == ThemeSource::Builtin {
-            let Some((_, content)) = BUILTIN_THEMES.iter().find(|(name, _)| *name == theme_name)
-            else {
-                return Err(Error::config(format!(
-                    "Unknown builtin theme: {theme_name}"
-                )));
-            };
-            return Ok((*content).to_owned());
-        }
-
-        let Some(path) = discovered.path else {
-            return Err(Error::config(format!(
-                "Theme '{theme_name}' has no backing file"
-            )));
-        };
-
-        std::fs::read_to_string(&path).map_err(|e| {
-            Error::config(format!("Failed to read theme file {}: {e}", path.display()))
-        })
-    }
-
     /// Get the directory where user themes are stored.
     #[must_use]
     pub fn user_themes_dir() -> PathBuf {
         crate::paths::config_root().join("themes")
-    }
-
-    fn user_theme_path(theme_name: &str) -> PathBuf {
-        Self::user_themes_dir().join(format!("{theme_name}.toml"))
-    }
-
-    /// Write `theme` as a user override under `user_themes_dir()`; never touches builtin/plugin files.
-    /// The file is replaced atomically, so a failed save keeps the previous theme, and a symlinked
-    /// theme file is written through.
-    ///
-    /// # Errors
-    /// Returns an error on an unsafe name, serialization failure, or I/O failure.
-    pub fn save_user_theme(theme_name: &str, theme: &ThemeConfig) -> Result<PathBuf> {
-        discovery::validate_config_name("theme", theme_name)?;
-
-        let toml_content = toml::to_string_pretty(theme)
-            .map_err(|e| Error::config(format!("Failed to serialize theme to TOML: {e}")))?;
-
-        let themes_dir = Self::user_themes_dir();
-        std::fs::create_dir_all(&themes_dir)
-            .map_err(|e| Error::config(format!("Failed to create themes directory: {e}")))?;
-
-        let target_path = themes_dir.join(format!("{theme_name}.toml"));
-        let content_with_header = format!(
-            "# GPY Theme: {theme_name}\n# Written by `gpy config wizard` — edit carefully\n\n{toml_content}"
-        );
-        crate::fs_util::write_atomically(&target_path, content_with_header.as_bytes())
-            .map_err(|e| Error::config(format!("Failed to write theme file: {e}")))?;
-
-        Ok(target_path)
-    }
-
-    /// # Errors
-    /// Returns an error if the file cannot be read or the TOML cannot be parsed.
-    fn load_from_path(path: &Path) -> Result<ThemeConfig> {
-        crate::config::loader::load_theme_from_path(path)
-    }
-
-    /// Resolve `theme_name` (user, plugin, then builtin), shared by daemon and oneshot.
-    /// Builtins resolve to their user path; the loader falls back to embedded content by stem.
-    pub(crate) fn resolve_path(theme_name: &str) -> Option<PathBuf> {
-        let user_path = Self::user_theme_path(theme_name);
-        if user_path.exists() {
-            return Some(user_path);
-        }
-
-        if let Some(path) = Self::discover_available_themes()
-            .into_iter()
-            .find(|theme| theme.name == theme_name)
-            .and_then(|theme| theme.path)
-        {
-            return Some(path);
-        }
-
-        if BUILTIN_THEMES.iter().any(|(name, _)| *name == theme_name) {
-            return Some(user_path);
-        }
-
-        None
-    }
-
-    fn theme_path(theme_name: &str) -> PathBuf {
-        // Unresolvable names get the user path; the loader reports the error.
-        Self::resolve_path(theme_name).unwrap_or_else(|| Self::user_theme_path(theme_name))
     }
 
     fn insert_plugin_themes(merged: &mut BTreeMap<String, DiscoveredTheme>) {
@@ -667,18 +580,19 @@ impl ThemeManager {
         discovery::insert_toml_dir(merged, &Self::user_themes_dir(), &ThemeSource::User);
     }
 
-    /// Poll target. The path is re-resolved each tick: `switch_theme` can
-    /// repoint it, and an override appearing or vanishing moves it.
+    /// Poll target. The chain is re-resolved each tick (see [`poll_paths`]):
+    /// `switch_theme` can repoint it, an override appearing or vanishing moves
+    /// its top, and a base can move to another source.
     fn poll_target(&self) -> PollTarget {
         let path_state = Arc::clone(&self.state);
         let target = self.reload_target();
 
         PollTarget {
             path_of: Box::new(move || {
-                let name = path_state.read_or_recover().name.clone();
-                Some(ThemeLocation::resolve(&name).path)
+                let active = Arc::clone(&path_state.read_or_recover());
+                poll_paths(&active)
             }),
-            reload: Box::new(move |_path: &Path| target.reload_and_apply("poll fallback")),
+            reload: Box::new(move || target.reload_and_apply("poll fallback")),
         }
     }
 
@@ -700,20 +614,20 @@ impl Drop for ThemeManager {
 #[cfg(test)]
 mod tests {
 
-    use super::{BUILTIN_THEMES, DiscoveredTheme, ThemeLocation, ThemeManager, ThemeSource};
+    use super::{BUILTIN_THEMES, DiscoveredTheme, ThemeManager, ThemeSource};
     use crate::config::Config;
     use crate::shell::Shell;
     use crate::theme::ThemeConfig;
+    use crate::theme::overlay::{self, ChainLink};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     /// A manager holding `theme` under `name`, with no file behind it.
     fn manager_with(name: &str, theme: ThemeConfig) -> ThemeManager {
-        let location = ThemeLocation {
-            path: PathBuf::from("/tmp/gpy-test-theme.toml"),
-            on_disk: false,
-        };
-        ThemeManager::with_state(name, location, None, theme)
+        let mut loaded =
+            overlay::load_link(ChainLink::embedded("default")).expect("default theme should load");
+        loaded.theme = theme;
+        ThemeManager::with_state(name, loaded)
     }
 
     /// `new` must error naming the theme, not fall back to a blank default.
@@ -730,7 +644,7 @@ mod tests {
         );
     }
 
-    /// Plugin-sourced discovered paths survive the merge `resolve_path` relies on.
+    /// Plugin-sourced discovered paths survive the merge `overlay::resolve_top` relies on.
     /// (Real plugin discovery needs env mutation, which `forbid(unsafe_code)` prevents.)
     #[test]
     fn plugin_sourced_theme_candidate_resolves_via_discovered_path() {
@@ -748,7 +662,7 @@ mod tests {
             },
         );
 
-        // Same expression `resolve_path` uses.
+        // Same expression `overlay::resolve_top` uses.
         let resolved = merged
             .into_values()
             .find(|theme| theme.name == "acme")
@@ -961,17 +875,5 @@ mod tests {
                 "error should mention builtin \"{name}\" as an expected option. Got: {message}"
             );
         }
-    }
-
-    #[test]
-    fn theme_source_content_rejects_unknown_theme_name() {
-        let message = match ThemeManager::theme_source_content("no-such-theme-xyz") {
-            Ok(_) => panic!("unknown theme name must be rejected"),
-            Err(e) => e.to_string(),
-        };
-        assert!(
-            message.contains("no-such-theme-xyz"),
-            "error should name the offending theme. Got: {message}"
-        );
     }
 }

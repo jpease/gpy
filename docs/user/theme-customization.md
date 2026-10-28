@@ -123,19 +123,31 @@ If the derived name would be unsafe (e.g. contains path separators), the import 
 
 ## 4. Light hand-editing
 
-Once you want something a built-in theme/palette combination can't give you — one different icon, one segment recolored — fork the default theme instead of authoring one from scratch.
+Once you want something a built-in theme/palette combination can't give you — one different icon, one segment recolored — start a theme of your own that builds on an existing one instead of authoring one from scratch.
 
 ```bash
 gpy theme new mytheme
 ```
 
-Already like a specific theme (built-in, user, or plugin) and just want to tweak it? Clone it instead of starting from the default:
+Already like a specific theme (built-in, user, or plugin) and just want to tweak it? Build on it instead of the default:
 
 ```bash
 gpy theme new mytheme --from starship
 ```
 
-Theme names must be valid configuration names (non-empty, non-whitespace, containing no `/`, `\`, `..`, or control characters). This copies the chosen theme (the default, or the one named by `--from`) to `~/.config/gpy/themes/mytheme.toml` and prints the path to edit plus the activation command. Open it in your editor:
+Theme names must be valid configuration names (non-empty, non-whitespace, containing no `/`, `\`, `..`, or control characters). This writes `~/.config/gpy/themes/mytheme.toml` as an **overlay** of the chosen theme (the default, or the one named by `--from`) and prints the path to edit, the theme it extends, and the activation command. The new file holds a single line:
+
+```toml
+extends = "starship"
+```
+
+Add only the keys you want to change; everything else comes from the base, including later fixes to it when you upgrade GPY. Tables merge key by key, so `[segments.clock]` with one `time_format` line keeps every other clock key of the base. To remove a key of the base, list it in `unset` (`unset = ["segments.character.format"]`). If the base is a plugin theme, the output names the plugin: removing or disabling it leaves your theme unable to load.
+
+To customize a theme under its own name, `gpy theme save` with that theme active writes a self-named overlay (`starship.toml` with `extends = "starship"`), which still receives the builtin's updates; `gpy config wizard` does the same for the options it edits.
+
+Want a frozen, independent copy instead, one that no longer follows its base? Add `--full` (`gpy theme new mytheme --from starship --full`, or `gpy theme save mytheme --full`): it writes the whole theme, the base's file verbatim when the base is a full theme, or the merged result when it is an overlay.
+
+Open the file in your editor:
 
 ```bash
 $EDITOR ~/.config/gpy/themes/mytheme.toml
@@ -209,15 +221,16 @@ gpy theme use mytheme
 `gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all nine supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`, `status`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Format templates and style strings may not contain terminal control characters (ESC, BEL, carriage return, …); newline is the only control character a format may carry, and the agent strips any other control character from template text at render time. Both `theme validate` and `theme use` share this validator.
 ### Your copy of a builtin theme after an upgrade
 
-A file `~/.config/gpy/themes/<name>.toml` with the name of a builtin theme (`default`, `text`, `starship`) completely replaces the builtin, so it keeps its old keys while the builtin moves on. A stale copy can fail to load after an upgrade (the 0.7 release moved `show_always`/`trim_at` and the `format` keys of `username` and `hostname` out of the theme). Three commands deal with it, none of which overwrites a copy without a backup:
+A **full** file `~/.config/gpy/themes/<name>.toml` (one without `extends`) with the name of a builtin theme (`default`, `text`, `starship`) completely replaces the builtin, so it keeps its old keys while the builtin moves on. Older GPY versions wrote such copies from `gpy config wizard`, `gpy theme new` and `gpy theme save`; today these write overlays (above), which hold only your changes and pick up the builtin's updates. A stale copy can fail to load after an upgrade (the 0.7 release moved `show_always`/`trim_at` and the `format` keys of `username` and `hostname` out of the theme). These commands deal with it, none of which overwrites a copy without a backup:
 
 ```bash
 gpy theme diff starship     # '-' = only in the builtin, '+' = only in your copy
 gpy theme migrate starship  # rewrite keys removed by breaking changes, backing up first
+gpy theme rebase starship   # turn a modified copy into an overlay that keeps only your changes
 gpy theme reset starship    # or drop the copy: moved to starship.toml.bak
 ```
 
-`migrate` moves the removed settings into `config.toml` (`[plugin.username]`, `[plugin.hostname]`) without replacing values already there, and checks that the result loads. Use `reset` when you have no customizations worth keeping; use `diff` to see what you would lose.
+`migrate` moves the removed settings into `config.toml` (`[plugin.username]`, `[plugin.hostname]`) without replacing values already there, and checks that the result loads. `rebase` shows the overlay first and writes it only with `--write`. Use `reset` when you have no customizations worth keeping; use `diff` to see what you would lose.
 
 ### Already using Starship?
 

@@ -50,7 +50,7 @@ _gpy_dynamic() {
     case "$sub1" in
         theme)
             case "$sub2" in
-                use | validate | diff | reset | migrate)
+                use | validate | diff | reset | migrate | rebase)
                     if [[ "$COMP_CWORD" -eq 3 ]]; then
                         __gpy_complete_cached theme
                         __gpy_complete_reply "$cur"

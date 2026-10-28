@@ -30,7 +30,7 @@ _gpy-dynamic() {
     case "$sub1" in
         theme)
             case "$sub2" in
-                use | validate | diff | reset | migrate)
+                use | validate | diff | reset | migrate | rebase)
                     if (( CURRENT == 4 )); then
                         __gpy_complete_cached theme
                         local -a vals

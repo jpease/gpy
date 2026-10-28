@@ -4,7 +4,7 @@
 use super::output;
 use super::theme::{print_theme_validation_error, validate_by_name};
 use super::theme_migrate_rules::{self, SettingMove};
-use super::theme_override::is_active;
+use super::theme_override::{in_active_chain, is_active};
 use super::utils::{active_config_path, load_active_config, reload_agent_and_notify};
 use crate::config::Config;
 use crate::config::discovery::validate_config_name;
@@ -105,7 +105,7 @@ pub fn migrate(name: &str) -> Result<()> {
     }
 
     let validation = validate_by_name(name);
-    if config_changed || is_active(name) {
+    if config_changed || is_active(name) || in_active_chain(&path) {
         reload_agent_and_notify();
     }
     match validation {

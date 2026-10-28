@@ -351,8 +351,13 @@ impl ConfigManager {
         let on_reload_option = self.on_reload.lock_or_recover().clone();
 
         PollTarget {
-            path_of: Box::new(move || Self::active_path(&candidates_for_poll)),
-            reload: Box::new(move |_path: &Path| {
+            // A list of one, the active file; no candidate ends the loop.
+            path_of: Box::new(move || {
+                Self::active_path(&candidates_for_poll)
+                    .into_iter()
+                    .collect()
+            }),
+            reload: Box::new(move || {
                 Self::reload_and_apply(
                     &config_arc,
                     &reload_gate,
@@ -740,7 +745,7 @@ theme = "other"
         let explicit = std::thread::spawn(move || explicit_manager.reload_now());
         // The delay only makes the race window certain; the gate orders them.
         std::thread::sleep(Duration::from_millis(100));
-        (manager.poll_target().reload)(&config_path);
+        (manager.poll_target().reload)();
         explicit
             .join()
             .expect("reload thread")

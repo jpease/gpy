@@ -36,6 +36,7 @@ pub fn user_copy_path(name: &str) -> PathBuf {
 }
 
 /// The user file for `name`, when it exists and shadows an embedded builtin.
+/// It may be a full copy or an overlay; see [`shadowing_full_copy`].
 #[must_use]
 pub fn shadowing_copy(name: &str) -> Option<PathBuf> {
     if !is_builtin(name) {
@@ -45,14 +46,32 @@ pub fn shadowing_copy(name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Whether the theme file at `path` is an overlay: its top-level table has an
+/// `extends` key. A file that can't be read or parsed is not.
+#[must_use]
+pub fn is_overlay_file(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .is_some_and(|table| table.contains_key("extends"))
+}
+
+/// The user file for `name` when it shadows an embedded builtin as a full
+/// copy, a fork that stops receiving upstream changes. An overlay is not one.
+#[must_use]
+pub fn shadowing_full_copy(name: &str) -> Option<PathBuf> {
+    shadowing_copy(name).filter(|path| !is_overlay_file(path))
+}
+
 /// Recovery text appended to diagnostics about a user file that overrides builtin `name`.
-/// Names `gpy theme reset|diff|migrate` and the upgrade notes.
+/// Names `gpy theme reset|diff|migrate|rebase` and the upgrade notes.
 #[must_use]
 pub fn recovery_hint(name: &str) -> String {
     format!(
         "{path} overrides the builtin theme '{name}' and may have been written by an older GPY.\n  \
          Recovery: `gpy theme diff {name}` shows how it differs from the builtin, \
          `gpy theme migrate {name}` rewrites keys removed by breaking changes, \
+         `gpy theme rebase {name}` keeps only your changes as an overlay of the builtin, \
          `gpy theme reset {name}` moves it to {name}.toml.bak so the builtin takes over. \
          See the upgrade notes in CHANGELOG.md.",
         path = user_copy_path(name).display(),
@@ -60,18 +79,19 @@ pub fn recovery_hint(name: &str) -> String {
 }
 
 /// Append [`recovery_hint`] to a load `error` when `path` is the existing user
-/// copy of an embedded builtin; any other error passes through unchanged.
+/// full copy of an embedded builtin; any other error passes through unchanged.
+/// An overlay's error is its chain error and gets no hint.
 ///
-/// Every user-theme load path (`config::loader::load_theme_from_path` and
-/// `ThemeManager`'s on-disk load) applies this exactly once, so callers must not
-/// add the hint again.
+/// Every theme load path (`config::loader::load_theme_file`,
+/// `config::loader::load_named_theme` and `ThemeManager`'s load) applies this
+/// exactly once, so callers must not add the hint again.
 #[must_use]
 pub fn annotate_load_error(path: &Path, error: Error) -> Error {
     let builtin = path
         .file_stem()
         .and_then(std::ffi::OsStr::to_str)
         .filter(|name| is_builtin(name))
-        .filter(|name| path.is_file() && path == user_copy_path(name));
+        .filter(|name| path.is_file() && path == user_copy_path(name) && !is_overlay_file(path));
     match (builtin, error) {
         (Some(name), Error::Config { message, source }) => Error::Config {
             message: format!("{message}\n  {}", recovery_hint(name)),

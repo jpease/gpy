@@ -29,6 +29,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `gpy theme new`, `gpy theme save` and `gpy config wizard`
+  write theme overlays instead of full copies (ADR-0012, #1095), so a
+  customised theme keeps receiving changes to the theme it builds on. A
+  script that expected a full copy gets a file with `extends = "<base>"`
+  and only the changed keys.
+  - `theme new <name>` writes `extends = "default"` (resolved like
+    `gpy theme use default`, so a user `default.toml` is picked up);
+    `--from <base>` names another base. `theme save [name]` writes
+    `extends = "<active theme>"`; an overwritten file is kept as `.bak`.
+    With the active theme already a file in the themes directory,
+    `theme save` (no name, or its own name) writes nothing and says so.
+  - `--full` on both writes the effective theme as a full, independent
+    file: the base's file verbatim when it is a full theme, the merged
+    result when it is an overlay.
+  - The wizard writes only the theme keys whose value you changed: a
+    self-named overlay for a builtin or plugin theme, in-place edits
+    (comments kept) in an existing overlay, where a key equal to its base
+    is removed and an `unset` entry for exactly that key is dropped, and
+    in-place edits in a full copy, with a `gpy theme rebase` hint.
+  - Every write is loaded first; a file that would not load (an unknown
+    base, an `extends` cycle) is not written. The output names the base
+    and any plugin the new theme now depends on.
+  - A theme file that already had a top-level `extends` or `unset` key
+    (ignored before) now means an overlay.
 - A theme load error for a user file that shadows a builtin now says it
   overrides the builtin and points to `gpy theme diff|migrate|reset`
   (#1085).

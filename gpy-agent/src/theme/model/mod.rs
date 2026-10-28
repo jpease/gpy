@@ -10,6 +10,10 @@ use crate::config::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod normalise;
+
+pub use normalise::{normalise, normalised_table};
+
 /// Theme configuration loaded from ~/.config/gpy/themes/{theme}.toml
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThemeConfig {

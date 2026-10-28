@@ -50,21 +50,39 @@ pub fn read_config() -> Result<config::Config> {
 }
 
 /// One `name [source]` line per discovered theme or palette, with ` *` after
-/// the `active` one.
-fn discovered_lines(active: &str, items: &[Discovered]) -> Vec<String> {
+/// the `active` one, and `, <note>` added inside the brackets of every
+/// item `note` returns text for.
+fn discovered_lines_noted(
+    active: &str,
+    items: &[Discovered],
+    note: impl Fn(&Discovered) -> Option<String>,
+) -> Vec<String> {
     items
         .iter()
         .map(|item| {
             let marker = if item.name == active { " *" } else { "" };
-            format!("{}{marker} [{}]", item.name, item.source)
+            note(item).map_or_else(
+                || format!("{}{marker} [{}]", item.name, item.source),
+                |text| format!("{}{marker} [{}, {text}]", item.name, item.source),
+            )
         })
         .collect()
 }
 
 /// Print `items` under `title`, marking the `active` one.
 pub fn print_discovered(title: &str, active: &str, items: &[Discovered]) {
+    print_discovered_noted(title, active, items, |_| None);
+}
+
+/// As [`print_discovered`], appending `note`'s text to an item's source label.
+pub fn print_discovered_noted(
+    title: &str,
+    active: &str,
+    items: &[Discovered],
+    note: impl Fn(&Discovered) -> Option<String>,
+) {
     output::heading(title);
-    for line in discovered_lines(active, items) {
+    for line in discovered_lines_noted(active, items, note) {
         output::detail(line);
     }
 }
@@ -144,7 +162,7 @@ mod tests {
             ),
         ];
         assert_eq!(
-            discovered_lines("mine", &items),
+            discovered_lines_noted("mine", &items, |_| None),
             [
                 "default [builtin]",
                 "mine * [user]",

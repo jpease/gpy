@@ -9,6 +9,7 @@ mod keys;
 mod preview;
 mod save;
 mod state;
+mod theme_file;
 mod ui;
 
 use crate::Result;
@@ -187,8 +188,14 @@ pub fn run() -> Result<()> {
     drop(guard);
 
     if should_save {
-        let path = save::save(&runtime.state)?;
-        println!("Saved configuration to {}", path.display());
+        let saved = save::save(&runtime.state)?;
+        if let Some(theme) = &saved.theme {
+            println!("Saved theme edits to {}", theme.path.display());
+            for note in &theme.notes {
+                println!("{note}");
+            }
+        }
+        println!("Saved configuration to {}", saved.config.display());
         crate::commands::utils::reload_agent_and_notify();
     }
 

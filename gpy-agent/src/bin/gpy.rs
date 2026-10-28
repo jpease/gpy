@@ -155,20 +155,29 @@ enum ThemeAction {
     },
     /// Show current theme
     Show,
-    /// Create new theme from template
+    /// Create a new theme as an overlay of a base theme (only your changes)
     New {
         /// New theme name
         name: String,
-        /// Clone an existing theme's full contents instead of the blank
-        /// default template (theme name, not a file path).
+        /// Theme the new theme extends (theme name, not a file path;
+        /// default: `default`)
         #[arg(long)]
         from: Option<String>,
+        /// Write a full, independent copy of the base theme instead of an
+        /// overlay that follows it
+        #[arg(long)]
+        full: bool,
     },
-    /// Save the currently active theme's contents as a theme file
+    /// Save the active theme as a theme file that extends it (writes nothing
+    /// when the active theme already is your theme file)
     Save {
         /// Theme name to save as (defaults to the currently active theme's
-        /// own name, always prompting before overwrite)
+        /// own name, always prompting first)
         name: Option<String>,
+        /// Write a full, independent copy of the active theme instead of an
+        /// overlay that follows it
+        #[arg(long)]
+        full: bool,
     },
     /// Validate a theme by name or file path (defaults to active theme)
     Validate {
@@ -189,6 +198,23 @@ enum ThemeAction {
     Migrate {
         /// Name of a theme file in the themes directory
         name: String,
+    },
+    /// Rewrite a modified full copy of a theme as an overlay that holds only
+    /// your changes (prints the result; writes only with --write)
+    Rebase {
+        /// Name of a full theme file in the themes directory
+        name: String,
+        /// Theme the overlay extends (default: the plugin or builtin theme
+        /// with the same name)
+        #[arg(long)]
+        onto: Option<String>,
+        /// Write the overlay over the file, after copying it to `.bak`
+        #[arg(long)]
+        write: bool,
+        /// Add an `unset` entry for each key the copy lacks but the base has,
+        /// instead of inheriting it
+        #[arg(long)]
+        unset_missing: bool,
     },
     /// Import a `starship.toml` into a GPY palette + prompt theme
     Import {
@@ -335,12 +361,25 @@ fn run_theme(action: ThemeAction) -> Result<()> {
         ThemeAction::List => commands::theme::list(),
         ThemeAction::Use { name, force } => commands::theme::use_theme(&name, force),
         ThemeAction::Show => commands::theme::show(),
-        ThemeAction::New { name, from } => commands::theme::new(&name, from.as_deref()),
-        ThemeAction::Save { name } => commands::theme::save(name.as_deref()),
+        ThemeAction::New { name, from, full } => {
+            commands::theme_write::new(&name, from.as_deref(), full)
+        }
+        ThemeAction::Save { name, full } => commands::theme_write::save(name.as_deref(), full),
         ThemeAction::Validate { target } => commands::theme::validate(target.as_deref()),
         ThemeAction::Diff { name } => commands::theme_override::diff(&name),
         ThemeAction::Reset { name } => commands::theme_override::reset(&name),
         ThemeAction::Migrate { name } => commands::theme_migrate::migrate(&name),
+        ThemeAction::Rebase {
+            name,
+            onto,
+            write,
+            unset_missing,
+        } => commands::theme_rebase::rebase(&commands::theme_rebase::RebaseOptions {
+            name: &name,
+            onto: onto.as_deref(),
+            write,
+            unset_missing,
+        }),
         ThemeAction::Import {
             path,
             name,

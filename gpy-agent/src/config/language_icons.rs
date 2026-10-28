@@ -50,6 +50,101 @@ pub struct LanguageTheme {
     pub enabled_languages: Option<Vec<String>>,
 }
 
+/// Keys of `[segments.language]` that [`LanguageTheme`] reads as named fields,
+/// including its three nested per-language maps. Every other key is a flat
+/// per-language key, read into the map [`flat_language_map`] names.
+pub(crate) const LANGUAGE_FIELDS: &[&str] = &[
+    "format",
+    "open",
+    "close",
+    "bg_color",
+    "text_color",
+    "show_symbol_without_version",
+    "enabled_languages",
+    "overrides",
+    "symbols",
+    "styles",
+];
+
+/// One of [`LanguageTheme`]'s per-language maps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LanguageMap {
+    /// `overrides`: per-language colours (`rust_bg_color`).
+    Overrides,
+    /// `symbols`: per-language symbols (`rust_symbol`).
+    Symbols,
+    /// `styles`: per-language style attributes (`java_style`).
+    Styles,
+}
+
+impl LanguageMap {
+    /// The map's key in `[segments.language]`, e.g. `symbols`.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::Overrides => "overrides",
+            Self::Symbols => "symbols",
+            Self::Styles => "styles",
+        }
+    }
+}
+
+/// The map a flat `[segments.language]` key (one not in [`LANGUAGE_FIELDS`])
+/// is read into: `*_symbol` → `symbols`, `*_style` → `styles`, anything else →
+/// `overrides`. The deserializer and theme overlay canonicalisation share this rule.
+pub(crate) fn flat_language_map(key: &str) -> LanguageMap {
+    if key.ends_with("_symbol") {
+        LanguageMap::Symbols
+    } else if key.ends_with("_style") {
+        LanguageMap::Styles
+    } else {
+        LanguageMap::Overrides
+    }
+}
+
+/// Rewrite a raw `[segments.language]` table to the nested spelling: each flat
+/// per-language key moves into the table [`flat_language_map`] names.
+///
+/// Keys are visited in table order, and a later key of the same language
+/// replaces an earlier one, as the deserializer reads them; so the nested
+/// table deserializes to the same [`LanguageTheme`]. A flat key whose map key
+/// holds a non-table value stays flat (the deserializer rejects that value).
+pub(crate) fn nest_language_table(table: &mut toml::Table) {
+    if table
+        .keys()
+        .all(|key| LANGUAGE_FIELDS.contains(&key.as_str()))
+    {
+        return;
+    }
+    for (key, value) in std::mem::take(table) {
+        if LANGUAGE_FIELDS.contains(&key.as_str()) {
+            let meets_table = matches!(table.get(&key), Some(toml::Value::Table(_)));
+            match value {
+                // A nested map after flat keys of the same map: its entries win.
+                toml::Value::Table(nested) if meets_table => {
+                    if let Some(toml::Value::Table(existing)) = table.get_mut(&key) {
+                        existing.extend(nested);
+                    }
+                }
+                other => {
+                    table.insert(key, other);
+                }
+            }
+            continue;
+        }
+        let map = flat_language_map(&key).key();
+        if table.get(map).is_none_or(toml::Value::is_table) {
+            if let toml::Value::Table(nested) = table
+                .entry(map)
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            {
+                nested.insert(key, value);
+            }
+        } else {
+            table.insert(key, value);
+        }
+    }
+}
+
 // Manual Deserialize: toml's `#[serde(flatten)]` on a map would capture named
 // fields like `format` and validate them as ColorSpec.
 impl<'de> Deserialize<'de> for LanguageTheme {
@@ -73,6 +168,7 @@ impl<'de> serde::de::Visitor<'de> for LanguageThemeVisitor {
     ) -> Result<LanguageTheme, A::Error> {
         let mut theme = LanguageTheme::default();
 
+        // The named arms are exactly `LANGUAGE_FIELDS`.
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
                 "format" => theme.format = map.next_value()?,
@@ -84,7 +180,7 @@ impl<'de> serde::de::Visitor<'de> for LanguageThemeVisitor {
                     theme.show_symbol_without_version = map.next_value()?;
                 }
                 "enabled_languages" => theme.enabled_languages = map.next_value()?,
-                // Flat keys (rust_bg_color = "red") or a nested [..overrides] subtable.
+                // Nested [..overrides] subtable or flat keys like rust_bg_color = "red".
                 "overrides" => {
                     let nested: HashMap<String, super::types::ColorSpec> = map.next_value()?;
                     theme.overrides.extend(nested);
@@ -94,20 +190,22 @@ impl<'de> serde::de::Visitor<'de> for LanguageThemeVisitor {
                     let nested: HashMap<String, String> = map.next_value()?;
                     theme.symbols.extend(nested);
                 }
-                k if k.ends_with("_symbol") => {
-                    theme.symbols.insert(key, map.next_value()?);
-                }
                 // Nested [..styles] subtable or flat keys like java_style = "dimmed".
                 "styles" => {
                     let nested: HashMap<String, String> = map.next_value()?;
                     theme.styles.extend(nested);
                 }
-                k if k.ends_with("_style") => {
-                    theme.styles.insert(key, map.next_value()?);
-                }
-                _ => {
-                    theme.overrides.insert(key, map.next_value()?);
-                }
+                _ => match flat_language_map(&key) {
+                    LanguageMap::Symbols => {
+                        theme.symbols.insert(key, map.next_value()?);
+                    }
+                    LanguageMap::Styles => {
+                        theme.styles.insert(key, map.next_value()?);
+                    }
+                    LanguageMap::Overrides => {
+                        theme.overrides.insert(key, map.next_value()?);
+                    }
+                },
             }
         }
 
@@ -349,5 +447,61 @@ mod tests {
                 .contains("$attr"),
             "language format must reference $attr"
         );
+    }
+
+    /// `LANGUAGE_FIELDS` is exactly the set of keys the deserializer reads as
+    /// named fields: a theme with every field set serializes to those keys.
+    #[test]
+    fn language_fields_match_the_named_fields() {
+        let theme: LanguageTheme = toml::from_str(
+            "format = \"x\"\nshow_symbol_without_version = true\nenabled_languages = [\"rust\"]\n\
+             rust_symbol = \"R\"\njava_style = \"dimmed\"\nrust_bg_color = \"red\"\n\
+             [open]\nicon = \"<\"\n[close]\nicon = \">\"\n",
+        )
+        .expect("parse");
+        let serialized = toml::Table::try_from(&theme).expect("serialize");
+        let mut keys: Vec<&str> = serialized.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        let mut expected = LANGUAGE_FIELDS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(keys, expected);
+    }
+
+    /// Nesting a table with the shared rule deserializes to the same theme as
+    /// the flat spelling, for every kind of flat key.
+    #[test]
+    fn nested_table_deserializes_like_the_flat_one() {
+        let flat: toml::Table = toml::from_str(
+            "format = \"x\"\nbg_color = \"white\"\nrust_symbol = \"R\"\njava_style = \"dimmed\"\n\
+             rust_bg_color = \"red\"\ngo_text_color = \"blue\"\n[symbols]\npython_symbol = \"P\"\n",
+        )
+        .expect("parse");
+        let mut nested = flat.clone();
+        nest_language_table(&mut nested);
+
+        let as_value = |table: toml::Table| {
+            let theme: LanguageTheme = toml::Value::Table(table).try_into().expect("deserialize");
+            toml::Value::try_from(&theme).expect("serialize")
+        };
+        assert_eq!(as_value(nested.clone()), as_value(flat));
+        assert!(
+            nested
+                .keys()
+                .all(|key| LANGUAGE_FIELDS.contains(&key.as_str())),
+            "every flat key moved into a map: {nested:?}"
+        );
+        let symbols = nested
+            .get("symbols")
+            .and_then(toml::Value::as_table)
+            .expect("symbols table");
+        assert!(symbols.contains_key("rust_symbol") && symbols.contains_key("python_symbol"));
+    }
+
+    #[test]
+    fn flat_keys_land_in_the_map_the_deserializer_uses() {
+        assert_eq!(flat_language_map("rust_symbol"), LanguageMap::Symbols);
+        assert_eq!(flat_language_map("java_style"), LanguageMap::Styles);
+        assert_eq!(flat_language_map("rust_bg_color"), LanguageMap::Overrides);
+        assert_eq!(flat_language_map("anything"), LanguageMap::Overrides);
     }
 }

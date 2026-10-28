@@ -26,6 +26,8 @@ pub mod output;
 pub mod palette;
 /// Plugin discovery and validation commands.
 pub mod plugin;
+/// Theme files shipped in a plugin's `themes/` directory, for `gpy plugin validate`.
+mod plugin_themes;
 /// Static checks of script segment files for `gpy plugin validate`.
 mod script_lint;
 /// Timed trial run of a script segment for `gpy doctor`.
@@ -46,6 +48,10 @@ pub mod theme_migrate;
 mod theme_migrate_rules;
 /// `gpy theme diff` and `gpy theme reset` for user copies of builtin themes.
 pub mod theme_override;
+/// `gpy theme rebase`: rewrite a modified full copy as an overlay.
+pub mod theme_rebase;
+/// `gpy theme new` and `gpy theme save`: write overlays, or full copies with `--full`.
+pub mod theme_write;
 /// Unified line diff for `gpy theme diff`.
 mod unified_diff;
 /// Shared utility functions for commands.
