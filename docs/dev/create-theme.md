@@ -12,17 +12,19 @@ Use the built-in scaffolder:
 gpy theme new mytheme
 ```
 
-Or clone an existing theme (builtin, user, or plugin) as your starting point instead of the blank default template:
+Or build on another existing theme (builtin, user, or plugin) instead of the default theme:
 
 ```bash
 gpy theme new mytheme --from starship
 ```
 
-That creates:
+That creates `~/.config/gpy/themes/mytheme.toml` as an **overlay** of the base:
 
-```text
-~/.config/gpy/themes/mytheme.toml
+```toml
+extends = "starship"
 ```
+
+Add only the keys your theme changes; everything else comes from the base, which keeps receiving updates. Tables merge key by key at every depth, arrays replace the base's array, and `unset = ["segments.character.format"]` removes a key of the base. If the base is a plugin theme, your theme depends on that plugin. For a theme that must stand alone (to publish it, or to freeze it against later releases), add `--full`: the file is then the base's whole theme, verbatim when the base is a full theme or merged when it is an overlay.
 
 Then edit it, validate it, and activate it:
 
@@ -33,10 +35,12 @@ gpy theme use mytheme
 
 ## Theme File Structure
 
-A theme is a TOML file with:
+A full theme is a TOML file with:
 
 - top-level UI settings under `[ui]`
 - per-segment styling under `[segments.<segment-id>]`
+
+An overlay (a file with a top-level `extends = "<theme>"`) needs neither table; it holds only what it changes, and its merged result must be a valid full theme.
 
 Start from the generated theme or from [templates/theme.plugin-segment.toml](templates/theme.plugin-segment.toml).
 
@@ -140,7 +144,7 @@ resolved `fg:`/`bg:` colors either way).
 
 ## Recommended Theme Workflow
 
-1. Create the theme with `gpy theme new <name>`.
+1. Create the theme with `gpy theme new <name>` (an overlay of `default`; `--from <base>` picks another base, `--full` writes a full theme).
 2. Edit `~/.config/gpy/themes/<name>.toml`.
 3. Add styling for the segments you care about.
 4. Validate with `gpy theme validate <name>`.

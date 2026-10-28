@@ -1,7 +1,9 @@
 //! `gpy theme` command handlers.
 
+use super::output;
 use super::utils::{
-    active_config_path, load_active_config, print_discovered, read_config, reload_agent_and_notify,
+    active_config_path, load_active_config, print_discovered_noted, read_config,
+    reload_agent_and_notify,
 };
 use super::validation::{self, Failure, FailureKind, ValidatableResource, ValidationReport};
 use crate::config::discovery::validate_config_name;
@@ -12,7 +14,7 @@ use crate::config::recommended_layout::{
 };
 use crate::{
     Error, Result, config,
-    theme::{LoadedTheme, RecommendedUi, ThemeConfig, ThemeManager},
+    theme::{LoadedTheme, RecommendedUi, ThemeConfig, ThemeManager, user_copy as theme_user_copy},
 };
 use std::path::Path;
 
@@ -22,12 +24,29 @@ use std::path::Path;
 /// Returns an error if the active config cannot be read, parsed, or validated.
 pub fn list() -> Result<()> {
     let config = read_config()?;
-    print_discovered(
+    print_discovered_noted(
         "Available Themes:",
         config.ui.theme.as_str(),
         &ThemeManager::discover_available_themes(),
+        overlay_note,
     );
     Ok(())
+}
+
+/// The `extends <source> <name>` note for a discovered overlay: the base its
+/// chain resolves to today. A file that does not load says so instead.
+fn overlay_note(theme: &config::discovery::Discovered) -> Option<String> {
+    let path = theme.path.as_deref()?;
+    if !theme_user_copy::is_overlay_file(path) {
+        return None;
+    }
+    Some(match config::loader::load_theme_file(path) {
+        Ok(loaded) => loaded.chain.iter().nth(1).map_or_else(
+            || "overlay".to_owned(),
+            |base| format!("extends {} {}", base.source, base.name),
+        ),
+        Err(_) => "overlay, does not load".to_owned(),
+    })
 }
 
 /// Switch to a different theme.
@@ -216,130 +235,6 @@ pub fn print_theme_validation_error(context: &str, failure: &Failure) {
     validation::print_validation_error::<ThemeResource>(context, failure);
 }
 
-/// Create a new theme from the default template or by cloning `from`.
-///
-/// # Errors
-/// Returns an error if `from` cannot be read or the theme file cannot be created.
-pub fn new(name: &str, from: Option<&str>) -> Result<()> {
-    validate_config_name("theme", name)?;
-
-    let themes_dir = ThemeManager::user_themes_dir();
-
-    std::fs::create_dir_all(&themes_dir)
-        .map_err(|e| Error::config(format!("failed to create themes directory: {e}")))?;
-
-    let new_theme_path = themes_dir.join(format!("{name}.toml"));
-
-    let source_content = match from {
-        Some(base) => ThemeManager::theme_source_content(base)?,
-        None => crate::config::defaults::DEFAULT_THEME_CONTENT.to_owned(),
-    };
-
-    crate::fs_util::create_new(&new_theme_path, source_content.as_bytes()).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            Error::config(format!("theme '{name}' already exists"))
-        } else {
-            Error::config(format!("failed to write theme file: {e}"))
-        }
-    })?;
-
-    match from {
-        Some(base) => println!(
-            "Created new theme: {} (cloned from '{base}')",
-            new_theme_path.display()
-        ),
-        None => println!("Created new theme: {}", new_theme_path.display()),
-    }
-    println!("Edit: {}", new_theme_path.display());
-    println!("Activate with: gpy theme use {name}");
-
-    Ok(())
-}
-
-/// Save the active theme's contents as `<name>.toml`, or over the active theme.
-///
-/// Overwriting an existing file, or omitting `name`, prompts for confirmation.
-///
-/// # Errors
-/// Returns an error on unresolvable/unsafe names, prompt failure, or write failure.
-pub fn save(name: Option<&str>) -> Result<()> {
-    let config = read_config()?;
-    let active_theme = config.ui.theme.as_str().to_owned();
-
-    let target_name = name.unwrap_or(active_theme.as_str());
-    validate_config_name("theme", target_name)?;
-
-    let source_content = ThemeManager::theme_source_content(&active_theme)?;
-
-    let themes_dir = ThemeManager::user_themes_dir();
-    std::fs::create_dir_all(&themes_dir)
-        .map_err(|e| Error::config(format!("failed to create themes directory: {e}")))?;
-    let target_path = themes_dir.join(format!("{target_name}.toml"));
-
-    let target_exists = target_path.exists();
-    if save_requires_confirmation(name, target_exists) {
-        let prompt = if name.is_none() {
-            format!(
-                "Overwrite current theme '{target_name}' with its current configuration? [y/N] "
-            )
-        } else {
-            format!("Theme '{target_name}' already exists. Overwrite? [y/N] ")
-        };
-        if !confirm(&prompt)? {
-            println!("Aborted.");
-            return Ok(());
-        }
-    }
-
-    let written = if target_exists {
-        crate::fs_util::write_atomically(&target_path, source_content.as_bytes())
-    } else {
-        crate::fs_util::create_new(&target_path, source_content.as_bytes())
-    };
-    written.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            Error::config(format!("theme '{target_name}' already exists"))
-        } else {
-            Error::config(format!("failed to write theme file: {e}"))
-        }
-    })?;
-
-    println!("Saved theme: {}", target_path.display());
-    println!("Edit: {}", target_path.display());
-    if target_name != active_theme {
-        println!("Activate with: gpy theme use {target_name}");
-    }
-
-    Ok(())
-}
-
-/// Omitting `name` always overwrites the theme in use, so it always confirms,
-/// even if the active theme is an unmaterialized builtin.
-const fn save_requires_confirmation(name: Option<&str>, target_exists: bool) -> bool {
-    name.is_none() || target_exists
-}
-
-fn confirm(prompt: &str) -> Result<bool> {
-    use std::io::Write;
-
-    print!("{prompt}");
-    std::io::stdout()
-        .flush()
-        .map_err(|e| Error::config(format!("failed to write prompt: {e}")))?;
-
-    let mut answer = String::new();
-    std::io::stdin()
-        .read_line(&mut answer)
-        .map_err(|e| Error::config(format!("failed to read confirmation: {e}")))?;
-
-    Ok(parse_confirmation(&answer))
-}
-
-/// Only (case-insensitive) `y`/`yes` confirm.
-fn parse_confirmation(answer: &str) -> bool {
-    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-}
-
 struct ThemeResource;
 
 impl ValidatableResource for ThemeResource {
@@ -469,44 +364,12 @@ fn validate_templates(
     palette: &crate::template::Palette,
 ) -> std::result::Result<(), Failure> {
     crate::config::validation::templates::validate_segment_templates(&loaded.theme, palette)
-        .map_err(|error| Failure::new(FailureKind::Template, loaded.template_error(error)))
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::{parse_confirmation, save_requires_confirmation};
-
-    #[test]
-    fn no_confirmation_needed_for_new_named_theme() {
-        assert!(!save_requires_confirmation(Some("mytheme"), false));
+        .map_err(|error| Failure::new(FailureKind::Template, loaded.template_error(error)))?;
+    let top = loaded.chain.top();
+    if top.on_disk {
+        for warning in crate::theme::overlay::unset_warnings(&top.path) {
+            output::warn(warning);
+        }
     }
-
-    #[test]
-    fn confirmation_needed_when_named_theme_already_exists() {
-        assert!(save_requires_confirmation(Some("mytheme"), true));
-    }
-
-    #[test]
-    fn confirmation_always_needed_when_name_omitted() {
-        assert!(save_requires_confirmation(None, false));
-        assert!(save_requires_confirmation(None, true));
-    }
-
-    #[test]
-    fn parses_yes_variants_as_confirmed() {
-        assert!(parse_confirmation("y"));
-        assert!(parse_confirmation("Y"));
-        assert!(parse_confirmation("yes"));
-        assert!(parse_confirmation("YES"));
-        assert!(parse_confirmation("  y  \n"));
-    }
-
-    #[test]
-    fn parses_everything_else_as_declined() {
-        assert!(!parse_confirmation("n"));
-        assert!(!parse_confirmation(""));
-        assert!(!parse_confirmation("\n"));
-        assert!(!parse_confirmation("maybe"));
-    }
+    Ok(())
 }

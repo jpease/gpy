@@ -325,6 +325,8 @@ Every reload also re-reads the active palette file, so palette edits apply witho
 
 The active theme name is re-resolved the same way, in user > plugin > built-in order: creating `~/.config/gpy/themes/<name>.toml` for the active theme replaces a plugin or built-in theme of that name, and deleting it falls back again, without a restart. The agent watches your user themes directory for this, and a config reload applies it at once.
 
+For an overlay (a theme file with `extends`), the agent watches the overlay and every theme file it extends, including a plugin theme it is based on, so editing any of them reloads the theme; a built-in base changes only with a new GPY version. A plugin installed later that provides an overlay's base takes over the base at the next theme reload, `gpy theme use`, or agent restart; with `GPY_THEME_WATCH_POLL_MS` set (see [Troubleshooting](troubleshooting.md)) the poll picks it up on its next tick.
+
 An edit made while the agent is stopped takes effect when the agent next starts. Shells that were open across the restart reload the new theme on their own. A new Fish shell that loaded the old theme at startup reloads it as soon as it registers with the agent.
 
 Use the CLI to inspect or edit values without hand-editing the file:

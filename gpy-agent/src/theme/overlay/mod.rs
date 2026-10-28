@@ -17,9 +17,13 @@
 
 mod attribute;
 mod header;
+mod lint;
 mod merge;
 mod resolve;
 
+pub(crate) use header::split_path;
+pub use lint::unset_warnings;
+pub(crate) use merge::nested_language_path;
 pub use resolve::resolve_top;
 
 use super::ThemeConfig;
@@ -169,6 +173,47 @@ pub(crate) fn load_path(path: &Path) -> Result<LoadedTheme> {
     )
 }
 
+/// Loads `text` as if it were the content of the user theme file `link`,
+/// without reading or writing that file, so `gpy theme rebase` can check an
+/// overlay before writing it. Resolution, the own-name rule and the cycle
+/// check treat it exactly as the file at `link.path`.
+///
+/// # Errors
+/// As [`load_link`].
+pub(crate) fn load_text(link: ChainLink, text: String) -> Result<LoadedTheme> {
+    let label = link.path.display().to_string();
+    let first = ChainFile::from_text(link, label, Cow::Owned(text))?;
+    load_first(first, OwnName::Listed, &mut Candidates::discover())
+}
+
+/// The existing user theme file `name` as a chain link, with its own name and
+/// path taken from the directory listing as when it loads by name.
+///
+/// # Errors
+/// Returns an error if no directory entry, or more than one, matches `name`.
+pub(crate) fn own_user_link(name: &str) -> Result<ChainLink> {
+    resolve::own_link(
+        ChainLink {
+            name: name.to_owned(),
+            source: Source::User,
+            path: user_copy_path(name),
+            on_disk: true,
+        },
+        OwnName::Listed,
+    )
+}
+
+/// Where `extends = "<name>"` in the file `from` resolves (ADR-0012 section 3).
+///
+/// # Errors
+/// Returns the diagnostic when `name` resolves to nothing allowed.
+pub(crate) fn resolve_extends(
+    name: &str,
+    from: &ChainLink,
+) -> std::result::Result<ChainLink, String> {
+    resolve::resolve_base(name, from, &mut Candidates::discover())
+}
+
 /// One file of a chain, read and split into its overlay header and table.
 struct ChainFile {
     link: ChainLink,
@@ -201,6 +246,14 @@ impl ChainFile {
                 link.name
             )));
         };
+        Self::from_text(link, label, text)
+    }
+
+    /// Syntax-check `text` as the content of `link`.
+    ///
+    /// # Errors
+    /// Returns an error if the TOML or overlay keys are malformed.
+    fn from_text(link: ChainLink, label: String, text: Cow<'static, str>) -> Result<Self> {
         let mut table = parse_table(&text, &label)?;
         let header = Header::take(&mut table, &label)?;
         Ok(Self {
@@ -227,10 +280,30 @@ fn overlay_error(label: &str, diagnostic: &str, remediation: &str) -> Error {
 fn load_with(top: ChainLink, own: OwnName, candidates: &mut Candidates) -> Result<LoadedTheme> {
     // The top file keeps the label it has always had, its path, even when embedded.
     let top_label = top.path.display().to_string();
-    let mut first = ChainFile::read(top, top_label)?;
+    let first = ChainFile::read(top, top_label)?;
+    load_first(first, own, candidates)
+}
+
+/// Load the already read `first` and, if it is an overlay, every base.
+///
+/// # Errors
+/// As [`load_link`].
+fn load_first(first: ChainFile, own: OwnName, candidates: &mut Candidates) -> Result<LoadedTheme> {
     if first.header.extends.is_none() {
         return load_full(first);
     }
+    merge_chain(read_chain(first, own, candidates)?)
+}
+
+/// Every file of the overlay `first`'s chain, `first` at the front.
+///
+/// # Errors
+/// As [`load_link`], short of merging.
+fn read_chain(
+    mut first: ChainFile,
+    own: OwnName,
+    candidates: &mut Candidates,
+) -> Result<Vec<ChainFile>> {
     first.link = resolve::own_link(first.link, own)?;
 
     let mut identities = vec![Identity::of(&first.link)];
@@ -273,7 +346,7 @@ fn load_with(top: ChainLink, own: OwnName, candidates: &mut Candidates) -> Resul
         identities.push(identity);
         files.push(file);
     }
-    merge_chain(files)
+    Ok(files)
 }
 
 /// A full theme: `from_table` on the table already parsed; only a failure

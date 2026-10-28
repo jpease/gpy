@@ -166,10 +166,12 @@ pub(super) fn own_entry(
 }
 
 /// What a chain link is for cycle detection: a file's canonical path, or an
-/// embedded builtin's name.
+/// embedded builtin's name. A user file not written yet (checked by
+/// `load_text` before it exists) is still a file, identified by its path,
+/// so it never collides with the builtin of the same name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Identity {
-    /// An on-disk file.
+    /// A theme file, on disk or about to be written.
     File(PathBuf),
     /// An embedded builtin.
     Builtin(String),
@@ -178,10 +180,10 @@ pub(super) enum Identity {
 impl Identity {
     /// The identity of `link`.
     pub(super) fn of(link: &ChainLink) -> Self {
-        if link.on_disk {
-            Self::File(std::fs::canonicalize(&link.path).unwrap_or_else(|_| link.path.clone()))
-        } else {
+        if link.source == Source::Builtin {
             Self::Builtin(link.name.clone())
+        } else {
+            Self::File(std::fs::canonicalize(&link.path).unwrap_or_else(|_| link.path.clone()))
         }
     }
 }

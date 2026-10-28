@@ -17,7 +17,7 @@ pub(super) fn canonicalise(table: &mut toml::Table) {
 
 /// `path` in the nested language spelling: `segments.language.<flat key>…`
 /// becomes `segments.language.<map>.<flat key>…`. Other paths are unchanged.
-pub(super) fn nested_language_path(mut path: Vec<String>) -> Vec<String> {
+pub(crate) fn nested_language_path(mut path: Vec<String>) -> Vec<String> {
     let map = match path.as_slice() {
         [segments, language, key, ..]
             if segments == "segments"

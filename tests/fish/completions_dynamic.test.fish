@@ -117,7 +117,7 @@ else
     fail "'gpy theme validate <TAB>' did not complete installed theme names: $theme_validate_names"
 end
 
-for verb in diff reset migrate
+for verb in diff reset migrate rebase
     set -l verb_names (__cd_test_names (complete -C "gpy theme $verb "))
     if contains starship $verb_names
         pass "'gpy theme $verb <TAB>' completes installed theme names"

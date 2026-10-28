@@ -14,7 +14,7 @@ pub use manager::{ThemeManager, ThemeSource};
 pub use model::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitState, GitTextElement, GitTheme,
     PluginSegmentTheme, RecommendedDirectory, RecommendedUi, SegmentThemes, StatusTheme,
-    ThemeConfig, UiTheme,
+    ThemeConfig, UiTheme, normalise, normalised_table,
 };
 pub use overlay::{ChainLink, LoadedTheme, ThemeChain};
 pub use parse::{FromTableError, RequiredTable, from_table, parse, parse_table};

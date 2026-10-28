@@ -111,7 +111,7 @@ fn parse_unset(value: toml::Value, label: &str) -> Result<Vec<UnsetEntry>> {
 
 /// `a.b-c.d_e` → `["a", "b-c", "d_e"]`; `None` if a component is empty or
 /// holds anything but ASCII letters, digits, `_` and `-`.
-pub(super) fn split_path(text: &str) -> Option<Vec<String>> {
+pub(crate) fn split_path(text: &str) -> Option<Vec<String>> {
     text.split('.')
         .map(|component| {
             (!component.is_empty()

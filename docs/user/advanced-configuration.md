@@ -105,9 +105,12 @@ and no colours or templates in `config.toml`; the split is described in
 Start from the shipped default rather than a blank file:
 
 ```bash
-gpy theme new mine --from default   # copies config/themes/default.toml to ~/.config/gpy/themes/mine.toml
+gpy theme new mine --from default   # writes ~/.config/gpy/themes/mine.toml with extends = "default"
 gpy theme use mine
 ```
+
+The new file is an overlay: add only the keys you change, and the rest comes
+from `default`. Add `--full` for a complete, independent copy instead.
 
 Every field a theme accepts, with the colour syntaxes and template
 placeholders, is in [Theme Customization](theme-customization.md).
@@ -367,14 +370,15 @@ gpy restart
 
 ## Custom Themes
 
-Create a new theme from the shipped default (built-in themes live with the
-installed binary, not under `~/.config/gpy/themes/`, so copy through the CLI):
+Create a new theme that builds on the shipped default (built-in themes live
+with the installed binary, not under `~/.config/gpy/themes/`):
 
 ```bash
 gpy theme new mytheme --from default
 ```
 
-Edit colors and glyphs as desired, then activate:
+Add the colors and glyphs you want to change to the new file (it starts as
+`extends = "default"`), then activate:
 
 ```bash
 # Switch to your new theme

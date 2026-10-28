@@ -27,7 +27,7 @@ end
 
 complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from use; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached theme)' -d Theme
 complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from validate; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached theme)' -d Theme
-complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from diff reset migrate; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached theme)' -d Theme
+complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from diff reset migrate rebase; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached theme)' -d Theme
 
 complete -c gpy -n '__fish_seen_subcommand_from palette; and __fish_seen_subcommand_from use; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached palette)' -d Palette
 complete -c gpy -n '__fish_seen_subcommand_from palette; and __fish_seen_subcommand_from validate; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached palette)' -d Palette

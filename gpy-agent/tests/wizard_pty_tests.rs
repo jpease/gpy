@@ -258,3 +258,76 @@ fn wizard_survives_selecting_malformed_theme() {
         "the previous valid theme is saved; config:\n{config}"
     );
 }
+
+/// Run the wizard on the builtin `starship`, send `keys` with the clock
+/// segment highlighted (Tab twice reaches the segment list, clock first),
+/// then save. Returns the captured output.
+fn edit_starship_clock_and_save(env: &CliTestEnv, keys: &[u8]) -> String {
+    env.write_config("[ui]\ntheme = \"starship\"\nenabled_segments = [\"clock\", \"directory\"]\n")
+        .expect("write config");
+    let (pair, reader) = open_pty();
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
+    cmd.args(["config", "wizard"]);
+    configure_gpy_env(&mut cmd, env);
+
+    let captured = spawn_reader_thread(reader);
+    let mut writer = pair.master.take_writer().expect("take pty writer");
+    let mut child = PtyChild::new(pair.slave.spawn_command(cmd).expect("spawn gpy in pty"));
+    drop(pair.slave);
+
+    wait_for_output(&captured, ENTER_ALT_SCREEN, OUTPUT_DEADLINE);
+    wait_for_output(&captured, b"starship", OUTPUT_DEADLINE);
+    writer.write_all(b"\t\t").expect("write Tab Tab");
+    writer.write_all(keys).expect("write edit keys");
+    writer.write_all(b"s").expect("write save key");
+    writer.flush().expect("flush keys");
+
+    let status = wait_for_exit(&mut *child, EXIT_DEADLINE);
+    let shown =
+        String::from_utf8_lossy(&captured.lock().expect("captured output lock")).into_owned();
+    assert!(
+        status.success(),
+        "save-and-exit run should exit successfully; captured: {shown:?}"
+    );
+    shown
+}
+
+/// A toggle over a builtin writes a self-named overlay holding only that key.
+#[test]
+fn toggling_a_key_of_builtin_starship_writes_a_small_overlay() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+
+    let shown = edit_starship_clock_and_save(&env, b":");
+
+    let path = env.themes_dir().join("starship.toml");
+    let written = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "the wizard should write {}: {e}; captured: {shown:?}",
+            path.display()
+        )
+    });
+    assert_eq!(
+        written, "extends = \"starship\"\n\n[segments.clock]\nshow_seconds = true\n",
+        "only the toggled key is written; captured: {shown:?}"
+    );
+    assert!(shown.contains("Saved theme edits to"), "{shown:?}");
+    env.run_gpy(&["theme", "validate", "starship"])
+        .expect("spawn gpy")
+        .assert_success("gpy theme validate starship");
+}
+
+/// A key toggled twice is back at its effective value: nothing is written.
+#[test]
+fn toggling_a_key_twice_writes_no_theme_file() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+
+    let shown = edit_starship_clock_and_save(&env, b"::");
+
+    assert!(
+        !env.themes_dir().join("starship.toml").exists(),
+        "captured: {shown:?}"
+    );
+    assert!(!shown.contains("Saved theme edits to"), "{shown:?}");
+    assert!(shown.contains("Saved configuration to"), "{shown:?}");
+}

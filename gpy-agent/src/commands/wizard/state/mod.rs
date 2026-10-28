@@ -68,6 +68,17 @@ impl SegmentEdit {
     }
 }
 
+/// Edits to the selected theme: the theme as loaded when the first edit was
+/// made, and the same theme with every edit applied. Saving writes only the
+/// keys whose effective value differs between the two.
+#[derive(Debug, Clone)]
+pub(crate) struct ThemeEdits {
+    /// The selected theme's merged result the edits started from.
+    pub(crate) seed: ThemeConfig,
+    /// `seed` with every edit applied.
+    pub(crate) edited: ThemeConfig,
+}
+
 pub struct WizardState {
     /// Startup config, never mutated: save base and `dirty()` baseline.
     initial_config: Config,
@@ -99,7 +110,7 @@ pub struct WizardState {
 
     /// Pending edits to the active theme's file (not `config.toml`); dropped
     /// when the theme changes.
-    pending_theme: Option<ThemeConfig>,
+    pending_theme: Option<ThemeEdits>,
 }
 
 impl WizardState {
@@ -236,7 +247,9 @@ impl WizardState {
 
     /// The active theme for reads: pending edits, else `base`.
     pub(crate) fn active_theme<'a>(&'a self, base: &'a ThemeConfig) -> &'a ThemeConfig {
-        self.pending_theme.as_ref().unwrap_or(base)
+        self.pending_theme
+            .as_ref()
+            .map_or(base, |edits| &edits.edited)
     }
 
     pub(crate) const fn focus(&self) -> Section {
@@ -283,19 +296,27 @@ impl WizardState {
         }
     }
 
-    /// Accumulate an edit to the active theme; the first edit clones `base`.
+    /// Accumulate an edit to the active theme; the first edit clones `base`
+    /// as both the seed and the theme being edited.
     pub(crate) fn patch_active_theme(
         &mut self,
         base: &ThemeConfig,
         patch: impl FnOnce(&mut ThemeConfig),
     ) {
-        let mut theme = self.pending_theme.take().unwrap_or_else(|| base.clone());
-        patch(&mut theme);
-        self.pending_theme = Some(theme);
+        let edits = self.pending_theme.get_or_insert_with(|| ThemeEdits {
+            seed: base.clone(),
+            edited: base.clone(),
+        });
+        patch(&mut edits.edited);
     }
 
     /// Active theme with pending edits, or `None` if unedited.
-    pub(crate) const fn pending_theme(&self) -> Option<&ThemeConfig> {
+    pub(crate) fn pending_theme(&self) -> Option<&ThemeConfig> {
+        self.pending_theme.as_ref().map(|edits| &edits.edited)
+    }
+
+    /// The pending edits with the theme they started from, or `None` if unedited.
+    pub(crate) const fn theme_edits(&self) -> Option<&ThemeEdits> {
         self.pending_theme.as_ref()
     }
 

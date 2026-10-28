@@ -171,8 +171,9 @@ fn cli_names_the_overlay_line_of_a_bad_key() {
             && output.contains(&format!("{}:4:1", path.display())),
         "names the key and the overlay line: {output}"
     );
+    // `mine` extends the env's user `starship` overlay, which extends the builtin.
     assert!(
-        output.contains("chain: mine (user) → starship (builtin)"),
+        output.contains("(chain: mine (user) → starship (user) → starship (builtin))"),
         "names the chain: {output}"
     );
 }

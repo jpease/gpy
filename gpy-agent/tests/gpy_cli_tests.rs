@@ -1295,16 +1295,22 @@ fn test_theme_new_creates_file() {
         "Should confirm theme created"
     );
     assert!(stdout.contains("test-theme"), "Should mention theme name");
+    assert!(
+        stdout.contains("Extends: default (user)"),
+        "Should name the base it used. Got: {stdout}"
+    );
 
     let theme_file = themes_dir.join("test-theme.toml");
     assert!(theme_file.exists(), "Theme file should be created");
 
     let content = fs::read_to_string(&theme_file).expect("Failed to read created theme file");
-    assert!(content.contains("[ui]"), "Theme should have [ui] section");
-    assert!(
-        content.contains("[segments"),
-        "Theme should have segments sections"
+    assert_eq!(
+        content, "extends = \"default\"\n",
+        "Without --from the new theme is an overlay of `default`"
     );
+    env.run_gpy(&["theme", "validate", "test-theme"])
+        .expect("Failed to run gpy theme validate")
+        .assert_success("gpy theme validate test-theme");
 }
 
 #[test]
@@ -1352,7 +1358,7 @@ fn test_plugin_new_twice_keeps_the_existing_scaffold() {
 }
 
 #[test]
-fn test_theme_new_from_clones_base_theme_contents() {
+fn test_theme_new_from_writes_an_overlay_of_the_base() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let themes_dir = env.themes_dir();
 
@@ -1361,27 +1367,14 @@ fn test_theme_new_from_clones_base_theme_contents() {
         .expect("Failed to run gpy theme new --from");
     output.assert_success("gpy theme new cloned-theme --from starship");
     assert!(
-        output.stdout.contains("cloned from 'starship'"),
-        "Should mention the clone source. Got: {}",
+        output.stdout.contains("Extends: starship (builtin)"),
+        "Should name the base. Got: {}",
         output.stdout
     );
 
     let cloned_content = fs::read_to_string(themes_dir.join("cloned-theme.toml"))
         .expect("Failed to read cloned theme file");
-
-    let starship_source = env
-        .run_gpy(&["theme", "new", "starship-reference"])
-        .expect("Failed to run gpy theme new");
-    starship_source.assert_success("gpy theme new starship-reference");
-    // `starship-reference` is a blank default-template theme, so instead
-    // compare against the embedded starship content indirectly: the clone
-    // must differ from the default template and must be valid on its own.
-    let default_content = fs::read_to_string(themes_dir.join("starship-reference.toml"))
-        .expect("Failed to read default-template theme file");
-    assert_ne!(
-        cloned_content, default_content,
-        "Cloning from 'starship' should not just copy the blank default template"
-    );
+    assert_eq!(cloned_content, "extends = \"starship\"\n");
 
     let validate_output = env
         .run_gpy(&["theme", "validate", "cloned-theme"])
@@ -1436,11 +1429,9 @@ fn test_theme_save_creates_new_named_theme_without_prompt() {
 
     let saved_content =
         fs::read_to_string(themes_dir.join("mynew.toml")).expect("Failed to read saved theme");
-    let active_content = fs::read_to_string(themes_dir.join("default.toml"))
-        .expect("Failed to read active default theme");
     assert_eq!(
-        saved_content, active_content,
-        "Saved theme should match the currently active theme's contents"
+        saved_content, "extends = \"default\"\n",
+        "Saved theme should be an overlay of the active theme"
     );
 
     let validate_output = env
@@ -1498,15 +1489,14 @@ fn test_theme_save_named_existing_theme_accepted_overwrites_file() {
     );
 
     let overwritten = fs::read_to_string(&target_path).expect("Failed to read theme file");
-    let active_content = fs::read_to_string(themes_dir.join("default.toml"))
-        .expect("Failed to read active default theme");
     assert_eq!(
-        overwritten, active_content,
-        "Accepting the overwrite prompt should replace the file with the active theme's contents"
+        overwritten, "extends = \"default\"\n",
+        "Accepting the overwrite prompt should replace the file with an overlay of the active theme"
     );
-    assert!(
-        !overwritten.contains("pre-existing custom marker"),
-        "Old marker content must be gone after overwrite"
+    assert_eq!(
+        fs::read_to_string(themes_dir.join("custom.toml.bak")).expect("Failed to read backup"),
+        marker_content,
+        "The overwritten file is kept as .bak"
     );
 }
 
@@ -1546,9 +1536,10 @@ enabled_segments = ["clock"]
         .run_gpy_with_stdin(&["theme", "save"], "y\n")
         .expect("Failed to run gpy theme save");
     accepted.assert_success("gpy theme save (no name, accepted)");
-    assert!(
-        target_path.exists(),
-        "Accepting should materialize the currently active theme"
+    assert_eq!(
+        fs::read_to_string(&target_path).expect("Failed to read saved theme"),
+        "extends = \"starship\"\n",
+        "Accepting should write a self-named overlay of the active builtin"
     );
     assert!(
         !accepted.stdout.contains("Activate with"),
@@ -2006,6 +1997,213 @@ fn test_theme_migrate_without_a_theme_file_is_an_error() {
         output.stderr.contains("No user theme file for 'starship'"),
         "{output:?}"
     );
+}
+
+// `gpy theme diff|reset|migrate` on overlays (ADR-0012).
+
+const OVERLAY_DIRECTORY_FORMAT: &str =
+    "extends = \"starship\"\n\n[segments.directory]\nformat = \"[OVL $path](bold cyan) \"\n";
+
+fn combined(output: &cli_harness::CliCommandResult) -> String {
+    format!("{}{}", output.stdout, output.stderr)
+}
+
+#[test]
+fn test_theme_diff_of_an_overlay_shows_only_the_changed_keys() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let path = write_theme_file(&env, "mine", OVERLAY_DIRECTORY_FORMAT);
+
+    let output = env
+        .run_gpy(&["theme", "diff", "mine"])
+        .expect("Failed to run gpy theme diff");
+
+    output.assert_success("gpy theme diff mine");
+    let stdout = output.stdout;
+    assert!(
+        stdout.contains("--- starship (builtin) (merged)")
+            && stdout.contains(&format!("+++ {} (merged)", path.display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\n+segments.directory.format = \"[OVL $path](bold cyan) \""),
+        "{stdout}"
+    );
+    let changes: Vec<&str> = stdout
+        .lines()
+        .filter(|line| {
+            (line.starts_with('+') || line.starts_with('-'))
+                && !line.starts_with("+++")
+                && !line.starts_with("---")
+        })
+        .collect();
+    assert!(!changes.is_empty(), "{stdout}");
+    assert!(
+        changes
+            .iter()
+            .all(|line| line.contains("segments.directory.format")),
+        "only the changed key may appear: {stdout}"
+    );
+}
+
+#[test]
+fn test_theme_reset_of_an_overlay_reports_what_the_name_resolves_to() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let mine = write_theme_file(&env, "mine", OVERLAY_DIRECTORY_FORMAT);
+    let starship = write_theme_file(&env, "starship", OVERLAY_DIRECTORY_FORMAT);
+
+    let first = env
+        .run_gpy(&["theme", "reset", "mine"])
+        .expect("Failed to run gpy theme reset");
+    first.assert_success("gpy theme reset mine");
+    assert!(
+        first.stdout.contains("No theme 'mine' remains"),
+        "{first:?}"
+    );
+    assert!(!mine.exists() && env.themes_dir().join("mine.toml.bak").is_file());
+
+    let second = env
+        .run_gpy(&["theme", "reset", "starship"])
+        .expect("Failed to run gpy theme reset");
+    second.assert_success("gpy theme reset starship");
+    assert!(
+        second
+            .stdout
+            .contains("The builtin theme 'starship' is in use again"),
+        "{second:?}"
+    );
+    assert!(!starship.exists());
+}
+
+#[test]
+fn test_theme_reset_refuses_a_file_in_the_active_chain() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.write_config("[ui]\ntheme = \"mine2\"\n")
+        .expect("Failed to write config");
+    let mine = write_theme_file(&env, "mine", OVERLAY_DIRECTORY_FORMAT);
+    write_theme_file(&env, "mine2", "extends = \"mine\"\n");
+
+    let output = env
+        .run_gpy(&["theme", "reset", "mine"])
+        .expect("Failed to run gpy theme reset");
+
+    assert_ne!(output.exit_code, 0_i32, "{output:?}");
+    let text = combined(&output);
+    assert!(
+        text.contains("active theme 'mine2' would not load") && text.contains("gpy theme use"),
+        "{text}"
+    );
+    assert_eq!(
+        fs::read_to_string(&mine).expect("the overlay stays in place"),
+        OVERLAY_DIRECTORY_FORMAT
+    );
+    assert!(!env.themes_dir().join("mine.toml.bak").exists());
+}
+
+#[test]
+fn test_theme_reset_moves_a_chain_file_when_the_active_theme_still_loads() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.write_config("[ui]\ntheme = \"starship\"\n")
+        .expect("Failed to write config");
+    let path = write_theme_file(&env, "starship", OVERLAY_DIRECTORY_FORMAT);
+
+    let output = env
+        .run_gpy(&["theme", "reset", "starship"])
+        .expect("Failed to run gpy theme reset");
+
+    output.assert_success("gpy theme reset starship");
+    assert!(!path.exists());
+    assert!(
+        output.stdout.contains("Agent not reloaded"),
+        "the file was in the active chain, so a reload is attempted: {output:?}"
+    );
+}
+
+#[test]
+fn test_theme_reset_does_not_refuse_when_the_active_theme_was_already_broken() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.write_config("[ui]\ntheme = \"broken\"\n")
+        .expect("Failed to write config");
+    write_theme_file(&env, "broken", "this is [not toml\n");
+    let mine = write_theme_file(&env, "mine", OVERLAY_DIRECTORY_FORMAT);
+
+    let output = env
+        .run_gpy(&["theme", "reset", "mine"])
+        .expect("Failed to run gpy theme reset");
+
+    output.assert_success("gpy theme reset mine");
+    assert!(!mine.exists());
+    assert!(
+        !output.stdout.contains("Agent not reloaded"),
+        "the moved file is outside the active theme's chain: {output:?}"
+    );
+}
+
+#[test]
+fn test_theme_reset_warns_when_other_overlays_extend_the_moved_one() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_theme_file(&env, "mine", OVERLAY_DIRECTORY_FORMAT);
+    write_theme_file(&env, "child", "extends = \"mine\"\n");
+
+    let output = env
+        .run_gpy(&["theme", "reset", "mine"])
+        .expect("Failed to run gpy theme reset");
+
+    output.assert_success("gpy theme reset mine");
+    let text = combined(&output);
+    assert!(text.contains("extend 'mine': child"), "{text}");
+}
+
+#[test]
+fn test_theme_migrate_rewrites_and_drops_unset_paths_of_an_overlay() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let path = write_theme_file(
+        &env,
+        "mine",
+        "extends = \"starship\"\nunset = [\"segments.hostname.icon\", \"segments.username.format\", \"segments.directory.format\"]\n",
+    );
+
+    let output = env
+        .run_gpy(&["theme", "migrate", "mine"])
+        .expect("Failed to run gpy theme migrate");
+
+    output.assert_success("gpy theme migrate mine");
+    let migrated: toml::Table =
+        toml::from_str(&fs::read_to_string(&path).expect("Failed to read migrated overlay"))
+            .expect("migrated overlay parses");
+    let unset: Vec<&str> = migrated
+        .get("unset")
+        .and_then(toml::Value::as_array)
+        .expect("unset is kept")
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect();
+    assert_eq!(
+        unset,
+        ["segments.hostname.ssh_icon", "segments.directory.format"]
+    );
+    assert!(
+        output.stdout.contains("renamed `segments.hostname.icon`")
+            && output.stdout.contains("dropped `segments.username.format`"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn test_theme_migrate_removes_an_unset_list_it_emptied() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let path = write_theme_file(
+        &env,
+        "mine",
+        "extends = \"starship\"\nunset = [\"segments.username.format\"]\n",
+    );
+
+    env.run_gpy(&["theme", "migrate", "mine"])
+        .expect("Failed to run gpy theme migrate")
+        .assert_success("gpy theme migrate mine");
+
+    let migrated = fs::read_to_string(&path).expect("Failed to read migrated overlay");
+    assert!(!migrated.contains("unset"), "{migrated}");
+    assert!(migrated.contains("extends = \"starship\""), "{migrated}");
 }
 
 #[test]

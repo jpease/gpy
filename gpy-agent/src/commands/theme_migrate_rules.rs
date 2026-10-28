@@ -112,15 +112,69 @@ pub struct Migration {
 }
 
 /// Apply every rule set to `theme`, rewriting it in place with its comments and
-/// layout intact.
+/// layout intact. An overlay's `unset` paths follow their keys: a renamed key's
+/// entry is renamed and the entry of a removed or moved key is dropped, because
+/// the old path would be ignored at load and the user's intent lost.
 pub fn apply(theme: &mut DocumentMut) -> Migration {
     let mut migration = Migration::default();
     for set in RULE_SETS {
         for rule in set.rules {
             apply_rule(theme, set.since, rule, &mut migration);
+            rewrite_unset(theme, set.since, rule, &mut migration);
         }
     }
     migration
+}
+
+/// What a rule does to the `unset` entry for `segments.<segment>.<key>`.
+fn rewrite_unset(theme: &mut DocumentMut, since: &str, rule: &Rule, out: &mut Migration) {
+    let (segment, from, to) = match *rule {
+        Rule::Drop { segment, key, .. } | Rule::MoveToConfig { segment, key, .. } => {
+            (segment, key, None)
+        }
+        Rule::Rename {
+            segment, from, to, ..
+        } => (segment, from, Some(to)),
+    };
+    let Some(entries) = theme.get_mut("unset").and_then(|item| item.as_array_mut()) else {
+        return;
+    };
+    let old_path = format!("segments.{segment}.{from}");
+    let new_path = to.map(|key| format!("segments.{segment}.{key}"));
+    let had_entries = !entries.is_empty();
+    let mut index = 0;
+    while index < entries.len() {
+        if entries.get(index).and_then(|entry| entry.as_str()) != Some(old_path.as_str()) {
+            index = index.saturating_add(1);
+            continue;
+        }
+        let target_present = new_path
+            .as_deref()
+            .is_some_and(|target| entries.iter().any(|entry| entry.as_str() == Some(target)));
+        match &new_path {
+            Some(target) if !target_present => {
+                let old_decor = entries.get(index).map(|entry| entry.decor().clone());
+                let mut value = toml_edit::Value::from(target.as_str());
+                if let Some(kept) = old_decor {
+                    *value.decor_mut() = kept;
+                }
+                entries.replace(index, value);
+                out.notes.push(format!(
+                    "{since}: renamed `{old_path}` to `{target}` in `unset`"
+                ));
+                index = index.saturating_add(1);
+            }
+            _ => {
+                entries.remove(index);
+                out.notes.push(format!(
+                    "{since}: dropped `{old_path}` from `unset` (the key no longer exists)"
+                ));
+            }
+        }
+    }
+    if had_entries && entries.is_empty() {
+        theme.remove("unset");
+    }
 }
 
 fn apply_rule(theme: &mut DocumentMut, since: &'static str, rule: &Rule, out: &mut Migration) {
@@ -303,5 +357,16 @@ mod tests {
         assert!(!rewritten.contains("format"), "{rewritten}");
         assert!(rewritten.contains("text_color"), "{rewritten}");
         assert_eq!(migration.notes.len(), 1);
+    }
+
+    #[test]
+    fn unset_paths_follow_renamed_and_removed_keys() {
+        let (rewritten, _) = migrate(
+            "extends = \"starship\"\nunset = [\"segments.hostname.icon\", \"segments.hostname.show_always\", \"segments.clock.format\"]\n",
+        );
+        assert_eq!(
+            rewritten,
+            "extends = \"starship\"\nunset = [\"segments.hostname.ssh_icon\", \"segments.clock.format\"]\n"
+        );
     }
 }

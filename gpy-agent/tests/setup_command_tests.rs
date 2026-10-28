@@ -384,6 +384,85 @@ fn setup_keeps_unedited_theme_copies_when_retirement_is_off() {
     assert!(!themes.join("starship.toml.bak").exists());
 }
 
+/// A wizard-style overlay of a builtin, with a stale key that fails to load.
+const BROKEN_OVERLAY: &str = "extends = \"starship\"\n\n[segments.username]\nformat = \"$user\"\n";
+
+/// `setup` keeps an overlay of a builtin but lists it apart from a full copy.
+#[test]
+fn setup_lists_kept_overlays_apart_from_full_copies() {
+    let home = TempDir::new().unwrap();
+    let themes = themes_dir(home.path());
+    fs::write(
+        themes.join("starship.toml"),
+        "extends = \"starship\"\n\n[segments.clock]\ntime_format = \"24\"\n",
+    )
+    .unwrap();
+    let mut edited = current_builtin("default");
+    edited.extend_from_slice(b"# mine\n");
+    fs::write(themes.join("default.toml"), &edited).unwrap();
+
+    let output = setup(home.path(), &["--shell", "zsh"]);
+    assert_ok(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let full_line = stdout
+        .lines()
+        .find(|line| line.starts_with("Kept your theme files that override builtins"))
+        .unwrap_or_else(|| panic!("full copies are listed: {stdout}"));
+    let overlay_line = stdout
+        .lines()
+        .find(|line| line.starts_with("Kept your theme overlays of builtins"))
+        .unwrap_or_else(|| panic!("overlays are listed: {stdout}"));
+    assert!(
+        full_line.contains("default.toml") && !full_line.contains("starship.toml"),
+        "{full_line}"
+    );
+    assert!(
+        overlay_line.contains("starship.toml") && !overlay_line.contains("default.toml"),
+        "{overlay_line}"
+    );
+    assert!(themes.join("starship.toml").exists());
+}
+
+/// Doctor lists overlays apart from full copies, suggests `rebase` only for a
+/// full copy, and gives a failing self-named overlay its chain error, not the
+/// "older GPY" fork hint.
+#[test]
+fn doctor_separates_overlays_from_full_copies_and_never_calls_an_overlay_a_fork() {
+    let home = TempDir::new().unwrap();
+    let themes = themes_dir(home.path());
+    fs::write(
+        home.path().join(".config/gpy/config.toml"),
+        "[ui]\ntheme = \"text\"\n",
+    )
+    .unwrap();
+    fs::write(themes.join("starship.toml"), BROKEN_OVERLAY).unwrap();
+    let mut edited = current_builtin("default");
+    edited.extend_from_slice(b"# mine\n");
+    fs::write(themes.join("default.toml"), &edited).unwrap();
+
+    let report = doctor(home.path());
+
+    let overlays = report.find("Overlays (").expect("overlay heading");
+    let copies = report.find("Full copies (").expect("full copy heading");
+    let starship = report
+        .find("Checking override 'starship'")
+        .expect("starship");
+    let default = report.find("Checking override 'default'").expect("default");
+    assert!(
+        overlays < starship && starship < copies && copies < default,
+        "{report}"
+    );
+    assert!(report.contains("gpy theme rebase default"), "{report}");
+    assert!(!report.contains("gpy theme rebase starship"), "{report}");
+    assert!(
+        report.contains("segments.username.format") && report.contains("chain:"),
+        "the overlay's chain error is reported: {report}"
+    );
+    let overlay_section = &report[starship..copies];
+    assert!(!overlay_section.contains("older GPY"), "{overlay_section}");
+}
+
 fn doctor(home: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .arg("doctor")

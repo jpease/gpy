@@ -1,6 +1,8 @@
-//! Persists the wizard's selection via the shared config load/validate/save path.
+//! Persists the wizard's selection via the shared config load/validate/save
+//! path, and its theme edits as an overlay (see [`theme_file`](super::theme_file)).
 
 use super::state::WizardState;
+use super::theme_file::{ThemeWrite, save_theme};
 use crate::Result;
 use crate::commands::palette;
 use crate::commands::theme;
@@ -30,19 +32,31 @@ pub fn save_to(state: &WizardState, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Persist the selection to the active config path and return that path.
+/// What [`save`] wrote.
+#[derive(Debug)]
+pub struct Saved {
+    /// The config file.
+    pub config: PathBuf,
+    /// The theme file the edits went to; `None` when no edit changed a value.
+    pub theme: Option<ThemeWrite>,
+}
+
+/// Persist the theme edits, then the selection to the active config path.
+/// The theme file is written first, so the config is validated against it.
 ///
 /// # Errors
 ///
-/// Returns an error if the path cannot be resolved or [`save_to`] fails.
-pub fn save(state: &WizardState) -> Result<PathBuf> {
-    let path = active_config_path()?;
-    save_to(state, &path)?;
-    // Theme field edits go to a user copy of the theme file, never the builtin.
-    if let Some(theme) = state.pending_theme() {
-        crate::theme::ThemeManager::save_user_theme(state.selected_theme(), theme)?;
-    }
-    Ok(path)
+/// Returns an error if the theme edits can't be written, the path cannot be
+/// resolved, or [`save_to`] fails.
+pub fn save(state: &WizardState) -> Result<Saved> {
+    // Theme field edits go to a user file of the theme, never the builtin.
+    let theme = match state.theme_edits() {
+        Some(edits) => save_theme(state.selected_theme(), edits)?,
+        None => None,
+    };
+    let config = active_config_path()?;
+    save_to(state, &config)?;
+    Ok(Saved { config, theme })
 }
 
 #[cfg(test)]

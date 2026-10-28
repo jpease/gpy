@@ -1,5 +1,5 @@
-//! Shared hot-reload machinery for managers that watch a single TOML file:
-//! OS notifications plus an optional polling fallback.
+//! Shared hot-reload machinery for managers that watch TOML files (the config
+//! file, a theme's chain): OS notifications plus an optional polling fallback.
 
 use crate::Result;
 use crate::env_config::env_u64_positive;
@@ -50,22 +50,38 @@ pub fn bytes_fingerprint(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// Resolves the file the poll loop should check on this tick.
-pub type PathSource = Box<dyn Fn() -> Option<PathBuf> + Send>;
+/// A fingerprint of `paths` together: each path and its contents, in order, so
+/// a change to any file or to the list is a change. `None` when no listed file
+/// is readable.
+fn paths_fingerprint(paths: &[PathBuf]) -> Option<u64> {
+    use std::hash::{Hash as _, Hasher as _};
 
-/// Applies a change the poll loop detected in that file.
-pub type ReloadAction = Box<dyn Fn(&Path) + Send>;
+    let contents: Vec<Option<u64>> = paths.iter().map(|path| content_fingerprint(path)).collect();
+    if contents.iter().all(Option::is_none) {
+        return None;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    paths.hash(&mut hasher);
+    contents.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// Resolves the files the poll loop should check together on this tick.
+pub type PathSource = Box<dyn Fn() -> Vec<PathBuf> + Send>;
+
+/// Applies a change the poll loop detected in those files.
+pub type ReloadAction = Box<dyn Fn() + Send>;
 
 /// The two manager-specific halves of a poll loop.
 pub struct PollTarget {
-    /// Which file to check; consulted every tick because the path can be
-    /// repointed at runtime. `None` ends the loop.
+    /// Which files to check, fingerprinted together; consulted every tick
+    /// because the list can change at runtime. An empty list ends the loop.
     pub path_of: PathSource,
-    /// Applied when that file's contents change.
+    /// Applied when the fingerprint of those files changes.
     pub reload: ReloadAction,
 }
 
-/// The file watcher and poll-fallback thread backing one hot-reloaded file.
+/// The file watcher and poll-fallback thread backing one hot-reloaded source.
 pub struct HotReloadSlot {
     /// OS-level file watcher, when watching.
     watcher: Arc<Mutex<Option<WatchCoordinator>>>,
@@ -73,7 +89,7 @@ pub struct HotReloadSlot {
     poll_stop: Arc<AtomicBool>,
     /// Handle for the poll-fallback thread, if running.
     poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    /// Whether a vanished polled file triggers the reload.
+    /// Whether vanished polled files trigger the reload.
     reload_on_missing: bool,
 }
 
@@ -94,7 +110,7 @@ impl HotReloadSlot {
         }
     }
 
-    /// Also reload when the polled file is gone for two consecutive ticks
+    /// Also reload when every polled file is gone for two consecutive ticks
     /// (for managers that map "no file" to defaults).
     #[must_use]
     pub const fn reloading_on_missing(mut self) -> Self {
@@ -170,7 +186,7 @@ impl HotReloadSlot {
 
         // Capture the baseline before spawning: a lazy read on the thread would
         // race a write landing before its first tick and miss it forever.
-        let initial_fingerprint = path_of().as_deref().and_then(content_fingerprint);
+        let initial_fingerprint = paths_fingerprint(&path_of());
 
         let reload_on_missing = self.reload_on_missing;
         let handle = std::thread::spawn(move || {
@@ -179,24 +195,25 @@ impl HotReloadSlot {
             // an atomic-rename save briefly leaves no file.
             let mut missing_once = false;
             while !stop_flag.load(Ordering::Relaxed) {
-                let Some(path) = path_of() else {
+                let paths = path_of();
+                if paths.is_empty() {
                     break;
-                };
+                }
 
-                match content_fingerprint(&path) {
+                match paths_fingerprint(&paths) {
                     Some(fingerprint) => {
                         missing_once = false;
                         let changed = last_fingerprint != Some(fingerprint);
                         if changed {
                             last_fingerprint = Some(fingerprint);
-                            reload(&path);
+                            reload();
                         }
                     }
                     None if reload_on_missing && last_fingerprint.is_some() => {
                         if missing_once {
                             missing_once = false;
                             last_fingerprint = None;
-                            reload(&path);
+                            reload();
                         } else {
                             missing_once = true;
                         }
@@ -237,7 +254,7 @@ impl HotReloadSlot {
 #[cfg(test)]
 mod tests {
 
-    use super::{HotReloadSlot, PollTarget, content_fingerprint};
+    use super::{HotReloadSlot, PollTarget, content_fingerprint, paths_fingerprint};
     use crate::sync_ext::MutexExt;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -253,14 +270,15 @@ mod tests {
         let reloads = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&reloads);
         let watched = file.clone();
+        let read_back = file.clone();
         let slot = HotReloadSlot::new();
         slot.spawn_poll_thread(
             Duration::from_millis(10),
             Duration::from_millis(10),
             PollTarget {
-                path_of: Box::new(move || Some(watched.clone())),
-                reload: Box::new(move |path| {
-                    let content = std::fs::read_to_string(path).unwrap_or_default();
+                path_of: Box::new(move || vec![watched.clone()]),
+                reload: Box::new(move || {
+                    let content = std::fs::read_to_string(&read_back).unwrap_or_default();
                     recorded.lock_or_recover().push(content);
                 }),
             },
@@ -325,6 +343,40 @@ mod tests {
         );
     }
 
+    /// A list is fingerprinted together: an edit to any listed file, or a
+    /// different list, is a change, and it is missing only when no listed
+    /// file is readable.
+    #[test]
+    fn paths_fingerprint_covers_every_listed_file_and_the_list() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let overlay = temp.path().join("overlay.toml");
+        let base = temp.path().join("base.toml");
+        let absent = temp.path().join("absent.toml");
+        std::fs::write(&overlay, "extends = \"base\"\n").expect("write overlay");
+        std::fs::write(&base, "a = 1\n").expect("write base");
+
+        let chain = [overlay.clone(), base.clone()];
+        let before = paths_fingerprint(&chain);
+        assert!(before.is_some(), "readable files must fingerprint");
+        std::fs::write(&base, "a = 2\n").expect("rewrite base");
+        let after = paths_fingerprint(&chain);
+        assert_ne!(before, after, "an edit to a later file is a change");
+        assert_ne!(
+            after,
+            paths_fingerprint(std::slice::from_ref(&overlay)),
+            "a shorter list is a change"
+        );
+        assert!(
+            paths_fingerprint(&[overlay, absent.clone()]).is_some(),
+            "one readable file is not missing"
+        );
+        assert_eq!(
+            paths_fingerprint(&[absent]),
+            None,
+            "no readable file is missing"
+        );
+    }
+
     /// `stop()` must wake the poll thread promptly, not sleep out its interval.
     #[test]
     fn stop_does_not_wait_for_full_poll_interval() {
@@ -337,8 +389,8 @@ mod tests {
             Duration::from_secs(5),
             Duration::from_secs(5),
             PollTarget {
-                path_of: Box::new(move || Some(file.clone())),
-                reload: Box::new(|_| {}),
+                path_of: Box::new(move || vec![file.clone()]),
+                reload: Box::new(|| {}),
             },
         );
         // Let the thread finish its first tick and enter its sleep.

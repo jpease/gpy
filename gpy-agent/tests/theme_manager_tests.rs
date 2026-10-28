@@ -1119,141 +1119,6 @@ fn switch_theme_reuses_the_registry_it_was_started_with() {
     manager.stop_watching();
 }
 
-/// Round-trip: editing a single theme field via `save_user_theme`,
-/// then reloading through `ThemeManager::new`, changes only that field and
-/// carries every other field through untouched.
-#[test]
-#[serial]
-fn save_user_theme_round_trip_changes_only_intended_field() {
-    let temp_dir = TempDir::new().unwrap();
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    // Deterministic base: the embedded builtin `default`, independent of any
-    // theme file the developer's machine might have installed.
-    let base = (*ThemeManager::builtin("default").unwrap().get()).clone();
-
-    // The one intended edit, applied to a clone of the base.
-    let mut edited = base.clone();
-    edited.segments.clock.time_format = Some("24".to_owned());
-    edited.segments.clock.show_seconds = Some(true);
-
-    let written_path = ThemeManager::save_user_theme("default", &edited).unwrap();
-    assert_eq!(
-        written_path,
-        temp_dir
-            .path()
-            .join("gpy")
-            .join("themes")
-            .join("default.toml"),
-        "must write to the user themes directory"
-    );
-    assert!(written_path.exists(), "the user theme file should exist");
-
-    // Reload through the real resolution path — the freshly-written user copy
-    // now shadows the builtin.
-    let reloaded = ThemeManager::new("default").unwrap().get();
-
-    // The intended field changed.
-    assert_eq!(reloaded.segments.clock.time_format.as_deref(), Some("24"));
-    assert_eq!(reloaded.segments.clock.show_seconds, Some(true));
-
-    // Nothing else did. Comparing as `toml::Value` (a sorted map) makes the
-    // check order-independent for the theme's `HashMap` fields
-    // (`language.overrides`, `git_style`, plugin tables), which serialize in
-    // nondeterministic order.
-    let reloaded_val = toml::Value::try_from(&*reloaded).unwrap();
-    let expected_val = toml::Value::try_from(&edited).unwrap();
-    assert_eq!(
-        reloaded_val, expected_val,
-        "only the intended field(s) should differ from the base"
-    );
-
-    let base_val = toml::Value::try_from(&base).unwrap();
-    assert_ne!(
-        reloaded_val, base_val,
-        "the edit must actually change the theme relative to the base"
-    );
-}
-
-/// `save_user_theme` only ever materializes a copy under the user
-/// themes directory — the written theme is discovered as a `User` source,
-/// shadowing (never replacing) the builtin.
-#[test]
-#[serial]
-fn save_user_theme_materializes_a_user_source_copy() {
-    let temp_dir = TempDir::new().unwrap();
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    // Before writing, `default` resolves to the builtin.
-    let before = ThemeManager::discover_available_themes()
-        .into_iter()
-        .find(|theme| theme.name == "default")
-        .expect("default is always discoverable");
-    assert_eq!(before.source, ThemeSource::Builtin);
-
-    let theme = (*ThemeManager::builtin("default").unwrap().get()).clone();
-    ThemeManager::save_user_theme("default", &theme).unwrap();
-
-    // After writing, `default` resolves to the user copy under XDG.
-    let after = ThemeManager::discover_available_themes()
-        .into_iter()
-        .find(|entry| entry.name == "default")
-        .expect("default still discoverable");
-    assert_eq!(after.source, ThemeSource::User);
-    assert_eq!(
-        after.path,
-        Some(
-            temp_dir
-                .path()
-                .join("gpy")
-                .join("themes")
-                .join("default.toml")
-        )
-    );
-}
-
-/// `save_user_theme` rejects an unsafe theme name before touching the
-/// filesystem — no path-traversal write escapes the user themes directory.
-#[test]
-#[serial]
-fn save_user_theme_rejects_unsafe_name() {
-    let temp_dir = TempDir::new().unwrap();
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    let theme = (*ThemeManager::builtin("default").unwrap().get()).clone();
-    let result = ThemeManager::save_user_theme("../escape", &theme);
-    assert!(result.is_err(), "unsafe theme name must be rejected");
-}
-
-/// A theme file managed as a symlink (dotfiles) stays a symlink across a
-/// wizard save, and the link's target receives the new content.
-#[test]
-#[serial]
-#[cfg(unix)]
-fn save_user_theme_writes_through_a_symlinked_theme_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    let dotfiles = temp_dir.path().join("dotfiles");
-    fs::create_dir_all(&dotfiles).unwrap();
-    let target = dotfiles.join("mine.toml");
-    fs::write(&target, "# linked\n").unwrap();
-    let themes_dir = temp_dir.path().join("gpy").join("themes");
-    fs::create_dir_all(&themes_dir).unwrap();
-    let link = themes_dir.join("mine.toml");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-
-    let theme = (*ThemeManager::builtin("default").unwrap().get()).clone();
-    ThemeManager::save_user_theme("mine", &theme).unwrap();
-
-    assert!(
-        link.symlink_metadata().unwrap().file_type().is_symlink(),
-        "the theme symlink must survive the save"
-    );
-    let written = fs::read_to_string(&target).unwrap();
-    assert!(written.starts_with("# GPY Theme: mine"), "{written}");
-}
-
 /// Extract the value assigned to `var` in a Fish theme export, e.g.
 /// `set -g __color_clock_bg "blue"` -> `Some("blue")`.
 fn exported_value(output: &str, var: &str) -> Option<String> {
@@ -1415,27 +1280,6 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
     );
 }
 
-/// The builtin's raw source comes back verbatim. Runs with an empty
-/// config root so an installed `~/.config/gpy/themes/default.toml` cannot
-/// shadow the builtin.
-#[test]
-#[serial]
-fn theme_source_content_returns_raw_builtin_content() {
-    let temp_dir = TempDir::new().unwrap();
-
-    let mut env = EnvGuard::default();
-    env.set("XDG_CONFIG_HOME", temp_dir.path());
-    env.remove("GPY_BUNDLED_PLUGIN_DIR");
-
-    let content = ThemeManager::theme_source_content("default");
-
-    assert_eq!(
-        content.expect("builtin default theme content should resolve"),
-        gpy_agent::config::defaults::DEFAULT_THEME_CONTENT,
-        "should return the exact embedded builtin content, not a re-serialized copy"
-    );
-}
-
 /// The reload hook's step swaps outside the state lock, so the hook may read
 /// the manager after it (a hook under the lock would deadlock here).
 #[test]
@@ -1484,22 +1328,30 @@ fn icon_theme(icon: &str) -> String {
     format!("[ui]\nprompt_icon = \"{icon}\"\n\n[segments]\n")
 }
 
-/// Install plugin `acme` providing theme `community`; returns the user
-/// override path that outranks it.
-fn install_plugin_theme(config_home: &Path) -> PathBuf {
+/// Install plugin `acme` providing theme `name` with `content`; returns the
+/// plugin's directory. The manifest is written last, so a poll never sees
+/// the plugin without its theme.
+fn install_acme_theme(config_home: &Path, name: &str, content: &str) -> PathBuf {
     let plugin_dir = config_home.join("gpy").join("plugins").join("acme");
     fs::create_dir_all(plugin_dir.join("themes")).unwrap();
+    fs::write(
+        plugin_dir.join("themes").join(format!("{name}.toml")),
+        content,
+    )
+    .unwrap();
     fs::write(
         plugin_dir.join("plugin.toml"),
         "id = \"acme\"\nname = \"Acme\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
          entry_type = \"file\"\nprovided_segments = [\"acme_seg\"]\n",
     )
     .unwrap();
-    fs::write(
-        plugin_dir.join("themes").join("community.toml"),
-        icon_theme("P"),
-    )
-    .unwrap();
+    plugin_dir
+}
+
+/// Install plugin `acme` providing theme `community`; returns the user
+/// override path that outranks it.
+fn install_plugin_theme(config_home: &Path) -> PathBuf {
+    install_acme_theme(config_home, "community", &icon_theme("P"));
     let user_themes = config_home.join("gpy").join("themes");
     fs::create_dir_all(&user_themes).unwrap();
     user_themes.join("community.toml")
@@ -1636,4 +1488,147 @@ fn watcher_follows_a_user_override_above_a_plugin_theme() {
         "edits to the plugin theme must reload after the fallback"
     );
     manager.stop_watching();
+}
+
+/// An overlay of `base` that sets only the root prompt icon.
+fn overlay_theme(base: &str, root_icon: &str) -> String {
+    format!("extends = \"{base}\"\n\n[ui]\nroot_prompt_icon = \"{root_icon}\"\n")
+}
+
+fn root_prompt_icon(manager: &ThemeManager) -> String {
+    manager.get().ui.root_prompt_icon.to_string()
+}
+
+/// A user overlay of a plugin theme: the watcher follows edits to the plugin
+/// base, whose `themes/` directory joins the watches, and to the overlay.
+#[test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn watcher_reloads_edits_to_an_overlay_and_its_plugin_base() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let user_override = install_plugin_theme(temp_dir.path());
+    let overlay_path = user_override.with_file_name("mine.toml");
+    let base_path = temp_dir
+        .path()
+        .join("gpy/plugins/acme/themes/community.toml");
+    fs::write(&overlay_path, overlay_theme("community", "1")).unwrap();
+
+    let manager = ThemeManager::new("mine").unwrap();
+    assert_eq!(
+        manager.chain_for_test().to_string(),
+        "mine (user) → community (plugin:acme)"
+    );
+    assert_eq!(prompt_icon(&manager), "P");
+    assert_eq!(root_prompt_icon(&manager), "1");
+    manager.start_watching(Duration::from_millis(50)).unwrap();
+
+    // A watch has no "armed" signal: re-apply each idempotent edit until seen.
+    let base_edited = wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+        fs::write(&base_path, icon_theme("Q")).unwrap();
+        prompt_icon(&manager) == "Q"
+    });
+    let overlay_edited = wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+        fs::write(&overlay_path, overlay_theme("community", "2")).unwrap();
+        root_prompt_icon(&manager) == "2"
+    });
+    manager.stop_watching();
+    assert!(base_edited, "an edit to the plugin base must reload");
+    assert!(overlay_edited, "an edit to the overlay must reload");
+    assert_eq!(
+        prompt_icon(&manager),
+        "Q",
+        "the overlay is still merged over the edited base"
+    );
+}
+
+/// An overlay created over the active builtin switches the source to the
+/// chain `default (user) → default (builtin)`, inherits the builtin's other
+/// keys, and reloads on its own later edits.
+#[test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn an_overlay_appearing_over_the_active_builtin_switches_the_source() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let user_themes = temp_dir.path().join("gpy").join("themes");
+    fs::create_dir_all(&user_themes).unwrap();
+    let overlay_path = user_themes.join("default.toml");
+
+    let manager = ThemeManager::new("default").unwrap();
+    let builtin_icon = prompt_icon(&manager);
+    assert_eq!(manager.chain_for_test().to_string(), "default (builtin)");
+    manager.start_watching(Duration::from_millis(50)).unwrap();
+
+    let appeared = wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+        fs::write(&overlay_path, overlay_theme("default", "1")).unwrap();
+        root_prompt_icon(&manager) == "1"
+    });
+    let switched_chain = manager.chain_for_test().to_string();
+    let edited = wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+        fs::write(&overlay_path, overlay_theme("default", "2")).unwrap();
+        root_prompt_icon(&manager) == "2"
+    });
+    manager.stop_watching();
+    assert!(appeared, "an overlay over the active builtin must reload");
+    assert_eq!(switched_chain, "default (user) → default (builtin)");
+    assert_eq!(
+        prompt_icon(&manager),
+        builtin_icon,
+        "the overlay inherits the builtin's other keys"
+    );
+    assert!(edited, "an edit to the new overlay must reload");
+}
+
+/// A plugin providing a self-named overlay's base moves the base from the
+/// builtin to the plugin, and back when the plugin goes. The plugin's
+/// directory is not watched before it appears, so the poll fallback, which
+/// re-resolves the chain on every tick, must see it.
+#[test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn a_plugin_providing_a_self_named_base_appearing_and_disappearing_reloads() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let user_themes = temp_dir.path().join("gpy").join("themes");
+    fs::create_dir_all(&user_themes).unwrap();
+    fs::write(
+        user_themes.join("default.toml"),
+        overlay_theme("default", "1"),
+    )
+    .unwrap();
+
+    let manager = ThemeManager::new("default").unwrap();
+    let builtin_icon = prompt_icon(&manager);
+    assert_eq!(
+        manager.chain_for_test().to_string(),
+        "default (user) → default (builtin)"
+    );
+    env.set("GPY_THEME_WATCH_POLL_MS", "25");
+    manager.start_watching(Duration::from_millis(50)).unwrap();
+
+    let plugin_dir = install_acme_theme(temp_dir.path(), "default", &icon_theme("P"));
+    let installed = wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+        prompt_icon(&manager) == "P"
+    });
+    let installed_chain = manager.chain_for_test().to_string();
+    // Uninstall by removing its files, not its watched directories, which a
+    // Windows watch can keep from being deleted.
+    fs::remove_file(plugin_dir.join("themes").join("default.toml")).unwrap();
+    fs::remove_file(plugin_dir.join("plugin.toml")).unwrap();
+    let removed = wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+        prompt_icon(&manager) == builtin_icon
+    });
+    let removed_chain = manager.chain_for_test().to_string();
+    manager.stop_watching();
+
+    assert!(installed, "a plugin providing the base must reload");
+    assert_eq!(installed_chain, "default (user) → default (plugin:acme)");
+    assert!(removed, "removing the plugin must fall back to the builtin");
+    assert_eq!(removed_chain, "default (user) → default (builtin)");
+    assert_eq!(
+        root_prompt_icon(&manager),
+        "1",
+        "the overlay is merged over every base"
+    );
 }

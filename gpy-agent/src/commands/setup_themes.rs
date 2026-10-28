@@ -5,6 +5,7 @@ use crate::commands::output;
 use crate::commands::utils::read_config;
 use crate::theme::ThemeManager;
 use crate::theme::retire::{Outcome, retire_unmodified_copies};
+use crate::theme::user_copy;
 
 /// Retire unedited copies of builtin themes and report what moved; copies
 /// that stay get one quiet line. Never fails: the shell integration is
@@ -22,6 +23,7 @@ pub(crate) fn retire_unmodified_themes() {
     }
     let themes_dir = ThemeManager::user_themes_dir();
     let mut kept = Vec::new();
+    let mut overlays = Vec::new();
     for copy in retire_unmodified_copies(&themes_dir) {
         match copy.outcome {
             Outcome::Retired(backup) => println!(
@@ -33,6 +35,9 @@ pub(crate) fn retire_unmodified_themes() {
                     .unwrap_or(backup.as_os_str())
                     .to_string_lossy()
             ),
+            Outcome::Modified if user_copy::is_overlay_file(&copy.path) => {
+                overlays.push(format!("{}.toml", copy.name));
+            }
             Outcome::Modified => kept.push(format!("{}.toml", copy.name)),
             Outcome::Symlink => kept.push(format!("{}.toml (symlink)", copy.name)),
             Outcome::Failed(err) => output::warn(format_args!(
@@ -47,6 +52,13 @@ pub(crate) fn retire_unmodified_themes() {
             "Kept your theme files that override builtins in {}: {}",
             themes_dir.display(),
             kept.join(", ")
+        );
+    }
+    if !overlays.is_empty() {
+        println!(
+            "Kept your theme overlays of builtins in {}: {}",
+            themes_dir.display(),
+            overlays.join(", ")
         );
     }
 }

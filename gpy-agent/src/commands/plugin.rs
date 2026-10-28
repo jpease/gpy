@@ -534,8 +534,10 @@ pub fn validate(path_or_id: &str) -> Result<()> {
         let (manifest, root, segments) = load_manifest_from_path(path)?;
         let checks = check_scripts(&root, &segments);
         ensure_lints_pass(&checks)?;
+        let themes = super::plugin_themes::validate_plugin_themes(&root)?;
         print_manifest_validation(&manifest, &root, &segments);
         print_script_checks(&checks);
+        super::plugin_themes::print_plugin_themes(&themes);
         return Ok(());
     }
 
@@ -549,8 +551,10 @@ pub fn validate(path_or_id: &str) -> Result<()> {
             let segments = validate_plugin_root(root, &plugin.manifest)?;
             let checks = check_scripts(root, &segments);
             ensure_lints_pass(&checks)?;
+            let themes = super::plugin_themes::validate_plugin_themes(root)?;
             print_discovered_plugin_validation(plugin, root);
             print_script_checks(&checks);
+            super::plugin_themes::print_plugin_themes(&themes);
         } else {
             validate_first_party_metadata(&plugin.manifest)?;
             print_first_party_validation(plugin);

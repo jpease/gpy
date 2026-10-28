@@ -23,12 +23,13 @@ gpy status                   # Show agent status
 gpy theme list               # List available themes
 gpy theme use <name>         # Switch to a theme
 gpy theme show               # Show current theme
-gpy theme new <name> [--from <base>]  # Create new theme, optionally cloning <base>
-gpy theme save [name]        # Save the active theme's contents to a theme file
+gpy theme new <name> [--from <base>] [--full]  # Create a theme that extends <base> (default: default)
+gpy theme save [name] [--full]  # Save the active theme as a theme file that extends it
 gpy theme validate [target]  # Validate active theme, name, or file path
 gpy theme diff <name>        # Compare your copy of a builtin theme with the builtin
 gpy theme reset <name>       # Move your copy of a builtin theme to .bak
 gpy theme migrate <name>     # Rewrite keys removed by breaking changes (backs up first)
+gpy theme rebase <name> [--onto <base>] [--write] [--unset-missing]  # Turn a modified full copy into an overlay
 
 # Palette management
 gpy palette list                 # List available palettes
@@ -228,6 +229,9 @@ Available Themes:
 
 The `*` marker indicates the currently active theme. `[builtin]`/`[user]`/`[plugin:<id>]` shows the theme's source.
 
+An overlay (a user theme with `extends`) also shows its base, e.g.
+`starship [user, extends builtin starship]`.
+
 ---
 
 #### `gpy theme use <name>`
@@ -316,62 +320,89 @@ default
 
 ---
 
-#### `gpy theme new <name> [--from <base>]`
+#### `gpy theme new <name> [--from <base>] [--full]`
 
-Create a new theme based on the default theme template, or by cloning an existing theme.
+Create a new theme as an overlay of an existing theme: a file that holds `extends = "<base>"` and, once you edit it, only the keys you change. Everything else comes from the base, including its later updates.
 
 Destination names must satisfy the safe configuration name invariant: non-empty,
 non-whitespace, containing no path separators (`/`, `\`), `..`, or control characters.
 An invalid destination name is rejected before creating files or directories.
 
-Creates a new theme file in `~/.config/gpy/themes/<name>.toml`. Without `--from`, it copies the default theme. With `--from <base>`, it copies the full contents of `<base>` (a builtin, user, or plugin theme name) instead. You can then edit the file to customize colors, icons, and other visual elements.
+Creates `~/.config/gpy/themes/<name>.toml`. Without `--from`, the base is `default`, resolved like `gpy theme use default`, so a user `default.toml` is picked up if you have one. With `--from <base>`, the base is that theme (a builtin, user, or plugin theme name). The new file is loaded before it is written; if it would not load (an unknown base, an `extends` cycle), nothing is written. The output names the base it resolved to and, when the base is a plugin theme, the plugin the new theme depends on: removing or disabling that plugin leaves the theme unable to load.
+
+With `--full`, the file is a full, independent copy of the base instead: the base's file verbatim (comments kept) when the base is a full theme, or the merged result when the base is itself an overlay. A full copy no longer receives changes to its base.
 
 **Arguments:**
 - `<name>` - New theme name (non-empty safe config name)
 
 **Options:**
-- `--from <base>` - Clone an existing theme's full contents instead of the default template
+- `--from <base>` - Theme the new theme extends (default: `default`)
+- `--full` - Write a full, independent copy of the base instead of an overlay
 
 **Example:**
 ```bash
 gpy theme new mytheme
 
-# Start from the starship preset instead of the default template
+# Build on the starship preset instead of the default theme
 gpy theme new mytheme --from starship
+
+# A frozen copy of the starship preset, independent of later releases
+gpy theme new mytheme --from starship --full
 ```
 
 **Output:**
 ```
 Created new theme: /home/user/.config/gpy/themes/mytheme.toml
+Extends: starship (builtin)
 Edit: /home/user/.config/gpy/themes/mytheme.toml
 Activate with: gpy theme use mytheme
 ```
 
+`~/.config/gpy/themes/mytheme.toml`:
+```toml
+extends = "starship"
+```
+
 ---
 
-#### `gpy theme save [name]`
+#### `gpy theme save [name] [--full]`
 
-Save the currently active theme's contents to a theme file.
+Save the active theme as a theme file that extends it.
 
-With `<name>`, saves to `~/.config/gpy/themes/<name>.toml`: created without prompting if no theme by that name exists yet, or overwritten after a `[y/N]` confirmation if it does. Without `<name>`, saves over the currently active theme's own name — this always prompts `[y/N]` first, since it always means overwriting "the theme in use", even if that theme is still a builtin with no file on disk yet.
+With `<name>`, writes `~/.config/gpy/themes/<name>.toml` with `extends = "<active theme>"`: created without prompting if no theme file by that name exists yet, or replaced after a `[y/N]` confirmation if it does (the old file is kept as `.bak`).
+
+Without `<name>`, or with the active theme's own name:
+- When the active theme is a builtin or plugin theme, it writes a self-named overlay, e.g. `starship.toml` with `extends = "starship"`, after a `[y/N]` confirmation. The theme keeps its name and still receives updates to the builtin or plugin theme; add your changes to the file.
+- When the active theme already is a file in the themes directory (an overlay or a full theme), nothing is written and the command says so: that file already is your theme. Edit it directly, or save it under another name.
+
+The new file is loaded before anything is written; if it would not load (for example `gpy theme save starship` while the active theme `mine` extends `starship`, which would be an `extends` cycle), nothing is written. The output names the theme the file extends and any plugin it depends on.
+
+With `--full`, the file is a full, independent copy of the active theme instead: its file verbatim when it is a full theme, or the merged result when it is an overlay. `--full` to the active theme's own file is refused like the plain form.
 
 Declining the prompt (anything other than `y`/`yes`) aborts without writing.
 
 **Arguments:**
 - `[name]` - Theme name to save as (defaults to the currently active theme)
 
+**Options:**
+- `--full` - Write a full, independent copy of the active theme instead of an overlay
+
 **Example:**
 ```bash
-# Materialize the active theme (e.g. a builtin) as an editable user theme
+# With a builtin active: make it an editable theme file that keeps its name
 gpy theme save
 
-# Save the active theme's contents under a new name
+# Save a theme that extends the active one under a new name
 gpy theme save mytheme
+
+# Freeze the active theme's current look under a new name
+gpy theme save mytheme --full
 ```
 
 **Output:**
 ```
 Saved theme: /home/user/.config/gpy/themes/mytheme.toml
+Extends: starship (builtin)
 Edit: /home/user/.config/gpy/themes/mytheme.toml
 Activate with: gpy theme use mytheme
 ```
@@ -392,6 +423,10 @@ If `target` is provided, it can be either:
 - a theme name (for discovered themes), or
 - a direct path to a theme `.toml` file.
 - `[target]` - Optional theme name or file path
+
+Warnings (validation still passes): `unset` in a file without `extends`
+(it does nothing), and an `unset` path the base theme lacks (ignored at load).
+A file in a plugin's `themes/` directory may extend only a builtin theme.
 
 **Examples:**
 ```bash
@@ -470,7 +505,7 @@ Rules are grouped by the release that removed the keys. The 0.7 rules (the `user
 - `show_always` and `trim_at` move to `config.toml` `[plugin.username]` / `[plugin.hostname]`. A value already set there is kept.
 - `icon` of `[segments.hostname]` is renamed `ssh_icon` unless `ssh_icon` is already set.
 
-Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. Unlike `diff` and `reset`, `migrate` accepts any theme file in the themes directory, including copies made with `gpy theme new --from`.
+Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. Unlike `diff` and `reset`, `migrate` accepts any theme file in the themes directory, including overlays and copies made with `gpy theme new --full`.
 
 **Arguments:**
 - `<name>` - Name of a theme file in the themes directory
@@ -478,6 +513,49 @@ Before anything is written, the theme file and `config.toml` are copied to `.bak
 **Example:**
 ```bash
 gpy theme migrate starship
+```
+
+---
+
+#### `gpy theme rebase <name> [--onto <base>] [--write] [--unset-missing]`
+
+Rewrite a modified full copy of a theme as an overlay: a file with `extends = "<base>"` that holds only the keys you changed, so it receives every later fix to the keys it does not set.
+
+The copy and the base are compared by their effective values, not their text, so a copy written by the wizard of an older GPY (every default spelled out, language keys as nested tables) compares like a hand-written one. A key whose value is only the default its segment applies anyway (for example `show_seconds = false`) counts as unset. Each key your file sets is dropped when it equals the base and kept otherwise, in your file's spelling and with its comments. Keys GPY ignores are dropped and listed.
+
+Keys the base has but your copy lacks are inherited from the base afterwards, because the copy cannot tell a key added upstream (which you should now receive) from one you deleted. They are listed at the highest level that is missing (a whole `[segments.hostname]` table, or `segments.clock.open`, not each key inside). `--unset-missing` writes one `unset` entry for each of them instead, for keys you removed on purpose. Without it, `rebase` never writes `unset`.
+
+The command prints a report and the overlay and writes nothing unless `--write` is given. Before printing, it checks that the overlay loads and gives the same theme as your copy, apart from the inherited keys; otherwise it fails and writes nothing. `--write` copies the file to `.bak` (`.bak.1`, ... when a backup exists) and then replaces it in one step, so a failed write leaves your copy in place. A running agent picks up the change like any other edit of the theme file.
+
+A copy that does not load, such as one with keys removed by a breaking change, is refused: run `gpy theme migrate <name>` first. A file that already has `extends` is refused too.
+
+**Arguments:**
+- `<name>` - Name of a full theme file in the themes directory
+
+**Options:**
+- `--onto <base>` - Theme the overlay extends. Defaults to the plugin or builtin theme with the same name, the one your copy shadows; for a copy with no such theme it is required, and the error names the closest builtin.
+- `--write` - Write the overlay over the file, after copying it to `.bak`
+- `--unset-missing` - Unset the inherited keys instead of inheriting them
+
+**Example:**
+```bash
+gpy theme rebase starship           # show the overlay and what it inherits
+gpy theme rebase starship --write   # replace the copy, keeping starship.toml.bak
+gpy theme rebase mine --onto default --write
+```
+
+**Output:**
+```
+Rebasing /home/user/.config/gpy/themes/starship.toml onto starship (builtin)
+   Kept, as different from the base: segments.clock.time_format
+   Dropped as equal to the base: 212 keys
+
+extends = "starship"
+
+[segments.clock]
+time_format = "24"
+
+Nothing written. Run `gpy theme rebase starship --write` to replace /home/user/.config/gpy/themes/starship.toml (a copy is kept as .bak).
 ```
 
 ---
@@ -944,11 +1022,13 @@ Keys (inside the wizard, `?` lists the ones that apply to the current view):
 | `?` / `Esc` | help open | close help |
 | `y` / `Y` | discard prompt | discard changes and quit |
 
-`Space`/`Enter` selects the highlighted theme or palette, or toggles the highlighted segment. The filter narrows all three sections at once; while filtering, any other character is added to the filter. Quitting with unsaved changes asks `Discard changes and quit? [y/N]`; any key other than `y`/`Y` returns to the wizard. The `language` and `directory` options are saved to `config.toml`; the `clock`, `duration` and `git` options are saved to a user copy of the active theme.
+`Space`/`Enter` selects the highlighted theme or palette, or toggles the highlighted segment. The filter narrows all three sections at once; while filtering, any other character is added to the filter. Quitting with unsaved changes asks `Discard changes and quit? [y/N]`; any key other than `y`/`Y` returns to the wizard. The `language` and `directory` options are saved to `config.toml`; the `clock`, `duration` and `git` options are saved to the selected theme's file in `~/.config/gpy/themes/`.
 
-Changes are only written to the config file on save; quitting without saving leaves the existing configuration untouched.
+Only theme options whose value you changed are written; an option toggled back to where it started writes nothing. For a builtin or plugin theme, the wizard writes a self-named overlay holding just those keys (for example `starship.toml` with `extends = "starship"` and `[segments.clock]` `show_seconds = true`), so the theme keeps receiving updates. In an existing overlay it sets each changed key, or removes it when it now equals the theme the overlay extends, and drops an `unset` entry for exactly that key; comments are kept. In a full theme file it sets the changed keys in place and suggests `gpy theme rebase`. The file is loaded before it is written; if it would not load, nothing is saved.
 
-After the wizard leaves the full-screen view, `s` prints `Saved configuration to <path>` on the normal screen, followed by the `Agent not reloaded` warning when no running agent confirmed the reload. Quitting without saving prints nothing.
+Changes are only written on save; quitting without saving leaves the existing configuration and theme files untouched.
+
+After the wizard leaves the full-screen view, `s` prints `Saved theme edits to <path>` (when a theme file was written) and `Saved configuration to <path>` on the normal screen, followed by the `Agent not reloaded` warning when no running agent confirmed the reload. Quitting without saving prints nothing.
 
 Selecting a user theme that fails to load keeps the wizard open: the selection stays on the previous theme and the Detail panel shows `Cannot select theme "<name>": <reason>` (naming the file) until the next key press. A configured theme that fails to load at startup still aborts the wizard.
 
@@ -1116,6 +1196,9 @@ Checks:
 - the declared plugin API version is supported
 - `provided_segments` is present and lists at least one segment
 - segment files exist for declared file-based segments
+- each file in the plugin's `themes/` directory loads and validates like
+  `gpy theme validate <file>`; a plugin overlay (`extends`) must extend a
+  builtin theme
 - for a script plugin, every `segments/<segment>.toml` manifest parses against
   the published schema and its `command` (and `require_command`) is a file
   inside the plugin root; the output lists each segment's description,
@@ -1199,7 +1282,7 @@ Tab-completion for the `gpy` CLI is installed automatically by the standard inst
 - `gpy <TAB>` completes subcommands and flags
 
 **Dynamic completion** (live from what's installed):
-- `gpy theme use <TAB>`, `gpy theme validate <TAB>`, `gpy theme diff <TAB>`, `gpy theme reset <TAB>` and `gpy theme migrate <TAB>` — installed theme names
+- `gpy theme use <TAB>`, `gpy theme validate <TAB>`, `gpy theme diff <TAB>`, `gpy theme reset <TAB>`, `gpy theme migrate <TAB>` and `gpy theme rebase <TAB>` — installed theme names
 - `gpy palette use <TAB>` and `gpy palette validate <TAB>` — installed palette names
 - `gpy enable <TAB>` and `gpy disable <TAB>` — available segment names
 

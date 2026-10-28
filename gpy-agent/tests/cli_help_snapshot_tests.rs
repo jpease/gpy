@@ -18,6 +18,9 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["theme"],
     &["theme", "use"],
     &["theme", "import"],
+    &["theme", "new"],
+    &["theme", "save"],
+    &["theme", "rebase"],
     &["palette"],
     &["palette", "import"],
     &["plugin"],
@@ -214,6 +217,22 @@ fn import_force_help_mentions_shadowing_a_builtin() {
         assert!(
             flat.contains("shadow a builtin"),
             "`gpy {} --help` must say --force shadows a builtin:\n{help}",
+            args.join(" ")
+        );
+    }
+}
+
+/// `theme new` and `theme save` write overlays; `--full` is the way to a
+/// full, independent copy, and the help of both must offer it.
+#[test]
+fn theme_new_and_save_help_offer_a_full_copy() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    for args in [&["theme", "new"][..], &["theme", "save"][..]] {
+        let help = help_of(&env, args);
+        let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("--full") && flat.contains("full, independent copy"),
+            "`gpy {} --help` must offer --full:\n{help}",
             args.join(" ")
         );
     }
