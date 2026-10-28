@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10). Needs maintainer approval: it alters the structure of the theme file schema, and configuration schema structure is one of the changes that need explicit maintainer approval ([ADR-0011](adr-0011-plugin-shell-coverage.md) Decision item 9 lists it). Nothing here is implemented; the follow-up items at the end are separate work.
+Accepted (2026-10-27). The maintainer approved all six decisions at the end of this document as written, and chose overlays as the writers' default from the start (no opt-in release). The ADR alters the structure of the theme file schema, which needs explicit maintainer approval ([ADR-0011](adr-0011-plugin-shell-coverage.md) Decision item 9 lists it). Implementation is tracked as separate work items (the follow-ups at the end).
 
 ## Context
 
@@ -35,7 +35,7 @@ TypeScript `tsconfig.json` `extends` ([docs](https://www.typescriptlang.org/tsco
 
 ## Decision
 
-Proposed: **overlay themes**. A user theme may name a base with `extends` and contain only the keys it changes. The loader merges it over the base before the existing typed step. The wizard, `theme new` and `theme save` write overlays. Existing full copies keep working unchanged and are converted only on request.
+Accepted: **overlay themes**. A user theme may name a base with `extends` and contain only the keys it changes. The loader merges it over the base before the existing typed step. The wizard, `theme new` and `theme save` write overlays. Existing full copies keep working unchanged and are converted only on request.
 
 ### 1. Format and location
 
@@ -288,7 +288,7 @@ A depth-1 merge makes a one-key overlay drop its siblings (section 2). Without `
    - `gpy theme validate` reports `unset` in a file without `extends` (section 1), warns on `unset` paths the base lacks, and applies the plugin rule to files in a plugin's `themes/` directory.
 6. **#1089 commands on overlays.** `diff` and `reset` accept user overlays (`theme_override.rs:73-78`). `diff` on an overlay compares the base's and the overlay's merged results, normalised and serialized the same way; on a full copy it keeps today's raw text diff. `reset` reports what the name resolves to afterwards, refuses when the active theme would not load without the moved file (anywhere in its chain), and reloads the agent when the file was in the active chain. `migrate` rewrites and drops `unset` paths along with keys. Tests for each, including `reset mine` with active `mine2` extending `mine`.
 
-## Decisions needing maintainer approval
+## Decisions approved by the maintainer
 
 1. **Theme file schema:** new top-level keys `extends` (string, a theme name) and `unset` (array of dotted key paths). A file with `extends` is an overlay and need not contain `[segments]` or `[ui]`.
 2. **Merge semantics:** deep table merge at every depth; arrays replace; `[segments.language]` and the `unset` paths into it canonicalised to the nested spelling before the merge; `unset` applied to the base before the overlay merges; unknown `unset` paths ignored at load and warned about by `validate`; validation on the merged result only.

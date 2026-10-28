@@ -40,7 +40,7 @@ What becomes easier or more difficult to do because of this change?
 - [ADR-0010](adr-0010-config-key-single-source.md) - Single Source of Truth for Config Keys
 - [ADR-0011](adr-0011-plugin-shell-coverage.md) - Plugin Segments Across Shells
   - [ADR-0011 Addendum](adr-0011-addendum-script-segment-security.md) - Script Segment Security
-- [ADR-0012](adr-0012-theme-overlays.md) - Theme Overlays (**proposed**)
+- [ADR-0012](adr-0012-theme-overlays.md) - Theme Overlays (**accepted**)
 
 ## Creating a New ADR
 
