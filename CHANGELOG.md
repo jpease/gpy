@@ -59,6 +59,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gpy setup` no longer deletes the files it installs from when an install
+  location is a symlink to, or lies inside or around, the source tree
+  (#1103). It resolves symlinks first and refuses before changing anything,
+  naming both paths, for the shell tree, Fish's completions directory, the
+  bundled plugins and the retained `share/gpy` copy. The same check guards
+  the refresh of shells set up earlier. A symlinked install directory that
+  points elsewhere is updated in place and stays a symlink; a symlinked
+  `bundled-plugins` is refused rather than replaced.
+- A failed `gpy setup` rerun no longer leaves a half-removed install behind
+  (#1104). The replacement tree (scripts, generated completions, Fish glue
+  and the version stamp) is built beside the live one and swapped in only
+  when complete; an unreadable source file, missing Fish completion glue or
+  failed completion generation keeps the previous install and its stamp, and
+  errors name the path and operation. Retired scripts are still removed on a
+  good run and unrelated files in the install directory stay. The bundled
+  plugins and the retained `share/gpy` trees are replaced the same way, so a
+  failed update leaves the previous complete tree for a later bare setup. A
+  failure to delete the old files after the swap is only a warning.
+
+- A script plugin that declares `env = ["PATH"]` no longer gets its
+  relative, dot and empty PATH entries back: the declared value goes
+  through the same cleaning as the base PATH, so a checkout can no longer
+  plant a tool the script runs (#1100). The raw PATH still keys the cache.
+
+- Script segments are no longer exported when a canonical ancestor of the
+  plugin root, up to `/`, lets another user replace the root after export
+  (#1102): owned by someone other than you or root, or group- or
+  world-writable without the sticky bit. Sticky directories you or root own
+  (`/tmp`, a private macOS `$TMPDIR`) and group-writable ancestors in your own
+  user-private group stay accepted, and a symlinked plugin
+  root is judged by its physical location. Fix with `chmod go-w` on the
+  named directory or move the plugin.
+- `gpy plugin new` no longer creates a group-writable scaffold under
+  `umask 0002` that its own validation and discovery reject (#1101). The
+  new plugin directories and files are created `0755`/`0644` narrowed by
+  the umask, never widened; existing directories are left untouched. A
+  umask that strips the owner's write or search bit still fails.
 - Theme parse errors for plugin segment tables (for example a stale
   `format` on `[segments.username]`) named the first `[segments.*]` table;
   they now name `segments.<segment>.<key>` and its line and column

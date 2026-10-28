@@ -36,6 +36,8 @@ mod script_run;
 pub mod segments;
 /// `gpy setup` — install and wire the per-shell scripts.
 pub mod setup;
+/// `gpy setup` step that stages and swaps in the installed shell trees.
+mod setup_install;
 /// `gpy setup` step that retires unedited copies of builtin themes.
 mod setup_themes;
 /// Theme management commands.
