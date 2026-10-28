@@ -59,6 +59,41 @@ pub fn create_new(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     file.write_all(contents)
 }
 
+/// [`create_new`] for a file the script-plugin policy must accept: requested
+/// mode `0644`, narrowed (never widened) by the process umask, so it is never
+/// group- or world-writable whatever the umask. Windows has no mode bits.
+///
+/// # Errors
+/// Returns an error if the file exists or cannot be created or written.
+pub fn create_new_unshared(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o644);
+    }
+    options.open(path)?.write_all(contents)
+}
+
+/// Create the single directory `path` (parent must exist) with requested mode
+/// `0755`, narrowed by the process umask, so it is never group- or
+/// world-writable. Fails with `AlreadyExists` if `path` exists.
+///
+/// # Errors
+/// Returns an error if the directory exists or cannot be created.
+pub fn create_dir_unshared(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o755);
+    }
+    builder.create(path)
+}
+
 static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Replace `path` with `contents` through a temp file in the same directory

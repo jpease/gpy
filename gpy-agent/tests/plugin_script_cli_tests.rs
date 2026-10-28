@@ -124,6 +124,103 @@ fn new_scaffolds_a_script_plugin_that_validates_and_runs() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "demo_status\n");
 }
 
+/// Run `gpy args...` through `sh` under `umask`, as a shell user would.
+fn run_gpy_under_umask(env: &CliTestEnv, umask: &str, args: &[&str]) -> CliCommandResult {
+    let mut command_line = vec![
+        "-c",
+        "umask \"$0\"; exec \"$@\"",
+        umask,
+        env!("CARGO_BIN_EXE_gpy"),
+    ];
+    command_line.extend_from_slice(args);
+    let none: [(&str, &str); 0] = [];
+    env.run_program_with_env(Path::new("/bin/sh"), &command_line, &none)
+        .expect("spawn sh")
+}
+
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::metadata(path).expect("metadata").permissions().mode() & 0o7777
+}
+
+#[test]
+fn new_scaffold_works_under_common_umasks() {
+    for umask in ["0000", "0002", "0022", "0077"] {
+        let env = CliTestEnv::new().expect("env");
+        run_gpy_under_umask(
+            &env,
+            umask,
+            &["plugin", "new", "demo-tools", "--segment", "demo"],
+        )
+        .assert_success("gpy plugin new");
+        let root = env.plugins_dir().join("demo-tools");
+
+        for path in [
+            root.clone(),
+            root.join("bin"),
+            root.join("segments"),
+            root.join("plugin.toml"),
+            root.join("segments/demo.toml"),
+            root.join("bin/demo.sh"),
+        ] {
+            let mode = mode_of(&path);
+            assert_eq!(
+                mode & 0o022,
+                0,
+                "umask {umask}: {} is {mode:o}",
+                path.display()
+            );
+            assert_eq!(
+                mode & 0o600,
+                0o600,
+                "umask {umask}: owner access lost on {}",
+                path.display()
+            );
+        }
+
+        validate(&env, &root).assert_success("validate by path");
+        let by_id = env
+            .run_gpy(&["plugin", "validate", "demo-tools"])
+            .expect("spawn gpy");
+        by_id.assert_success("validate by id");
+        let list = env.run_gpy(&["plugin", "list"]).expect("spawn gpy");
+        list.assert_success("plugin list");
+        assert!(
+            list.stdout.contains("segment demo:"),
+            "umask {umask}: {}",
+            list.stdout
+        );
+        env.run_gpy(&["enable", "demo"])
+            .expect("spawn gpy")
+            .assert_success("enable the scaffolded segment");
+    }
+}
+
+#[test]
+fn new_refuses_an_existing_target_without_touching_it() {
+    let env = CliTestEnv::new().expect("env");
+    let root = env.plugins_dir().join("demo-tools");
+    fs::create_dir_all(&root).expect("existing root");
+    fs::write(root.join("keep.txt"), "mine").expect("user file");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o775)).expect("chmod");
+    }
+    let result = run_gpy_under_umask(&env, "0002", &["plugin", "new", "demo-tools"]);
+    assert_ne!(result.exit_code, 0_i32, "{}", combined(&result));
+    assert!(
+        combined(&result).contains("already exists"),
+        "{}",
+        combined(&result)
+    );
+    assert_eq!(mode_of(&root), 0o775);
+    assert_eq!(
+        fs::read_to_string(root.join("keep.txt")).expect("kept"),
+        "mine"
+    );
+    assert!(!root.join("plugin.toml").exists());
+}
+
 #[test]
 fn validate_prints_each_segment_description() {
     let env = CliTestEnv::new().expect("env");
