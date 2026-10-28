@@ -199,12 +199,16 @@ impl ScriptPath {
     }
 
     /// Resolve under `root`, requiring a regular file inside it after symlinks
-    /// whose canonical path a shell can be given (UTF-8, no control character)
-    /// and that passes [`check_owned_and_not_shared`] up to the plugin root.
+    /// whose canonical path a shell can be given (UTF-8, no control character).
+    /// The file and every directory up to the plugin root must pass
+    /// [`check_owned_and_not_shared`], and every canonical ancestor above the
+    /// root up to `/` must not let another user replace the root: owned by the
+    /// user or root, and not group- or world-writable unless sticky.
     ///
     /// # Errors
     /// Returns an error if the file is missing, escapes the plugin root, has an
-    /// unusable path, or it or a directory up to the root is writable by others.
+    /// unusable path, it or a directory up to the root is writable by others,
+    /// or an ancestor of the root is replaceable by another user.
     pub fn resolve(&self, root: &Path) -> Result<PathBuf> {
         let canonical_root = root.canonicalize().map_err(|e| {
             Error::invalid(format!(
@@ -241,11 +245,12 @@ impl ScriptPath {
         }
         let mut checked = canonical.as_path();
         loop {
-            check_owned_and_not_shared(checked)
-                .map_err(|e| Error::invalid(format!("Script '{}': {}", self.0, detail(e))))?;
-            if checked == canonical_root {
-                break;
+            if checked.starts_with(&canonical_root) {
+                check_owned_and_not_shared(checked)
+            } else {
+                super::script_ancestry::check_ancestor_not_replaceable(checked)
             }
+            .map_err(|e| Error::invalid(format!("Script '{}': {}", self.0, detail(e))))?;
             let Some(parent) = checked.parent() else {
                 break;
             };
