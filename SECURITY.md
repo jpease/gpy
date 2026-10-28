@@ -169,16 +169,24 @@ manifest's names. The design record is
 a relative path without `..`, canonicalize (all symlinks resolved) to a regular
 file inside the canonical plugin root, and sit at a UTF-8 path without control
 characters. The script, and every directory from it up to the plugin root,
-must be owned by you or by root and must not be group- or world-writable. A
-segment failing any check is not exported, so no shell runs it. The export
-writes the canonical absolute path, and the shells run exactly that path
-without resolving it again. Re-resolving at run time would add no protection:
-after export, replacing the script or a directory on its path with a symlink
-or another file needs write access to a file or directory that the ownership
-rule has just shown only you (or root) can write. Anyone able to do that
-already runs code as you, which is outside this design (see "No defence
-against a compromised account" below). The ownership rule is what keeps other
-local users out: without it, a user who could write the plugin directory could
+must be owned by you or by root and must not be group- or world-writable.
+Every canonical ancestor of the plugin root, up to `/`, must also be unable
+to let another user replace the root: owned by you or root and not group- or
+world-writable, or writable only with the sticky bit set (as in `/tmp`) and
+owned by you or root, or group-writable (not world-writable) through your own
+user-private group (named like you, no other member), as `$HOME` is with
+umask 002 on user-private-group systems. Renaming or replacing a directory needs write
+permission on its parent, not on the directory itself, so without the
+ancestor rule another user with write access to a parent could swap the root
+after export. A segment failing any check is not exported, so no shell runs
+it. The export writes the canonical absolute path, and the shells run exactly
+that path without resolving it again. Re-resolving at run time would add no
+protection: after export, replacing the script or a directory on its path
+needs write access to a file or directory (or its parent) that the rules have
+just shown only you (or root) can change. Anyone able to do that already
+runs code as you, which is outside this design (see "No defence against a
+compromised account" below). These rules are what keep other local users out:
+without them, a user who could write the plugin directory or its parent could
 run code as you on every command. The interpreter is `/bin/sh` by an absolute
 path the agent resolves at export time (on macOS, the target of
 `/private/var/select/sh` when it passes the same ownership and mode checks),

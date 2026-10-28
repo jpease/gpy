@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
 const DEFAULT_TEST_CONFIG_TOML: &str = r#"
@@ -114,11 +115,62 @@ impl Isolation {
     }
 }
 
+/// Recursively copy `src` to the existing directory `dst` with private-safe
+/// modes: dirs `0755`, files `0644` (`0755` when the source is owner-executable).
+/// Symlinks are followed.
+fn copy_tree_private(src: &Path, dst: &Path) -> io::Result<()> {
+    set_mode(dst, 0o755)?;
+    for dir_entry in fs::read_dir(src)? {
+        let entry = dir_entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let metadata = fs::metadata(&from)?;
+        if metadata.is_dir() {
+            fs::create_dir_all(&to)?;
+            copy_tree_private(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)?;
+            set_mode(
+                &to,
+                if is_owner_executable(&metadata) {
+                    0o755
+                } else {
+                    0o644
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_owner_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode() & 0o100 != 0
+}
+
+#[cfg(not(unix))]
+fn is_owner_executable(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
 /// An isolated environment in a temp directory removed on drop.
 #[derive(Debug)]
 pub struct CliTestEnv {
     _temp_dir: TempDir,
     isolation: Isolation,
+    bundled_plugins: OnceLock<PathBuf>,
 }
 
 impl CliTestEnv {
@@ -131,6 +183,7 @@ impl CliTestEnv {
         let env = Self {
             isolation: Isolation::under(temp_dir.path()),
             _temp_dir: temp_dir,
+            bundled_plugins: OnceLock::new(),
         };
         env.prepare(config_toml)?;
         Ok(env)
@@ -171,10 +224,33 @@ impl CliTestEnv {
         self.config_dir().join("plugins")
     }
 
-    /// The repo's `plugins` tree (`username`, `hostname`), for
-    /// `GPY_BUNDLED_PLUGIN_DIR` where `gpy setup` would have installed it.
-    pub fn repo_bundled_plugins_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins")
+    /// A private copy of the repo's `plugins` tree (`username`, `hostname`) inside
+    /// this env's temp root, for `GPY_BUNDLED_PLUGIN_DIR` where `gpy setup` would
+    /// have installed it. The checkout's ancestors may be group/world-writable,
+    /// which script-plugin loading rejects; the temp root is `0700`. Created once
+    /// per env; the repo is never modified.
+    pub fn bundled_plugins_dir(&self) -> PathBuf {
+        self.bundled_plugins
+            .get_or_init(|| {
+                self.private_copy_of(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins"))
+            })
+            .clone()
+    }
+
+    /// Copy the plugin tree at `src` into a fresh directory under this env's
+    /// private root (dirs `0755`, files `0644`, or `0755` if the source file is
+    /// owner-executable) and return the copy's path.
+    #[allow(
+        clippy::create_dir,
+        reason = "create_dir fails with AlreadyExists, which picks a fresh unique directory"
+    )]
+    pub fn private_copy_of(&self, src: &Path) -> PathBuf {
+        let dst = (0_u32..10_000)
+            .map(|n| self.isolation.root.join(format!("private-plugins-{n}")))
+            .find(|candidate| fs::create_dir(candidate).is_ok())
+            .expect("create private plugin copy dir");
+        copy_tree_private(src, &dst).expect("copy plugin tree");
+        dst
     }
 
     pub fn write_config(&self, config_toml: &str) -> io::Result<()> {

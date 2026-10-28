@@ -323,10 +323,16 @@ debug log line) and never runs.
 
 **Ownership rule.** The script, and every directory from it up to and
 including the plugin root, must be owned by you or root and must not be group-
-or world-writable (fix with `chmod go-w`). Another user who can write there
-could make the segment run their code as you on every command. Discovery,
-`gpy plugin validate` and export all refuse a script that fails it. Directories
-above the plugin root are not checked.
+or world-writable (fix with `chmod go-w`). Every canonical ancestor above the
+root, up to `/`, must be owned by you or root and not group- or
+world-writable, unless it is sticky (like `/tmp`), where the kernel stops
+others renaming your root, or group-writable only through your own
+user-private group (named like you, no other member; umask 002 `$HOME`). Replacing a directory needs write access to its
+parent, so a writable non-sticky ancestor would let another user swap the
+plugin after export; the error names that ancestor. A symlinked plugin root
+is judged by the physical location it points to. Another user who can write
+there could make the segment run their code as you on every command.
+Discovery, `gpy plugin validate` and export all refuse a script that fails it.
 
 The variable names are private to GPY's integrations, like
 `__gpy_plugin_segment_file_*`; plugin authors must not rely on them. `<tok>` is
@@ -382,9 +388,11 @@ Containment is enforced at export, not at run time. Export runs the script
 path checks (canonical path inside the canonical plugin root, regular file)
 and the ownership rule: the script and every directory from it up to the
 plugin root must be owned by you or root and not be group- or
-world-writable. The shells then run the exported absolute path as is.
+world-writable, and no canonical ancestor of the root may be replaceable by
+another user. The shells then run the exported absolute path as is.
 Swapping the file or a directory on its path after that needs your own write
-access, so a run-time re-check would only guard against code that already
+access (or write access to an ancestor, which the rule excludes), so a
+run-time re-check would only guard against code that already
 runs as you. See [SECURITY.md](../../SECURITY.md#script-segment-trust-model) for the full
 model.
 

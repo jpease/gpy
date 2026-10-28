@@ -116,6 +116,48 @@ cd "$G_SANDBOX/work"
 PATH=${PATH#.:relative/bin::}
 unset AWS_SECRET_ACCESS_KEY SSH_AUTH_SOCK GPY_OPT_k DECLARED
 
+# --- a declared PATH never restores relative entries ---------------------------
+plant=$G_SANDBOX/plant
+mkdir -p "$plant/rel"
+for d in "$plant" "$plant/rel"; do
+    printf '#!/bin/sh\necho x >>"%s/planted"\n' "$G_SANDBOX" >"$d/plantedtool"
+    chmod 755 "$d/plantedtool"
+done
+g_segment pathrun "printf '%s' \"\$PATH\" >'$G_SANDBOX/path.out'; plantedtool; printf done"
+__gpy_script_pathrun_ttl=60
+g_enable pathrun
+saved_path=$PATH
+cd "$plant"
+PATH=".:rel::/usr/bin:/bin"
+g_command
+PATH=$saved_path
+check "an undeclared PATH is cleaned, absolute entries in order" "/usr/bin:/bin" "$(<"$G_SANDBOX/path.out")"
+check "no planted tool ran without PATH declared" false "$([[ -e $G_SANDBOX/planted ]] && echo true || echo false)"
+g_segment pathdecl "printf '%s' \"\$PATH\" >'$G_SANDBOX/path.out'; plantedtool; printf done"
+__gpy_script_pathdecl_ttl=60
+__gpy_script_pathdecl_env=(PATH)
+g_reqcommand pathdecl "printf '%s' \"\$PATH\" >'$G_SANDBOX/reqpath.out'; plantedtool; exit 0"
+g_enable pathdecl
+: >"$G_RUNS"
+PATH=".:rel::/usr/bin:/bin"
+g_command
+PATH=$saved_path
+check "a declared PATH runs the script" "done" "$(g_text pathdecl)"
+check "the script sees the same PATH as when undeclared" "/usr/bin:/bin" "$(<"$G_SANDBOX/path.out")"
+check "require_command sees the cleaned PATH" "/usr/bin:/bin" "$(<"$G_SANDBOX/reqpath.out")"
+check "a declared PATH never ran a planted tool (command, require_command)" false \
+    "$([[ -e $G_SANDBOX/planted ]] && echo true || echo false)"
+PATH=".:rel::/usr/bin:/bin"
+g_command
+PATH=$saved_path
+check "an unchanged declared PATH is a cache hit" 1 "$(g_runs)"
+PATH="/bin:.:rel:/usr/bin"
+g_command
+PATH=$saved_path
+check "a changed declared PATH is a cache miss" 2 "$(g_runs)"
+check "the changed PATH is cleaned in order" "/bin:/usr/bin" "$(<"$G_SANDBOX/path.out")"
+cd "$G_SANDBOX/work"
+
 # --- job state -----------------------------------------------------------------
 sleep 5 &
 bg_pid=$!

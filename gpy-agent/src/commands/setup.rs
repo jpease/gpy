@@ -5,6 +5,9 @@
 //! both installers share one uninstall path. The `gpy-init` marker lines are
 //! the contract `scripts/uninstall.*` remove by. Every step is idempotent.
 
+use super::setup_install::{
+    BUNDLED_PLUGINS_SOURCE, install_bundled_plugins, install_files, preflight, replace_tree,
+};
 use crate::commands::init::{self, InitOptions};
 use crate::paths::{self, Os};
 use crate::shell::Shell;
@@ -23,12 +26,9 @@ const RC_BLOCK_HEADER: &str = "GPY shell integration";
 const CREATED_NOTE: &str = " (gpy-created-file)";
 /// File in each installed shell tree naming the `gpy` version that wrote it,
 /// so `gpy doctor` can spot a tree an upgrade left behind.
-const VERSION_STAMP: &str = ".gpy-version";
+pub(super) const VERSION_STAMP: &str = ".gpy-version";
 /// Every shell `gpy setup` can install.
 const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
-/// Directory beside the shell trees holding the script plugins GPY ships
-/// (`username`, `hostname`), installed as the bundled plugin root.
-const BUNDLED_PLUGINS_SOURCE: &str = "plugins";
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -193,11 +193,15 @@ fn keep_shell_trees(source_root: &Path, env: &Environment) {
             if !has_shell_tree(&source, shell) {
                 continue;
             }
-            replace_tree(&source.join(shell.as_str()), &target.join(shell.as_str()))?;
+            replace_tree(
+                &source.join(shell.as_str()),
+                &target.join(shell.as_str()),
+                &source,
+            )?;
         }
         let plugins = source.join(BUNDLED_PLUGINS_SOURCE);
         if plugins.is_dir() {
-            replace_tree(&plugins, &target.join(BUNDLED_PLUGINS_SOURCE))?;
+            replace_tree(&plugins, &target.join(BUNDLED_PLUGINS_SOURCE), &source)?;
         }
         Ok(())
     };
@@ -207,8 +211,9 @@ fn keep_shell_trees(source_root: &Path, env: &Environment) {
             target.display()
         ),
         Err(err) => crate::commands::output::warn(format_args!(
-            "Could not keep the shell scripts in {} ({err}); a later `gpy setup` will need --from",
-            target.display()
+            "Could not keep the shell scripts in {} ({}); a later `gpy setup` will need --from",
+            target.display(),
+            crate::error::user_message(&err)
         )),
     }
 }
@@ -239,8 +244,9 @@ fn refresh_other_shells(
                 dir.display()
             ),
             Err(err) => crate::commands::output::warn(format_args!(
-                "Could not refresh the {shell} files in {} ({err}); run `gpy setup --shell {shell}`",
-                shell_dir.display()
+                "Could not refresh the {shell} files in {} ({}); run `gpy setup --shell {shell}`",
+                shell_dir.display(),
+                crate::error::user_message(&err)
             )),
         }
     }
@@ -392,7 +398,7 @@ pub fn find_source_root(from: Option<&Path>, env: &Environment, shell: Shell) ->
 
 /// Reject a path that could break out of the rc block's double quotes. One
 /// check for all three shells is simpler than escaping three ways.
-fn check_sourceable(path: &Path) -> Result<()> {
+pub(super) fn check_sourceable(path: &Path) -> Result<()> {
     let text = path.to_string_lossy();
     if text.contains(['"', '$', '`', '\\', '\n']) {
         return Err(Error::invalid(format!(
@@ -403,7 +409,8 @@ fn check_sourceable(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Copy the shell tree and completions, then wire the rc file.
+/// Check the install locations, copy the shell tree and completions, then
+/// wire the rc file.
 fn install(
     shell: Shell,
     source_root: &Path,
@@ -411,6 +418,7 @@ fn install(
     completions: &impl Fn(Shell) -> Result<Vec<u8>>,
 ) -> Result<Outcome> {
     let config_home = env.config_home()?;
+    preflight(shell, source_root, &config_home)?;
     let shell_dir = install_files(shell, source_root, &config_home, completions)?;
     let plugins_dir = install_bundled_plugins(source_root, &config_home)?;
 
@@ -427,169 +435,12 @@ fn install(
     })
 }
 
-/// Replace the bundled plugin root (`<config home>/gpy/bundled-plugins`) with
-/// `source_root/plugins`, so a plugin dropped by an upgrade is gone too. A
-/// source without that tree (an older archive) leaves the installed root alone.
-/// Group and world write bits are cleared, as export refuses a shared script.
-fn install_bundled_plugins(source_root: &Path, config_home: &Path) -> Result<Option<PathBuf>> {
-    let source = source_root.join(BUNDLED_PLUGINS_SOURCE);
-    if !source.is_dir() {
-        return Ok(None);
-    }
-    let target = config_home
-        .join("gpy")
-        .join(crate::plugin::BUNDLED_PLUGINS_DIR_NAME);
-    replace_tree(&source, &target)?;
-    clear_shared_write(&target)?;
-    Ok(Some(target))
-}
-
-/// Clear the group and world write bits of `path` and everything below it.
-#[cfg(unix)]
-fn clear_shared_write(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        return Ok(());
-    }
-    let mode = metadata.permissions().mode();
-    if mode & 0o022 != 0 {
-        fs::set_permissions(path, fs::Permissions::from_mode(mode & !0o022))?;
-    }
-    if metadata.is_dir() {
-        for entry in fs::read_dir(path)? {
-            clear_shared_write(&entry?.path())?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn clear_shared_write(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-/// Remove `dst` (if present), then copy `src` to it.
-fn replace_tree(src: &Path, dst: &Path) -> Result<()> {
-    match fs::remove_dir_all(dst) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
-    }
-    copy_tree(src, dst, &[])
-}
-
 /// Where `gpy setup` installs `shell`'s scripts under `config_home`.
-fn shell_dir_for(config_home: &Path, shell: Shell) -> PathBuf {
+pub(super) fn shell_dir_for(config_home: &Path, shell: Shell) -> PathBuf {
     match shell {
         Shell::Fish => config_home.join("fish").join("gpy"),
         Shell::Zsh | Shell::Bash => config_home.join("gpy").join(shell.as_str()),
     }
-}
-
-/// Copy `shell`'s tree and completions from `source_root` and stamp the
-/// version; returns the installed tree. Leaves the rc file alone.
-fn install_files(
-    shell: Shell,
-    source_root: &Path,
-    config_home: &Path,
-    completions: &impl Fn(Shell) -> Result<Vec<u8>>,
-) -> Result<PathBuf> {
-    let shell_dir = shell_dir_for(config_home, shell);
-    check_sourceable(&shell_dir)?;
-
-    let source = source_root.join(shell.as_str());
-    // Fish's completion glue is merged into the generated file below.
-    let skip: &[&str] = if shell == Shell::Fish {
-        &["completions"]
-    } else {
-        &[]
-    };
-    // Overlaying keeps scripts a newer release dropped (they then run against
-    // state the agent no longer provides): clear each shipped subtree first.
-    for dirent in fs::read_dir(&source)? {
-        let entry = dirent?;
-        if entry.file_type()?.is_dir() && !skip.iter().any(|skipped| entry.file_name() == *skipped)
-        {
-            match fs::remove_dir_all(shell_dir.join(entry.file_name())) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-        }
-    }
-    copy_tree(&source, &shell_dir, skip)?;
-
-    let generated = completions(shell)?;
-    match shell {
-        Shell::Fish => {
-            let dir = config_home.join("fish").join("completions");
-            fs::create_dir_all(&dir)?;
-            // Never autoloaded as its own file.
-            match fs::remove_file(dir.join("gpy-dynamic.fish")) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-            let glue_path = source.join("completions/gpy-dynamic.fish");
-            let glue = fs::read(&glue_path).map_err(|err| {
-                Error::invalid(format!(
-                    "cannot read completion glue {}: {err}",
-                    glue_path.display()
-                ))
-            })?;
-            let mut script = generated;
-            script.extend_from_slice(&glue);
-            write_replacing(&dir.join("gpy.fish"), &script)?;
-        }
-        Shell::Zsh => write_replacing(&shell_dir.join("completions/_gpy"), &generated)?,
-        Shell::Bash => write_replacing(&shell_dir.join("completions/gpy.bash"), &generated)?,
-    }
-    write_replacing(
-        &shell_dir.join(VERSION_STAMP),
-        format!("{}\n", crate::VERSION).as_bytes(),
-    )?;
-    Ok(shell_dir)
-}
-
-/// Recursively copy `src` to `dst`, skipping top-level entries named in
-/// `skip` and any symlink.
-#[allow(
-    clippy::filetype_is_file,
-    reason = "only regular files are copied; symlinks, sockets and FIFOs are skipped on purpose"
-)]
-fn copy_tree(src: &Path, dst: &Path, skip: &[&str]) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    for dirent in fs::read_dir(src)? {
-        let entry = dirent?;
-        let name = entry.file_name();
-        if skip.iter().any(|skipped| name == *skipped) {
-            continue;
-        }
-        let target = dst.join(&name);
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            copy_tree(&entry.path(), &target, &[])?;
-        } else if kind.is_file() {
-            write_replacing(&target, &fs::read(entry.path())?)?;
-        }
-    }
-    Ok(())
-}
-
-/// Write `contents` to `path`, removing it first so a re-run can replace
-/// files a package manager left read-only.
-fn write_replacing(path: &Path, contents: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match fs::remove_file(path) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
-    }
-    fs::write(path, contents)?;
-    Ok(())
 }
 
 /// Append a `gpy-init` block to `rc`, creating it when missing; `false` when

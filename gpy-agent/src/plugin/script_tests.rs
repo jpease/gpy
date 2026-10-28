@@ -302,26 +302,149 @@ fn resolve_refuses_a_script_or_directory_others_can_write() {
     script.resolve(temp.path()).unwrap();
 }
 
-/// Only the plugin root and below are checked: a shared parent of the root
-/// (such as a world-writable temp directory) is not the plugin's to fix.
+/// Build `<outer>/<middle>/plugin` with private modes and return the plugin
+/// root; `outer` and `middle` keep the modes the caller sets afterwards.
 #[cfg(unix)]
-#[test]
-fn resolve_stops_the_writability_check_at_the_plugin_root() {
+fn nested_plugin(outer: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let outer = TempDir::new().unwrap();
-    fs::set_permissions(outer.path(), fs::Permissions::from_mode(0o777)).unwrap();
-    let root = outer.path().join("plugin");
+    let middle = outer.join("middle");
+    let root = middle.join("plugin");
     fs::create_dir_all(root.join("bin")).unwrap();
-    for dir in [&root, &root.join("bin")] {
+    for dir in [&middle, &root, &root.join("bin")] {
         fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
     }
     fs::write(root.join("bin/seg.sh"), "echo hi\n").unwrap();
     fs::set_permissions(root.join("bin/seg.sh"), fs::Permissions::from_mode(0o644)).unwrap();
-    ScriptPath::new("bin/seg.sh")
-        .unwrap()
-        .resolve(&root)
-        .unwrap();
+    root
+}
+
+/// Replacing the plugin root needs write access to its parent, so a
+/// group- or world-writable ancestor without the sticky bit (immediate parent
+/// or higher) is refused, naming that ancestor, even when the plugin itself
+/// is private; a sticky one owned by the user stays usable.
+#[cfg(unix)]
+#[test]
+fn resolve_refuses_a_replaceable_ancestor_of_the_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = TempDir::new().unwrap();
+    let root = nested_plugin(outer.path());
+    let middle = root.parent().unwrap().to_path_buf();
+    let script = ScriptPath::new("bin/seg.sh").unwrap();
+    let set_mode = |dir: &Path, mode: u32| {
+        fs::set_permissions(dir, fs::Permissions::from_mode(mode)).unwrap();
+    };
+    set_mode(outer.path(), 0o755);
+    script.resolve(&root).unwrap();
+
+    let canonical_outer = outer.path().canonicalize().unwrap();
+    let canonical_middle = middle.canonicalize().unwrap();
+    for (dir, named) in [
+        (&middle, &canonical_middle),
+        (&outer.path().to_path_buf(), &canonical_outer),
+    ] {
+        for mode in [0o777, 0o757, 0o707] {
+            set_mode(dir, mode);
+            let err = script.resolve(&root).unwrap_err().to_string();
+            let shown = named.to_string_lossy();
+            assert!(
+                err.contains(shown.as_ref()) && err.contains("sticky"),
+                "{dir:?} {mode:o}: {err}"
+            );
+        }
+        set_mode(dir, 0o1777);
+        script.resolve(&root).unwrap();
+        set_mode(dir, 0o755);
+    }
+    script.resolve(&root).unwrap();
+}
+
+/// A group-writable (not world-writable) ancestor is accepted only through a
+/// group the user alone belongs to, as `$HOME` is under user-private-group
+/// distros with umask 002; otherwise it is refused. The directory is created
+/// by the test user, so its group is the user's primary group.
+#[cfg(unix)]
+#[test]
+fn resolve_accepts_a_group_writable_ancestor_only_in_a_private_group() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let outer = TempDir::new().unwrap();
+    let root = nested_plugin(outer.path());
+    let middle = root.parent().unwrap();
+    fs::set_permissions(outer.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(middle, fs::Permissions::from_mode(0o775)).unwrap();
+    let private =
+        crate::plugin::script_ancestry::group_is_private(middle.metadata().unwrap().gid());
+    let result = ScriptPath::new("bin/seg.sh").unwrap().resolve(&root);
+    if private {
+        result.unwrap();
+    } else {
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("sticky"), "{err}");
+    }
+    fs::set_permissions(middle, fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(
+        ScriptPath::new("bin/seg.sh")
+            .unwrap()
+            .resolve(&root)
+            .is_err()
+    );
+}
+
+/// A discovered plugin root that is a symlink is judged by the canonical
+/// location it points to, not by the (safe) directory holding the link.
+#[cfg(unix)]
+#[test]
+fn resolve_checks_the_ancestry_of_a_symlinked_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let shared = TempDir::new().unwrap();
+    let physical = nested_plugin(shared.path());
+    let linked = TempDir::new().unwrap();
+    let link = linked.path().join("plugin");
+    std::os::unix::fs::symlink(&physical, &link).unwrap();
+    let script = ScriptPath::new("bin/seg.sh").unwrap();
+    fs::set_permissions(shared.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    script.resolve(&link).unwrap();
+
+    let middle = physical.parent().unwrap();
+    fs::set_permissions(middle, fs::Permissions::from_mode(0o777)).unwrap();
+    let err = script.resolve(&link).unwrap_err().to_string();
+    assert!(
+        err.contains(&middle.canonicalize().unwrap().to_string_lossy().to_string())
+            && err.contains("replace"),
+        "{err}"
+    );
+}
+
+/// `load` (used by export and `plugin validate`) applies the ancestry check to
+/// `command` and to `require_command`, which resolve through the same path.
+#[cfg(unix)]
+#[test]
+fn load_refuses_a_replaceable_ancestor_for_both_scripts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = TempDir::new().unwrap();
+    let root = nested_plugin(outer.path());
+    fs::set_permissions(outer.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::create_dir_all(root.join("segments")).unwrap();
+    fs::set_permissions(root.join("segments"), fs::Permissions::from_mode(0o755)).unwrap();
+    let segment = SegmentName::new("seg").unwrap();
+    let manifest = script_segment_manifest_path(&root, &segment);
+    fs::write(
+        &manifest,
+        "command = \"bin/seg.sh\"\nrequire_command = \"bin/seg.sh\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644)).unwrap();
+    ScriptSegmentManifest::load(&root, &segment).unwrap();
+
+    fs::set_permissions(root.parent().unwrap(), fs::Permissions::from_mode(0o777)).unwrap();
+    let err = ScriptSegmentManifest::load(&root, &segment)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("sticky") && err.contains("replace"), "{err}");
 }
 
 /// Rejected values are echoed `{:?}`-escaped: ESC and CSI (U+009B) from a

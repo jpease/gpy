@@ -81,19 +81,26 @@ __gpy_g_quote() {
     __gpy_g_qv="'$v'"
 }
 
-# The clean base environment as sh code into __gpy_g_basev: PATH without
-# empty, dot or relative entries, then these names and every LC_* when set.
+# PATH $1 without empty, dot or relative entries into __gpy_g_qv, quoted for sh.
+# Both the base PATH and a declared PATH go through here, so no declared value
+# brings a relative entry back.
+__gpy_g_path() {
+    local p=$1: e out=
+    while [[ -n $p ]]; do
+        e=${p%%:*}
+        p=${p#*:}
+        [[ $e == /* ]] && out=${out:+$out:}$e
+    done
+    __gpy_g_quote "$out"
+}
+
+# The clean base environment as sh code into __gpy_g_basev: the cleaned PATH,
+# then these names and every LC_* when set.
 # Runs before the caller pins LC_ALL=C, so it forwards the real locale.
 __gpy_g_base() {
-    local s= p e out= n
+    local s= n
     if [[ -n ${PATH+x} ]]; then
-        p=$PATH:
-        while [[ -n $p ]]; do
-            e=${p%%:*}
-            p=${p#*:}
-            [[ $e == /* ]] && out=${out:+$out:}$e
-        done
-        __gpy_g_quote "$out"
+        __gpy_g_path "$PATH"
         s="export PATH=$__gpy_g_qv"$'\n'
     fi
     for n in HOME USER LOGNAME LANG TERM TZ TMPDIR "${!LC_@}"; do
@@ -218,7 +225,11 @@ __gpy_g_batch() {
             [[ -n $name && $name != [0-9]* && $name != *[!A-Za-z0-9_]* ]] || continue
             ref=__gpy_g_v${k}_$name
             [[ -n ${!ref+x} ]] || continue
-            __gpy_g_quote "${!ref}"
+            if [[ $name == PATH ]]; then
+                __gpy_g_path "${!ref}"
+            else
+                __gpy_g_quote "${!ref}"
+            fi
             pay+="export $name=$__gpy_g_qv"$'\n'
         done
         ids[k]=$id

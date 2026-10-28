@@ -463,10 +463,7 @@ fn test_enable_hostname_segment() {
     )
     .expect("Failed to write config");
 
-    let bundled = [(
-        "GPY_BUNDLED_PLUGIN_DIR",
-        CliTestEnv::repo_bundled_plugins_dir(),
-    )];
+    let bundled = [("GPY_BUNDLED_PLUGIN_DIR", env.bundled_plugins_dir())];
     let enable = env
         .run_gpy_with_env(&["enable", "hostname"], &bundled)
         .expect("Failed to run gpy enable hostname");
@@ -492,10 +489,7 @@ fn test_doctor_accepts_starship_recommended_segments() {
     let env = CliTestEnv::with_config("[ui]\ntheme = \"default\"\n")
         .expect("Failed to create isolated CLI test environment");
 
-    let bundled = [(
-        "GPY_BUNDLED_PLUGIN_DIR",
-        CliTestEnv::repo_bundled_plugins_dir(),
-    )];
+    let bundled = [("GPY_BUNDLED_PLUGIN_DIR", env.bundled_plugins_dir())];
     let theme_use = env
         .run_gpy_with_env(&["theme", "use", "starship", "--force"], &bundled)
         .expect("Failed to run gpy theme use starship --force");

@@ -628,16 +628,22 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     if let Some(parent) = plugin_root.parent() {
         fs::create_dir_all(parent).map_err(create_failed)?;
     }
-    fs::create_dir(&plugin_root).map_err(create_failed)?;
-    fs::create_dir_all(plugin_root.join("segments")).map_err(create_failed)?;
-    fs::create_dir_all(plugin_root.join("bin")).map_err(create_failed)?;
+    // Modes are set at creation (narrowed by the umask, never widened), so a
+    // `umask 0002` cannot leave group-writable paths the script policy rejects.
+    for dir in [
+        plugin_root.clone(),
+        plugin_root.join("segments"),
+        plugin_root.join("bin"),
+    ] {
+        crate::fs_util::create_dir_unshared(&dir).map_err(create_failed)?;
+    }
 
     let manifest_path = plugin_root.join("plugin.toml");
     let segment_manifest_path = script_segment_manifest_path(&plugin_root, &segment);
     let script_path = plugin_root.join(scaffold_script_path(&segment));
 
     let write_new = |path: &Path, contents: String, what: &str| {
-        crate::fs_util::create_new(path, contents.as_bytes()).map_err(|e| {
+        crate::fs_util::create_new_unshared(path, contents.as_bytes()).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 already_exists()
             } else {
