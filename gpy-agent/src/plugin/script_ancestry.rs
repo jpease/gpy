@@ -6,12 +6,16 @@
 //! another user. Every ancestor of the canonical root is therefore checked once
 //! at export, keeping the shells free of per-prompt `stat` calls.
 
-use crate::{Error, Result};
+#[cfg(unix)]
+use crate::Error;
+use crate::Result;
 use std::path::Path;
 
 /// Mode bits that let a group or world member create, rename or remove entries.
+#[cfg(unix)]
 const GROUP_WORLD_WRITE: u32 = 0o022;
 /// The sticky bit: only an entry's owner or the directory's owner may rename it.
+#[cfg(unix)]
 const STICKY: u32 = 0o1000;
 
 /// Refuse a directory above the plugin root through which another user could

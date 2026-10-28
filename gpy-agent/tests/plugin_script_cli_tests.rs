@@ -492,12 +492,14 @@ fn doctor_reports_a_hidden_segment() {
 #[test]
 fn example_plugins_validate_and_stay_short_lived() {
     let env = CliTestEnv::new().expect("env");
+    // Validate a private copy: the checkout's ancestors may be group/world-writable.
+    let examples = env.private_copy_of(&examples_dir());
     for (dir, segment, description) in [
         ("k8s-context", "k8s", "Current kubectl context"),
         ("username-example", "whoami-user", "Login name"),
         ("hostname-example", "host-name", "Host name"),
     ] {
-        let root = examples_dir().join(dir);
+        let root = examples.join(dir);
         let result = validate(&env, &root);
         result.assert_success(&format!("validate example {dir}"));
         assert!(

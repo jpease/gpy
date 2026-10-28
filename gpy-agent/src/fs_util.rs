@@ -85,12 +85,15 @@ pub fn create_new_unshared(path: &Path, contents: &[u8]) -> std::io::Result<()> 
 /// # Errors
 /// Returns an error if the directory exists or cannot be created.
 pub fn create_dir_unshared(path: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt as _;
+        let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o755);
-    }
+        builder
+    };
+    #[cfg(not(unix))]
+    let builder = std::fs::DirBuilder::new();
     builder.create(path)
 }
 
