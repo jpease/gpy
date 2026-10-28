@@ -286,6 +286,19 @@ fn re_running_replaces_files_a_package_manager_left_read_only() {
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 }
 
+#[test]
+fn re_running_removes_scripts_a_newer_release_no_longer_ships() {
+    let home = TempDir::new().unwrap();
+    assert_ok(&setup(home.path(), &["--shell", "zsh"]));
+    let stale = home.path().join(".config/gpy/zsh/segments/retired.zsh");
+    fs::write(&stale, "retired\n").unwrap();
+
+    assert_ok(&setup(home.path(), &["--shell", "zsh"]));
+
+    assert!(!stale.exists(), "a dropped script must not survive setup");
+    assert!(home.path().join(".config/gpy/zsh/segments").is_dir());
+}
+
 /// `<home>/.config/gpy/themes`, created.
 fn themes_dir(home: &Path) -> PathBuf {
     let dir = home.join(".config/gpy/themes");

@@ -505,6 +505,19 @@ fn install_files(
     } else {
         &[]
     };
+    // Overlaying keeps scripts a newer release dropped (they then run against
+    // state the agent no longer provides): clear each shipped subtree first.
+    for dirent in fs::read_dir(&source)? {
+        let entry = dirent?;
+        if entry.file_type()?.is_dir() && !skip.iter().any(|skipped| entry.file_name() == *skipped)
+        {
+            match fs::remove_dir_all(shell_dir.join(entry.file_name())) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
     copy_tree(&source, &shell_dir, skip)?;
 
     let generated = completions(shell)?;
