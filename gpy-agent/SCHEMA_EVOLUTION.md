@@ -34,6 +34,17 @@ classes. Before 1.0, a BREAKING change bumps the minor component.
   config and theme types do not use `deny_unknown_fields`); `gpy doctor`
   reports unknown config keys. A MINOR field takes its serde default when
   absent, so older files load unchanged.
+- **Theme overlays** ([ADR-0012](../docs/dev/adr/adr-0012-theme-overlays.md)).
+  The top-level theme keys `extends` (a theme name) and `unset` (an array of
+  dotted key paths) are MINOR: a file with a top-level `extends` string is an
+  overlay, merged over the theme it names, and needs no `[segments]` or
+  `[ui]`; every other theme loads and behaves as before. The one exception is
+  a file that already has a top-level `extends` or `unset`, which older
+  versions ignored as unknown keys: such a file now changes meaning (`extends`
+  makes it an overlay; `unset` is still ignored in a file without `extends`).
+  Downgrades are not supported for theme files: an older GPY ignores
+  `extends`, so it rejects an overlay without `[segments]` and `[ui]` and
+  loads any other overlay without its base.
 - **Plugin manifests.** `plugin.toml` and `segments/<id>.toml` reject unknown
   keys. A theme's `[segments.<plugin-segment>]` table accepts only style keys.
 - **IPC requests.** Every request is one newline-terminated JSON object with an

@@ -62,9 +62,9 @@ pub fn recovery_hint(name: &str) -> String {
 /// Append [`recovery_hint`] to a load `error` when `path` is the existing user
 /// copy of an embedded builtin; any other error passes through unchanged.
 ///
-/// Every user-theme load path (`config::loader::load_theme_from_path` and
-/// `ThemeManager`'s on-disk load) applies this exactly once, so callers must not
-/// add the hint again.
+/// Every theme load path (`config::loader::load_theme_file`,
+/// `config::loader::load_named_theme` and `ThemeManager`'s load) applies this
+/// exactly once, so callers must not add the hint again.
 #[must_use]
 pub fn annotate_load_error(path: &Path, error: Error) -> Error {
     let builtin = path

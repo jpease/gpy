@@ -2,16 +2,18 @@
 
 use super::colors::validate_color;
 use super::{ValidationError, ValidationErrorKind};
-use crate::Result;
 use crate::plugin::{SegmentName, first_token_collision};
 use crate::theme::ThemeConfig;
 use crate::theme::export::first_plugin_variable_collision;
 
 /// Validate the fully parsed theme configuration.
 ///
+/// The failure stays a structured [`ValidationError`], so theme overlay error
+/// attribution can map its field path back to the files that set it.
+///
 /// # Errors
-/// Returns a configuration error if any theme field fails validation.
-pub fn validate_theme_config(theme: &ThemeConfig, source: &str) -> Result<()> {
+/// Returns the first theme field that fails validation.
+pub fn validate_theme_config(theme: &ThemeConfig, source: &str) -> Result<(), ValidationError> {
     // Variant colours are typed keys; their values still go through the palette check.
     validate_plugin_segment_themes(&theme.segments.plugin, source)
 }
@@ -19,21 +21,19 @@ pub fn validate_theme_config(theme: &ThemeConfig, source: &str) -> Result<()> {
 /// Validate plugin-specific segment themes.
 ///
 /// # Errors
-/// Returns a configuration error if a section name is not a segment name, two
-/// sections share a shell variable token, two fields would export the same
-/// shell variable, a field would overwrite a built-in theme export, or a
-/// variant colour is invalid.
+/// Returns an error if a section name is not a segment name, two sections share
+/// a shell variable token, two fields would export the same shell variable, a
+/// field would overwrite a built-in theme export, or a variant colour is invalid.
 fn validate_plugin_segment_themes(
     plugins: &std::collections::HashMap<String, crate::theme::PluginSegmentTheme>,
     source: &str,
-) -> Result<()> {
+) -> Result<(), ValidationError> {
     validate_plugin_segment_names(plugins.keys())?;
     if let Some(collision) = first_plugin_variable_collision(plugins) {
         return Err(ValidationError {
             field_path: "segments".to_owned(),
             kind: ValidationErrorKind::PluginVariableCollision { collision },
-        }
-        .into());
+        });
     }
     for (name, theme) in plugins {
         for (key, value) in &theme.variant_colors {
@@ -48,7 +48,9 @@ fn validate_plugin_segment_themes(
 ///
 /// # Errors
 /// Returns the first invalid or colliding section name, in sorted order.
-fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> Result<()> {
+fn validate_plugin_segment_names<'a>(
+    keys: impl Iterator<Item = &'a String>,
+) -> Result<(), ValidationError> {
     let mut sorted: Vec<&String> = keys.collect();
     sorted.sort_unstable();
     let mut names: Vec<SegmentName> = Vec::with_capacity(sorted.len());
@@ -61,11 +63,10 @@ fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> 
             return Err(ValidationError {
                 field_path: format!("segments.{key}"),
                 kind: ValidationErrorKind::InvalidValue {
-                    expected: "segment section (duplicates another section's name ignoring case)",
+                    expected: DUPLICATE_SECTION,
                     value: key.clone(),
                 },
-            }
-            .into());
+            });
         }
         names.push(name);
     }
@@ -73,10 +74,14 @@ fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> 
         Err(ValidationError {
             field_path: "segments".to_owned(),
             kind: ValidationErrorKind::SegmentTokenCollision { collision },
-        }
-        .into())
+        })
     })
 }
+
+/// `expected` text of the [`ValidationErrorKind::InvalidValue`] raised for a
+/// `[segments]` section that duplicates another ignoring case.
+pub const DUPLICATE_SECTION: &str =
+    "segment section (duplicates another section's name ignoring case)";
 
 #[cfg(test)]
 mod tests {

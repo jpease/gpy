@@ -1,41 +1,136 @@
-//! Theme TOML parsing and validation.
+//! Theme TOML parsing and validation, in two steps: [`parse_table`] checks the
+//! syntax and [`from_table`] runs the typed checks on a table, which may be a
+//! single file's or a merged overlay chain's.
 
 use super::ThemeConfig;
 use super::locate::plugin_key_error;
-use crate::config::validation;
+use crate::config::validation::{self, ValidationError};
 use crate::{Error, Result};
 
-/// Parses and validates theme TOML `contents` into a [`ThemeConfig`].
-/// `source` labels diagnostics. Re-parses from the string only on failure, to get span info.
+/// A top-level table every theme needs after any overlay merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredTable {
+    /// `[segments]`.
+    Segments,
+    /// `[ui]`.
+    Ui,
+}
+
+impl RequiredTable {
+    /// The table's key, `segments` or `ui`.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Segments => "segments",
+            Self::Ui => "ui",
+        }
+    }
+}
+
+/// Why [`from_table`] rejected a theme table. Every variant keeps its typed
+/// cause, so overlay error attribution can find the failing key structurally.
+#[derive(Debug)]
+pub enum FromTableError {
+    /// `[segments]` or `[ui]` is absent or not a table.
+    Missing(RequiredTable),
+    /// Typed deserialization failed. A table has no source text, so the error
+    /// has no span.
+    Deserialize(toml::de::Error),
+    /// The typed theme failed `validate_theme_config`.
+    Validation(ValidationError),
+}
+
+impl std::fmt::Display for FromTableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing(table) => write!(f, "missing required [{}] table", table.key()),
+            Self::Deserialize(error) => f.write_str(error.message().trim()),
+            Self::Validation(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for FromTableError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Missing(_) => None,
+            Self::Deserialize(error) => Some(error),
+            Self::Validation(error) => Some(error),
+        }
+    }
+}
+
+/// Parses and validates theme TOML `contents` into a [`ThemeConfig`]:
+/// [`parse_table`] followed by [`from_table`]. `source` labels diagnostics.
+/// Re-parses from the string only on failure, to get span info.
 ///
 /// # Errors
 /// Returns a config error on bad syntax, missing `[segments]`/`[ui]`, or invalid schema.
 pub fn parse(contents: &str, source: &str) -> Result<ThemeConfig> {
-    let value: toml::Value = toml::from_str(contents).map_err(|e| {
+    let table = parse_table(contents, source)?;
+    from_table(table, source).or_else(|error| full_theme_result(contents, source, error))
+}
+
+/// Parses theme TOML `contents` into a table, checking only the syntax.
+/// `source` labels the error.
+///
+/// # Errors
+/// Returns a config error naming the line of a TOML syntax error.
+pub fn parse_table(contents: &str, source: &str) -> Result<toml::Table> {
+    toml::from_str(contents).map_err(|e| {
         Error::config(format!(
             "Failed to parse theme TOML syntax in {source}:\n  {e}\n  Remediation: Fix the TOML syntax error at the reported line."
         ))
-    })?;
+    })
+}
 
-    if !value.get("segments").is_some_and(toml::Value::is_table) {
-        return Err(Error::config(format!(
-            "Invalid theme in {source}\n  Diagnostic: Missing required [segments] table\n  Remediation: Add a [segments] block to define segment colors."
-        )));
+/// Runs the typed theme checks on `table`: `[segments]` and `[ui]` present,
+/// typed deserialization, and `validate_theme_config`. `source` labels the
+/// colours a validation error names.
+///
+/// # Errors
+/// Returns the first failing check as a [`FromTableError`].
+pub fn from_table(
+    table: toml::Table,
+    source: &str,
+) -> std::result::Result<ThemeConfig, FromTableError> {
+    for required in [RequiredTable::Segments, RequiredTable::Ui] {
+        if !table.get(required.key()).is_some_and(toml::Value::is_table) {
+            return Err(FromTableError::Missing(required));
+        }
     }
-    if !value.get("ui").is_some_and(toml::Value::is_table) {
-        return Err(Error::config(format!(
-            "Invalid theme in {source}\n  Diagnostic: Missing required [ui] table\n  Remediation: Add a [ui] block to define prompt icons and delimiters."
-        )));
-    }
-
-    let theme = match value.try_into() {
-        Ok(theme) => theme,
-        Err(_) => reparse_for_diagnostic(contents, source)?,
-    };
-
-    validation::validate_theme_config(&theme, source)?;
-
+    let theme: ThemeConfig = toml::Value::Table(table)
+        .try_into()
+        .map_err(FromTableError::Deserialize)?;
+    validation::validate_theme_config(&theme, source).map_err(FromTableError::Validation)?;
     Ok(theme)
+}
+
+/// The result of a full theme (one file, no overlay) whose [`from_table`]
+/// failed, with the diagnostics [`parse`] has always given: a typed failure is
+/// re-parsed from `contents` for its span.
+///
+/// # Errors
+/// Returns the config error describing `error`.
+pub(super) fn full_theme_result(
+    contents: &str,
+    source: &str,
+    error: FromTableError,
+) -> Result<ThemeConfig> {
+    match error {
+        FromTableError::Missing(RequiredTable::Segments) => Err(Error::config(format!(
+            "Invalid theme in {source}\n  Diagnostic: Missing required [segments] table\n  Remediation: Add a [segments] block to define segment colors."
+        ))),
+        FromTableError::Missing(RequiredTable::Ui) => Err(Error::config(format!(
+            "Invalid theme in {source}\n  Diagnostic: Missing required [ui] table\n  Remediation: Add a [ui] block to define prompt icons and delimiters."
+        ))),
+        FromTableError::Deserialize(_) => {
+            let theme = reparse_for_diagnostic(contents, source)?;
+            validation::validate_theme_config(&theme, source)?;
+            Ok(theme)
+        }
+        FromTableError::Validation(invalid) => Err(invalid.into()),
+    }
 }
 
 /// Re-parses `contents` after `toml::Value` (which has no spans) failed to deserialize.

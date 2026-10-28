@@ -4,6 +4,7 @@ pub mod export;
 mod locate;
 pub mod manager;
 pub mod model;
+pub mod overlay;
 mod parse;
 mod released_hashes;
 pub mod retire;
@@ -15,4 +16,5 @@ pub use model::{
     PluginSegmentTheme, RecommendedDirectory, RecommendedUi, SegmentThemes, StatusTheme,
     ThemeConfig, UiTheme,
 };
-pub use parse::parse;
+pub use overlay::{ChainLink, LoadedTheme, ThemeChain};
+pub use parse::{FromTableError, RequiredTable, from_table, parse, parse_table};

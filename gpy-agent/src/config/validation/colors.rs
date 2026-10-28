@@ -4,7 +4,6 @@
 //! parser (`parse_color`) resolves to a concrete color, plus the keywords below.
 
 use super::{ValidationError, ValidationErrorKind};
-use crate::Result;
 use crate::template::{Color, config_color_name, parse_color};
 
 /// Theme-only keywords: the shell renderers resolve them against the
@@ -45,8 +44,9 @@ pub fn is_valid_color(value: &str) -> bool {
 /// Validate a single color value.
 ///
 /// # Errors
-/// Returns a configuration error if the provided value is not a recognised color.
-pub fn validate_color(value: &str, field: &str, source: &str) -> Result<()> {
+/// Returns an [`ValidationErrorKind::InvalidColor`] error if the provided value
+/// is not a recognised color.
+pub fn validate_color(value: &str, field: &str, source: &str) -> Result<(), ValidationError> {
     if !is_valid_color(value) {
         return Err(ValidationError {
             field_path: field.to_owned(),
@@ -54,8 +54,7 @@ pub fn validate_color(value: &str, field: &str, source: &str) -> Result<()> {
                 value: value.to_owned(),
                 theme: source.to_owned(),
             },
-        }
-        .into());
+        });
     }
     Ok(())
 }

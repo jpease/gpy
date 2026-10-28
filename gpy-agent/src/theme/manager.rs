@@ -10,9 +10,8 @@ use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::Palette;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
-use crate::watcher::hot_reload::{
-    HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget, bytes_fingerprint,
-};
+use crate::theme::overlay::{self, ChainLink};
+use crate::watcher::hot_reload::{HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
@@ -27,19 +26,20 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     ("starship", STARSHIP_THEME_CONTENT),
 ];
 
-/// Where a theme name resolves (user, then plugin, then builtin): its file path,
-/// and whether a file exists there (otherwise the embedded builtin is loaded).
+/// Where a theme name resolves (user, then plugin, then builtin): the
+/// requested file's link, whose `on_disk` is `false` when the embedded builtin
+/// is loaded. An overlay's bases are resolved when it loads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ThemeLocation {
-    path: PathBuf,
-    on_disk: bool,
+    top: ChainLink,
 }
 
 impl ThemeLocation {
     fn resolve(theme_name: &str) -> Self {
-        let path = ThemeManager::theme_path(theme_name);
-        let on_disk = path.exists();
-        Self { path, on_disk }
+        // Unresolvable names get the embedded link; the loader reports the error.
+        let top =
+            overlay::resolve_top(theme_name).unwrap_or_else(|| ChainLink::embedded(theme_name));
+        Self { top }
     }
 
     /// Watches this source needs beyond the always-watched user themes dir: a
@@ -47,13 +47,13 @@ impl ThemeLocation {
     /// notify backends report truncate/write saves only on a file watch.
     fn watch_paths(&self, user_themes_dir: &Path) -> Vec<PathBuf> {
         let mut paths = Vec::new();
-        if let Some(parent) = self.path.parent()
+        if let Some(parent) = self.top.path.parent()
             && parent != user_themes_dir
         {
             paths.push(parent.to_path_buf());
         }
-        if self.on_disk {
-            paths.push(self.path.clone());
+        if self.top.on_disk {
+            paths.push(self.top.path.clone());
         }
         paths
     }
@@ -207,7 +207,8 @@ impl ThemeManager {
     }
 
     /// Construct a manager from embedded builtin content, ignoring on-disk overrides.
-    /// The recorded path is still the user location so reload/watch match [`new`](Self::new).
+    /// Builtins are full themes, never overlays. The recorded path is still the
+    /// user location so reload/watch match [`new`](Self::new).
     ///
     /// # Errors
     /// Returns an error if `theme_name` is not a builtin or fails to parse.
@@ -225,8 +226,7 @@ impl ThemeManager {
 
         let theme = crate::theme::parse(content, theme_name)?;
         let location = ThemeLocation {
-            path: Self::user_theme_path(theme_name),
-            on_disk: false,
+            top: ChainLink::embedded(theme_name),
         };
         Ok(Self::with_state(theme_name, location, None, theme))
     }
@@ -304,23 +304,16 @@ impl ThemeManager {
         Ok(reloaded)
     }
 
-    /// Load the theme at `location`, with the fingerprint of the file bytes
-    /// parsed (`None` for an embedded builtin).
+    /// Load the theme at `location`, merging an overlay's chain, with the
+    /// fingerprint of the file bytes parsed (`None` when every link is an
+    /// embedded builtin).
     ///
     /// # Errors
-    /// Returns an error if the file can't be read or the theme can't be parsed.
+    /// Returns an error if a file can't be read or the theme can't be parsed.
     fn load_source(location: &ThemeLocation) -> Result<(ThemeConfig, Option<u64>)> {
-        if !location.on_disk {
-            return Ok((Self::load_from_path(&location.path)?, None));
-        }
-        let source = location.path.display().to_string();
-        let annotate = |e| super::user_copy::annotate_load_error(&location.path, e);
-        let content = std::fs::read_to_string(&location.path)
-            .map_err(|e| Error::config(format!("Failed to read theme file {source}: {e}")))
-            .map_err(annotate)?;
-        let fingerprint = bytes_fingerprint(content.as_bytes());
-        let theme = crate::theme::parse(&content, &source).map_err(annotate)?;
-        Ok((theme, Some(fingerprint)))
+        let loaded = overlay::load_link(location.top.clone())
+            .map_err(|e| super::user_copy::annotate_load_error(&location.top.path, e))?;
+        Ok((loaded.theme, loaded.fingerprint))
     }
 
     /// Re-arm the source watches from a non-watcher thread.
@@ -587,10 +580,6 @@ impl ThemeManager {
         crate::paths::config_root().join("themes")
     }
 
-    fn user_theme_path(theme_name: &str) -> PathBuf {
-        Self::user_themes_dir().join(format!("{theme_name}.toml"))
-    }
-
     /// Write `theme` as a user override under `user_themes_dir()`; never touches builtin/plugin files.
     /// The file is replaced atomically, so a failed save keeps the previous theme, and a symlinked
     /// theme file is written through.
@@ -615,40 +604,6 @@ impl ThemeManager {
             .map_err(|e| Error::config(format!("Failed to write theme file: {e}")))?;
 
         Ok(target_path)
-    }
-
-    /// # Errors
-    /// Returns an error if the file cannot be read or the TOML cannot be parsed.
-    fn load_from_path(path: &Path) -> Result<ThemeConfig> {
-        crate::config::loader::load_theme_from_path(path)
-    }
-
-    /// Resolve `theme_name` (user, plugin, then builtin), shared by daemon and oneshot.
-    /// Builtins resolve to their user path; the loader falls back to embedded content by stem.
-    pub(crate) fn resolve_path(theme_name: &str) -> Option<PathBuf> {
-        let user_path = Self::user_theme_path(theme_name);
-        if user_path.exists() {
-            return Some(user_path);
-        }
-
-        if let Some(path) = Self::discover_available_themes()
-            .into_iter()
-            .find(|theme| theme.name == theme_name)
-            .and_then(|theme| theme.path)
-        {
-            return Some(path);
-        }
-
-        if BUILTIN_THEMES.iter().any(|(name, _)| *name == theme_name) {
-            return Some(user_path);
-        }
-
-        None
-    }
-
-    fn theme_path(theme_name: &str) -> PathBuf {
-        // Unresolvable names get the user path; the loader reports the error.
-        Self::resolve_path(theme_name).unwrap_or_else(|| Self::user_theme_path(theme_name))
     }
 
     fn insert_plugin_themes(merged: &mut BTreeMap<String, DiscoveredTheme>) {
@@ -676,7 +631,7 @@ impl ThemeManager {
         PollTarget {
             path_of: Box::new(move || {
                 let name = path_state.read_or_recover().name.clone();
-                Some(ThemeLocation::resolve(&name).path)
+                Some(ThemeLocation::resolve(&name).top.path)
             }),
             reload: Box::new(move |_path: &Path| target.reload_and_apply("poll fallback")),
         }
@@ -710,8 +665,12 @@ mod tests {
     /// A manager holding `theme` under `name`, with no file behind it.
     fn manager_with(name: &str, theme: ThemeConfig) -> ThemeManager {
         let location = ThemeLocation {
-            path: PathBuf::from("/tmp/gpy-test-theme.toml"),
-            on_disk: false,
+            top: crate::theme::ChainLink {
+                name: name.to_owned(),
+                source: ThemeSource::Builtin,
+                path: PathBuf::from("/tmp/gpy-test-theme.toml"),
+                on_disk: false,
+            },
         };
         ThemeManager::with_state(name, location, None, theme)
     }
@@ -730,7 +689,7 @@ mod tests {
         );
     }
 
-    /// Plugin-sourced discovered paths survive the merge `resolve_path` relies on.
+    /// Plugin-sourced discovered paths survive the merge `overlay::resolve_top` relies on.
     /// (Real plugin discovery needs env mutation, which `forbid(unsafe_code)` prevents.)
     #[test]
     fn plugin_sourced_theme_candidate_resolves_via_discovered_path() {
@@ -748,7 +707,7 @@ mod tests {
             },
         );
 
-        // Same expression `resolve_path` uses.
+        // Same expression `overlay::resolve_top` uses.
         let resolved = merged
             .into_values()
             .find(|theme| theme.name == "acme")

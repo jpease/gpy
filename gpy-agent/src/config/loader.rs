@@ -318,55 +318,57 @@ fn write_atomically(target: &Path, contents: &str) -> Result<()> {
         .map_err(|e| Error::config(format!("Failed to write config file: {e}")))
 }
 
-/// Load a theme by name (user, plugin, or builtin), fresh from disk.
+/// Load a theme by name (user, plugin, or builtin), fresh from disk, merging
+/// an overlay's chain.
 ///
 /// # Errors
 /// Returns an error if the theme is unresolvable or fails to parse.
 pub fn load_theme(theme_name: &str) -> Result<crate::theme::ThemeConfig> {
+    load_named_theme(theme_name).map(|loaded| loaded.theme)
+}
+
+/// [`load_theme`], keeping the chain the theme was merged from so a later
+/// template check can name the file and line of a failing key
+/// ([`LoadedTheme::template_error`](crate::theme::LoadedTheme::template_error)).
+///
+/// # Errors
+/// Returns an error if the theme is unresolvable or fails to parse.
+pub fn load_named_theme(theme_name: &str) -> Result<crate::theme::LoadedTheme> {
     // Same resolver as the daemon so oneshot agrees on plugin themes.
-    let theme_path = crate::theme::ThemeManager::resolve_path(theme_name).ok_or_else(|| {
+    let top = crate::theme::overlay::resolve_top(theme_name).ok_or_else(|| {
         Error::config(format!(
             "theme '{theme_name}' not found (no user theme, plugin theme, or builtin matches this name)"
         ))
     })?;
-
-    load_theme_from_path(&theme_path)
+    let path = top.path.clone();
+    crate::theme::overlay::load_link(top)
+        .map_err(|error| crate::theme::user_copy::annotate_load_error(&path, error))
 }
 
 /// Load a theme from a path, falling back to the builtin with that stem.
+/// An overlay's `extends` resolves as for a user theme named after the stem,
+/// or, for a file in a plugin's `themes/` directory, as for that plugin.
 ///
-/// This is the single funnel for theme load errors (CLI, daemon, oneshot,
-/// export, `doctor`). When the failing file is the user copy of an embedded
-/// builtin, the returned error already ends with
+/// This is the single funnel for theme load errors by path (CLI, `doctor`,
+/// `theme validate`); loads by name go through [`load_named_theme`] or
+/// `ThemeManager`, which annotate the same way. When the failing file is the
+/// user copy of an embedded builtin, the returned error already ends with
 /// [`user_copy::recovery_hint`](crate::theme::user_copy::recovery_hint) (it
 /// says the file overrides the builtin). Callers MUST NOT append the hint again.
 ///
 /// # Errors
 /// Returns an error if the file can't be read or parsed, or matches no builtin.
 pub fn load_theme_from_path(path: &Path) -> Result<crate::theme::ThemeConfig> {
-    load_theme_from_path_inner(path)
-        .map_err(|error| crate::theme::user_copy::annotate_load_error(path, error))
+    load_theme_file(path).map(|loaded| loaded.theme)
 }
 
-fn load_theme_from_path_inner(path: &Path) -> Result<crate::theme::ThemeConfig> {
-    use crate::theme::manager::BUILTIN_THEMES;
-
-    // `file_stem`, not a `/` suffix match: Windows paths use `\`.
-    let stem = path.file_stem().and_then(|s| s.to_str());
-    let contents = if path.exists() {
-        std::fs::read_to_string(path).map_err(|e| {
-            Error::config(format!("Failed to read theme file {}: {e}", path.display()))
-        })?
-    } else if let Some((_, content)) = BUILTIN_THEMES.iter().find(|(name, _)| stem == Some(*name)) {
-        (*content).to_owned()
-    } else {
-        let theme_name = stem.map_or_else(|| path.display().to_string(), str::to_owned);
-        return Err(Error::config(format!(
-            "theme '{theme_name}' not found (no user theme, plugin theme, or builtin matches this name)"
-        )));
-    };
-
-    crate::theme::parse(&contents, &path.display().to_string())
+/// [`load_theme_from_path`], keeping the chain the theme was merged from.
+///
+/// # Errors
+/// Returns an error if the file can't be read or parsed, or matches no builtin.
+pub fn load_theme_file(path: &Path) -> Result<crate::theme::LoadedTheme> {
+    crate::theme::overlay::load_path(path)
+        .map_err(|error| crate::theme::user_copy::annotate_load_error(path, error))
 }
 
 #[cfg(test)]

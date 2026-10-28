@@ -12,7 +12,7 @@ use crate::config::recommended_layout::{
 };
 use crate::{
     Error, Result, config,
-    theme::{RecommendedUi, ThemeConfig, ThemeManager},
+    theme::{LoadedTheme, RecommendedUi, ThemeConfig, ThemeManager},
 };
 use std::path::Path;
 
@@ -38,8 +38,9 @@ pub fn list() -> Result<()> {
 /// # Errors
 /// Returns an error if the theme doesn't exist or config cannot be saved.
 pub fn use_theme(name: &str, force: bool) -> Result<()> {
-    let manager = ThemeManager::new(name)?;
-    let theme = manager.get();
+    validate_config_name("theme", name)?;
+    let loaded = config::loader::load_named_theme(name)?;
+    let theme = &loaded.theme;
 
     let path = active_config_path()?;
     let original = load_active_config(&path)?;
@@ -73,14 +74,14 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
             &original,
             &mut config,
             &path,
-            &theme,
+            &loaded,
             pending,
             recommended_detection,
             recommended_palette,
             outgoing_recommended.as_ref(),
         )?;
     } else {
-        validate_prospective_activation(&theme, config.ui.palette.as_str())?;
+        validate_prospective_activation(&loaded, config.ui.palette.as_str())?;
         save_config(&path, &original, &config, &[])?;
 
         println!("Switched to '{name}' theme");
@@ -115,7 +116,7 @@ fn apply_forced_switch(
     original: &config::Config,
     config: &mut config::Config,
     path: &Path,
-    theme: &ThemeConfig,
+    loaded: &LoadedTheme,
     pending: PendingLayout,
     recommended_detection: Option<config::types::DetectionMode>,
     recommended_palette: Option<config::types::PaletteName>,
@@ -135,7 +136,7 @@ fn apply_forced_switch(
     );
     let (palette_applied, palette_preserved) =
         resolve_forced_palette(config, recommended_palette, &user_set, outgoing_recommended);
-    validate_prospective_activation(theme, config.ui.palette.as_str())?;
+    validate_prospective_activation(loaded, config.ui.palette.as_str())?;
     save_config(path, original, config, &[])?;
 
     println!("Switched to '{name}' theme");
@@ -151,12 +152,13 @@ fn apply_forced_switch(
     );
     Ok(())
 }
-/// Validate prospective theme activation against the prospective active palette.
-fn validate_prospective_activation(theme: &ThemeConfig, palette_name: &str) -> Result<()> {
+/// Validate prospective theme activation against the prospective active
+/// palette. A template error in an overlay names the file and line that set it.
+fn validate_prospective_activation(loaded: &LoadedTheme, palette_name: &str) -> Result<()> {
     let palette_mgr = crate::palette::PaletteManager::new(palette_name)?;
     let palette = palette_mgr.get().to_template_palette();
-    crate::config::validation::templates::validate_segment_templates(theme, &palette)
-        .map_err(|e| Error::config(e.to_string()))?;
+    crate::config::validation::templates::validate_segment_templates(&loaded.theme, &palette)
+        .map_err(|e| loaded.template_error(e))?;
     Ok(())
 }
 
@@ -438,34 +440,36 @@ fn discovered_theme(name: &str) -> Option<config::discovery::Discovered> {
 fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
     validate_config_name("theme", theme_name)
         .map_err(|error| Failure::new(FailureKind::UnknownName, error))?;
-    // Load first: `ThemeManager::new` gives the more specific parse errors;
-    // only a name loaded via the default fallback reaches discovery.
-    let manager =
-        ThemeManager::new(theme_name).map_err(|error| match discovered_theme(theme_name) {
+    // Load first: the loader gives the more specific parse errors; only a
+    // name that loaded reaches discovery.
+    let loaded = config::loader::load_named_theme(theme_name).map_err(|error| {
+        match discovered_theme(theme_name) {
             Some(theme) => classify_load_failure(error, theme.path.as_deref()),
             None => Failure::new(FailureKind::UnknownName, error),
-        })?;
+        }
+    })?;
     ensure_theme_discovered(theme_name)?;
-    let theme = manager.get();
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
-    validate_templates(&theme, &palette)
+    validate_templates(&loaded, &palette)
 }
 
 fn validate_theme_file(path: &Path) -> std::result::Result<(), Failure> {
-    let theme = config::loader::load_theme_from_path(path)
+    let loaded = config::loader::load_theme_file(path)
         .map_err(|error| classify_load_failure(error, Some(path)))?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
-    validate_templates(&theme, &palette)
+    validate_templates(&loaded, &palette)
 }
 
+/// Template validation; an overlay's failure names the file and line that set
+/// the failing key.
 fn validate_templates(
-    theme: &ThemeConfig,
+    loaded: &LoadedTheme,
     palette: &crate::template::Palette,
 ) -> std::result::Result<(), Failure> {
-    crate::config::validation::templates::validate_segment_templates(theme, palette)
-        .map_err(|error| Failure::new(FailureKind::Template, Error::from(error)))
+    crate::config::validation::templates::validate_segment_templates(&loaded.theme, palette)
+        .map_err(|error| Failure::new(FailureKind::Template, loaded.template_error(error)))
 }
 
 #[cfg(test)]
