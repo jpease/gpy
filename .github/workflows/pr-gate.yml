@@ -52,10 +52,15 @@ jobs:
         shell: bash
         run: ./scripts/check-active-toolchain.sh
 
+      # Restores the cache cross-platform-test.yml saves on main; a PR never
+      # saves one (a PR's cache is readable only by that PR, and 8 per PR
+      # overran the repository's 10 GB cache limit).
       - name: Cache cargo build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: gpy-agent
+          shared-key: rust
+          save-if: "false"
 
       # quality-check.sh fails under CI when any of these is missing.
       - name: Install Rust tooling (nextest, audit, deny, machete)
@@ -78,11 +83,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # Two shards of `quality-check.sh --shell-only` per OS, balanced on
-        # measured wall time: the Bash suite alone,
+        # Four shards of `quality-check.sh --shell-only` per OS, balanced on
+        # measured wall time: the Bash suite in two halves (bash1, bash2),
         # and everything else. Together they must cover every part
         # (tests/bash/ci_gate_shape).
-        parts: [bash, "checks,fish,zsh"]
+        parts: [bash1, bash2, "checks,fish,zsh"]
 
     steps:
       - name: Checkout
@@ -104,6 +109,8 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: gpy-agent
+          shared-key: rust
+          save-if: "false"
 
       # One shellcheck version on every runner; cargo-audit backs the
       # dependency-advisory claims test.
@@ -144,10 +151,12 @@ jobs:
         shell: bash
         run: ./scripts/check-active-toolchain.sh
 
+      # llvm-cov builds with its own flags, so nothing seeded on main fits.
       - name: Cache cargo build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: gpy-agent
+          save-if: "false"
 
       - name: Install Rust tooling (nextest, llvm-cov)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
@@ -195,10 +204,15 @@ jobs:
         shell: bash
         run: ./scripts/check-active-toolchain.sh
 
+      # Restores the cache cross-platform-test.yml saves on main (release
+      # profile and every dependency); never saves, since only main's cache
+      # is readable by every PR.
       - name: Cache cargo build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: gpy-agent
+          shared-key: rust
+          save-if: "false"
 
       - name: Absolute performance budgets
         run: ./scripts/bench.sh --ci

@@ -25,7 +25,7 @@ check-rust:
 check-fish:
     ./{{scripts_dir}}/quality-check.sh --fish-only
 
-# Run shell checks only (skips Rust); optional comma-separated parts: checks,fish,bash,zsh
+# Run shell checks only (skips Rust); optional comma-separated parts: checks,fish,bash,zsh (bash1 or bash2 for half the Bash suite)
 check-shell parts="":
     ./{{scripts_dir}}/quality-check.sh --shell-only {{parts}}
 
