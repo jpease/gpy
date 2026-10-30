@@ -105,7 +105,7 @@ jobs:
           workspaces: gpy-agent
 
       - name: Install Rust tooling (nextest, audit, deny, machete)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just,shellcheck
 
@@ -197,7 +197,7 @@ jobs:
 
       - name: Install cargo-zigbuild (Linux)
         if: endsWith(matrix.target, '-unknown-linux-gnu')
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-zigbuild@0.23.4
 
