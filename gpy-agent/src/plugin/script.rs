@@ -289,7 +289,7 @@ pub fn check_owned_and_not_shared(path: &Path) -> Result<()> {
             meta.mode() & 0o7777
         )));
     }
-    Ok(())
+    super::script_acl::check_no_foreign_write_acl(path)
 }
 
 /// Windows builds the CLI only and runs no script segments: nothing to check.

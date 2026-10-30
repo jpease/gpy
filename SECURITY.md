@@ -170,6 +170,10 @@ a relative path without `..`, canonicalize (all symlinks resolved) to a regular
 file inside the canonical plugin root, and sit at a UTF-8 path without control
 characters. The script, and every directory from it up to the plugin root,
 must be owned by you or by root and must not be group- or world-writable.
+On macOS the same applies to extended ACLs, for the script, its directories
+and every ancestor: an allow entry for another principal granting write,
+append, delete, delete-child, write-security or change-owner is refused
+(deny entries are ignored; `chmod -N` removes an ACL).
 Every canonical ancestor of the plugin root, up to `/`, must also be unable
 to let another user replace the root: owned by you or root and not group- or
 world-writable, or writable only with the sticky bit set (as in `/tmp`) and

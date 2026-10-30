@@ -10,6 +10,8 @@ pub(crate) mod newtype;
 pub mod registry;
 /// Script segment manifests (`entry_type = "script"`)
 pub mod script;
+#[cfg(unix)]
+mod script_acl;
 mod script_ancestry;
 /// Typed settings declared by script segments
 pub mod settings;

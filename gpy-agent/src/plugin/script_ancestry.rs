@@ -59,7 +59,7 @@ pub(super) fn check_ancestor_not_replaceable(path: &Path) -> Result<()> {
             mode & 0o7777
         )));
     }
-    Ok(())
+    super::script_acl::check_no_foreign_write_acl(path)
 }
 
 /// Whether `gid` is a group only the current user is in: the process's primary

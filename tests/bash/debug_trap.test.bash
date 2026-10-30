@@ -70,6 +70,25 @@ for gpy_bash_bin in /bin/bash "$BASH"; do
 done
 echo "PASS: EXIT trap containing quotes runs at exit"
 
+echo "=== Testing EXIT trap sees the real exit status ==="
+for gpy_bash_bin in /bin/bash "$BASH"; do
+    for load_gpy in 0 1; do
+        gpy_script='trap '"'"'printf "status=%s\n" "$?"'"'"' EXIT'$'\n'
+        if [[ "$load_gpy" == 1 ]]; then
+            gpy_script+='source "$1/bash/gpy.bash"'$'\n'
+        fi
+        gpy_script+='exit 7'
+        out=$(GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_SOCKET_PATH="${TMPDIR:-/tmp}/gpy-missing-$$.sock" \
+            "$gpy_bash_bin" --noprofile --norc -c "$gpy_script" _ "$ROOT" 2>/dev/null)
+        code=$?
+        if [[ "$out" != *"status=7" || "$code" -ne 7 ]]; then
+            echo "FAIL: $gpy_bash_bin load_gpy=$load_gpy: trap saw [$out], exit code $code (want status=7, 7)"
+            exit 1
+        fi
+    done
+done
+echo "PASS: pre-existing EXIT trap observes the incoming exit status"
+
 echo "=== Testing DEBUG trap is safe under set -u ==="
 OUT_LOG="$(mktemp)"
 cleanup() { rm -f "$OUT_LOG"; }

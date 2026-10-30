@@ -45,12 +45,18 @@ __gpy_trap_body() {
     eval "set -- $1"
     printf '%s' "${3-}"
 }
+# Return "$1" so the next command (the saved trap's eval) starts with `$?` = "$1".
+__gpy_replay_status() {
+    return "$1"
+}
 __gpy_handle_exit() {
+    local status=$?
     if [[ -n "$__gpy_registered" ]]; then
         __gpy_send_json "{\"op\":\"unregister\",\"pid\":$$}" &>/dev/null || true
     fi
     __gpy_untrack_shell_for_agent_recovery
     if [[ -n "$__gpy_prev_exit_trap" ]]; then
+        __gpy_replay_status "$status"
         eval "$__gpy_prev_exit_trap"
     fi
 }

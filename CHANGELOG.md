@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The Bash integration passes the real exit status to an existing `EXIT` trap
+  instead of 0 (#1105).
+- On macOS, script segments whose file, directories or ancestors carry an ACL
+  letting another principal write them are no longer trusted (#1106).
+
 ## [0.8.0] - 2026-10-29
 
 ### Added

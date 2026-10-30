@@ -129,6 +129,12 @@ sysinfo = "0.39"
 
 # No Windows dependencies: Windows builds the CLI only; IPC is Unix-socket only.
 
+[target."cfg(target_os = \"macos\")".dependencies]
+# Reads macOS extended ACLs for the script-segment trust checks. Its API is
+# safe (this crate denies unsafe); default features use prebuilt bindings, so
+# no libclang is needed.
+exacl = "0.13"
+
 [target."cfg(unix)".dev-dependencies]
 # PTY-backed `init` and wizard tests.
 portable-pty = "0.9"
