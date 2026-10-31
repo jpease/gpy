@@ -62,4 +62,24 @@ echo "--- a 404 page in place of a sidecar aborts ---"
 result="$(SIDECAR_BODY="<!DOCTYPE html><title>404</title>" run_verify)"
 [[ "${result%%|*}" -ne 0 ]] || fail "verify_download accepted an HTML error page as a checksum"
 
+echo "--- curl's own error line reaches stderr ---"
+FAKEBIN="$WORKDIR/fakebin"
+mkdir -p "$FAKEBIN"
+cat >"$FAKEBIN/curl" <<'EOF'
+#!/bin/sh
+echo "curl: (22) The requested URL returned error: 404" >&2
+exit 22
+EOF
+chmod +x "$FAKEBIN/curl"
+fetch_err="$(
+    PATH="$FAKEBIN:$PATH" sh -c '
+        . "$1"
+        fetch_to "https://example.invalid/asset" "$2"
+    ' _ "$PRELUDE" "$WORKDIR/fetched.bin" 2>&1 >/dev/null
+)" && fail "fetch_to succeeded although curl failed"
+case "$fetch_err" in
+    *"curl: (22) The requested URL returned error: 404"*) ;;
+    *) fail "fetch_to hid curl's error line: $fetch_err" ;;
+esac
+
 test_finish "install-oneline.sh verify_download fails closed"

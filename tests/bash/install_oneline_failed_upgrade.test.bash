@@ -8,8 +8,8 @@
 #   broken agent  installer exits non-zero; the old agent is byte-identical
 #                 and still runs; no .gpy-agent.new.* is left
 #   broken CLI    installer exits non-zero (the CLI is required: it runs
-#                 `gpy setup`); the old gpy is byte-identical and still runs;
-#                 the new agent is installed; no .gpy.new.* is left
+#                 `gpy setup`); both the old gpy and the old agent are
+#                 byte-identical and still run; no .gpy*.new.* is left
 #   good upgrade  both binaries are replaced by the new ones
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -175,10 +175,16 @@ if [ "$(digest_of "$bindir/gpy")" = "$old_cli_sum" ] \
 else
     fail "broken CLI: the installed gpy was replaced"
 fi
-if [ "$("$bindir/gpy-agent" --version 2>/dev/null)" = "gpy-agent 9.9.9" ]; then
-    pass "broken CLI: the new agent was still installed"
+if [ "$(digest_of "$bindir/gpy-agent")" = "$old_agent_sum" ] \
+    && [ "$("$bindir/gpy-agent" --version 2>/dev/null)" = "gpy-agent 0.0.1" ]; then
+    pass "broken CLI: the old agent is byte-identical and still runs"
 else
-    fail "broken CLI: the agent was not upgraded"
+    fail "broken CLI: the agent was replaced before the CLI failed"
+fi
+if [ -z "$(find "$bindir" -name '*.backup.*' 2>/dev/null)" ]; then
+    pass "broken CLI: no backup was created"
+else
+    fail "broken CLI: a backup was created"
 fi
 if no_staged_files; then
     pass "broken CLI: no staged file left behind"

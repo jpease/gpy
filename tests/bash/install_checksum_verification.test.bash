@@ -181,4 +181,33 @@ if compgen -G "$HOME_EXISTING/.local/bin/gpy-agent.backup.*" >/dev/null; then
     fail "a failed verification left backup files behind; it should abort before touching anything"
 fi
 
+echo "--- tampered CLI over an existing install ---"
+HOME_BOTH="$WORKDIR/home-both"
+rm -rf "$HOME_BOTH"
+mkdir -p "$HOME_BOTH/.local/bin"
+for incumbent in gpy-agent gpy; do
+    printf '#!/bin/sh\necho "incumbent 1.0.0"\n' >"$HOME_BOTH/.local/bin/$incumbent"
+    chmod +x "$HOME_BOTH/.local/bin/$incumbent"
+done
+incumbent_agent_sum="$(sha256_of "$HOME_BOTH/.local/bin/gpy-agent")"
+incumbent_cli_sum="$(sha256_of "$HOME_BOTH/.local/bin/gpy")"
+
+status=0
+(
+    cd "$PKG_CLI" || exit 99
+    HOME="$HOME_BOTH" XDG_CONFIG_HOME="$HOME_BOTH/.config" GPY_SHELL=fish bash ./install.sh
+) >"$WORKDIR/both.log" 2>&1 || status=$?
+
+[[ "$status" -ne 0 ]] || fail "install.sh succeeded with a tampered CLI over an existing install"
+[[ "$(sha256_of "$HOME_BOTH/.local/bin/gpy-agent")" == "$incumbent_agent_sum" ]] ||
+    fail "a tampered CLI still replaced the existing gpy-agent"
+[[ "$(sha256_of "$HOME_BOTH/.local/bin/gpy")" == "$incumbent_cli_sum" ]] ||
+    fail "a tampered CLI replaced the existing gpy"
+if compgen -G "$HOME_BOTH/.local/bin/*.backup.*" >/dev/null; then
+    fail "a tampered CLI left backup files behind"
+fi
+if compgen -G "$HOME_BOTH/.local/bin/.gpy*.new.*" >/dev/null; then
+    fail "a tampered CLI left a staged file behind"
+fi
+
 test_finish
