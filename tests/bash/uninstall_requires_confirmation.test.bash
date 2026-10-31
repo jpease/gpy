@@ -21,6 +21,8 @@ make_sandbox() {
     printf '[ui]\ntheme = "mine"\n' >"$sb/config/gpy/config.toml"
     printf '# hand-written theme\n' >"$sb/config/gpy/themes/mine.toml"
     printf '# hand-written palette\n' >"$sb/config/gpy/palettes/mine.toml"
+    mkdir -p "$sb/config/gpy/plugins/demo"
+    printf '# hand-written plugin\n' >"$sb/config/gpy/plugins/demo/plugin.toml"
     printf '%s' "$sb"
 }
 
@@ -34,7 +36,7 @@ run_uninstall() {
 
 user_files_intact() {
     [[ -f "$1/config/gpy/config.toml" && -f "$1/config/gpy/themes/mine.toml" &&
-        -f "$1/config/gpy/palettes/mine.toml" ]]
+        -f "$1/config/gpy/palettes/mine.toml" && -f "$1/config/gpy/plugins/demo/plugin.toml" ]]
 }
 
 sb="$(make_sandbox)"
@@ -53,14 +55,36 @@ sb="$(make_sandbox)"
 run_uninstall "$sb" /dev/null --yes
 rc=$?
 [[ $rc -eq 0 ]] || fail "--yes: uninstaller exited $rc"
-[[ ! -e "$sb/config/gpy" ]] || fail "--yes: config directory still present"
+user_files_intact "$sb" || fail "--yes: user config, themes, palettes or plugins were removed"
 
 sb="$(make_sandbox)"
 printf '\n' >"$WORKDIR/enter"
 run_uninstall "$sb" "$WORKDIR/enter"
 rc=$?
 [[ $rc -eq 0 ]] || fail "Enter: uninstaller exited $rc"
-[[ ! -e "$sb/config/gpy" ]] || fail "Enter: config directory still present"
+user_files_intact "$sb" || fail "Enter: user config, themes, palettes or plugins were removed"
+
+sb="$(make_sandbox)"
+run_uninstall "$sb" /dev/null --yes --purge-config
+rc=$?
+[[ $rc -eq 0 ]] || fail "--purge-config: uninstaller exited $rc"
+[[ ! -e "$sb/config/gpy" ]] || fail "--purge-config: config directory still present"
+
+sb="$(make_sandbox)"
+rm -rf "$sb/config/gpy"
+mkdir -p "$sb/config/gpy/bash" "$sb/config/gpy/zsh" "$sb/config/gpy/bundled-plugins"
+run_uninstall "$sb" /dev/null --yes
+rc=$?
+[[ $rc -eq 0 ]] || fail "GPY-only config dir: uninstaller exited $rc"
+[[ ! -e "$sb/config/gpy" ]] || fail "GPY-only config dir: empty config directory still present"
+
+sb="$(make_sandbox)"
+rm -rf "$sb/config/gpy"
+run_uninstall "$sb" /dev/null --yes
+rc=$?
+[[ $rc -eq 0 ]] || fail "no config dir: uninstaller exited $rc"
+grep -q 'Configuration directory not found' "$sb/uninstall.log" || fail "no config dir: missing 'not found' message"
+! grep -q 'Kept' "$sb/uninstall.log" || fail "no config dir: unexpected Kept line"
 
 if [[ $failures -ne 0 ]]; then
     for log in "$WORKDIR"/sb.*/uninstall.log; do

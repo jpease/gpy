@@ -73,4 +73,4 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `test-fresh-install.sh` | Install into a stock `ubuntu:24.04` container and render a prompt per shell. |
 | `wsl-smoke.sh [--contract \| --contract-only]` | Inside WSL: font detection via `gpy setup`, `gpy-agent oneshot git` on Linux and Windows-drive repos, and optionally the cross-shell contract suite. `GPY_AGENT_BIN` and `GPY_WSL_DRVFS_DIR` override paths. |
 | `install-hooks.sh [--uninstall]` | Install (or remove) the prek git hooks from `.pre-commit-config.yaml`. |
-| `uninstall.sh` | Remove an installed GPY (every shell, Fish included). |
+| `uninstall.sh [--yes] [--purge-config]` | Remove an installed GPY (every shell, Fish included). Keeps `~/.config/gpy` unless `--purge-config` is given. |

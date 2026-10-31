@@ -64,8 +64,8 @@ end
 # This script installs into ~/.local/bin, which sits ahead of Homebrew, system
 # and package-manager prefixes on PATH, and replaces ~/.config/fish/gpy that
 # `gpy setup` owns. Doing that over a packaged gpy leaves a stale shadow
-# once the package updates, so refuse unless asked. Copies under $HOME are
-# `_remove_conflicting_binaries`' business, and a sandboxed HOME sees none.
+# once the package updates, so refuse unless asked. Other earlier copies are
+# reported by `_warn_shadowing_binaries`.
 function _refuse_to_shadow_package_install
     test $allow_shadow -eq 1; and return 0
     set -l install_dir (path resolve "$HOME/.local/bin")
@@ -184,13 +184,11 @@ function _clear_instant_prompt_cache
     end
 end
 
-function _remove_conflicting_binaries --argument-names install_dir
-    # Remove stale gpy/gpy-agent copies earlier on PATH that shadow the install
-    # (e.g. ~/.cargo/bin). Only copies under $HOME are deleted: with a sandboxed
-    # HOME, `sudo -E` or another account, PATH order says nothing about ownership.
+# Reports gpy/gpy-agent copies earlier on PATH than the install dir; never touches them.
+function _warn_shadowing_binaries --argument-names install_dir
     set -l target_dir (path resolve $install_dir)
 
-    # Off PATH, nothing shadows the install; delete nothing.
+    # Off PATH, nothing shadows the install.
     if not contains -- $target_dir (path resolve $PATH)
         for name in gpy gpy-agent
             set -l in_use (type -P $name 2>/dev/null)
@@ -198,11 +196,6 @@ function _remove_conflicting_binaries --argument-names install_dir
         end
         return 0
     end
-
-    # Resolved so a symlinked HOME (/var -> /private/var) compares equal.
-    # Empty HOME means nothing is deleted.
-    set -l home_dir
-    test -n "$HOME"; and set home_dir (path resolve $HOME)
 
     for name in gpy gpy-agent
         set -l reached_target 0
@@ -221,22 +214,7 @@ function _remove_conflicting_binaries --argument-names install_dir
                 continue
             end
 
-            # Only delete our own binary; clap `--version` starts with its name.
-            set -l found_version ("$found" --version 2>/dev/null)
-            if not string match -q "$name *" -- $found_version
-                echo "warn: Found $name earlier on PATH but it doesn't look like ours, leaving it: $found"
-                continue
-            end
-
-            # rm removes the directory entry, so the directory decides whether
-            # it is under $HOME. Prefix compare: HOME may contain glob characters.
-            set -l home_prefix "$home_dir/"
-            if test -z "$home_dir"; or test (string sub -l (string length -- $home_prefix) -- "$found_dir/") != "$home_prefix"
-                echo "warn: $found shadows the install but is outside \$HOME, leaving it. If it is a stale copy, remove it: rm '$found'"
-                continue
-            end
-
-            rm -f $found; and echo "Removed conflicting $name shadowing the install: $found"
+            echo "warn: $found comes before $install_dir on PATH, so your shell runs it instead of this install. If it is stale, remove it: rm '$found'"
         end
     end
 end
@@ -274,7 +252,7 @@ function _install_agent_binary
         echo "ok: installed $install_dir/$name"
     end
 
-    _remove_conflicting_binaries $install_dir
+    _warn_shadowing_binaries $install_dir
 
     return 0
 end

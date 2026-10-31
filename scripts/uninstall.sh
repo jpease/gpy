@@ -1,23 +1,28 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Remove the current user's whole GPY install (every shell, binaries, config,
-# cache, runtime). Usage: sh scripts/uninstall.sh [--yes]
+# Remove the current user's GPY install (every shell, binaries, cache, runtime).
+# The configuration directory is kept unless --purge-config is given.
+# Usage: sh scripts/uninstall.sh [--yes] [--purge-config]
 # Sources nothing, so a lone downloaded copy works.
 
 set -e
 
 usage() {
-    echo "Usage: sh uninstall.sh [--yes]"
-    echo "  -y, --yes   uninstall without asking (for scripts and non-interactive shells)"
+    echo "Usage: sh uninstall.sh [--yes] [--purge-config]"
+    echo "  -y, --yes        uninstall without asking (for scripts and non-interactive shells)"
+    echo "      --purge-config  also delete the configuration directory (config.toml, themes, palettes, plugins)"
 }
 
 error() { printf 'error: %s\n' "$1" >&2; }
 warn() { printf 'warn: %s\n' "$1" >&2; }
 
 assume_yes=0
+purge_config=0
+config_outcome=missing
 for arg in "$@"; do
     case "$arg" in
         -y | --yes) assume_yes=1 ;;
+        --purge-config) purge_config=1 ;;
         -h | --help)
             usage
             exit 0
@@ -200,7 +205,11 @@ echo "  - Agent binary: $agent_binary (and gpy-agent.backup.* copies)"
 echo "  - CLI binary: $cli_binary (and gpy.backup.* copies)"
 echo "  - Bundled plugins (username, hostname): $bundled_plugins_dir"
 echo "  - Kept shell scripts and plugins: $share_dir"
-echo "  - Configuration: $gpy_config_dir"
+if [ "$purge_config" = 1 ]; then
+    echo "  - Configuration: $gpy_config_dir (--purge-config)"
+else
+    echo "  - Configuration: $gpy_config_dir is kept (config.toml, themes, palettes, plugins); pass --purge-config to delete it"
+fi
 echo "  - Cache: $gpy_cache_dir"
 echo "  - Runtime: $runtime_root"
 echo "  - fish_prompt.fish (will restore previous backup if destination becomes absent)"
@@ -361,7 +370,23 @@ if [ "$removed_backups" -gt 0 ]; then
 fi
 remove_dir "$share_dir" "Removed kept shell scripts and plugins: $share_dir"
 
-remove_dir "$gpy_config_dir" "Removed configuration: $gpy_config_dir" "Configuration directory not found"
+if [ "$purge_config" = 1 ]; then
+    if [ -d "$gpy_config_dir" ]; then
+        config_outcome=purged
+    else
+        config_outcome=missing
+    fi
+    remove_dir "$gpy_config_dir" "Removed configuration: $gpy_config_dir" "Configuration directory not found"
+elif [ ! -d "$gpy_config_dir" ]; then
+    config_outcome=missing
+    echo "Configuration directory not found"
+elif rmdir "$gpy_config_dir" 2>/dev/null; then
+    config_outcome=removed_empty
+    echo "Removed empty $gpy_config_dir"
+else
+    config_outcome=kept
+    echo "Kept your configuration in $gpy_config_dir; delete it with: rm -rf '$gpy_config_dir'"
+fi
 remove_dir "$gpy_cache_dir" "Removed cache: $gpy_cache_dir" "Cache directory not found"
 
 if [ "$runtime_root" != "$gpy_cache_dir" ]; then
@@ -375,6 +400,12 @@ echo ""
 echo "Removed:"
 echo "  - Shell integration files and completions (bash, zsh, fish)"
 echo "  - Agent and CLI binaries (and their backups)"
-echo "  - Configuration files"
+case "$config_outcome" in
+    purged | removed_empty) echo "  - Configuration files" ;;
+esac
 echo "  - Cache and runtime files"
 echo "  - Running agent and supervisor processes"
+if [ "$config_outcome" = kept ]; then
+    echo ""
+    echo "Kept: configuration in $gpy_config_dir"
+fi

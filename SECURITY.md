@@ -286,7 +286,9 @@ not controls and pass. A script run in `$PWD` may run repository-local tools
 - **Path validation** to prevent directory traversal
 - **Message content validated against the protocol schema**
   (`gpy-agent/src/ipc/protocol/mod.rs`, `gpy-agent/schemas/`)
-- **Connection rate limiting** to prevent abuse
+- **Connection rate limiting** to prevent abuse; an over-limit connection is
+  closed without a reply, and `gpy-agent start` treats that as a busy agent,
+  not a wedged one
 - **Message size limits** to prevent DoS
 - **Operation timeouts** so a slow or hostile request cannot pin the agent
 
