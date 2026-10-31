@@ -189,21 +189,17 @@ impl ClientHandler {
             let started = std::time::Instant::now();
             match load_repository_state(
                 &scan_path,
-                None,
                 config.git.max_ahead_behind,
                 config.git.stash_enabled,
             ) {
                 Ok(Some(CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical. A newer entry was
+                    // `git_root` is already canonical. A newer full scan was
                     // already published, so skip republishing older content.
-                    if git_cache.set_canonical_if_not_newer(
-                        &git_root,
-                        started,
-                        status.clone(),
-                        files,
-                    ) {
+                    if let Some(published) =
+                        git_cache.apply_full_scan(&git_root, started, status, files)
+                    {
                         // No request color context, so prev_bg is None.
-                        publish_and_repaint(&render, &git_root, &status, None);
+                        publish_and_repaint(&render, &git_root, &published, None);
                     }
                 }
                 Ok(None) => {}

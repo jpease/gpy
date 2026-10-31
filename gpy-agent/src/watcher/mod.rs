@@ -12,8 +12,7 @@
 //! Entries flush once quiet for the debounce window (default
 //! [`DEFAULT_DEBOUNCE_MS`], `GPY_DEBOUNCE_MS`) or once older than the max-delay
 //! cap ([`debouncer::DebounceEngine::default_max_delay`]), so sustained
-//! churn cannot starve flushes. The agent's separate cache cooldown
-//! ([`DEFAULT_THROTTLE_MS`]) skips redundant git scans when an IPC request already refreshed the cache.
+//! churn cannot starve flushes.
 
 mod coordinator;
 pub mod debouncer;
@@ -30,7 +29,6 @@ pub use registry::WatchRegistry;
 pub const DEFAULT_DEBOUNCE_MS: u64 = 100;
 
 /// Minimum gap between SIGURG prompt refreshes per repository, in milliseconds.
-/// The git-status cache cooldown matches it.
 pub const DEFAULT_THROTTLE_MS: u64 = 150;
 
 use crate::env_config::env_u64_positive;

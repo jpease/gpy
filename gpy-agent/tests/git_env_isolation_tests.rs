@@ -160,12 +160,14 @@ fn test_git_status_is_independent_of_inherited_git_env() {
     );
 }
 
-/// (label, local setting, `GIT_CONFIG_GLOBAL` for the agent, expected local values)
+/// (label, local setting, `GIT_CONFIG_GLOBAL` for the agent, expected local
+/// values, whether the index may carry the untracked-cache extension)
 type CacheRow = (
     &'static str,
     Option<&'static str>,
     String,
     Vec<&'static str>,
+    bool,
 );
 
 /// `git config --local --get-all core.untrackedCache` values, one per entry.
@@ -181,16 +183,29 @@ fn local_untracked_cache(repo: &Path) -> Vec<String> {
         .collect()
 }
 
-/// gpy must never override a `core.untrackedCache` the user set at any
-/// scope, but still enables it when it is unset everywhere.
+/// Whether `<repo>/.git/index` carries the `UNTR` extension. Fixture file
+/// names are lowercase, so a path cannot produce the same four bytes.
+fn index_has_untracked_cache(repo: &Path) -> bool {
+    fs::read(repo.join(".git").join("index"))
+        .expect("read index")
+        .windows(4)
+        .any(|window| window == b"UNTR")
+}
+
+/// `gpy-agent oneshot git` leaves every repository untouched: it never writes
+/// `core.untrackedCache` and never adds the untracked-cache extension to the
+/// index, whatever the config says at any scope.
 #[test]
-fn test_agent_respects_user_untracked_cache_setting() {
+fn test_oneshot_never_touches_git_config_or_index() {
     let env = CliTestEnv::new().expect("env");
     let global_false = env.root().join("global_false.gitconfig");
     fs::write(&global_false, "[core]\n\tuntrackedCache = false\n").expect("write gitconfig");
+    let global_keep = env.root().join("global_keep.gitconfig");
+    fs::write(&global_keep, "[core]\n\tuntrackedCache = keep\n").expect("write gitconfig");
     let global_empty = env.root().join("global_empty.gitconfig");
     fs::write(&global_empty, "").expect("write gitconfig");
     let global_false_str = global_false.to_string_lossy().into_owned();
+    let global_keep_str = global_keep.to_string_lossy().into_owned();
     let global_empty_str = global_empty.to_string_lossy().into_owned();
 
     let rows: Vec<CacheRow> = vec![
@@ -199,12 +214,15 @@ fn test_agent_respects_user_untracked_cache_setting() {
             Some("false"),
             global_empty_str.clone(),
             vec!["false"],
+            false,
         ),
-        ("global false", None, global_false_str, vec![]),
-        ("unset everywhere", None, global_empty_str, vec!["true"]),
+        ("global false", None, global_false_str, vec![], false),
+        ("global keep", None, global_keep_str, vec![], false),
+        ("unset everywhere", None, global_empty_str, vec![], false),
     ];
     let mut failures = Vec::new();
-    for (index, (label, local, global, expected)) in rows.into_iter().enumerate() {
+    for (index, (label, local, global, expected, expect_extension)) in rows.into_iter().enumerate()
+    {
         let repo = env.root().join(format!("uc{index}"));
         fs::create_dir_all(&repo).expect("mkdir");
         git_init(&repo);
@@ -227,10 +245,16 @@ fn test_agent_respects_user_untracked_cache_setting() {
                 "{label}: local core.untrackedCache {actual:?}, expected {expected:?}"
             ));
         }
+        if index_has_untracked_cache(&repo) != expect_extension {
+            failures.push(format!(
+                "{label}: index untracked-cache extension present: {}",
+                !expect_extension
+            ));
+        }
     }
     assert!(
         failures.is_empty(),
-        "untrackedCache policy violated:\n{}",
+        "oneshot touched the repository:\n{}",
         failures.join("\n")
     );
 }

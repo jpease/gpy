@@ -546,29 +546,37 @@ fn whole_repo_paths_yield_no_incremental_hint() {
     assert!(git_paths_hint(&GitPaths::WholeRepo, &repo).is_none());
 }
 
-/// Records each `complete_status` call's `paths` (`None` = full scan).
+/// Counts full scans and records each pathspec scan's paths.
 struct CountingGitBackend {
-    calls: Mutex<Vec<Option<Vec<PathBuf>>>>,
+    full_scans: Mutex<usize>,
+    pathspec_scans: Mutex<Vec<Vec<PathBuf>>>,
 }
 
 impl CountingGitBackend {
     fn new() -> Self {
         Self {
-            calls: Mutex::new(Vec::new()),
+            full_scans: Mutex::new(0),
+            pathspec_scans: Mutex::new(Vec::new()),
         }
     }
 
-    fn call_count(&self) -> usize {
-        self.calls.lock().expect("calls lock").len()
+    fn full_count(&self) -> usize {
+        *self.full_scans.lock().expect("full scans lock")
     }
 
-    fn call_paths(&self, index: usize) -> Option<Vec<PathBuf>> {
-        self.calls
+    fn pathspec_count(&self) -> usize {
+        self.pathspec_scans
             .lock()
-            .expect("calls lock")
+            .expect("pathspec scans lock")
+            .len()
+    }
+
+    fn pathspec_paths(&self, index: usize) -> Option<Vec<PathBuf>> {
+        self.pathspec_scans
+            .lock()
+            .expect("pathspec scans lock")
             .get(index)
             .cloned()
-            .flatten()
     }
 }
 
@@ -576,16 +584,54 @@ impl GitBackend for CountingGitBackend {
     fn complete_status(
         &self,
         path: &Path,
-        paths: Option<&[PathBuf]>,
         max_ahead_behind: usize,
         stash_enabled: bool,
         timeout: Duration,
     ) -> Result<Option<CompleteStatus>> {
-        self.calls
+        {
+            let mut scans = self.full_scans.lock().expect("full scans lock");
+            *scans = scans.saturating_add(1);
+        }
+        NativeGitBackend.complete_status(path, max_ahead_behind, stash_enabled, timeout)
+    }
+
+    fn pathspec_status(
+        &self,
+        repo_root: &Path,
+        paths: &[PathBuf],
+        timeout: Duration,
+    ) -> Result<crate::git::PathspecScan> {
+        self.pathspec_scans
             .lock()
-            .expect("calls lock")
-            .push(paths.map(<[PathBuf]>::to_vec));
-        NativeGitBackend.complete_status(path, paths, max_ahead_behind, stash_enabled, timeout)
+            .expect("pathspec scans lock")
+            .push(paths.to_vec());
+        NativeGitBackend.pathspec_status(repo_root, paths, timeout)
+    }
+}
+
+/// Backend whose pathspec scans always return `scan`.
+struct FixedScanBackend {
+    scan: crate::git::PathspecScan,
+}
+
+impl GitBackend for FixedScanBackend {
+    fn complete_status(
+        &self,
+        path: &Path,
+        max_ahead_behind: usize,
+        stash_enabled: bool,
+        timeout: Duration,
+    ) -> Result<Option<CompleteStatus>> {
+        NativeGitBackend.complete_status(path, max_ahead_behind, stash_enabled, timeout)
+    }
+
+    fn pathspec_status(
+        &self,
+        _repo_root: &Path,
+        _paths: &[PathBuf],
+        _timeout: Duration,
+    ) -> Result<crate::git::PathspecScan> {
+        Ok(self.scan.clone())
     }
 }
 
@@ -607,14 +653,9 @@ fn git_index_write_triggers_exactly_one_capture_round() {
     refresh_repo_status_with(&backend, &ctx, &repo, &config, paths_hint.as_deref());
 
     assert_eq!(
-        backend.call_count(),
-        1,
-        "a .git/index write must cost exactly one complete git capture round"
-    );
-    assert_eq!(
-        backend.call_paths(0),
-        None,
-        "the single capture round must be a full scan (paths == None)"
+        (backend.full_count(), backend.pathspec_count()),
+        (1, 0),
+        "a .git/index write must cost exactly one full scan and no pathspec scan"
     );
 }
 
@@ -632,7 +673,7 @@ fn ordinary_file_write_takes_the_incremental_route_in_one_capture_round() {
 
     // The incremental route needs a warm complete-detail cache entry.
     refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
-    assert_eq!(backend.call_count(), 1, "warm-up scan should be one call");
+    assert_eq!(backend.full_count(), 1, "warm-up scan should be one call");
 
     let paths_hint = git_paths_hint(&GitPaths::single(source.clone()), &repo);
     assert_eq!(
@@ -644,14 +685,14 @@ fn ordinary_file_write_takes_the_incremental_route_in_one_capture_round() {
     refresh_repo_status_with(&backend, &ctx, &repo, &config, paths_hint.as_deref());
 
     assert_eq!(
-        backend.call_count(),
-        2,
-        "one warm-up call plus exactly one incremental call"
+        (backend.full_count(), backend.pathspec_count()),
+        (1, 1),
+        "the warm-up full scan plus exactly one pathspec scan and no second full scan"
     );
     assert_eq!(
-        backend.call_paths(1),
+        backend.pathspec_paths(0),
         Some(vec![PathBuf::from("a.txt")]),
-        "the incremental capture round must be pathspec-limited to the changed file"
+        "the incremental scan must be pathspec-limited to the changed file"
     );
 }
 
@@ -667,21 +708,62 @@ fn incremental_and_full_scan_share_one_backend() {
 
     refresh_repo_status_with(&backend, &ctx, &repo, &config, Some(&forced_hint));
 
-    assert!(
-        backend.call_count() > 1,
-        "the incremental call site must share the caller's backend, or a \
-         capture-round counter is blind to it (saw {} call(s))",
-        backend.call_count()
-    );
     assert_eq!(
-        backend.call_paths(0),
+        backend.pathspec_paths(0),
         Some(vec![PathBuf::from(".git/index")]),
-        "the first round is the pathspec-limited attempt"
+        "the incremental call site must share the caller's backend, or a \
+         scan counter is blind to it"
     );
     assert_eq!(
-        backend.call_paths(backend.call_count() - 1),
-        None,
-        "the last round is the full scan the event always needed"
+        backend.full_count(),
+        1,
+        "the incremental attempt fell through to the full scan the event always needed"
+    );
+}
+
+#[test]
+fn incremental_refresh_reuses_the_ignore_case_of_its_scan() {
+    let (_tmp, repo) = create_temp_repo();
+    let ctx = make_agent_context();
+    let config = Config::default();
+    let cached = FileStatus {
+        unstaged: true,
+        ..FileStatus::default()
+    };
+    let seeded = crate::git::RepositoryStatus {
+        branch: "main".to_owned(),
+        ahead: 0,
+        behind: 0,
+        ahead_capped: false,
+        behind_capped: false,
+        staged: 0,
+        unstaged: 1,
+        untracked: 0,
+        conflicts: 0,
+        state: RepositoryState::Dirty,
+        stash_count: 0,
+        detached: false,
+        rebase_progress: None,
+    };
+    ctx.cache.set_canonical(
+        &repo,
+        seeded,
+        HashMap::from([(PathBuf::from("Readme.md"), cached)]),
+    );
+    let backend = FixedScanBackend {
+        scan: crate::git::PathspecScan {
+            files: HashMap::new(),
+            ignore_case: true,
+        },
+    };
+
+    let refreshed =
+        try_incremental_update_with(&backend, &ctx, &repo, &config, &[repo.join("README.md")]);
+
+    let status = refreshed.status.expect("incremental update applied");
+    assert_eq!(
+        status.unstaged, 0,
+        "the scan's case rule must replace the differently-cased cached entry"
     );
 }
 

@@ -12,7 +12,7 @@ pub struct ParsedChangedFile {
     pub status: FileStatus,
 }
 
-/// Branch identity from a `# branch.head` header. `Detached`/`Initial` need a
+/// Branch identity from a `# branch.head` header. `Detached` needs a
 /// subprocess to resolve, which the backend does after parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchHead {
@@ -20,8 +20,6 @@ pub enum BranchHead {
     Named(String),
     /// `(detached)` — HEAD points directly at a commit, not a branch.
     Detached,
-    /// `(initial)` — a brand-new repository with no commits yet.
-    Initial,
 }
 
 impl BranchHead {
@@ -30,7 +28,6 @@ impl BranchHead {
     fn parse(header_content: &str) -> Self {
         match header_content {
             "(detached)" => Self::Detached,
-            "(initial)" => Self::Initial,
             named => Self::Named(named.to_owned()),
         }
     }
@@ -64,8 +61,10 @@ pub struct V2ParseResult {
 
 /// Pure parse result; `branch` stays unresolved (see [`BranchHead`]).
 pub struct V2ParseRecords {
-    /// The unresolved branch identity.
-    pub branch: BranchHead,
+    /// The unresolved branch identity; `None` when no `# branch.head` line was printed.
+    pub branch: Option<BranchHead>,
+    /// Commit id from `# branch.oid`; `None` for an unborn branch or a missing header.
+    pub oid: Option<String>,
     /// Number of commits ahead of upstream.
     pub ahead: u32,
     /// Number of commits behind upstream.
@@ -87,9 +86,12 @@ pub struct V2ParseRecords {
 }
 
 /// Accumulator state for parsing Git porcelain v2 output line by line.
+#[derive(Default)]
 pub struct V2ParseState {
-    /// The unresolved branch identity.
-    pub branch: BranchHead,
+    /// The unresolved branch identity; `None` until a `# branch.head` line is seen.
+    pub branch: Option<BranchHead>,
+    /// Commit id from `# branch.oid`; `None` for an unborn branch or a missing header.
+    pub oid: Option<String>,
     /// Number of commits ahead of upstream.
     pub ahead: u32,
     /// Number of commits behind upstream.
@@ -132,6 +134,7 @@ impl V2ParseState {
         let aggregate = StatusAggregate::from_file_statuses(self.files.values());
         V2ParseRecords {
             branch: self.branch,
+            oid: self.oid,
             ahead: self.ahead,
             behind: self.behind,
             ahead_capped: self.ahead_capped,
@@ -145,22 +148,21 @@ impl V2ParseState {
     }
 }
 
-impl Default for V2ParseState {
-    fn default() -> Self {
-        Self {
-            branch: BranchHead::Named(String::from("main")),
-            ahead: 0,
-            behind: 0,
-            ahead_capped: false,
-            behind_capped: false,
-            files: HashMap::new(),
-        }
-    }
-}
-
 /// Parses UTF-8-decoded `git status --porcelain=v2 --branch -z` output.
 #[must_use]
 pub fn parse_v2_records(output: &str, max_ahead_behind: usize) -> V2ParseRecords {
+    parse_v2_state(output, max_ahead_behind).into_records()
+}
+
+/// Parses the file records of `git status --porcelain=v2 -z` output, ignoring
+/// any header lines.
+#[must_use]
+pub fn parse_v2_files(output: &str) -> HashMap<PathBuf, FileStatus> {
+    parse_v2_state(output, 0).files
+}
+
+/// Runs the record loop shared by [`parse_v2_records`] and [`parse_v2_files`].
+fn parse_v2_state(output: &str, max_ahead_behind: usize) -> V2ParseState {
     let mut state = V2ParseState::new();
 
     // A type `2` record is followed by a separate original-path record, which
@@ -168,8 +170,10 @@ pub fn parse_v2_records(output: &str, max_ahead_behind: usize) -> V2ParseRecords
     let records: Vec<&str> = output.split('\0').filter(|r| !r.is_empty()).collect();
     let mut index = 0_usize;
     while let Some(&record) = records.get(index) {
-        if let Some(header_content) = record.strip_prefix("# branch.head ") {
-            state.branch = BranchHead::parse(header_content);
+        if let Some(header_content) = record.strip_prefix("# branch.oid ") {
+            state.oid = (header_content != "(initial)").then(|| header_content.to_owned());
+        } else if let Some(header_content) = record.strip_prefix("# branch.head ") {
+            state.branch = Some(BranchHead::parse(header_content));
         } else if let Some(header_content) = record.strip_prefix("# branch.ab ") {
             let (ahead, behind, ahead_capped, behind_capped) =
                 parse_v2_ahead_behind(header_content, max_ahead_behind);
@@ -189,7 +193,7 @@ pub fn parse_v2_records(output: &str, max_ahead_behind: usize) -> V2ParseRecords
 
         index = index.saturating_add(1);
     }
-    state.into_records()
+    state
 }
 
 /// Parses `branch.ab` into `(ahead, behind, ahead_capped, behind_capped)`.
@@ -429,21 +433,58 @@ mod tests {
     fn parse_v2_records_named_header_yields_branch_head_named() {
         let output = "# branch.head main\0";
         let result = parse_v2_records(output, 0);
-        assert_eq!(result.branch, BranchHead::Named("main".to_owned()));
+        assert_eq!(result.branch, Some(BranchHead::Named("main".to_owned())));
     }
 
     #[test]
     fn parse_v2_records_detached_header_yields_branch_head_detached() {
         let output = "# branch.head (detached)\0";
         let result = parse_v2_records(output, 0);
-        assert_eq!(result.branch, BranchHead::Detached);
+        assert_eq!(result.branch, Some(BranchHead::Detached));
     }
 
     #[test]
-    fn parse_v2_records_initial_header_yields_branch_head_initial() {
-        let output = "# branch.head (initial)\0";
+    fn parse_v2_records_reads_branch_oid() {
+        let output =
+            "# branch.oid 8fb1ddef85e4672c6150364dcb5df6711fd16b65\0# branch.head (detached)\0";
         let result = parse_v2_records(output, 0);
-        assert_eq!(result.branch, BranchHead::Initial);
+        assert_eq!(result.branch, Some(BranchHead::Detached));
+        assert_eq!(
+            result.oid.as_deref(),
+            Some("8fb1ddef85e4672c6150364dcb5df6711fd16b65")
+        );
+    }
+
+    #[test]
+    fn unborn_branch_has_named_head_and_no_oid() {
+        let output = "# branch.oid (initial)\0# branch.head trunk\0";
+        let result = parse_v2_records(output, 0);
+        assert_eq!(result.branch, Some(BranchHead::Named("trunk".to_owned())));
+        assert_eq!(result.oid, None);
+    }
+
+    #[test]
+    fn records_without_branch_header_have_no_branch() {
+        let result = parse_v2_records("? a.txt\0", 0);
+        assert_eq!(result.branch, None);
+    }
+
+    #[test]
+    fn parse_v2_files_ignores_headers_and_keeps_file_records() {
+        let output =
+            "# branch.head main\0? a.txt\x001 .M N... 100644 100644 100644 abc abc b.txt\0";
+        let files = parse_v2_files(output);
+        assert_eq!(files.len(), 2);
+        assert!(
+            files
+                .get(&PathBuf::from("a.txt"))
+                .is_some_and(|f| f.untracked)
+        );
+        assert!(
+            files
+                .get(&PathBuf::from("b.txt"))
+                .is_some_and(|f| f.unstaged)
+        );
     }
 
     #[test]

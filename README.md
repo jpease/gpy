@@ -41,10 +41,12 @@ Time for one git-status prompt segment (median, ms; lower is better).
 
 These numbers time the no-daemon `oneshot` path, the like-for-like process
 comparison. With the daemon running, the same request on the two large
-repositories takes about 3.5 ms (median, including starting `socat`). GPY
-enables git's `core.untrackedCache` in repositories where it is unset, which
-accounts for most of the large-repository lead; a value you set yourself is
-respected. See [how it was measured and how to run it
+repositories takes about 3.5 ms (median, including starting `socat`). The GPY
+agent adds git's untracked cache to a repository's index where
+`core.untrackedCache` is unset, and your own git commands can add it too; the
+benchmark primes it itself before timing. `gpy-agent oneshot` never adds it,
+GPY never writes your git config, and a value you set yourself is respected.
+See [how it was measured and how to run it
 yourself](docs/user/performance-vs-starship.md).
 
 ## Install

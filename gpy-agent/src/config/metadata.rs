@@ -191,7 +191,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             c.git.max_ahead_behind = parse_field(v, "git.max_ahead_behind")?;
             Ok(())
         }),
-        description: "Maximum ahead/behind commit count to report (0 = unlimited)",
+        description: "Largest ahead/behind count displayed; larger counts show as N+ (display only: git still counts them all; 0 = no cap)",
     },
     ConfigKeyMeta {
         key: "git.stash_enabled",

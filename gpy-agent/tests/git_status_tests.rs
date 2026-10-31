@@ -25,7 +25,7 @@ use std::os::unix::ffi::OsStrExt;
 #[serial(git_status)]
 fn test_git_status_not_a_repo() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let result = load_repository_state(temp_dir.path().to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_dir.path().to_string_lossy().as_ref(), 0, true);
 
     assert!(
         matches!(result, Ok(None)),
@@ -45,7 +45,7 @@ fn test_git_status_from_subdirectory() {
     let nested = repo.join("src").join("nested");
     fs::create_dir_all(&nested).expect("create nested dir");
 
-    let status = load_repository_state(&nested, None, 0, true)
+    let status = load_repository_state(&nested, 0, true)
         .expect("load_repository_state should succeed")
         .expect("subdirectory should resolve to the enclosing repository");
     assert_eq!(status.status.branch, "main");
@@ -59,7 +59,7 @@ fn test_git_status_invalid_path() {
     let missing = temp_dir.path().join("does").join("not").join("exist");
 
     // A nonexistent path has no enclosing `.git`, so it resolves to "not a repo".
-    let result = load_repository_state(&missing, None, 0, true);
+    let result = load_repository_state(&missing, 0, true);
     assert!(
         matches!(result, Ok(None)),
         "nonexistent path must yield Ok(None)"
@@ -74,7 +74,7 @@ fn test_git_status_created_repo() {
 
     git::git_init(temp_path);
 
-    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -97,7 +97,7 @@ fn test_git_status_with_untracked_files() {
     fs::write(temp_path.join("untracked1.txt"), "content").expect("write untracked1.txt");
     fs::write(temp_path.join("untracked2.txt"), "content").expect("write untracked2.txt");
 
-    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -117,7 +117,7 @@ fn test_git_status_with_staged_files() {
     fs::write(temp_path.join("staged.txt"), "content").expect("write staged.txt");
     git::git(temp_path, &["add", "staged.txt"]);
 
-    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -144,7 +144,7 @@ fn test_git_status_relative_path() {
         .collect();
     assert!(relative.is_relative());
 
-    let status = load_repository_state(&relative, None, 0, true)
+    let status = load_repository_state(&relative, 0, true)
         .expect("load_repository_state should succeed")
         .expect("relative path should resolve to the repository");
     assert_eq!(status.status.branch, "main");
@@ -153,7 +153,7 @@ fn test_git_status_relative_path() {
 #[test]
 #[serial(git_status)]
 fn test_git_status_empty_path() {
-    let result = load_repository_state("", None, 0, true);
+    let result = load_repository_state("", 0, true);
 
     // Empty path should be handled gracefully (either Ok(None) or Err)
     assert!(matches!(result, Ok(Some(_) | None) | Err(_)));
@@ -205,7 +205,6 @@ fn test_non_utf8_staged_paths_are_counted() {
 
     let complete = NativeGitBackend::get_complete_status(
         temp_path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -245,7 +244,6 @@ fn test_merge_conflicts_are_counted() {
 
     let complete = NativeGitBackend::get_complete_status(
         repo_path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -273,7 +271,7 @@ fn test_git_status_ignores_gitignored_files() {
 
     fs::write(temp_path.join(".DS_Store"), "macOS metadata").expect("write .DS_Store");
 
-    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -304,7 +302,7 @@ fn test_git_status_counts_non_ignored_files_with_ignored_present() {
 
     fs::write(temp_path.join("foo.txt"), "real content").expect("write foo.txt");
 
-    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -335,7 +333,7 @@ fn test_git_status_staged_deletion() {
     fs::remove_file(temp_path.join("file.txt")).unwrap();
     run(&["add", "-u"]);
 
-    let result = load_repository_state(temp_path, None, 0, true);
+    let result = load_repository_state(temp_path, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -382,7 +380,7 @@ fn test_git_status_rebase_state_precedence() {
     run(&["add", "file.txt"]);
 
     // Mid-rebase with staged changes reports Rebasing, not Dirty.
-    let result = load_repository_state(temp_path, None, 0, true);
+    let result = load_repository_state(temp_path, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -433,7 +431,7 @@ fn test_ahead_only_commits() {
         git::git(repo_path, &["commit", "-m", &format!("Commit {i}")]);
     }
 
-    let result = load_repository_state(work_path, None, 0, true);
+    let result = load_repository_state(work_path, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -470,7 +468,7 @@ fn test_ahead_with_non_origin_remote() {
     git::git(repo_path, &["add", "."]);
     git::git(repo_path, &["commit", "-m", "Local ahead commit"]);
 
-    let result = load_repository_state(repo_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(repo_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -514,7 +512,7 @@ fn test_ahead_with_packed_refs_only() {
     git::git(repo_path, &["add", "."]);
     git::git(repo_path, &["commit", "-m", "Local ahead commit"]);
 
-    let result = load_repository_state(repo_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(repo_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -581,7 +579,7 @@ fn test_behind_only_commits() {
 
     git::git(repo_path, &["fetch"]);
 
-    let result = load_repository_state(work_path, None, 0, true);
+    let result = load_repository_state(work_path, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -657,7 +655,7 @@ fn test_ahead_and_behind_commits() {
 
     git::git(repo_path, &["fetch"]);
 
-    let result = load_repository_state(work_path, None, 0, true);
+    let result = load_repository_state(work_path, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -680,7 +678,7 @@ fn test_no_upstream_configured() {
     run(&["add", "file.txt"]);
     run(&["commit", "-m", "Initial commit"]);
 
-    let result = load_repository_state(temp_path.to_str().unwrap(), None, 0, true);
+    let result = load_repository_state(temp_path.to_str().unwrap(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -717,7 +715,6 @@ fn test_git_status_respects_gitignore() {
 
     let complete = NativeGitBackend::get_complete_status(
         temp_path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -745,7 +742,7 @@ fn test_git_status_respects_gitignore() {
     );
     assert_eq!(conflicts, 0, "Should have 0 conflicts");
 
-    let result = load_repository_state(temp_path.to_str().unwrap(), None, 0, true);
+    let result = load_repository_state(temp_path.to_str().unwrap(), 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -773,7 +770,7 @@ fn test_git_status_staged_rename_with_spaces_keys_by_destination() {
 
     git::git(temp_path, &["mv", "old name.txt", "new name.txt"]);
 
-    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
+    let result = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true);
     let status = result
         .expect("status should load")
         .expect("a non-empty repo should report status");

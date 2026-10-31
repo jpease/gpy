@@ -12,7 +12,7 @@ use std::time::Duration;
 #[test]
 fn test_detached_head_state() {
     let repo = TestRepo::new().with_detached_head();
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -33,7 +33,7 @@ fn test_detached_head_state() {
 #[test]
 fn test_initial_commit_branch_resolution() {
     let repo = TestRepo::new();
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -54,7 +54,7 @@ fn test_initial_commit_branch_resolution() {
 #[test]
 fn test_merge_conflict_detection() {
     let repo = TestRepo::new().with_conflicts();
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -78,7 +78,7 @@ fn test_merge_conflict_detection() {
 #[test]
 fn test_empty_directory_not_a_repo() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let result = load_repository_state(temp_dir.path(), None, 0, true);
+    let result = load_repository_state(temp_dir.path(), 0, true);
 
     assert!(result.is_ok(), "Should not error for non-git directory");
     assert!(
@@ -103,7 +103,7 @@ fn test_symlink_loop_handling() {
     let repo_path = repo.path().to_path_buf();
 
     std::thread::spawn(move || {
-        let result = load_repository_state(&repo_path, None, 0, true);
+        let result = load_repository_state(&repo_path, 0, true);
         tx.send(result).unwrap();
     });
 
@@ -128,7 +128,7 @@ fn test_large_repository_counts_every_untracked_file() {
         repo.create_file(&format!("file{i}.txt"), "content");
     }
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(result.is_ok(), "Should handle large repository");
 
@@ -147,7 +147,7 @@ fn test_repository_with_binary_files() {
     std::fs::write(repo.path().join("binary.dat"), binary_data)
         .expect("Failed to write binary file");
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -186,7 +186,7 @@ fn test_file_permission_changes() {
     non_exec_perms.set_mode(0o644); // Remove execute bit
     std::fs::set_permissions(&script_path, non_exec_perms).expect("Failed to set permissions");
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
     assert!(result.is_ok(), "Should handle permission changes");
 
     let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
@@ -206,7 +206,7 @@ fn test_mixed_encoding_files() {
     std::fs::write(repo.path().join("latin1.txt"), latin1_data)
         .expect("Failed to write Latin-1 file");
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -233,7 +233,7 @@ fn test_shallow_clone_handling() {
         .commit("Third commit");
 
     let shallow = TestRepo::as_shallow_clone(&source, 1);
-    let result = load_repository_state(shallow.path(), None, 0, true);
+    let result = load_repository_state(shallow.path(), 0, true);
 
     assert!(result.is_ok(), "Should handle shallow clones");
     let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
@@ -252,14 +252,14 @@ fn test_git_worktree_handling() {
 
     let worktree_path = repo.with_worktree("feature");
 
-    let result_main = load_repository_state(repo.path(), None, 0, true);
+    let result_main = load_repository_state(repo.path(), 0, true);
     let CompleteStatus {
         status: status_main,
         ..
     } = result_main.unwrap().expect("Main repo should be valid");
     assert_eq!(status_main.branch, "main");
 
-    let result_wt = load_repository_state(&worktree_path, None, 0, true);
+    let result_wt = load_repository_state(&worktree_path, 0, true);
     let CompleteStatus {
         status: status_wt, ..
     } = result_wt.unwrap().expect("Worktree should be valid");
@@ -270,7 +270,7 @@ fn test_git_worktree_handling() {
     let CompleteStatus {
         status: status_wt_dirty,
         ..
-    } = load_repository_state(&worktree_path, None, 0, true)
+    } = load_repository_state(&worktree_path, 0, true)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -281,7 +281,7 @@ fn test_git_worktree_handling() {
     let CompleteStatus {
         status: status_main_clean,
         ..
-    } = load_repository_state(repo.path(), None, 0, true)
+    } = load_repository_state(repo.path(), 0, true)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -298,7 +298,7 @@ fn test_submodule_status_detection() {
     parent.with_submodule("child-module", &child);
 
     // `with_submodule` commits the submodule.
-    let CompleteStatus { status, .. } = load_repository_state(parent.path(), None, 0, true)
+    let CompleteStatus { status, .. } = load_repository_state(parent.path(), 0, true)
         .unwrap()
         .unwrap();
     assert_eq!(status.untracked, 0);
@@ -310,7 +310,7 @@ fn test_submodule_status_detection() {
     let CompleteStatus {
         status: status_dirty,
         ..
-    } = load_repository_state(parent.path(), None, 0, true)
+    } = load_repository_state(parent.path(), 0, true)
         .unwrap()
         .unwrap();
 

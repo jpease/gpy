@@ -116,7 +116,8 @@ pub struct GitSettings {
     pub skip_paths: Vec<String>,
     /// Maximum branch name length to display (0 = unlimited)
     pub max_branch_length: types::MaxBranchLength,
-    /// Max ahead/behind count (0 = unlimited); larger counts render as `N+`.
+    /// Largest ahead/behind count displayed; larger counts render as `N+`
+    /// (0 = no cap). Display only: git still counts them all.
     pub max_ahead_behind: usize,
     /// Watch the working tree, not just `.git` (`GPY_WATCH_WORKTREE` overrides).
     /// When off, worktree-only edits surface on the next `.git` write or reconcile scan.

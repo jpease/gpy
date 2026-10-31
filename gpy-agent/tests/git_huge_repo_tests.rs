@@ -43,7 +43,6 @@ fn test_sparse_checkout_doesnt_crash() {
     // Must not crash under sparse checkout; exact counts are git-version dependent.
     let result = NativeGitBackend::get_complete_status(
         repo_path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -68,7 +67,6 @@ fn test_repeated_complete_status_is_deterministic() {
     let status = || {
         NativeGitBackend::get_complete_status(
             repo_path,
-            None,
             0,
             true,
             Duration::from_secs(GitTimeout::DEFAULT),

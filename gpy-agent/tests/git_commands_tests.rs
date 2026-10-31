@@ -43,7 +43,7 @@ fn test_repo_fixture_with_staged_file() {
 #[test]
 fn test_load_repository_state_with_clean_repo() {
     let repo = TestRepo::new().with_initial_commit();
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(result.is_ok(), "Should successfully load clean repository");
     let status = result.unwrap().expect("Should find repository");
@@ -56,7 +56,7 @@ fn test_load_repository_state_with_clean_repo() {
 fn test_load_repository_state_with_untracked_file() {
     let repo = TestRepo::new().with_initial_commit().with_untracked_file();
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(result.is_ok(), "Should successfully load repository");
     let status = result.unwrap().expect("Should find repository");
@@ -69,7 +69,7 @@ fn test_load_repository_state_with_staged_file() {
         .with_initial_commit()
         .with_staged_file("new.txt", "content");
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(result.is_ok(), "Should successfully load repository");
     let status = result.unwrap().expect("Should find repository");
@@ -82,7 +82,7 @@ fn test_load_repository_state_with_unstaged_changes() {
         .with_initial_commit()
         .with_unstaged_changes();
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(result.is_ok(), "Should successfully load repository");
     let status = result.unwrap().expect("Should find repository");
@@ -96,7 +96,7 @@ fn test_load_repository_state_with_unstaged_changes() {
 fn test_load_repository_state_with_conflicts() {
     let repo = TestRepo::new().with_initial_commit().with_conflicts();
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -114,7 +114,7 @@ fn test_load_repository_state_with_conflicts() {
 fn test_load_repository_state_with_detached_head() {
     let repo = TestRepo::new().with_detached_head();
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(
         result.is_ok(),
@@ -133,7 +133,7 @@ fn test_load_repository_state_with_detached_head() {
 
 #[test]
 fn test_load_repository_state_invalid_path() {
-    let result = load_repository_state(std::path::Path::new("/nonexistent/path"), None, 0, true);
+    let result = load_repository_state(std::path::Path::new("/nonexistent/path"), 0, true);
 
     // Discovery may yield Ok(None) or an error for a nonexistent path.
     assert!(matches!(result, Ok(None) | Err(_)));
@@ -142,7 +142,7 @@ fn test_load_repository_state_invalid_path() {
 #[test]
 fn test_load_repository_state_not_a_repo() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let result = load_repository_state(temp_dir.path(), None, 0, true);
+    let result = load_repository_state(temp_dir.path(), 0, true);
 
     assert!(matches!(result, Ok(None)));
 }
@@ -159,7 +159,7 @@ fn test_load_repository_state_mixed_changes() {
 
     repo.create_file("untracked.txt", "untracked content");
 
-    let result = load_repository_state(repo.path(), None, 0, true);
+    let result = load_repository_state(repo.path(), 0, true);
 
     assert!(result.is_ok(), "Should successfully load repository");
     let status = result.unwrap().expect("Should find repository");

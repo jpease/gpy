@@ -2,7 +2,7 @@
 //!
 //! Shelling out lets git use its own optimizations (fsmonitor, untracked cache).
 
-use super::{CompleteStatus, RebaseProgress, RepositoryState, RepositoryStatus};
+use super::{CompleteStatus, PathspecScan, RebaseProgress, RepositoryState, RepositoryStatus};
 use crate::Error;
 use crate::Result;
 use crate::cache::bounded::NATIVE_GIT_CONFIG_CACHE_CAPACITY;
@@ -13,6 +13,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Git output parsing logic.
@@ -22,6 +23,10 @@ use parser::{BranchHead, V2ParseResult};
 
 /// Repos whose `core.untrackedCache` was checked within the shared cache TTL.
 static UNTRACKED_CACHE_CHECKED: TtlMap<PathBuf, ()> = TtlMap::new(NATIVE_GIT_CONFIG_CACHE_CAPACITY);
+
+/// Per-process switch for the untracked-cache setup; see
+/// [`NativeGitBackend::disable_untracked_cache_setup`].
+static UNTRACKED_CACHE_SETUP: AtomicBool = AtomicBool::new(true);
 
 /// How long a repository's `core.ignorecase` is trusted before it is re-read.
 const IGNORE_CASE_TTL: Duration = Duration::from_secs(60);
@@ -133,7 +138,8 @@ impl NativeGitBackend {
         ignore_case
     }
 
-    /// Whether the user has set `core.untrackedCache` at any scope, to any value.
+    /// Whether the user has set `core.untrackedCache` at any scope, to any
+    /// value (`true`, `false` and `keep` all count as intent).
     fn is_untracked_cache_configured(repo_path: &Path, deadline: Instant) -> bool {
         Self::run_git_optional(
             repo_path,
@@ -143,26 +149,26 @@ impl NativeGitBackend {
         .is_some_and(|value| !value.trim().is_empty())
     }
 
-    /// Enable and initialize the untracked cache.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `git config` fails.
-    fn enable_untracked_cache(repo_path: &Path, deadline: Instant) -> Result<()> {
-        run_git_until(
-            repo_path,
-            &["config", "core.untrackedCache", "true"],
-            deadline,
-        )?;
-
-        let _ = Self::run_git_optional(repo_path, &["update-index", "--untracked-cache"], deadline);
-
-        Ok(())
+    /// Turn the untracked-cache setup off for this process. Short-lived
+    /// processes (`gpy-agent oneshot`, the `gpy` CLI) call this once at
+    /// start so they never read or touch the repository's untracked-cache
+    /// state; only the long-lived agent sets the cache up.
+    pub fn disable_untracked_cache_setup() {
+        UNTRACKED_CACHE_SETUP.store(false, Ordering::Relaxed);
     }
 
-    /// Enable the untracked cache unless the user set it. Runs at most once per
+    /// Add git's untracked cache to the index unless the user set
+    /// `core.untrackedCache` at any scope. Git keeps the extension under its
+    /// default (`keep`); the repository config is never written.
+    ///
+    /// Does nothing in a process that called
+    /// [`Self::disable_untracked_cache_setup`]. Otherwise runs at most once per
     /// repository per cache window, and exactly once across concurrent callers.
     fn ensure_untracked_cache(repo_path: &Path, deadline: Instant) {
+        if !UNTRACKED_CACHE_SETUP.load(Ordering::Relaxed) {
+            return;
+        }
+
         let _t = Timer::new("native_ensure_untracked_cache");
 
         if !UNTRACKED_CACHE_CHECKED.insert_if_absent(repo_path.to_path_buf(), ()) {
@@ -170,7 +176,8 @@ impl NativeGitBackend {
         }
 
         if !Self::is_untracked_cache_configured(repo_path, deadline) {
-            let _ = Self::enable_untracked_cache(repo_path, deadline);
+            let _ =
+                Self::run_git_optional(repo_path, &["update-index", "--untracked-cache"], deadline);
         }
     }
 
@@ -201,27 +208,30 @@ impl NativeGitBackend {
         crate::git::resolve_gitdir(repo_root).unwrap_or_else(|| repo_root.join(".git"))
     }
 
-    /// Resolve a [`BranchHead`] to `(branch, detached)`; detached yields the short hash.
+    /// Resolve a [`BranchHead`] to `(branch, detached)`; detached yields the
+    /// short hash git itself prints, or the first 7 characters of the status
+    /// output's commit id when that command cannot run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a detached HEAD whose commit cannot be named.
     fn resolve_branch_head(
         branch_head: BranchHead,
+        oid: Option<&str>,
         repo_path: &Path,
         deadline: Instant,
-    ) -> (String, bool) {
-        const FALLBACK: &str = "main";
-
+    ) -> Result<(String, bool)> {
         match branch_head {
-            BranchHead::Named(name) => (name, false),
+            BranchHead::Named(name) => Ok((name, false)),
             BranchHead::Detached => {
-                let hash = run_git_until(repo_path, &["rev-parse", "--short", "HEAD"], deadline)
-                    .unwrap_or_else(|_| FALLBACK.to_owned());
-                (hash, true)
-            }
-            BranchHead::Initial => {
-                let branch =
-                    run_git_until(repo_path, &["symbolic-ref", "--short", "HEAD"], deadline)
-                        .ok()
-                        .unwrap_or_else(|| FALLBACK.to_owned());
-                (branch, false)
+                if let Ok(hash) =
+                    run_git_until(repo_path, &["rev-parse", "--short", "HEAD"], deadline)
+                {
+                    return Ok((hash, true));
+                }
+                oid.and_then(|full| full.get(..7))
+                    .map(|prefix| (prefix.to_owned(), true))
+                    .ok_or_else(|| Error::git("cannot name the detached HEAD commit".to_owned()))
             }
         }
     }
@@ -230,10 +240,9 @@ impl NativeGitBackend {
     ///
     /// # Errors
     ///
-    /// Returns an error if git status command fails
+    /// Returns an error if git status command fails or prints no branch header.
     fn get_status_v2(
         repo_path: &Path,
-        paths: Option<&[PathBuf]>,
         max_ahead_behind: usize,
         deadline: Instant,
     ) -> Result<V2ParseResult> {
@@ -241,31 +250,18 @@ impl NativeGitBackend {
         Self::ensure_untracked_cache(repo_path, deadline);
 
         // `-z`: NUL-terminated records with unescaped paths.
-        let mut args: Vec<OsString> = ["status", "--porcelain=v2", "--branch", "-z"]
-            .into_iter()
-            .map(OsString::from)
-            .collect();
-
-        // `:(literal)` disables pathspec magic/globs in filenames; `icase`
-        // matches watcher spelling against index spelling on case-insensitive repos.
-        if let Some(p) = paths {
-            let magic = if Self::ignores_case_until(repo_path, deadline) {
-                ":(literal,icase)"
-            } else {
-                ":(literal)"
-            };
-            args.push(OsString::from("--"));
-            for pb in p {
-                let mut spec = OsString::from(magic);
-                spec.push(pb.as_os_str());
-                args.push(spec);
-            }
-        }
-
-        let output = run_git_until(repo_path, &args, deadline)?;
+        let output = run_git_until(
+            repo_path,
+            &["status", "--porcelain=v2", "--branch", "-z"],
+            deadline,
+        )?;
 
         let records = parser::parse_v2_records(&output, max_ahead_behind);
-        let (branch, detached) = Self::resolve_branch_head(records.branch, repo_path, deadline);
+        let Some(branch_head) = records.branch else {
+            return Err(Error::git("git status printed no branch header".to_owned()));
+        };
+        let (branch, detached) =
+            Self::resolve_branch_head(branch_head, records.oid.as_deref(), repo_path, deadline)?;
 
         Ok(V2ParseResult {
             branch,
@@ -394,7 +390,6 @@ impl NativeGitBackend {
     /// Returns an error if a capture thread panics.
     fn run_parallel_captures(
         repo_root: &Path,
-        paths: Option<&[PathBuf]>,
         max_ahead_behind: usize,
         stash_enabled: bool,
         deadline: Instant,
@@ -402,7 +397,7 @@ impl NativeGitBackend {
         let (status_v2_join_result, state_join_result, stash_join_result) =
             std::thread::scope(|s| {
                 let status_v2_handle =
-                    s.spawn(|| Self::get_status_v2(repo_root, paths, max_ahead_behind, deadline));
+                    s.spawn(|| Self::get_status_v2(repo_root, max_ahead_behind, deadline));
                 let state_handle = s.spawn(|| Self::get_repo_state(repo_root, deadline));
                 let stash_handle =
                     s.spawn(|| Self::get_stash_count(repo_root, stash_enabled, deadline));
@@ -441,7 +436,6 @@ impl NativeGitBackend {
     /// Returns an error if git fails, the deadline passes, or a capture thread panics.
     pub fn get_complete_status(
         path: &Path,
-        paths: Option<&[PathBuf]>,
         max_ahead_behind: usize,
         stash_enabled: bool,
         timeout: Duration,
@@ -454,13 +448,8 @@ impl NativeGitBackend {
         let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
             crate::Error::git("status timeout is too large for the clock".to_owned())
         })?;
-        let (status_v2_res, state_opt, stash_count) = Self::run_parallel_captures(
-            &repo_root,
-            paths,
-            max_ahead_behind,
-            stash_enabled,
-            deadline,
-        )?;
+        let (status_v2_res, state_opt, stash_count) =
+            Self::run_parallel_captures(&repo_root, max_ahead_behind, stash_enabled, deadline)?;
 
         let v2 = status_v2_res?;
 
@@ -493,6 +482,57 @@ impl NativeGitBackend {
             status,
             files: v2.files,
         }))
+    }
+
+    /// File statuses for only the named paths: one `git status` with no branch
+    /// header, stash, repository-state or worktree-root queries. `repo_root`
+    /// must already be the canonical repository root.
+    ///
+    /// The scan reports the `core.ignorecase` it used, so the caller merges
+    /// the result under the same rule that matched the pathspecs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if git fails or the deadline passes.
+    pub fn get_pathspec_status(
+        repo_root: &Path,
+        paths: &[PathBuf],
+        timeout: Duration,
+    ) -> Result<PathspecScan> {
+        let _t = Timer::new("native_get_pathspec_status");
+        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+            crate::Error::git("status timeout is too large for the clock".to_owned())
+        })?;
+        let ignore_case = Self::ignores_case_until(repo_root, deadline);
+
+        // `-z`: NUL-terminated records with unescaped paths.
+        let mut args: Vec<OsString> = ["status", "--porcelain=v2", "-z", "--"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        Self::push_pathspecs(&mut args, paths, ignore_case);
+
+        let output = run_git_until(repo_root, &args, deadline)?;
+        Ok(PathspecScan {
+            files: parser::parse_v2_files(&output),
+            ignore_case,
+        })
+    }
+
+    /// Append one literal pathspec per path. `:(literal)` disables pathspec
+    /// magic/globs in filenames; `icase` matches watcher spelling against
+    /// index spelling on case-insensitive repositories.
+    fn push_pathspecs(args: &mut Vec<OsString>, paths: &[PathBuf], ignore_case: bool) {
+        let magic = if ignore_case {
+            ":(literal,icase)"
+        } else {
+            ":(literal)"
+        };
+        for path in paths {
+            let mut spec = OsString::from(magic);
+            spec.push(path.as_os_str());
+            args.push(spec);
+        }
     }
 }
 
@@ -612,3 +652,10 @@ fn git_output_to_string(output: &std::process::Output) -> Result<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod branch_head_tests;
+#[cfg(test)]
+mod pathspec_tests;
+#[cfg(test)]
+mod untracked_cache_tests;

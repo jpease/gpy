@@ -56,9 +56,11 @@ Workload:
   --runs N           Timed runs per tool per round (default 100).
   --warmup N         Untimed runs before each block (default 5).
   --untracked-cache M  How the fixtures' core.untrackedCache is set: unset (default;
-                       key removed, as on a typical machine: GPY enables it
-                       itself on first use, Starship never does), on (pinned
-                       true, the same for both tools) or off (pinned false).
+                       key removed, as on a typical machine: the fixture primes
+                       the cache, as your own git commands would; GPY's one-shot
+                       path does not add it, the agent does; Starship never
+                       uses it), on (pinned true, the same for both tools) or
+                       off (pinned false).
 
 Environment:
   --home DIR         Cache for fixtures and tools (default: $GPY_BENCH_HOME or

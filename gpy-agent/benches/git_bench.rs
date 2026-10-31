@@ -14,7 +14,7 @@ fn bench_git_status(c: &mut Criterion) {
 
     c.bench_function("git_status_cold", |b| {
         b.iter(|| {
-            let result = load_repository_state(path, None, 0, true);
+            let result = load_repository_state(path, 0, true);
             std::hint::black_box(result).unwrap();
         });
     });

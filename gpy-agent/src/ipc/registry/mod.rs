@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::debug_log;
 use crate::sync_ext::MutexExt;
+use crate::watcher::DEFAULT_THROTTLE_MS;
 
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
@@ -95,8 +96,6 @@ pub(crate) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Op
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]), true);
     sys.process(sys_pid).map(sysinfo::Process::start_time)
 }
-
-const DEFAULT_THROTTLE_MS: u64 = 150;
 
 /// Whether a registered PID still belongs to the process that registered it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
