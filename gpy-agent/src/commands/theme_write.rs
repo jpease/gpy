@@ -68,12 +68,12 @@ pub fn new(name: &str, from: Option<&str>, full: bool) -> Result<()> {
 /// overlay; a theme that already is a user file is left alone.
 ///
 /// Overwriting an existing file, or omitting `name`, prompts for
-/// confirmation; an overwritten file is kept as `.bak`.
+/// confirmation unless `yes`; an overwritten file is kept as `.bak`.
 ///
 /// # Errors
 /// Returns an error on an unsafe name, an active theme that does not load,
 /// a new file that would not load, prompt failure, or write failure.
-pub fn save(name: Option<&str>, full: bool) -> Result<()> {
+pub fn save(name: Option<&str>, full: bool, yes: bool) -> Result<()> {
     let config = read_config()?;
     let active = load_named_theme(config.ui.theme.as_str())?;
     let top = active.chain.top();
@@ -103,7 +103,7 @@ pub fn save(name: Option<&str>, full: bool) -> Result<()> {
     let path = written.chain.top().path.clone();
     let exists = written.chain.top().on_disk;
 
-    if save_requires_confirmation(name, exists) {
+    if !yes && save_requires_confirmation(name, exists) {
         let prompt = if exists {
             format!("Theme '{target}' already exists. Overwrite? (a copy is kept as .bak) [y/N] ")
         } else {
@@ -118,9 +118,17 @@ pub fn save(name: Option<&str>, full: bool) -> Result<()> {
                 path.display()
             )
         };
-        if !confirm(&prompt)? {
-            output::plain("Aborted.");
-            return Ok(());
+        match confirm(&prompt)? {
+            Answer::Yes => {}
+            Answer::No => {
+                return Err(Error::invalid("theme save cancelled; nothing was written"));
+            }
+            Answer::Eof => {
+                return Err(Error::invalid(format!(
+                    "theme save needs confirmation to write {}; pass --yes",
+                    path.display()
+                )));
+            }
         }
     }
 
@@ -319,7 +327,15 @@ const fn save_requires_confirmation(name: Option<&str>, target_exists: bool) -> 
     name.is_none() || target_exists
 }
 
-fn confirm(prompt: &str) -> Result<bool> {
+/// What the user said to a yes/no question.
+enum Answer {
+    Yes,
+    No,
+    /// Input ended before any answer.
+    Eof,
+}
+
+fn confirm(prompt: &str) -> Result<Answer> {
     use std::io::Write;
 
     print!("{prompt}");
@@ -328,11 +344,17 @@ fn confirm(prompt: &str) -> Result<bool> {
         .map_err(|e| Error::config(format!("failed to write prompt: {e}")))?;
 
     let mut answer = String::new();
-    std::io::stdin()
+    let read = std::io::stdin()
         .read_line(&mut answer)
         .map_err(|e| Error::config(format!("failed to read confirmation: {e}")))?;
 
-    Ok(parse_confirmation(&answer))
+    Ok(if read == 0 {
+        Answer::Eof
+    } else if parse_confirmation(&answer) {
+        Answer::Yes
+    } else {
+        Answer::No
+    })
 }
 
 /// Only (case-insensitive) `y`/`yes` confirm.

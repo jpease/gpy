@@ -59,14 +59,14 @@ report the expected clean or dirty state and aborts if either does not.
 
 ### Why the untracked cache matters
 
-GPY turns on git's untracked cache (`core.untrackedCache`) the first time it
-runs in a repository where you have not set it either way. Starship never uses
-it. That is most of GPY's lead on large repositories, so the results depend on
-this setting:
+The GPY agent adds git's untracked cache (`core.untrackedCache`) to a
+repository's index where you have not set it either way, and your own git
+commands can add it too. Starship never uses it. That is most of GPY's lead on
+large repositories, so the results depend on this setting:
 
 | Fixture setting | What happens | medium-kubernetes (GPY / Starship) |
 |---|---|---|
-| unset (the default here, and typical) | GPY enables the cache | 55.8 / 113.7 ms |
+| unset (the default here, and typical) | the fixture primes the cache, as your own git commands would; GPY's one-shot path does not add it, the agent does | 55.8 / 113.7 ms |
 | `true`, for both tools | same | about 55 / 114 ms |
 | `false` | GPY respects it and loses its fast path | about 143 / 114 ms |
 

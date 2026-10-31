@@ -269,6 +269,17 @@ pub struct CompleteStatus {
     pub files: HashMap<PathBuf, FileStatus>,
 }
 
+/// An incremental scan of named paths: their statuses and the
+/// `core.ignorecase` rule the scan matched them under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathspecScan {
+    /// Statuses of the named paths that are not clean.
+    pub files: HashMap<PathBuf, FileStatus>,
+    /// Whether the pathspecs matched case-insensitively; the caller merges
+    /// the result under the same rule.
+    pub ignore_case: bool,
+}
+
 impl RepositoryStatus {
     /// Zero the ahead/behind counts and their capped flags.
     /// Used when `git.show_upstream` is disabled.

@@ -3,47 +3,6 @@ use crate::git::RebaseProgress;
 use std::time::SystemTime;
 use tempfile::TempDir;
 
-/// `git config --local --get-all core.untrackedCache` as seen from `path`.
-fn untracked_cache_values(path: &Path) -> String {
-    let output = Command::new("git")
-        .args(["config", "--local", "--get-all", "core.untrackedCache"])
-        .current_dir(path)
-        .output()
-        .expect("run git config");
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
-}
-
-#[test]
-fn does_not_override_explicit_untracked_cache_false() {
-    let (_dir, path) = init_test_repo();
-    let status = Command::new("git")
-        .args(["config", "core.untrackedCache", "false"])
-        .current_dir(&path)
-        .status()
-        .expect("run git config");
-    assert!(status.success());
-
-    NativeGitBackend::get_complete_status(&path, None, 100, false, Duration::from_secs(5))
-        .expect("status");
-
-    assert_eq!(untracked_cache_values(&path), "false");
-}
-
-#[test]
-fn enables_untracked_cache_when_unset() {
-    let (_dir, path) = init_test_repo();
-    // A user/system-level setting would (correctly) stop gpy enabling it.
-    if NativeGitBackend::is_untracked_cache_configured(&path, NativeGitBackend::default_deadline())
-    {
-        return;
-    }
-
-    NativeGitBackend::get_complete_status(&path, None, 100, false, Duration::from_secs(5))
-        .expect("status");
-
-    assert_eq!(untracked_cache_values(&path), "true");
-}
-
 #[test]
 fn parse_msgnum_table() {
     let cases: &[(&str, Option<u32>)] = &[
@@ -97,7 +56,7 @@ fn parse_sequencer_command_table() {
 /// # Panics
 ///
 /// Panics if git is not available or repository setup fails.
-fn init_test_repo() -> (TempDir, PathBuf) {
+pub(super) fn init_test_repo() -> (TempDir, PathBuf) {
     let dir = TempDir::new().expect("create temp dir");
     let path = fs::canonicalize(dir.path()).expect("canonicalize temp dir");
 
@@ -162,7 +121,6 @@ fn detached_head_sets_flag_not_branch_prefix() {
 
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -185,7 +143,7 @@ fn get_complete_status_respects_configured_timeout() {
 
     let short_start = std::time::Instant::now();
     let short_timeout_result =
-        NativeGitBackend::get_complete_status(&path, None, 0, true, Duration::from_nanos(1));
+        NativeGitBackend::get_complete_status(&path, 0, true, Duration::from_nanos(1));
     let short_elapsed = short_start.elapsed();
     assert!(
         short_timeout_result.is_err(),
@@ -194,7 +152,7 @@ fn get_complete_status_respects_configured_timeout() {
 
     let generous_start = std::time::Instant::now();
     let generous_timeout_result =
-        NativeGitBackend::get_complete_status(&path, None, 0, true, Duration::from_secs(5));
+        NativeGitBackend::get_complete_status(&path, 0, true, Duration::from_secs(5));
     let generous_elapsed = generous_start.elapsed();
     assert!(
         generous_timeout_result.is_ok(),
@@ -218,7 +176,6 @@ fn stash_count_reflects_stash_list() {
 
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -243,7 +200,6 @@ fn stash_count_is_zero_when_stash_disabled() {
 
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         false,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -274,7 +230,6 @@ fn rebase_progress_present_for_interactive_rebase() {
 
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -461,7 +416,6 @@ fn rebase_progress_none_for_non_interactive_rebase() {
 
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -515,7 +469,6 @@ fn get_repo_state_returns_applying_for_conflicted_git_am() {
     // am detection must not affect interactive-rebase progress.
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -726,7 +679,6 @@ fn detached_stashed_and_mid_rebase_are_captured_simultaneously() {
 
     let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
         &path,
-        None,
         0,
         true,
         Duration::from_secs(GitTimeout::DEFAULT),
@@ -792,7 +744,7 @@ fn parse_v2_output_handles_rename_and_clamps_counts() {
 
     let result = parser::parse_v2_records(output, 2);
 
-    assert_eq!(result.branch, BranchHead::Named("main".to_owned()));
+    assert_eq!(result.branch, Some(BranchHead::Named("main".to_owned())));
     // Ahead 3 > max 2 -> clamped and capped; behind 1 <= max -> verbatim.
     assert_eq!(result.ahead, 2);
     assert!(result.ahead_capped);
@@ -881,44 +833,4 @@ fn config_caches_stay_within_capacity() {
 
     assert!(IGNORE_CASE.len() <= NATIVE_GIT_CONFIG_CACHE_CAPACITY);
     assert!(UNTRACKED_CACHE_CHECKED.len() <= NATIVE_GIT_CONFIG_CACHE_CAPACITY);
-}
-
-/// A pathspec is passed to git as the raw `OsStr`, so a file whose
-/// name is not valid UTF-8 is still matched. Skipped where the filesystem
-/// rejects such names (APFS).
-#[cfg(unix)]
-#[test]
-fn pathspec_matches_a_non_utf8_file_name() {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-
-    let (_dir, path) = init_test_repo();
-    let name = PathBuf::from(OsStr::from_bytes(b"bad\xff.txt"));
-    if fs::write(path.join(&name), "one\n").is_err() {
-        return;
-    }
-    for args in [vec!["add", "-A"], vec!["commit", "-q", "-m", "non-utf8"]] {
-        let output = Command::new("git")
-            .args(&args)
-            .current_dir(&path)
-            .output()
-            .expect("run git");
-        assert!(output.status.success(), "git {args:?} failed");
-    }
-    fs::write(path.join(&name), "two\n").expect("modify non-UTF-8 file");
-
-    let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
-        &path,
-        Some(&[name]),
-        0,
-        false,
-        Duration::from_secs(GitTimeout::DEFAULT),
-    )
-    .expect("get_complete_status should succeed")
-    .expect("repo should be detected");
-
-    assert_eq!(
-        status.unstaged, 1,
-        "the edit must be seen through the pathspec"
-    );
 }

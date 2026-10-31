@@ -126,10 +126,12 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::create(&temp)?;
-        file.write_all(contents)?;
+        // Match the target's mode while the temp file is still empty: a private
+        // file's contents must never sit in a wider-readable temp file.
         if let Ok(meta) = std::fs::metadata(&target) {
             file.set_permissions(meta.permissions())?;
         }
+        file.write_all(contents)?;
         file.sync_all()?;
         std::fs::rename(&temp, &target)
     })();
@@ -315,6 +317,26 @@ mod tests {
         // `TempDir::drop` needs write access to clean up.
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755))
             .expect("restore temp dir permissions before drop");
+    }
+
+    /// The temp file takes the target's mode before any content is written, so a
+    /// private file's contents are never readable through a wider temp file.
+    #[test]
+    #[cfg(unix)]
+    fn write_atomically_keeps_a_private_file_private() {
+        use super::write_atomically;
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("rc");
+        std::fs::write(&path, "secret").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&path, b"replacement").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "replacement");
     }
 
     /// A write that cannot complete must leave the previous file intact. An

@@ -8,6 +8,13 @@ use std::fs;
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
 use cli_harness::CliTestEnv;
+#[cfg(unix)]
+#[allow(
+    dead_code,
+    reason = "this binary uses only the silent-socket helper from the shared fixtures"
+)]
+#[path = "common/fixtures.rs"]
+mod fixtures;
 
 fn run_gpy_command(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
     let result = CliTestEnv::new()?.run_gpy(args)?;
@@ -1142,11 +1149,12 @@ enabled_segments = ["clock", "duration", "language", "directory", "git"]
     fs::write(&config_path, valid_config).expect("Failed to write config");
 
     let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
-    // No agent runs in this env, so doctor exits 1.
+    // No agent runs in this env: a warning, not a failure.
     assert_eq!(
-        output.exit_code, 1_i32,
-        "doctor with no agent exits 1: {output:?}"
+        output.exit_code, 0_i32,
+        "a not-running agent only warns: {output:?}"
     );
+    assert!(output.stdout.contains("warn:"), "{output:?}");
     let stdout = output.stdout;
     assert!(
         stdout.contains("Checking process... warn: Not running"),
@@ -1263,14 +1271,24 @@ fn test_config_open_uses_editor_and_creates_missing_file() {
     // Compared as a `Path`, not a string: on Windows the printed path joins
     // the XDG root with `/` while `config_path()` joins with `\`, and `Path`
     // equality is per component.
-    let opened = output
+    let created = output
         .stdout
         .lines()
-        .find_map(|line| line.strip_prefix("Opened config: "));
+        .find_map(|line| line.strip_prefix("Created config: "));
     assert_eq!(
-        opened.map(std::path::Path::new),
+        created.map(std::path::Path::new),
         Some(config_path.as_path()),
-        "Config open should report the opened path"
+        "Config open should report the created path"
+    );
+
+    let again = env
+        .run_gpy_with_env(&["config", "open"], &[("EDITOR", "true")])
+        .expect("Failed to run gpy config open");
+    again.assert_success("gpy config open (existing file)");
+    assert!(
+        again.stdout.is_empty(),
+        "Nothing was created, so nothing is printed. Got: {}",
+        again.stdout
     );
 }
 
@@ -1445,16 +1463,16 @@ fn test_theme_save_named_existing_theme_declined_leaves_file_unchanged() {
     let output = env
         .run_gpy_with_stdin(&["theme", "save", "custom"], "n\n")
         .expect("Failed to run gpy theme save");
-    output.assert_success("gpy theme save custom (declined)");
+    assert_eq!(output.exit_code, 1_i32, "{output:?}");
     assert!(
         output.stdout.contains("[y/N]"),
         "Should prompt before overwriting an existing named theme. Got: {}",
         output.stdout
     );
     assert!(
-        output.stdout.contains("Aborted"),
-        "Declining should report an abort. Got: {}",
-        output.stdout
+        output.stderr.contains("cancelled"),
+        "Declining should report the cancellation. Got: {}",
+        output.stderr
     );
 
     let unchanged = fs::read_to_string(&target_path).expect("Failed to read theme file");
@@ -1462,6 +1480,50 @@ fn test_theme_save_named_existing_theme_declined_leaves_file_unchanged() {
         unchanged, marker_content,
         "Declining the overwrite prompt must leave the existing theme file untouched"
     );
+}
+
+#[test]
+fn test_theme_save_without_an_answer_fails_and_writes_nothing() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let target_path = env.themes_dir().join("custom.toml");
+    let marker_content = "# pre-existing custom marker\n[segments]\n";
+    fs::write(&target_path, marker_content).expect("Failed to seed pre-existing theme");
+
+    let output = env
+        .run_gpy_with_stdin(&["theme", "save", "custom"], "")
+        .expect("Failed to run gpy theme save");
+
+    assert_eq!(output.exit_code, 1_i32, "{output:?}");
+    assert!(output.stderr.contains("pass --yes"), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(&target_path).expect("read theme"),
+        marker_content,
+        "nothing may be written unconfirmed"
+    );
+}
+
+#[test]
+fn test_theme_save_yes_overwrites_without_prompting() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let target_path = env.themes_dir().join("custom.toml");
+    fs::write(&target_path, "# pre-existing\n").expect("Failed to seed pre-existing theme");
+
+    let output = env
+        .run_gpy_with_stdin(&["theme", "save", "custom", "--yes"], "")
+        .expect("Failed to run gpy theme save");
+    output.assert_success("gpy theme save custom --yes");
+
+    assert!(!output.stdout.contains("[y/N]"), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(&target_path).expect("Failed to read theme file"),
+        "extends = \"default\"\n"
+    );
+    let no_name = env
+        .run_gpy_with_stdin(&["theme", "save", "-y"], "")
+        .expect("Failed to run gpy theme save");
+    no_name.assert_success("gpy theme save -y");
+    assert!(!no_name.stdout.contains("[y/N]"), "{no_name:?}");
+    assert!(env.themes_dir().join("default.toml").is_file());
 }
 
 #[test]
@@ -1515,7 +1577,8 @@ enabled_segments = ["clock"]
     let declined = env
         .run_gpy_with_stdin(&["theme", "save"], "n\n")
         .expect("Failed to run gpy theme save");
-    declined.assert_success("gpy theme save (no name, declined)");
+    assert_eq!(declined.exit_code, 1_i32, "{declined:?}");
+    assert!(declined.stderr.contains("cancelled"), "{declined:?}");
     assert!(
         declined.stdout.contains("[y/N]"),
         "Omitting the name must still prompt, even though no file exists yet. Got: {}",
@@ -1747,15 +1810,85 @@ fn test_theme_diff_and_reset_reject_non_builtin_themes() {
     assert!(!custom.with_extension("toml.bak").exists());
 }
 
+/// Stands in for an agent that accepts connections but never answers, so an
+/// attempted reload prints `Agent not reloaded:` and a skipped one prints
+/// nothing. Native Windows never runs an agent, so there it only runs the
+/// command.
+#[cfg(unix)]
+struct ReloadProbe {
+    _dir: tempfile::TempDir,
+    _listener: std::os::unix::net::UnixListener,
+    socket: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl ReloadProbe {
+    fn new() -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("probe-")
+            .tempdir_in(fixtures::gpy_test_root().expect("GPY test root"))
+            .expect("socket tempdir under the test root");
+        let socket = dir.path().join("gpy.sock");
+        let listener = fixtures::bind_silent_socket(&socket);
+        Self {
+            _dir: dir,
+            _listener: listener,
+            socket,
+        }
+    }
+
+    fn run_gpy(&self, env: &CliTestEnv, args: &[&str]) -> cli_harness::CliCommandResult {
+        env.run_gpy_with_env(args, &[("GPY_AGENT_SOCKET_PATH", self.socket.as_os_str())])
+            .expect("Failed to run gpy")
+    }
+
+    #[expect(clippy::unused_self, reason = "mirrors the non-Unix probe")]
+    fn assert_reload_attempted(
+        &self,
+        output: &cli_harness::CliCommandResult,
+        attempted: bool,
+        why: &str,
+    ) {
+        assert_eq!(
+            output.stdout.contains("Agent not reloaded:"),
+            attempted,
+            "{why}: {output:?}"
+        );
+    }
+}
+
+#[cfg(not(unix))]
+struct ReloadProbe;
+
+#[cfg(not(unix))]
+impl ReloadProbe {
+    const fn new() -> Self {
+        Self
+    }
+
+    #[expect(clippy::unused_self, reason = "mirrors the Unix probe")]
+    fn run_gpy(&self, env: &CliTestEnv, args: &[&str]) -> cli_harness::CliCommandResult {
+        env.run_gpy(args).expect("Failed to run gpy")
+    }
+
+    #[expect(clippy::unused_self, reason = "mirrors the Unix probe")]
+    const fn assert_reload_attempted(
+        &self,
+        _output: &cli_harness::CliCommandResult,
+        _attempted: bool,
+        _why: &str,
+    ) {
+    }
+}
+
 #[test]
 fn test_theme_reset_moves_the_copy_aside_so_the_builtin_takes_over() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let stale = stale_starship_copy();
     let path = write_theme_file(&env, "starship", &stale);
 
-    let output = env
-        .run_gpy(&["theme", "reset", "starship"])
-        .expect("Failed to run gpy theme reset");
+    let probe = ReloadProbe::new();
+    let output = probe.run_gpy(&env, &["theme", "reset", "starship"]);
 
     output.assert_success("gpy theme reset starship");
     let backup = env.themes_dir().join("starship.toml.bak");
@@ -1772,9 +1905,10 @@ fn test_theme_reset_moves_the_copy_aside_so_the_builtin_takes_over() {
         .run_gpy(&["theme", "diff", "starship"])
         .expect("Failed to run gpy theme diff");
     assert!(diff.stdout.contains("No user copy"), "{diff:?}");
-    assert!(
-        !output.stdout.contains("Agent not reloaded"),
-        "starship is not the active theme, so no reload is attempted: {output:?}"
+    probe.assert_reload_attempted(
+        &output,
+        false,
+        "starship is not the active theme, so no reload is attempted",
     );
 }
 
@@ -1797,18 +1931,18 @@ fn test_theme_reset_keeps_older_backups() {
 }
 
 #[test]
-fn test_theme_reset_of_the_active_theme_without_an_agent_still_succeeds() {
+fn test_theme_reset_of_the_active_theme_attempts_a_reload() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     write_theme_file(&env, "default", "# stale\n");
 
-    let output = env
-        .run_gpy(&["theme", "reset", "default"])
-        .expect("Failed to run gpy theme reset");
+    let probe = ReloadProbe::new();
+    let output = probe.run_gpy(&env, &["theme", "reset", "default"]);
 
     output.assert_success("gpy theme reset default");
-    assert!(
-        output.stdout.contains("Agent not reloaded"),
-        "the active theme changed, so a reload is attempted: {output:?}"
+    probe.assert_reload_attempted(
+        &output,
+        true,
+        "the active theme changed, so a reload is attempted",
     );
     assert!(env.themes_dir().join("default.toml.bak").is_file());
 }
@@ -2100,15 +2234,15 @@ fn test_theme_reset_moves_a_chain_file_when_the_active_theme_still_loads() {
         .expect("Failed to write config");
     let path = write_theme_file(&env, "starship", OVERLAY_DIRECTORY_FORMAT);
 
-    let output = env
-        .run_gpy(&["theme", "reset", "starship"])
-        .expect("Failed to run gpy theme reset");
+    let probe = ReloadProbe::new();
+    let output = probe.run_gpy(&env, &["theme", "reset", "starship"]);
 
     output.assert_success("gpy theme reset starship");
     assert!(!path.exists());
-    assert!(
-        output.stdout.contains("Agent not reloaded"),
-        "the file was in the active chain, so a reload is attempted: {output:?}"
+    probe.assert_reload_attempted(
+        &output,
+        true,
+        "the file was in the active chain, so a reload is attempted",
     );
 }
 
@@ -2120,15 +2254,15 @@ fn test_theme_reset_does_not_refuse_when_the_active_theme_was_already_broken() {
     write_theme_file(&env, "broken", "this is [not toml\n");
     let mine = write_theme_file(&env, "mine", OVERLAY_DIRECTORY_FORMAT);
 
-    let output = env
-        .run_gpy(&["theme", "reset", "mine"])
-        .expect("Failed to run gpy theme reset");
+    let probe = ReloadProbe::new();
+    let output = probe.run_gpy(&env, &["theme", "reset", "mine"]);
 
     output.assert_success("gpy theme reset mine");
     assert!(!mine.exists());
-    assert!(
-        !output.stdout.contains("Agent not reloaded"),
-        "the moved file is outside the active theme's chain: {output:?}"
+    probe.assert_reload_attempted(
+        &output,
+        false,
+        "the moved file is outside the active theme's chain",
     );
 }
 
@@ -2440,12 +2574,13 @@ enabled_segments = ["clock", "duration", "language", "directory", "git"]
 "#;
     fs::write(&config_path, valid_config).expect("Failed to write config");
 
-    // No agent runs in this env, so doctor exits 1.
+    // No agent runs in this env: a warning, not a failure.
     let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
     assert_eq!(
-        output.exit_code, 1_i32,
-        "doctor with no agent exits 1: {output:?}"
+        output.exit_code, 0_i32,
+        "a not-running agent only warns: {output:?}"
     );
+    assert!(output.stdout.contains("warn:"), "{output:?}");
     let stdout = output.stdout;
     assert!(
         stdout.contains("Checking config file... ok: Valid"),

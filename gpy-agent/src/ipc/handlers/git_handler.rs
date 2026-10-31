@@ -213,7 +213,6 @@ impl GitHandler {
             let started = Instant::now();
             let result = crate::git::native::NativeGitBackend::get_complete_status(
                 &job_spec.path,
-                None,
                 job_spec.max_ahead_behind,
                 stash_enabled,
                 Duration::from_secs(
@@ -228,9 +227,9 @@ impl GitHandler {
             );
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical. A newer entry was
+                    // `git_root` is already canonical. A newer full scan was
                     // already published, so its waiters get it instead.
-                    if job_spec.cache.set_canonical_if_not_newer(
+                    if let Some(published) = job_spec.cache.apply_full_scan(
                         &job_spec.git_root,
                         started,
                         status.clone(),
@@ -238,8 +237,8 @@ impl GitHandler {
                     ) {
                         // The request path may have served stale data; publish the
                         // fresh status. No request context, so prev_bg is None.
-                        publish_and_repaint(&job_spec.render, &job_spec.git_root, &status, None);
-                        Ok(Some(status))
+                        publish_and_repaint(&job_spec.render, &job_spec.git_root, &published, None);
+                        Ok(Some(published))
                     } else {
                         Ok(Some(
                             job_spec
@@ -457,7 +456,7 @@ mod tests {
             .expect("safe path");
 
         let handler_result = handler.get_git_status(&safe_path, None);
-        let oneshot_result = load_repository_state(&bare_path, None, 0, false);
+        let oneshot_result = load_repository_state(&bare_path, 0, false);
 
         let Err(handler_error) = handler_result else {
             panic!("expected an error (git refuses status without a worktree), got Ok");
@@ -598,7 +597,8 @@ mod tests {
         // Seed a WRONG (Clean) status; the true state is Dirty (untracked file).
         cache.set_canonical(&git_root, status(0), HashMap::new());
         // Backdate past MAX_IMMEDIATE_STALE_AGE.
-        cache.age_entry_for_test(&git_root, MAX_IMMEDIATE_STALE_AGE + Duration::from_secs(1));
+        let age = MAX_IMMEDIATE_STALE_AGE + Duration::from_secs(1);
+        cache.age_entry_for_test(&git_root, age, age);
 
         let job = handler.git_status_job(&git_root, git_root.clone(), 0);
         let config = handler.render.config_manager.get();
@@ -628,10 +628,8 @@ mod tests {
 
         // Seed a WRONG (Clean) status, backdated but still within bound.
         cache.set_canonical(&git_root, status(0), HashMap::new());
-        cache.age_entry_for_test(
-            &git_root,
-            MAX_IMMEDIATE_STALE_AGE.saturating_sub(Duration::from_secs(1)),
-        );
+        let age = MAX_IMMEDIATE_STALE_AGE.saturating_sub(Duration::from_secs(1));
+        cache.age_entry_for_test(&git_root, age, age);
 
         let job = handler.git_status_job(&git_root, git_root.clone(), 0);
         let config = handler.render.config_manager.get();

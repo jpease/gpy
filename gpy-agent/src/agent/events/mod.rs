@@ -409,21 +409,17 @@ fn try_incremental_update_with<B: GitBackend>(
         return not_attempted;
     }
 
-    match backend.complete_status(
+    match backend.pathspec_status(
         git_root,
-        Some(&relative_paths),
-        config.git.max_ahead_behind,
-        config.git.stash_enabled,
+        &relative_paths,
         Duration::from_secs(config.git.timeout_seconds.get()),
     ) {
-        Ok(Some(CompleteStatus {
-            files: file_map, ..
-        })) => {
+        Ok(scan) => {
             let Some(updated_status) = ctx.cache.update_paths_canonical(
                 git_root,
                 &relative_paths,
-                &file_map,
-                NativeGitBackend::ignores_case(git_root),
+                &scan.files,
+                scan.ignore_case,
             ) else {
                 return not_attempted;
             };
@@ -439,7 +435,6 @@ fn try_incremental_update_with<B: GitBackend>(
                 cache_write,
             }
         }
-        Ok(_) => not_attempted,
         Err(e) => {
             debug_log!("agent", "Incremental check failed: {}", e);
             not_attempted
@@ -479,7 +474,6 @@ fn refresh_repo_status_with<B: GitBackend>(
     ctx.cache.invalidate_canonical(git_root);
     match backend.complete_status(
         git_root,
-        None,
         config.git.max_ahead_behind,
         config.git.stash_enabled,
         Duration::from_secs(config.git.timeout_seconds.get()),

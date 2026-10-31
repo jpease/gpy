@@ -1,7 +1,7 @@
 //! Theme-export cache files, sourced by shells at startup and on reload so they
 //! never spawn the binary on the hot path.
 
-use super::instant_prompt::files::{get_gpy_cache_dir, write_atomic};
+use super::instant_prompt::files::{create_private_dir, get_gpy_cache_dir, write_atomic};
 use crate::Result;
 use std::path::PathBuf;
 
@@ -58,7 +58,7 @@ pub fn write_theme_export_to_dir(
     config: &crate::config::Config,
     palette: &crate::template::Palette,
 ) -> Result<bool> {
-    std::fs::create_dir_all(cache_dir)?;
+    create_private_dir(cache_dir)?;
 
     let mut changed = false;
     for (shell, file_name) in EXPORT_FILES {
@@ -173,5 +173,83 @@ mod tests {
             fish.contains("set -g __gpy_theme_name \"text\""),
             "the changed export must be on disk, got:\n{fish}"
         );
+    }
+
+    /// The directory shells source from is owner-only, and so are the files.
+    #[cfg(unix)]
+    #[test]
+    fn theme_export_dir_and_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache_dir = temp_dir.path().join("gpy");
+        std::fs::create_dir_all(&cache_dir).expect("create dir");
+        std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod dir");
+        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
+
+        write_theme_export_to_dir(
+            &cache_dir,
+            &theme_manager,
+            &crate::config::Config::default(),
+            &crate::template::Palette::default(),
+        )
+        .expect("write theme export cache");
+
+        let mode = |path: &std::path::Path| {
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(&cache_dir), 0o700, "cache dir must be owner-only");
+        for file_name in ["theme-export.fish", "theme-export.bash", "theme-export.zsh"] {
+            assert_eq!(mode(&cache_dir.join(file_name)), 0o600, "{file_name}");
+        }
+    }
+
+    /// A symlinked cache dir is written through and its target is not chmod-ed.
+    #[cfg(unix)]
+    #[test]
+    fn theme_export_follows_a_symlinked_cache_dir_without_chmod() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let real = temp_dir.path().join("real");
+        let link = temp_dir.path().join("gpy");
+        std::fs::create_dir_all(&real).expect("create real");
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod real");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
+
+        write_theme_export_to_dir(
+            &link,
+            &theme_manager,
+            &crate::config::Config::default(),
+            &crate::template::Palette::default(),
+        )
+        .expect("write through symlink");
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink(),
+            "the symlink must stay a symlink"
+        );
+        assert_eq!(
+            std::fs::metadata(&real)
+                .expect("real metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+            "the symlink target must not be chmod-ed"
+        );
+        for file_name in ["theme-export.fish", "theme-export.bash", "theme-export.zsh"] {
+            assert!(real.join(file_name).exists(), "{file_name} must exist");
+        }
     }
 }

@@ -104,11 +104,18 @@ fn agent_binary_beside(exe: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("gpy-agent"))
 }
 
-/// Printed when the running agent did not confirm a reload.
-const NOT_RELOADED_NOTICE: &str =
-    "Agent not reloaded; the new config applies the next time it starts.";
+/// `name` as an executable on `PATH`.
+pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
 
-/// Reload the running agent's config, warning when it was not applied. The
+/// Reload the running agent's config. Prints nothing when no agent runs (the
+/// agent reads the config when it starts) or when the reload was confirmed;
+/// warns when a running agent rejected the config or did not answer. The
 /// config is already written, so there is nothing to return.
 #[cfg(unix)]
 pub fn reload_agent_and_notify() {
@@ -121,8 +128,7 @@ pub fn reload_agent_and_notify() {
         });
 
     match outcome {
-        Ok(ConfigReload::Applied) => {}
-        Ok(ConfigReload::NotRunning) => crate::commands::output::warn(NOT_RELOADED_NOTICE),
+        Ok(ConfigReload::Applied | ConfigReload::NotRunning) => {}
         Ok(ConfigReload::Rejected(reason)) => crate::commands::output::warn(format_args!(
             "Agent rejected the new config and kept its previous one: {reason}"
         )),
@@ -130,11 +136,10 @@ pub fn reload_agent_and_notify() {
     }
 }
 
-/// Native Windows stub; see `crate::ipc::native_windows_unsupported`.
+/// Native Windows never runs the agent, so there is nothing to reload; see
+/// `crate::ipc::native_windows_unsupported`.
 #[cfg(not(unix))]
-pub fn reload_agent_and_notify() {
-    crate::commands::output::warn(NOT_RELOADED_NOTICE);
-}
+pub fn reload_agent_and_notify() {}
 
 #[cfg(test)]
 mod tests {

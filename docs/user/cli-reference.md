@@ -95,7 +95,13 @@ then reports `Running and Responding`. Starting is idempotent: with a
 matching agent already running it exits `0` without forking a second one,
 and with an older agent running it evicts it first (`Detected version
 mismatch`) so an upgrade never leaves a stale daemon serving new shells.
-A newer running agent is left alone. If the new daemon exits or does not
+It also replaces an agent that speaks a different protocol, even a newer
+one (`Detected protocol mismatch`): shells built for this protocol cannot use
+it. A newer agent on the same protocol is left alone. An agent that is
+running but too busy to answer (it closes new connections without a reply)
+is left alone too: `gpy-agent start` prints `GPY Agent is running but too
+busy to answer; leaving it alone` and exits `0`. `agent.enabled = false` is
+honored even when other keys in `config.toml` are invalid. If the new daemon exits or does not
 answer within 5 seconds, `gpy start` (and `gpy-agent start`) exits `1`
 with an `Error:` line; when the daemon fails before binding its socket, the
 line carries the daemon's own error, such as a cache directory it could not
@@ -197,8 +203,10 @@ Cache Entries: 2
 
 **Exit Codes:**
 - `0` - The agent answered (`Status: Running and Responding`)
-- `1` - No agent is running (`Status: Not Running (socket not found)`) or the
-  socket exists but nothing answered (`Status: Connection failed - ...`)
+- `1` - No agent is running (`Status: Not Running (socket not found)`), the
+  socket exists but nothing answered (`Status: Connection failed - ...`), or
+  the agent is running but closing connections without a reply
+  (`Status: Running but busy (not answering right now)`)
 
 The exit code is what scripts and `gpy doctor` rely on; the report is
 printed either way. `gpy-agent status` follows the same contract.
@@ -264,17 +272,18 @@ gpy theme use text
 Switched to 'text' theme
 ```
 
-That is the whole output when the running agent acknowledged the reload.
-When it did not, one more line follows:
+That is the whole output when the running agent acknowledged the reload, and
+when no agent is running (it reads the config when it starts). When a running
+agent rejected the config or did not answer, one more line follows:
 
 ```
-! Agent not reloaded; the new config applies the next time it starts.
+! Agent not reloaded: <reason>
 ```
 
 Every command that edits `config.toml` (`theme use`, `palette use`,
 `enable`, `disable`, `lang versions`, `config set`) ends the same way: silent
-on a confirmed reload, that one notice otherwise. Switching *themes* currently
-prints the notice even with a live agent on macOS, because the switch re-arms
+on a confirmed reload or with no agent, one warning otherwise. Switching
+*themes* currently prints the warning even with a live agent on macOS, because the switch re-arms
 its theme-file watcher for longer than the CLI waits; the reload still
 happens a few seconds later.
 
@@ -365,7 +374,7 @@ extends = "starship"
 
 ---
 
-#### `gpy theme save [name] [--full]`
+#### `gpy theme save [name] [--full] [--yes]`
 
 Save the active theme as a theme file that extends it.
 
@@ -379,13 +388,14 @@ The new file is loaded before anything is written; if it would not load (for exa
 
 With `--full`, the file is a full, independent copy of the active theme instead: its file verbatim when it is a full theme, or the merged result when it is an overlay. `--full` to the active theme's own file is refused like the plain form.
 
-Declining the prompt (anything other than `y`/`yes`) aborts without writing.
+Declining the prompt (anything other than `y`/`yes`) exits 1 with `theme save cancelled; nothing was written`. When input ends without an answer (for example `</dev/null`), it exits 1 with `theme save needs confirmation to write <path>; pass --yes`. Piped answers (`echo y | gpy theme save`) work. `--yes` skips the question.
 
 **Arguments:**
-- `[name]` - Theme name to save as (defaults to the currently active theme)
+- `[name]` - Theme name to save as (default: the active theme's own name; asks before writing unless `--yes`)
 
 **Options:**
 - `--full` - Write a full, independent copy of the active theme instead of an overlay
+- `-y`, `--yes` - Skip the confirmation question
 
 **Example:**
 ```bash
@@ -976,7 +986,9 @@ This command respects `GPY_CONFIG_PATH` when set. Otherwise it opens the standar
 Editor selection order:
 - `$VISUAL`
 - `$EDITOR`
-- Platform default opener as a fallback: `open -t` on macOS, `xdg-open` on Linux (on WSL, `wslview` when it is installed, then `xdg-open`), `start` on Windows
+- Platform default opener as a fallback: `open -t` on macOS, `xdg-open` on Linux (on WSL, `wslview` when it is installed, then `xdg-open`), `start` on Windows. If the opener cannot be run, the command fails with `no editor found: set $VISUAL or $EDITOR (config file: <path>)`.
+
+When it created the file it prints `Created config: <path>`. After `$VISUAL`/`$EDITOR` (which blocks until the editor exits) nothing more is printed; the platform opener returns immediately, so it prints `Opened <path> in the default editor (<program>)`.
 
 **Example:**
 ```bash
@@ -985,8 +997,10 @@ gpy config open
 
 **Output:**
 ```text
-Opened config: /home/user/.config/gpy/config.toml
+Created config: /home/user/.config/gpy/config.toml
 ```
+
+(Only when the file did not exist.)
 
 ---
 
@@ -1028,7 +1042,7 @@ Only theme options whose value you changed are written; an option toggled back t
 
 Changes are only written on save; quitting without saving leaves the existing configuration and theme files untouched.
 
-After the wizard leaves the full-screen view, `s` prints `Saved theme edits to <path>` (when a theme file was written) and `Saved configuration to <path>` on the normal screen, followed by the `Agent not reloaded` warning when no running agent confirmed the reload. Quitting without saving prints nothing.
+After the wizard leaves the full-screen view, `s` prints `Saved theme edits to <path>` (when a theme file was written) and `Saved configuration to <path>` on the normal screen, followed by an `Agent not reloaded` warning only when a running agent rejected the config or did not answer. Quitting without saving prints nothing.
 
 Selecting a user theme that fails to load keeps the wizard open: the selection stays on the previous theme and the Detail panel shows `Cannot select theme "<name>": <reason>` (naming the file) until the next key press. A configured theme that fails to load at startup still aborts the wizard.
 
@@ -1081,7 +1095,11 @@ Verifies:
   (clean environment, the plugin root as working directory or the current one
   when `pwd` is declared, killed after `timeout_ms`) and reports the run time,
   what it would show and why it would be hidden
-- Required binaries are in PATH
+- `gpy-agent` runs, and Bash/Fish have an IPC client (`socat`, or an `nc` whose
+  help lists `-U`); without one every prompt falls back to `gpy-agent oneshot`.
+  The IPC client check runs only when a Bash or Fish integration is installed
+  and the agent is not disabled. To tell whether `nc` supports `-U`, doctor
+  runs `nc -h` (the first `nc` in `PATH`) when `socat` is absent.
 
 **Example:**
 ```bash
@@ -1105,16 +1123,24 @@ Summary:
 ```
 
 With no agent running the first check reads `! Not running` with the hint
-``Start the agent with `gpy start` or just use your prompt.``, and the
-command exits `1`.
+``Start the agent with `gpy start` or just use your prompt.``. That is a
+warning, not a failure: the command still exits `0`. The same holds for an
+agent that is running but too busy to answer (`! Running but too busy to
+answer`) and for a stale socket file nothing listens on. An agent that holds
+its socket but never answers is a failure (`✗ Not answering on <socket>`,
+remediation `gpy restart`), as is a socket path that cannot be resolved.
 
 With `agent.enabled = false` the agent check reads
-`Disabled via config (agent.enabled = false)` and is not counted as a
-failure (the agent is not probed), so the command can still exit `0`.
+`Disabled via config (agent.enabled = false)` (the agent is not probed) and
+the IPC client check is skipped.
+
+Only a failed check fails the run. Warnings (outdated shell scripts, unknown
+config keys, an inactive broken theme override, script trial and plugin
+performance findings) are advice and never change the exit code.
 
 **Exit Codes:**
-- `0` - All checks passed
-- `1` - One or more checks failed (including the agent not running, unless it is disabled via `agent.enabled = false`)
+- `0` - No check failed (warnings may be listed above the summary)
+- `1` - A check failed
 
 ---
 
@@ -1259,6 +1285,11 @@ then `$SHELL`. `--from` names a directory holding the `fish/`, `zsh/` and
 binary, then the source checkout it was built in are tried. See
 [`gpy setup`](../INSTALL.md#gpy-setup) for the full list of steps.
 
+The Bash block loads GPY only in interactive shells. Setup rewrites an
+unedited Bash block or login loader from an earlier release to that form and
+prints `Updated the GPY block in <file>`; a block whose text differs is left
+as it is, and setup says so.
+
 A theme file under `~/.config/gpy/themes/` named after a builtin theme replaces
 that builtin entirely. Setup moves one that is byte-identical to a released
 version of the builtin to `<name>.toml.bak` and reports it, so the builtin
@@ -1396,7 +1427,7 @@ commands.
 
 | Command | What it does |
 |---|---|
-| `gpy-agent start [--socket <path>]` | Start the daemon in the background (idempotent; evicts an older version). `--socket` overrides the socket path, mainly for tests. |
+| `gpy-agent start [--socket <path>]` | Start the daemon in the background (idempotent; replaces an agent whose version or protocol differs, leaves a busy one alone). `--socket` overrides the socket path, mainly for tests. |
 | `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
 | `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
 | `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
@@ -1413,8 +1444,8 @@ GPY reads the following environment variables:
 | `GPY_CONFIG_PATH` | Explicit path to `config.toml`; checked before the XDG and `$HOME` locations. An empty value is ignored. |
 | `XDG_CONFIG_HOME` | Config root: `$XDG_CONFIG_HOME/gpy` (default `~/.config/gpy`), also where user themes and palettes live. |
 | `XDG_CACHE_HOME` | Cache root: `$XDG_CACHE_HOME/gpy` (default `~/.cache/gpy`): theme exports, instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
-| `XDG_RUNTIME_DIR` | Runtime root: `$XDG_RUNTIME_DIR/gpy`: the socket, `agent.version`, the shell registry. |
-| `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. The agent's version marker then lives at `<socket>.version` instead of `agent.version`. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](#gpy-start)). |
+| `XDG_RUNTIME_DIR` | Runtime root: `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
+| `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](#gpy-start)). |
 | `HOME` | Fallback for the config and cache roots when the XDG variables are unset. |
 | `GPY_NERD_FONT` | Tells `gpy setup` what to assume about icons instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown`; anything else falls through to detection. Setting it skips the prompt. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. |
 | `VISUAL`, `EDITOR` | The editor `gpy config open` launches, in that order, before the platform fallback. |

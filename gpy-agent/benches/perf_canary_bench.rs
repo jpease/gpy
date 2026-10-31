@@ -52,7 +52,7 @@ fn bench_perf_canary(c: &mut Criterion) {
     ipc::bench_ipc_roundtrip(c, &rt, &socket_path);
     c.bench_function("git_status_cold", |b| {
         b.iter(|| {
-            let result = load_repository_state(repo_path, None, 0, true);
+            let result = load_repository_state(repo_path, 0, true);
             black_box(result).expect("load repository state");
         });
     });

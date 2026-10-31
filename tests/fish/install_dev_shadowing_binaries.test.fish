@@ -1,33 +1,32 @@
 #!/usr/bin/env fish
-# tests/fish/install_dev_remove_conflicting_binaries.test.fish
+# tests/fish/install_dev_shadowing_binaries.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# install-dev.fish's _remove_conflicting_binaries deletes files on PATH.
-# It must remove only a stale copy of OUR binary under $HOME that
-# shadows the install dir, and leave everything else alone:
-#   (a) a `gpy-agent` under $HOME earlier on PATH whose --version says
-#       `gpy-agent ...` is deleted
-#   (b) an unrelated tool that merely shares the name (--version says
-#       something else) is kept, with a warning
-#   (c) a tool-manager shim (a */shims/* path) is kept
-#   (d) a copy AFTER the install dir on PATH is kept (it does not shadow)
-#   (e) with the install dir absent from PATH, nothing is deleted
-#   (f) a shadowing copy of ours outside $HOME is kept, with a warning
+# install-dev.fish's _warn_shadowing_binaries only reports: it prints a
+# `warn:` line with an `rm` command for every gpy/gpy-agent earlier on PATH
+# than the install dir, and deletes nothing:
+#   (a) a stale copy of ours under $HOME is kept and warned about
+#   (b) an unrelated tool that merely shares the name is kept and warned about
+#   (c) a tool-manager shim (a */shims/* path) is kept, with no warning
+#   (d) the install dir's own binaries and a copy AFTER it are untouched,
+#       with no warning for the later copy
+#   (e) with the install dir absent from PATH, the copy is kept, the `Note:`
+#       line is printed and there is no `comes before` warning
+#   (f) a shadowing copy outside $HOME is kept and warned about
+#   (g) _config_home honours XDG_CONFIG_HOME
 #
 # The function is sourced from the real install-dev.fish (run with
 # --fish-only against a throwaway HOME so sourcing has no side effects on
 # this machine), the way install_dev_stop_running_agent.test.fish does.
 # Every stub lives under the sandbox, and each driver runs under `env -i`
 # with only system dirs on PATH, so an exported `fish_user_paths` or a real
-# ~/.local/bin from the caller can never reach a deletion candidate.
+# ~/.local/bin from the caller can never reach a candidate.
 
 set -l script_dir (dirname (status filename))
 set -l repo_root (realpath "$script_dir/../..")
 source "$repo_root/tests/lib/test_helpers.fish"
 init_test_env
 
-# Global: the fail helper below cannot see a script-level local, so a
-# `set -l` counter here would stay 0 and the test could never fail.
 set -l sandbox (mktemp -d)
 set -l home_dir "$sandbox/home"
 mkdir -p "$home_dir"
@@ -65,7 +64,7 @@ write_stub "$off_path_copy/gpy-agent" "gpy-agent 0.0.1"
 set -l safe_path (string join : /usr/bin /bin /usr/sbin /sbin /opt/homebrew/bin /usr/local/bin)
 
 # Writes a driver that sources install-dev.fish, sets PATH to the given
-# entries, and calls _remove_conflicting_binaries on the install dir.
+# entries, and calls _warn_shadowing_binaries on the install dir.
 function write_driver --argument-names driver repo_root home_dir safe_path install
     printf '%s\n' \
         "cd '$repo_root'" \
@@ -75,7 +74,7 @@ function write_driver --argument-names driver repo_root home_dir safe_path insta
         "set -gx PATH '$safe_path'" \
         "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
         "set -gx PATH "(string escape -- $argv[6..-1] | string join ' ') \
-        "_remove_conflicting_binaries '$install'" >"$driver"
+        "_warn_shadowing_binaries '$install'" >"$driver"
 end
 
 set -l driver "$sandbox/driver.fish"
@@ -88,38 +87,45 @@ if test $rc -ne 0
     fail "driver exited $rc: $out"
 end
 
-# (a) the stale copy of ours, earlier on PATH, is gone
-if not test -e "$early/gpy-agent"; and not test -e "$early/gpy"
-    pass "stale gpy and gpy-agent earlier on PATH were removed"
+# (a) the stale copies of ours are kept and each gets the warning
+if test -e "$early/gpy-agent"; and test -e "$early/gpy"
+    pass "stale gpy and gpy-agent earlier on PATH were kept"
 else
-    fail "a stale binary earlier on PATH survived: "(ls $early)
+    fail "a binary earlier on PATH was deleted: "(ls $early)
 end
-if string match -q "*Removed conflicting gpy-agent*$early/gpy-agent*" -- "$out"
-    pass "the removal was reported"
-else
-    fail "no removal report for $early/gpy-agent in: $out"
+for name in gpy gpy-agent
+    if string match -q "*$early/$name comes before $install*rm '$early/$name'*" -- (string join ' ' $out)
+        pass "the shadowing $name under \$HOME was warned about"
+    else
+        fail "no warning with an rm command for $early/$name in: $out"
+    end
 end
 
-# (b) an unrelated tool sharing the name is kept and warned about
+# (b) an unrelated tool sharing the name is kept and gets the same warning
 if test -e "$other/gpy-agent"
     pass "an unrelated tool named gpy-agent was kept"
 else
     fail "the unrelated tool at $other/gpy-agent was deleted"
 end
-if string match -q "*doesn't look like ours*$other/gpy-agent*" -- "$out"
+if string match -q "*$other/gpy-agent comes before*" -- (string join ' ' $out)
     pass "the unrelated tool was warned about"
 else
     fail "no warning for the unrelated tool in: $out"
 end
 
-# (c) a tool-manager shim is kept
+# (c) a tool-manager shim is kept and not named in a warning
 if test -e "$shims/gpy-agent"
     pass "a */shims/* entry was kept"
 else
     fail "the shim at $shims/gpy-agent was deleted"
 end
+if string match -q "*$shims/gpy-agent*" -- (string join ' ' $out)
+    fail "the shim was named in a warning: $out"
+else
+    pass "the shim produced no warning"
+end
 
-# (d) the install dir itself and anything after it are untouched
+# (d) the install dir itself and anything after it are untouched and unreported
 if test -e "$install/gpy-agent"; and test -e "$install/gpy"
     pass "the install dir's own binaries are untouched"
 else
@@ -130,20 +136,25 @@ if test -e "$late/gpy-agent"
 else
     fail "the copy after the install dir was deleted"
 end
+if string match -q "*$late/gpy-agent*" -- (string join ' ' $out)
+    fail "the later copy was named in a warning: $out"
+else
+    pass "the later copy produced no warning"
+end
 
-# (f) a shadowing copy of ours outside $HOME is kept and named in a warning
+# (f) a shadowing copy outside $HOME is kept and warned about
 if test -e "$outside/gpy-agent"
     pass "a shadowing copy outside \$HOME was kept"
 else
     fail "the copy outside \$HOME at $outside/gpy-agent was deleted"
 end
-if string match -q "*outside \$HOME*$outside/gpy-agent*" -- "$out"
+if string match -q "*$outside/gpy-agent comes before*rm '$outside/gpy-agent'*" -- (string join ' ' $out)
     pass "the copy outside \$HOME was warned about"
 else
-    fail "no outside-\$HOME warning for $outside/gpy-agent in: $out"
+    fail "no warning for $outside/gpy-agent in: $out"
 end
 
-# (e) install dir absent from PATH: nothing shadows it, nothing is deleted
+# (e) install dir absent from PATH: copy kept, only the Note line is printed
 set -l driver_off "$sandbox/driver_off.fish"
 write_driver $driver_off $repo_root $home_dir $safe_path $install \
     $off_path_copy $safe_path
@@ -157,11 +168,40 @@ if test -e "$off_path_copy/gpy-agent"
 else
     fail "with the install dir off PATH, $off_path_copy/gpy-agent was deleted"
 end
-if string match -q "*Removed conflicting*" -- "$out_off"
-    fail "with the install dir off PATH, a removal was reported: $out_off"
+if string match -q "*Note: $install is not on PATH*" -- (string join ' ' $out_off)
+    pass "with the install dir off PATH, the Note line was printed"
 else
-    pass "with the install dir off PATH, no removal was reported"
+    fail "with the install dir off PATH, no Note line in: $out_off"
+end
+if string match -q "*comes before*" -- (string join ' ' $out_off)
+    fail "with the install dir off PATH, a shadow warning was printed: $out_off"
+else
+    pass "with the install dir off PATH, no shadow warning was printed"
+end
+
+# (g) _config_home: $HOME/.config by default, $XDG_CONFIG_HOME when set
+set -l driver_cfg "$sandbox/driver_cfg.fish"
+printf '%s\n' \
+    "cd '$repo_root'" \
+    "set -gx HOME '$home_dir'" \
+    "set -gx XDG_CACHE_HOME '$home_dir/.cache'" \
+    "set -gx PATH '$safe_path'" \
+    "set -e XDG_CONFIG_HOME" \
+    "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
+    "echo default=(_config_home)" \
+    "set -gx XDG_CONFIG_HOME '$sandbox/xdg'" \
+    "echo xdg=(_config_home)" >"$driver_cfg"
+set -l out_cfg (env -i HOME=$home_dir PATH=$safe_path fish --no-config "$driver_cfg" 2>&1)
+if contains -- "default=$home_dir/.config" $out_cfg
+    pass "_config_home defaults to \$HOME/.config"
+else
+    fail "_config_home default wrong in: $out_cfg"
+end
+if contains -- "xdg=$sandbox/xdg" $out_cfg
+    pass "_config_home honours XDG_CONFIG_HOME"
+else
+    fail "_config_home ignored XDG_CONFIG_HOME in: $out_cfg"
 end
 
 rm -rf "$sandbox"
-test_finish "_remove_conflicting_binaries removes only our stale binaries that shadow the install"
+test_finish "_warn_shadowing_binaries reports earlier copies on PATH and deletes nothing"

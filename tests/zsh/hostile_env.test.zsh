@@ -108,8 +108,46 @@ scenario_cache_dir_lifecycle() {
         || fail "exec left ${#d} relay dir(s)"
 }
 
+# urg_scenario <label> <prelude> [<extra input>]: a handler defined before
+# GPY loads runs exactly once per SIGURG, and the agent's reload flag is still
+# consumed.
+urg_scenario() {
+    local label=$1 prelude=$2 extra=${3:-} n
+    run_child "$prelude" "$extra"$'\n''__gpy_shell_flag_base="$TMPDIR/flag"
+: >"$__gpy_shell_flag_base.reload"
+kill -URG $$
+[[ -e "$__gpy_shell_flag_base.reload" ]] && print -r -- "consumed=[no]" || print -r -- "consumed=[yes]"
+exit'
+    n=$(print -r -- "$CHILD_OUT" | grep -c 'user_urg=\[ran\]')
+    if [[ "$CHILD_OUT" == *"parameter not set"* ]]; then
+        fail "$label: nounset produced errors"
+    elif [[ "$n" != 1 ]]; then
+        fail "$label: user handler ran $n times: $CHILD_OUT"
+    elif [[ "$(field consumed)" != yes ]]; then
+        fail "$label: reload flag was not consumed"
+    else
+        pass "$label: user handler ran once, reload flag consumed"
+    fi
+}
+
+scenario_user_trapurg_function_survives() {
+    urg_scenario "user TRAPURG function" 'TRAPURG() { print -r -- "user_urg=[ran]" }'
+}
+
+scenario_user_urg_string_trap_survives() {
+    urg_scenario "user URG string trap" $'setopt nounset\ntrap \'print -r -- "user_urg=[ran]"\' URG'
+}
+
+scenario_trapurg_resource_does_not_chain_to_itself() {
+    urg_scenario "re-sourced gpy.zsh" 'TRAPURG() { print -r -- "user_urg=[ran]" }' \
+        'source "$GPY_TEST_ROOT/zsh/gpy.zsh"'
+}
+
 run_scenario nounset_no_xdg
 run_scenario nounset_runtime_only
 run_scenario cache_dir_lifecycle
+run_scenario user_trapurg_function_survives
+run_scenario user_urg_string_trap_survives
+run_scenario trapurg_resource_does_not_chain_to_itself
 
 test_finish

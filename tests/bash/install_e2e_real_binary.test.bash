@@ -141,11 +141,13 @@ shell_e2e_stop_client
 cd "$SHELL_E2E_ROOT" || exit 1
 
 echo "--- upgrade ---"
-# The harness overrides the socket path, so the agent records its version next
-# to the socket rather than in the runtime root's agent.version.
-VERSION_FILE="$GPY_AGENT_SOCKET_PATH.version"
-[ -f "$VERSION_FILE" ] || fail "no version marker at $VERSION_FILE"
-printf '0.0.0-old\n' >"$VERSION_FILE"
+# Swap the real daemon for a stub that reports an old version, so the
+# installer's `gpy-agent start` has an older agent to replace. The supervisor
+# is left alone: uninstall must still stop it.
+"$HOME/.local/bin/gpy-agent" stop >/dev/null 2>&1
+shell_e2e_stub_listener "$GPY_AGENT_SOCKET_PATH" reply --reply '{"status":"ok"}' \
+    --route '"op":"status"' '{"AgentStatus":{"version":"0.0.0-old","protocol_version":2,"watched_repos":0,"registered_clients":0,"cache_entries":0}}' \
+    --lifetime 120 --requests "$SHELL_E2E_ROOT/old-agent.requests"
 sed -i.bak 's/^show_icons = false/show_icons = true/' "$CONFIG" && rm -f "$CONFIG.bak"
 cp "$CONFIG" "$SHELL_E2E_ROOT/config.before-upgrade"
 
@@ -168,32 +170,27 @@ if ls "$HOME/.local/bin/gpy-agent.backup."* >/dev/null 2>&1; then
 else
     fail "no gpy-agent.backup.* beside the installed binary"
 fi
-old_gone() { ! kill -0 "$first_pid" 2>/dev/null; }
-if [ -n "$first_pid" ] && shell_e2e_poll 10 old_gone; then
-    pass "the old agent process ($first_pid) was replaced"
-else
-    fail "the old agent process $first_pid is still alive after the upgrade"
-fi
 if shell_e2e_poll 5 installed_agent_responding; then
     pass "the upgraded agent is running and responding"
 else
     fail "no responding agent after the upgrade"
 fi
-second_pid="$(agent_pid)"
-if [ -z "$second_pid" ] || [ "$second_pid" = "$first_pid" ]; then
-    fail "expected a new agent PID, got '$second_pid'"
-fi
 binary_version="$("$HOME/.local/bin/gpy-agent" --version | awk '{print $2}')"
-if [ "$(tr -d '[:space:]' <"$VERSION_FILE")" = "$binary_version" ]; then
-    pass "agent.version records the upgraded binary's version ($binary_version)"
+if grep -q '"op":"shutdown"' "$SHELL_E2E_ROOT/old-agent.requests" 2>/dev/null; then
+    pass "the old agent was asked to shut down"
 else
-    fail "agent.version is '$(cat "$VERSION_FILE")', expected $binary_version"
+    fail "the old agent never received a shutdown request"
+fi
+if "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -q "^Agent Version: $binary_version\$"; then
+    pass "the upgraded agent reports the binary's version ($binary_version)"
+else
+    fail "the upgraded agent does not report version $binary_version"
 fi
 
 echo "--- uninstall ---"
 SUPERVISOR_PIDFILE="$XDG_RUNTIME_DIR/gpy/supervisor.pid"
 supervisor_pid="$(cat "$SUPERVISOR_PIDFILE" 2>/dev/null || true)"
-printf '\n' | sh "$PKG/scripts/uninstall.sh" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
+printf '\n' | sh "$PKG/scripts/uninstall.sh" --purge-config >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then
     pass "uninstall.sh exited 0"

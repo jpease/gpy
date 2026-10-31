@@ -62,10 +62,11 @@ classes. Before 1.0, a BREAKING change bumps the minor component.
 
 ## Protocol version
 
-`PROTOCOL_VERSION` in `src/ipc/protocol/mod.rs` is currently `2`. The agent
-reports it in the status reply as `protocol_version`; the shells compare it
-for equality with the version they were built for and restart a mismatched
-agent. There is no negotiation, so a bump forces every running shell to restart
+`PROTOCOL_VERSION` in `src/ipc/protocol/mod.rs` is the current version. The
+agent reports it in the status reply as `protocol_version`; the shells compare
+it for equality with the version they were built for and restart a mismatched
+agent, and `gpy-agent start` replaces a running agent with another protocol,
+even a newer one. There is no negotiation, so a bump forces every running shell to restart
 its agent.
 
 Bump it only when an existing message, reply or notification changes in a way

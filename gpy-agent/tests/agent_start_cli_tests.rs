@@ -1,0 +1,107 @@
+//! `gpy-agent start`, `status` and `theme export` against fake and real
+//! agents. Socket-dependent, so Unix-only.
+#![cfg(unix)]
+#![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
+#![allow(clippy::expect_used, reason = "test code may panic on failure")]
+#![allow(clippy::panic, reason = "test code may panic on failure")]
+
+mod common;
+
+use common::agent_sandbox::{AgentSandbox, RUNNING_LINE};
+use common::fake_agent::{Behaviour, FakeAgent};
+use std::time::Duration;
+
+/// A config whose `agent.enabled = false` sits beside a key that fails validation.
+const DISABLED_IN_INVALID_CONFIG: &str = "[agent]\nenabled = false\n[ui]\ntheme = 42\n";
+
+#[test]
+fn status_reports_a_busy_agent_as_busy() {
+    let sandbox = AgentSandbox::new();
+    let _agent =
+        FakeAgent::spawn_with(&sandbox.socket_path, Behaviour::DropsUnread, Duration::ZERO);
+
+    let status = sandbox.gpy_agent(&["status"]);
+
+    assert!(
+        status
+            .stdout
+            .contains("Status: Running but busy (not answering right now)"),
+        "{status:?}"
+    );
+    assert_eq!(
+        status.exit_code, 1_i32,
+        "status exits 1 for a busy agent until the exit codes change: {status:?}"
+    );
+}
+
+#[test]
+fn start_honors_agent_disabled_in_an_otherwise_invalid_config() {
+    let sandbox = AgentSandbox::new();
+    sandbox
+        .env
+        .write_config(DISABLED_IN_INVALID_CONFIG)
+        .expect("write config");
+
+    let started = sandbox.gpy_agent(&["start"]);
+
+    assert_eq!(started.exit_code, 0_i32, "{started:?}");
+    assert!(
+        started.stderr.contains("disabled via config"),
+        "the disabled line must be printed: {started:?}"
+    );
+    assert!(
+        !sandbox.socket_path.exists(),
+        "no daemon may bind a socket when the agent is disabled"
+    );
+}
+
+#[test]
+fn theme_export_keeps_agent_disabled_from_an_invalid_config() {
+    let sandbox = AgentSandbox::new();
+    sandbox
+        .env
+        .write_config(DISABLED_IN_INVALID_CONFIG)
+        .expect("write config");
+
+    let exported = sandbox.gpy_agent(&["theme", "export", "--format", "bash"]);
+
+    assert_eq!(exported.exit_code, 0_i32, "{exported:?}");
+    let line = exported
+        .stdout
+        .lines()
+        .find(|line| line.contains("GPY_AGENT_ENABLED"))
+        .unwrap_or_else(|| panic!("GPY_AGENT_ENABLED must be exported: {exported:?}"));
+    assert!(
+        line.contains('0') && !line.contains('1'),
+        "GPY_AGENT_ENABLED must be 0: {line}"
+    );
+}
+
+#[test]
+fn start_prints_one_progress_line_and_leaves_an_answering_daemon() {
+    let sandbox = AgentSandbox::new();
+
+    let started = sandbox.gpy_agent(&["start"]);
+
+    assert_eq!(started.exit_code, 0_i32, "{started:?}");
+    assert_eq!(
+        started
+            .stderr
+            .lines()
+            .filter(|line| *line == "Starting GPY Agent in background...")
+            .count(),
+        1,
+        "start prints its outcome once, never from the daemon child: {started:?}"
+    );
+    sandbox.wait_until_responding();
+    let status = sandbox.gpy_agent(&["status"]);
+    assert!(status.stdout.contains(RUNNING_LINE), "{status:?}");
+
+    sandbox
+        .gpy_agent(&["stop"])
+        .assert_success("gpy-agent stop");
+    assert!(
+        sandbox.wait_until_socket_gone(),
+        "the stopped daemon must remove its socket"
+    );
+}

@@ -409,3 +409,17 @@ impl CliTestEnv {
         self.isolation.command(program)
     }
 }
+
+/// `gpy` copied alone into a fresh directory: no sibling `gpy-agent`, so it
+/// must find the agent on `PATH`. Copied once per test environment: copying
+/// over a binary that already ran rewrites it in place, and macOS then kills
+/// the next exec of it (its cached code signature no longer matches).
+pub fn lone_gpy(env: &CliTestEnv) -> PathBuf {
+    let dir = env.root().join("lone-gpy");
+    let gpy = dir.join("gpy");
+    if !gpy.exists() {
+        fs::create_dir_all(&dir).expect("create lone gpy dir");
+        fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).expect("copy gpy");
+    }
+    gpy
+}

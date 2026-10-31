@@ -143,7 +143,6 @@ fn git_response(request: &OneshotRequest, config: &Config) -> Result<Response> {
     let Some(crate::git::CompleteStatus { status, .. }) =
         crate::git::native::NativeGitBackend::get_complete_status(
             request_path,
-            None,
             config.git.max_ahead_behind,
             config.git.stash_enabled,
             std::time::Duration::from_secs(config.git.timeout_seconds.get()),

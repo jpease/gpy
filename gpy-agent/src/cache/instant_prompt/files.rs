@@ -18,7 +18,7 @@ fn next_tmp_suffix() -> u64 {
 /// # Errors
 /// Returns an error if a directory cannot be created or inspected.
 #[cfg(unix)]
-pub(super) fn create_private_dir(path: &Path) -> std::io::Result<()> {
+pub(in crate::cache) fn create_private_dir(path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -38,7 +38,7 @@ pub(super) fn create_private_dir(path: &Path) -> std::io::Result<()> {
 /// # Errors
 /// Returns an error if a directory cannot be created.
 #[cfg(not(unix))]
-pub(super) fn create_private_dir(path: &Path) -> std::io::Result<()> {
+pub(in crate::cache) fn create_private_dir(path: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(path)
 }
 

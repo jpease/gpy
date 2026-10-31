@@ -150,5 +150,6 @@ Note: on case-insensitive filesystems, some repositories may still report dirty 
 
 The git segment runs a single `git status --porcelain=v2 --branch` subprocess
 (branch, ahead/behind and file status in one call), so git's own fsmonitor,
-untracked-cache and sparse-checkout support apply. GPY enables the untracked
-cache for a repository unless the user has set `core.untrackedCache`.
+untracked-cache and sparse-checkout support apply. The GPY agent adds the
+untracked cache to the index unless the user has set `core.untrackedCache`; the
+benchmark primes it itself.

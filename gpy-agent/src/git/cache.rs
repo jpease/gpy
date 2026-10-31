@@ -31,7 +31,11 @@ pub struct CachedRepoStatus {
 #[derive(Clone)]
 struct CacheEntry {
     data: CachedRepoStatus,
-    cached_at: Instant,
+    /// When the head fields (branch, upstream counts, stash, in-progress
+    /// state) were last read by a full scan; the TTL counts from here.
+    full_scan_at: Instant,
+    /// Last write of any kind; the cooldown and eviction recency count from here.
+    updated_at: Instant,
     /// `false` when per-file details were dropped for the byte budget;
     /// incremental updates then require a full scan.
     files_complete: bool,
@@ -50,7 +54,8 @@ impl CacheEntry {
     }
 }
 
-/// Recompute aggregates from the file map and refresh the timestamp.
+/// Recompute aggregates from the file map and stamp the entry as updated.
+/// `full_scan_at` is untouched, so incremental updates never age the TTL.
 fn reaggregate(entry: &mut CacheEntry) -> RepositoryStatus {
     let aggregate = StatusAggregate::from_file_statuses(entry.data.files.values());
     entry.data.aggregates.staged = aggregate.staged;
@@ -69,7 +74,7 @@ fn reaggregate(entry: &mut CacheEntry) -> RepositoryStatus {
         aggregate.untracked,
     );
 
-    entry.cached_at = Instant::now();
+    entry.updated_at = Instant::now();
 
     entry.data.aggregates.clone()
 }
@@ -131,18 +136,18 @@ impl GitStatusCache {
     /// [`get`](Self::get) for an already-canonical key.
     #[must_use]
     pub fn get_canonical(&self, key: &Path) -> Option<RepositoryStatus> {
-        let (aggregates, cached_at) = self
+        let (aggregates, full_scan_at) = self
             .entries
             .lock_or_recover()
             .get(key)
-            .map(|e| (e.data.aggregates.clone(), e.cached_at))?;
+            .map(|e| (e.data.aggregates.clone(), e.full_scan_at))?;
 
-        if cached_at.elapsed() >= self.policy.ttl() {
+        if full_scan_at.elapsed() >= self.policy.ttl() {
             debug_log!(
                 "cache",
                 "Cache EXPIRED for {} (age: {:?}, TTL: {:?})",
                 key.display(),
-                cached_at.elapsed(),
+                full_scan_at.elapsed(),
                 self.policy.ttl()
             );
             return None;
@@ -152,7 +157,7 @@ impl GitStatusCache {
             "cache",
             "Cache HIT for {} (age: {:?})",
             key.display(),
-            cached_at.elapsed()
+            full_scan_at.elapsed()
         );
         Some(aggregates)
     }
@@ -181,7 +186,7 @@ impl GitStatusCache {
         self.entries
             .lock_or_recover()
             .get(key)
-            .map(|e| (e.data.aggregates.clone(), e.cached_at.elapsed()))
+            .map(|e| (e.data.aggregates.clone(), e.full_scan_at.elapsed()))
     }
 
     /// Cache status for a repository.
@@ -202,57 +207,77 @@ impl GitStatusCache {
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
     ) {
-        self.set_inner(key, status, files, None);
+        let mut entries = self.entries.lock_or_recover();
+        Self::insert_entry(&mut entries, key, status, files);
     }
 
-    /// Like [`set_canonical`](Self::set_canonical), but skips the write and
-    /// returns `false` when the entry was written after `started`.
+    /// Publish a full scan that began at `started`.
+    ///
+    /// - An entry holding a full scan newer than `started` is kept and `None`
+    ///   returned.
+    /// - An entry that only took incremental updates since `started` keeps its
+    ///   newer file map; the scan's branch, upstream counts, stash count and
+    ///   in-progress state replace the entry's, the counts are recomputed from
+    ///   the map, and the merged status is returned. The scan's own file map
+    ///   is discarded; the next full scan picks up anything only it saw.
+    /// - Otherwise, including an entry whose file details were dropped for the
+    ///   byte budget, the entry is replaced by the scan.
     #[must_use]
-    pub fn set_canonical_if_not_newer(
+    pub fn apply_full_scan(
         &self,
         key: &Path,
         started: Instant,
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
-    ) -> bool {
-        self.set_inner(key, status, files, Some(started))
+    ) -> Option<RepositoryStatus> {
+        let mut entries = self.entries.lock_or_recover();
+        if let Some(entry) = entries.get_mut(key) {
+            if entry.full_scan_at > started {
+                debug_log!("cache", "Kept newer full scan for {}", key.display());
+                return None;
+            }
+            if entry.updated_at > started && entry.files_complete {
+                debug_log!(
+                    "cache",
+                    "Merged full scan into incremental entry for {}",
+                    key.display()
+                );
+                entry.data.aggregates = status;
+                let merged = reaggregate(entry);
+                entry.full_scan_at = started;
+                return Some(merged);
+            }
+        }
+        Some(Self::insert_entry(&mut entries, key, status, files))
     }
 
-    /// Compare, insert and evict under one `entries` guard; with `started`,
-    /// an entry written after it is kept and `false` returned.
-    fn set_inner(
-        &self,
+    /// Insert a full-scan entry, then enforce the entry-count and file-detail
+    /// byte bounds. Returns the stored aggregates.
+    fn insert_entry(
+        entries: &mut HashMap<PathBuf, CacheEntry>,
         key: &Path,
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
-        started: Option<Instant>,
-    ) -> bool {
-        let mut entries = self.entries.lock_or_recover();
-        if let Some(started_at) = started
-            && entries.get(key).is_some_and(|e| e.cached_at > started_at)
-        {
-            debug_log!("cache", "Kept newer status for {}", key.display());
-            return false;
-        }
+    ) -> RepositoryStatus {
         debug_log!("cache", "Caching status for {}", key.display());
+        let now = Instant::now();
         entries.insert(
             key.to_path_buf(),
             CacheEntry {
                 data: CachedRepoStatus {
-                    aggregates: status,
+                    aggregates: status.clone(),
                     files,
                 },
-                cached_at: Instant::now(),
+                full_scan_at: now,
+                updated_at: now,
                 files_complete: true,
             },
         );
-        evict_to_capacity(&mut entries, GIT_STATUS_CACHE_CAPACITY, |entry| {
-            entry.cached_at
-        });
+        evict_to_capacity(entries, GIT_STATUS_CACHE_CAPACITY, |entry| entry.updated_at);
         drop_file_details_to_budget(
-            &mut entries,
+            entries,
             GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES,
-            |entry| entry.cached_at,
+            |entry| entry.updated_at,
             CacheEntry::file_detail_bytes,
             |entry| {
                 entry.data.files.clear();
@@ -260,8 +285,7 @@ impl GitStatusCache {
                 entry.files_complete = false;
             },
         );
-        drop(entries);
-        true
+        status
     }
 
     /// Fold a pathspec-limited scan into the cached file map.
@@ -345,7 +369,7 @@ impl GitStatusCache {
         self.entries
             .lock_or_recover()
             .get(key)
-            .is_some_and(|entry| entry.cached_at.elapsed() < self.policy.cooldown())
+            .is_some_and(|entry| entry.updated_at.elapsed() < self.policy.cooldown())
     }
 
     /// Invalidate cached status for a repository.
@@ -394,10 +418,18 @@ mod tests {
     use std::time::{Duration, Instant};
 
     impl GitStatusCache {
-        /// Backdate an entry's `cached_at` by `age`.
-        pub(crate) fn age_entry_for_test(&self, key: &Path, age: Duration) {
+        /// Backdate an entry's timestamps: `full_scan_age` for the last full
+        /// scan, `update_age` for the last write of any kind.
+        pub(crate) fn age_entry_for_test(
+            &self,
+            key: &Path,
+            full_scan_age: Duration,
+            update_age: Duration,
+        ) {
             if let Some(entry) = self.entries.lock_or_recover().get_mut(key) {
-                entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+                let now = Instant::now();
+                entry.full_scan_at = now.checked_sub(full_scan_age).unwrap_or(now);
+                entry.updated_at = now.checked_sub(update_age).unwrap_or(now);
             }
         }
 
@@ -463,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn set_canonical_if_not_newer_keeps_the_newer_entry() {
+    fn apply_full_scan_keeps_the_newer_full_scan() {
         let cache = GitStatusCache::new();
         let key = PathBuf::from("/repo/not-newer-keep");
         let newer = RepositoryStatus {
@@ -480,12 +512,16 @@ mod tests {
             .expect("instant");
         cache.set_canonical(&key, newer.clone(), HashMap::new());
 
-        assert!(!cache.set_canonical_if_not_newer(&key, started, stale, HashMap::new()));
+        assert!(
+            cache
+                .apply_full_scan(&key, started, stale, HashMap::new())
+                .is_none()
+        );
         assert_eq!(cache.get_any_canonical(&key), Some(newer));
     }
 
     #[test]
-    fn set_canonical_if_not_newer_writes_when_older() {
+    fn apply_full_scan_writes_when_older() {
         let cache = GitStatusCache::new();
         let key = PathBuf::from("/repo/not-newer-write");
         let older = RepositoryStatus {
@@ -497,10 +533,14 @@ mod tests {
             ..dummy_status()
         };
         cache.set_canonical(&key, older, HashMap::new());
-        cache.age_entry_for_test(&key, Duration::from_secs(5));
+        cache.age_entry_for_test(&key, Duration::from_secs(5), Duration::from_secs(5));
         let started = Instant::now();
 
-        assert!(cache.set_canonical_if_not_newer(&key, started, newer.clone(), HashMap::new()));
+        assert!(
+            cache
+                .apply_full_scan(&key, started, newer.clone(), HashMap::new())
+                .is_some()
+        );
         assert_eq!(cache.get_any_canonical(&key), Some(newer));
     }
 
@@ -616,6 +656,157 @@ mod tests {
             cache.get_any(&repo_a).is_some(),
             "aggregate must survive after file-detail eviction"
         );
+    }
+
+    fn modified(path: &str) -> (PathBuf, FileStatus) {
+        (
+            PathBuf::from(path),
+            FileStatus {
+                unstaged: true,
+                ..FileStatus::default()
+            },
+        )
+    }
+
+    fn incremental_update(cache: &GitStatusCache, key: &Path, path: &str) {
+        let (file, status) = modified(path);
+        assert!(
+            cache
+                .update_paths_canonical(
+                    key,
+                    std::slice::from_ref(&file),
+                    &HashMap::from([(file.clone(), status)]),
+                    false,
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn ttl_counts_from_last_full_scan_despite_incremental_updates() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/ttl-full-scan");
+        cache.set_canonical(&key, dummy_status(), HashMap::new());
+        let beyond_ttl = cache.policy.ttl().saturating_add(Duration::from_secs(1));
+        cache.age_entry_for_test(&key, beyond_ttl, Duration::ZERO);
+
+        incremental_update(&cache, &key, "a.rs");
+
+        assert_eq!(cache.get_canonical(&key), None);
+        assert!(cache.get_any_canonical(&key).is_some());
+    }
+
+    #[test]
+    fn cooldown_counts_from_incremental_update() {
+        let cache = GitStatusCache::with_policy(CachePolicy {
+            ttl: Duration::from_secs(3600),
+            cooldown: Duration::from_secs(3600),
+        });
+        let key = PathBuf::from("/repo/cooldown-incremental");
+        cache.set_canonical(&key, dummy_status(), HashMap::new());
+        cache.age_entry_for_test(&key, Duration::from_secs(7200), Duration::from_secs(7200));
+        assert!(!cache.is_fresh_canonical(&key));
+
+        incremental_update(&cache, &key, "a.rs");
+
+        assert!(cache.is_fresh_canonical(&key));
+    }
+
+    #[test]
+    fn full_scan_overlapping_an_incremental_update_keeps_both() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/overlap");
+        cache.set_canonical(
+            &key,
+            RepositoryStatus {
+                branch: "a".to_owned(),
+                ..dummy_status()
+            },
+            HashMap::new(),
+        );
+        let started = Instant::now();
+        // Coarse clocks can tie; the merge needs `updated_at > started`.
+        std::thread::sleep(Duration::from_millis(2));
+        incremental_update(&cache, &key, "x.rs");
+
+        let scan = RepositoryStatus {
+            branch: "b".to_owned(),
+            ahead: 3,
+            stash_count: 2,
+            ..dummy_status()
+        };
+        let merged = cache
+            .apply_full_scan(&key, started, scan, HashMap::new())
+            .expect("merged status");
+
+        assert_eq!(merged.branch, "b");
+        assert_eq!((merged.ahead, merged.stash_count), (3, 2));
+        assert_eq!(merged.unstaged, 1, "x.rs stays modified");
+        assert_eq!(cache.get_any_canonical(&key), Some(merged));
+        assert!(
+            cache
+                .files_for_test(&key)
+                .is_some_and(|files| files.contains_key(&PathBuf::from("x.rs")))
+        );
+        assert!(cache.get_canonical(&key).is_some(), "still a TTL hit");
+    }
+
+    #[test]
+    fn newer_full_scan_is_kept() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/newer-full-scan");
+        let started = Instant::now();
+        std::thread::sleep(Duration::from_millis(2));
+        let newer = RepositoryStatus {
+            branch: "newer".to_owned(),
+            ..dummy_status()
+        };
+        cache.set_canonical(&key, newer.clone(), HashMap::new());
+
+        let stale = RepositoryStatus {
+            branch: "stale".to_owned(),
+            ..dummy_status()
+        };
+        assert!(
+            cache
+                .apply_full_scan(&key, started, stale, HashMap::new())
+                .is_none()
+        );
+        assert_eq!(cache.get_any_canonical(&key), Some(newer));
+    }
+
+    #[test]
+    fn full_scan_replaces_an_entry_whose_file_details_were_dropped() {
+        use crate::cache::bounded::{
+            FILE_DETAIL_BYTES_PER_FILE, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES,
+        };
+
+        let cache = GitStatusCache::new();
+        let repo_a = PathBuf::from("/repo/dropped-a");
+        let repo_b = PathBuf::from("/repo/dropped-b");
+        cache.set_canonical(&repo_a, dummy_status(), dirty_files(10));
+        let started = Instant::now();
+        std::thread::sleep(Duration::from_millis(2));
+        incremental_update(&cache, &repo_a, "x.rs");
+
+        // One entry alone exceeds the byte budget, so the older repo_a loses details.
+        let files_per_repo =
+            GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES / FILE_DETAIL_BYTES_PER_FILE + 1;
+        cache.set_canonical(&repo_b, dummy_status(), dirty_files(files_per_repo));
+        assert_eq!(cache.files_for_test(&repo_a), Some(HashMap::new()));
+
+        let scan = RepositoryStatus {
+            unstaged: 7,
+            branch: "scan".to_owned(),
+            ..dummy_status()
+        };
+        let applied = cache
+            .apply_full_scan(&repo_a, started, scan.clone(), dirty_files(7))
+            .expect("scan replaces the entry");
+
+        assert_eq!(applied, scan);
+        assert_eq!(cache.get_any_canonical(&repo_a), Some(scan));
+        assert_eq!(cache.files_for_test(&repo_a), Some(dirty_files(7)));
     }
 
     #[test]

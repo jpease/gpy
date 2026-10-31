@@ -34,7 +34,6 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
     let repository_status = if git_allowed {
         crate::git::status::load_repository_state(
             cwd,
-            None,
             config.git.max_ahead_behind,
             config.git.stash_enabled,
         )

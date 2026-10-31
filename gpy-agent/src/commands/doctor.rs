@@ -1,8 +1,10 @@
 //! `gpy doctor`: agent, config, theme, segment, plugin and binary checks.
 
 use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
+use super::doctor_ipc::check_ipc_client;
 use super::doctor_themes::check_theme_overrides;
 use super::utils::agent_binary;
+use crate::agent::lifecycle::StatusProbe;
 use crate::commands::output::{self, Status};
 use crate::commands::validation::FailureKind;
 use crate::plugin::discover_plugins;
@@ -49,7 +51,9 @@ pub fn run() -> Result<()> {
     output::blank();
 
     all_ok &= check_binaries();
-    check_shell_integrations(&super::setup::installed_integrations());
+    let installed = super::setup::installed_integrations();
+    check_ipc_client(&installed, loaded_config.as_ref().ok());
+    check_shell_integrations(&installed);
 
     output::blank();
     output::plain("Summary:");
@@ -69,13 +73,15 @@ fn check_agent_status(cfg: Option<&config::Config>) -> bool {
         output::plain("Disabled via config (agent.enabled = false)");
         return true;
     }
-    if check_agent_running() {
-        output::ok("Running");
-        true
-    } else {
-        output::warn("Not running");
-        output::detail("Hint: Start the agent with `gpy start` or just use your prompt.");
-        false
+    match crate::paths::get_socket_path() {
+        Ok(socket_path) => {
+            let probe = crate::agent::lifecycle::probe_status(&socket_path);
+            report_agent_probe(probe, &socket_path)
+        }
+        Err(err) => {
+            output::fail(format_args!("Cannot resolve the agent socket: {err}"));
+            false
+        }
     }
 }
 
@@ -267,7 +273,7 @@ fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
                 2,
                 Status::Ok,
                 format_args!(
-                    "{} v{} [{}]",
+                    "{} {} [{}]",
                     plugin.manifest.id, plugin.manifest.version, plugin.source
                 ),
             );
@@ -640,16 +646,33 @@ fn check_binaries() -> bool {
     }
 }
 
-/// Whether a live agent answered a ping on its socket. A ping that cannot be
-/// attempted is reported.
-fn check_agent_running() -> bool {
-    let ping = crate::paths::get_socket_path()
-        .and_then(|socket_path| crate::agent::lifecycle::ping_agent_blocking(&socket_path));
-    match ping {
-        Ok(answered) => answered,
-        Err(err) => {
-            output::detail(format_args!("Diagnostic: could not ping the agent: {err}"));
+/// The agent check's verdict from a probe of its socket. A refused or absent
+/// socket and a load-shedding agent only warn; an agent that holds its socket
+/// without answering is wedged, and every shell prompt would time out on it.
+fn report_agent_probe(probe: StatusProbe, socket_path: &std::path::Path) -> bool {
+    match probe {
+        StatusProbe::Answered(_) => {
+            output::ok("Running");
+            true
+        }
+        StatusProbe::NotListening(_) => {
+            output::warn("Not running");
+            output::detail("Hint: Start the agent with `gpy start` or just use your prompt.");
+            true
+        }
+        StatusProbe::Busy => {
+            output::warn("Running but too busy to answer");
+            true
+        }
+        StatusProbe::NoReply(err) => {
+            output::fail(format_args!("Not answering on {}", socket_path.display()));
+            output::detail(format_args!("Diagnostic: {err}"));
+            output::detail("Remediation: run `gpy restart`.");
             false
+        }
+        StatusProbe::Failed(err) => {
+            output::warn(format_args!("Could not check the agent: {err}"));
+            true
         }
     }
 }

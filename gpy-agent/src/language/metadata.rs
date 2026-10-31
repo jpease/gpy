@@ -104,7 +104,7 @@ pub const LANGUAGES: &[LanguageMeta] = &[
         canonical: "c",
         aliases: &["c"],
         icon_key: "c",
-        marker_files: &["Makefile"],
+        marker_files: &[],
         marker_extensions: &["c", "h"],
     },
     LanguageMeta {
@@ -144,10 +144,30 @@ pub fn get_icon_key(alias: &str) -> Option<&'static str> {
     lookup(alias).map(|lang| lang.icon_key)
 }
 
-/// All [`LanguageMeta::marker_files`] flattened, built once. Shared with the
-/// watcher's invalidation so there is one list. Raw case; callers fold case.
+/// Marker files that count as evidence for a language only when the directory
+/// holds no evidence for any other language: `(file name, language)`.
+pub(crate) const WEAK_MARKER_FILES: &[(&str, &str)] = &[("Makefile", "c")];
+
+/// All [`LanguageMeta::marker_files`] and the [`WEAK_MARKER_FILES`] names
+/// flattened, built once. Shared with the watcher's invalidation and the
+/// shells' pre-filter so there is one list. Raw case; callers fold case.
 #[must_use]
 pub(crate) fn marker_file_names() -> &'static std::collections::HashSet<&'static str> {
+    static MARKER_FILES: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+        std::sync::OnceLock::new();
+    MARKER_FILES.get_or_init(|| {
+        LANGUAGES
+            .iter()
+            .flat_map(|language| language.marker_files.iter().copied())
+            .chain(WEAK_MARKER_FILES.iter().map(|(file, _)| *file))
+            .collect()
+    })
+}
+
+/// All [`LanguageMeta::marker_files`] flattened, built once; excludes weak
+/// markers, which never make a directory a project root.
+#[must_use]
+pub(crate) fn project_root_marker_names() -> &'static std::collections::HashSet<&'static str> {
     static MARKER_FILES: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
         std::sync::OnceLock::new();
     MARKER_FILES.get_or_init(|| {

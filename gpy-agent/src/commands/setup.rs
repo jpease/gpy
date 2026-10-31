@@ -2,9 +2,11 @@
 //!
 //! Lays files out exactly as `install-oneline.sh` does (Fish:
 //! `$XDG_CONFIG_HOME/fish/gpy`; Zsh/Bash: `$XDG_CONFIG_HOME/gpy/<shell>`) so
-//! both installers share one uninstall path. The `gpy-init` marker lines are
-//! the contract `scripts/uninstall.*` remove by. Every step is idempotent.
+//! both installers share one uninstall path. The `gpy-init` marker lines (see
+//! `rc_block`) are the contract `scripts/uninstall.*` remove by. Every step
+//! is idempotent.
 
+use super::rc_block::{BlockChange, append_block, ensure_block, has_block};
 use super::setup_install::{
     BUNDLED_PLUGINS_SOURCE, install_bundled_plugins, install_files, preflight, replace_tree,
 };
@@ -15,15 +17,8 @@ use crate::{Error, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// First line of the rc-file block; `scripts/uninstall.*` match on it.
-const BLOCK_START: &str = "# >>> gpy-init >>>";
-/// Last line of the rc-file block.
-const BLOCK_END: &str = "# <<< gpy-init <<<";
-/// Comment on the line after [`BLOCK_START`] that says what the block is for.
+/// Comment on the line after the block's start marker that says what the block is for.
 const RC_BLOCK_HEADER: &str = "GPY shell integration";
-/// Tag in the block header for an rc file `gpy setup` itself created, so the
-/// uninstaller may delete it again.
-const CREATED_NOTE: &str = " (gpy-created-file)";
 /// File in each installed shell tree naming the `gpy` version that wrote it,
 /// so `gpy doctor` can spot a tree an upgrade left behind.
 pub(super) const VERSION_STAMP: &str = ".gpy-version";
@@ -443,34 +438,6 @@ pub(super) fn shell_dir_for(config_home: &Path, shell: Shell) -> PathBuf {
     }
 }
 
-/// Append a `gpy-init` block to `rc`, creating it when missing; `false` when
-/// a block is already there. A file this call creates gets [`CREATED_NOTE`].
-fn append_block(rc: &Path, header: &str, body: &str) -> Result<bool> {
-    use std::io::Write;
-
-    let existing = match fs::read_to_string(rc) {
-        Ok(text) => Some(text),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => return Err(err.into()),
-    };
-    if existing
-        .as_deref()
-        .is_some_and(|text| text.lines().any(|line| line == BLOCK_START))
-    {
-        return Ok(false);
-    }
-    if let Some(parent) = rc.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let note = if existing.is_none() { CREATED_NOTE } else { "" };
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(rc)?;
-    write!(
-        file,
-        "\n{BLOCK_START}\n# {header}{note}\n{body}\n{BLOCK_END}\n"
-    )?;
-    Ok(true)
-}
-
 /// Wire Fish: rc block in `config.fish` plus the `fish_prompt` symlink.
 fn wire_fish(config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let fish_dir = config_home.join("fish");
@@ -549,27 +516,101 @@ fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     Ok((rc, added))
 }
 
+/// The `.bashrc` block body: GPY loads only in interactive shells.
+fn bash_rc_body(gpy_bash: &Path) -> String {
+    format!(
+        "case $- in\n    *i*) source \"{}\" ;;\nesac",
+        gpy_bash.display()
+    )
+}
+
+/// `.bashrc` block bodies earlier releases wrote for this install.
+fn legacy_bash_rc_bodies(gpy_bash: &Path) -> Vec<String> {
+    vec![format!("source \"{}\"", gpy_bash.display())]
+}
+
+/// Login-file loader body; inert outside Bash.
+const BASH_LOGIN_LOADER: &str =
+    "[ -n \"${BASH_VERSION:-}\" ] && [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
+/// Login-file loader body earlier releases wrote.
+const LEGACY_BASH_LOGIN_LOADER: &str = "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
+/// Header line of the login-file loader block.
+const BASH_LOGIN_HEADER: &str = "GPY: load ~/.bashrc in login shells";
+
+/// Run [`ensure_block`] on an rc file and report the outcome; `true` only when
+/// a block was added. Failing to rewrite an existing block is a warning, since
+/// the old block keeps working.
+fn ensure_and_report(
+    rc: &Path,
+    header: &str,
+    body: &str,
+    legacy_bodies: &[String],
+    upgraded_note: &str,
+) -> Result<bool> {
+    let had_block = has_block(rc);
+    match ensure_block(rc, header, body, legacy_bodies) {
+        Ok(BlockChange::Added) => Ok(true),
+        Ok(BlockChange::Unchanged) => Ok(false),
+        Ok(BlockChange::Upgraded) => {
+            println!("Updated the GPY block in {} {upgraded_note}", rc.display());
+            Ok(false)
+        }
+        Ok(BlockChange::KeptEdited) => {
+            println!(
+                "GPY block in {} differs from the current text; left unchanged. See docs/INSTALL.md#gpy-setup",
+                rc.display()
+            );
+            Ok(false)
+        }
+        Err(err) if had_block => {
+            eprintln!(
+                "warn: could not update the GPY block in {}: {err}; it still works with the old behaviour",
+                rc.display()
+            );
+            Ok(false)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Wire Bash: rc block in `~/.bashrc`, plus a login-shell loader.
 fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let home = env.home()?;
     let rc = home.join(".bashrc");
-    let body = format!("source \"{}\"", shell_dir.join("gpy.bash").display());
-    let added = append_block(&rc, RC_BLOCK_HEADER, &body)?;
+    let gpy_bash = shell_dir.join("gpy.bash");
+    let added = ensure_and_report(
+        &rc,
+        RC_BLOCK_HEADER,
+        &bash_rc_body(&gpy_bash),
+        &legacy_bash_rc_bodies(&gpy_bash),
+        "so it loads only in interactive shells",
+    )?;
+
+    // Upgrade loaders earlier releases wrote before deciding whether one is
+    // needed: `sources_bashrc` accepts the old loader as a working one.
+    let login_files = [".bash_profile", ".bash_login", ".profile"].map(|name| home.join(name));
+    for path in &login_files {
+        if has_block(path) {
+            ensure_and_report(
+                path,
+                BASH_LOGIN_HEADER,
+                BASH_LOGIN_LOADER,
+                &[LEGACY_BASH_LOGIN_LOADER.to_owned()],
+                "so `sh` login shells skip it",
+            )?;
+        }
+    }
 
     // A login shell reads only the first of these. With none present, create
     // ~/.profile (~/.bash_profile would shadow a later ~/.profile).
-    let login = [".bash_profile", ".bash_login", ".profile"]
+    let login = login_files
         .iter()
-        .map(|name| home.join(name))
         .find(|path| path.exists())
+        .cloned()
         .unwrap_or_else(|| home.join(".profile"));
     let loads_bashrc = fs::read_to_string(&login).is_ok_and(|text| sources_bashrc(&text));
     if !loads_bashrc
-        && append_block(
-            &login,
-            "GPY: load ~/.bashrc in login shells",
-            "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"",
-        )?
+        && ensure_block(&login, BASH_LOGIN_HEADER, BASH_LOGIN_LOADER, &[])? == BlockChange::Added
     {
         println!("Added ~/.bashrc loader to {}", login.display());
     }
@@ -692,32 +733,6 @@ mod tests {
     fn bad_gpy_shell_is_an_error_not_a_guess() {
         let err = detect_shell(None, Some("nushell"), Some("/bin/zsh")).unwrap_err();
         assert!(err.to_string().contains("nushell"));
-    }
-
-    #[test]
-    fn append_block_is_idempotent_and_tags_created_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let rc = dir.path().join("rc");
-
-        assert!(append_block(&rc, "hdr", "body").unwrap());
-        assert!(!append_block(&rc, "hdr", "body").unwrap());
-
-        let text = fs::read_to_string(&rc).unwrap();
-        assert_eq!(text.matches(BLOCK_START).count(), 1);
-        assert!(text.contains("# hdr (gpy-created-file)"), "{text}");
-    }
-
-    #[test]
-    fn append_block_keeps_existing_content_and_skips_the_created_tag() {
-        let dir = tempfile::tempdir().unwrap();
-        let rc = dir.path().join("rc");
-        fs::write(&rc, "export A=1\n").unwrap();
-
-        assert!(append_block(&rc, "hdr", "body").unwrap());
-
-        let text = fs::read_to_string(&rc).unwrap();
-        assert!(text.starts_with("export A=1\n"));
-        assert!(!text.contains("gpy-created-file"));
     }
 
     #[test]

@@ -7,113 +7,16 @@
 
 mod common;
 
+use common::agent_sandbox::{AgentSandbox, RUNNING_LINE};
 use common::child_guard::KillOnDrop;
-use common::cli_harness::{CliCommandResult, CliTestEnv};
-use common::fixtures::gpy_test_root;
+use common::cli_harness::{CliCommandResult, CliTestEnv, lone_gpy};
+use common::fake_agent::{Behaviour, FakeAgent};
+use common::fixtures::{bind_silent_socket, gpy_test_root};
 use common::wait::wait_until;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
-use tempfile::TempDir;
+use std::time::Duration;
 
-/// How long a freshly started daemon gets to answer `status`.
-const READY_DEADLINE: Duration = Duration::from_secs(10);
-/// How long a stopped daemon gets to remove its socket.
-const STOP_DEADLINE: Duration = Duration::from_secs(10);
-
-const RUNNING_LINE: &str = "Status: Running and Responding";
 const NOT_RUNNING_LINE: &str = "Status: Not Running (socket not found)";
-const NOT_RELOADED_NOTICE: &str = "Agent not reloaded";
-
-/// A `CliTestEnv` plus a socket under `gpy_test_root()`, with a drop guard
-/// that stops the daemon through its own socket (there is no child handle to
-/// kill). A leaked daemon is still reaped by `scripts/cleanup-test-agents.sh`.
-struct AgentSandbox {
-    env: CliTestEnv,
-    _socket_dir: TempDir,
-    socket_path: PathBuf,
-}
-
-impl AgentSandbox {
-    fn new() -> Self {
-        let env = CliTestEnv::new().expect("create isolated CLI test env");
-        let root = gpy_test_root().expect("GPY test root");
-        let socket_dir = tempfile::Builder::new()
-            .prefix("lifecycle-")
-            .tempdir_in(root)
-            .expect("socket tempdir under the test root");
-        let socket_path = socket_dir.path().join("gpy.sock");
-        Self {
-            env,
-            _socket_dir: socket_dir,
-            socket_path,
-        }
-    }
-
-    fn socket_env(&self) -> [(&'static str, String); 1] {
-        [(
-            "GPY_AGENT_SOCKET_PATH",
-            self.socket_path.to_string_lossy().into_owned(),
-        )]
-    }
-
-    fn gpy(&self, args: &[&str]) -> CliCommandResult {
-        self.env
-            .run_gpy_with_env(args, &self.socket_env())
-            .expect("spawn gpy")
-    }
-
-    fn gpy_agent(&self, args: &[&str]) -> CliCommandResult {
-        self.env
-            .run_gpy_agent_with_env(args, &self.socket_env())
-            .expect("spawn gpy-agent")
-    }
-
-    fn start_and_wait(&self) {
-        let started = self.gpy(&["start"]);
-        started.assert_success("gpy start");
-        self.wait_until_responding();
-    }
-
-    fn wait_until_responding(&self) {
-        let started = Instant::now();
-        let mut last = None;
-        while started.elapsed() < READY_DEADLINE {
-            let status = self.gpy(&["status"]);
-            if status.exit_code == 0_i32 && status.stdout.contains(RUNNING_LINE) {
-                return;
-            }
-            last = Some(status);
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        panic!("agent did not answer `gpy status` within {READY_DEADLINE:?}; last: {last:?}");
-    }
-
-    fn wait_until_socket_gone(&self) -> bool {
-        let started = Instant::now();
-        while started.elapsed() < STOP_DEADLINE {
-            if !self.socket_path.exists() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        false
-    }
-}
-
-impl Drop for AgentSandbox {
-    fn drop(&mut self) {
-        if self.socket_path.exists() {
-            let _ = self.gpy_agent(&["stop"]);
-            // A daemon that ignores stop is left for cleanup-test-agents.sh.
-            let _ = self.wait_until_socket_gone();
-        }
-    }
-}
-
-/// Keep a listener open so the socket file exists but nothing answers.
-fn bind_silent_socket(path: &Path) -> std::os::unix::net::UnixListener {
-    std::os::unix::net::UnixListener::bind(path).expect("bind silent socket")
-}
 
 #[test]
 fn agent_status_exit_code_reflects_liveness() {
@@ -170,170 +73,6 @@ fn gpy_status_passes_the_agent_exit_code_through() {
     let live = sandbox.gpy(&["status"]);
     assert_eq!(live.exit_code, 0_i32, "{live:?}");
     assert!(live.stdout.contains(RUNNING_LINE), "{live:?}");
-}
-
-#[test]
-fn doctor_reports_not_running_when_no_agent() {
-    let sandbox = AgentSandbox::new();
-
-    let doctor = sandbox.gpy(&["doctor"]);
-    assert_eq!(
-        doctor.exit_code, 1_i32,
-        "doctor with no agent must fail: {doctor:?}"
-    );
-    assert!(
-        doctor
-            .stdout
-            .contains("Checking process... warn: Not running"),
-        "{doctor:?}"
-    );
-    assert!(
-        doctor
-            .stdout
-            .contains("Hint: Start the agent with `gpy start`"),
-        "the hint must name the real command: {doctor:?}"
-    );
-    assert!(
-        !doctor.stdout.contains("gpy agent start"),
-        "no nonexistent `gpy agent start` command in the hint: {doctor:?}"
-    );
-    assert!(
-        !doctor.stdout.contains("Checking process... ok: Running"),
-        "{doctor:?}"
-    );
-}
-
-#[test]
-fn doctor_accepts_agent_disabled_via_config() {
-    let sandbox = AgentSandbox::new();
-    sandbox
-        .env
-        .write_config("[agent]\nenabled = false\n")
-        .expect("write config");
-
-    let doctor = sandbox.gpy(&["doctor"]);
-    assert_eq!(
-        doctor.exit_code, 0_i32,
-        "a disabled agent is not a health failure: {doctor:?}"
-    );
-    assert!(
-        doctor
-            .stdout
-            .contains("Checking process... Disabled via config (agent.enabled = false)"),
-        "{doctor:?}"
-    );
-    assert!(!doctor.stdout.contains("Not running"), "{doctor:?}");
-    assert!(
-        doctor
-            .stdout
-            .contains("Checking gpy-agent binary... ok: Found ("),
-        "the working gpy-agent must pass the binary check: {doctor:?}"
-    );
-    let sibling = Path::new(env!("CARGO_BIN_EXE_gpy")).with_file_name("gpy-agent");
-    assert!(
-        doctor
-            .stdout
-            .contains(&format!("Found ({})", sibling.display())),
-        "{doctor:?}"
-    );
-}
-
-/// `gpy` copied alone into a fresh directory: no sibling `gpy-agent`, so it
-/// must find the agent on `PATH`. Copied once per test environment: copying
-/// over a binary that already ran rewrites it in place, and macOS then kills
-/// the next exec of it (its cached code signature no longer matches).
-fn lone_gpy(env: &CliTestEnv) -> PathBuf {
-    let dir = env.root().join("lone-gpy");
-    let gpy = dir.join("gpy");
-    if !gpy.exists() {
-        std::fs::create_dir_all(&dir).expect("create lone gpy dir");
-        std::fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).expect("copy gpy");
-    }
-    gpy
-}
-
-/// `gpy doctor` with the agent disabled (so only the binary check can fail)
-/// and PATH holding just `bin_dir`.
-fn doctor_with_agent_path(sandbox: &AgentSandbox, bin_dir: &Path) -> CliCommandResult {
-    sandbox
-        .env
-        .write_config("[agent]\nenabled = false\n")
-        .expect("write config");
-    sandbox
-        .env
-        .run_program_with_env(&lone_gpy(&sandbox.env), &["doctor"], &[("PATH", bin_dir)])
-        .expect("run gpy doctor")
-}
-
-#[test]
-fn doctor_fails_a_gpy_agent_whose_version_probe_fails() {
-    let sandbox = AgentSandbox::new();
-    let bin_dir = sandbox.env.root().join("broken-bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let agent = bin_dir.join("gpy-agent");
-    std::fs::write(&agent, "#!/bin/sh\necho 'loader failed' >&2\nexit 42\n").unwrap();
-    std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-
-    let broken = doctor_with_agent_path(&sandbox, &bin_dir);
-    assert_eq!(broken.exit_code, 1_i32, "{broken:?}");
-    let binary_report = broken
-        .stdout
-        .split_once("Checking gpy-agent binary...")
-        .map(|(_, report)| report)
-        .expect("doctor ran the binary check");
-    assert!(binary_report.contains("42"), "exit status: {broken:?}");
-    assert!(
-        binary_report.contains("loader failed"),
-        "stderr: {broken:?}"
-    );
-
-    let empty_dir = sandbox.env.root().join("empty-bin");
-    std::fs::create_dir_all(&empty_dir).unwrap();
-    let missing = doctor_with_agent_path(&sandbox, &empty_dir);
-    assert_eq!(missing.exit_code, 1_i32, "{missing:?}");
-    assert_ne!(
-        missing
-            .stdout
-            .lines()
-            .find(|line| line.contains("gpy-agent binary")),
-        broken
-            .stdout
-            .lines()
-            .find(|line| line.contains("gpy-agent binary")),
-        "a failing binary must be reported differently from a missing one"
-    );
-}
-
-#[test]
-fn doctor_reports_not_running_on_a_stale_socket() {
-    let sandbox = AgentSandbox::new();
-    let _listener = bind_silent_socket(&sandbox.socket_path);
-
-    let doctor = sandbox.gpy(&["doctor"]);
-    assert_eq!(doctor.exit_code, 1_i32, "{doctor:?}");
-    assert!(
-        doctor
-            .stdout
-            .contains("Checking process... warn: Not running"),
-        "{doctor:?}"
-    );
-}
-
-#[test]
-fn doctor_reports_running_with_a_live_agent() {
-    let sandbox = AgentSandbox::new();
-    sandbox.start_and_wait();
-
-    let doctor = sandbox.gpy(&["doctor"]);
-    doctor.assert_success("gpy doctor with a live agent");
-    assert!(
-        doctor.stdout.contains("Checking process... ok: Running"),
-        "{doctor:?}"
-    );
-    assert!(
-        doctor.stdout.contains("ok: All checks passed."),
-        "{doctor:?}"
-    );
 }
 
 #[test]
@@ -420,9 +159,13 @@ fn concurrent_starts_during_eviction_leave_one_daemon() {
             .expect("spawn gpy-agent start")
     };
 
-    assert!(start().wait().expect("first start").success());
-    sandbox.wait_until_responding();
-    std::fs::write(format!("{socket}.version"), "0.0.0-old").expect("age the running agent");
+    // Stand-in for an old agent: answers as 0.0.0-old and stops on shutdown.
+    let _old_agent = FakeAgent::spawn_reporting(
+        &sandbox.socket_path,
+        Behaviour::AliveUntilShutdown,
+        "0.0.0-old",
+        gpy_agent::ipc::protocol::PROTOCOL_VERSION,
+    );
 
     let mut first = KillOnDrop::new(start());
     // Stagger the second start into the first one's eviction window.
@@ -995,40 +738,6 @@ fn gpy_lifecycle_fails_clearly_when_gpy_agent_missing() {
             "no Debug-formatted enum: {result:?}"
         );
     }
-}
-
-#[test]
-fn mutation_reloads_live_agent() {
-    let sandbox = AgentSandbox::new();
-    sandbox.start_and_wait();
-
-    let switched = sandbox.gpy(&["theme", "use", "starship"]);
-    switched.assert_success("gpy theme use starship");
-    assert!(
-        switched.stdout.contains("Switched to 'starship' theme"),
-        "{switched:?}"
-    );
-    assert!(
-        !switched.stdout.contains(NOT_RELOADED_NOTICE),
-        "a live agent must acknowledge the reload: {switched:?}"
-    );
-
-    let theme = sandbox.gpy(&["config", "get", "ui.theme"]);
-    theme.assert_success("gpy config get ui.theme");
-    assert_eq!(theme.stdout.trim(), "starship", "{theme:?}");
-}
-
-#[test]
-fn mutation_without_agent_prints_exactly_one_not_reloaded_notice() {
-    let sandbox = AgentSandbox::new();
-
-    let switched = sandbox.gpy(&["theme", "use", "starship"]);
-    switched.assert_success("gpy theme use starship with no agent");
-    assert_eq!(
-        switched.stdout.matches(NOT_RELOADED_NOTICE).count(),
-        1_usize,
-        "{switched:?}"
-    );
 }
 
 /// The same minimal config with only the theme varying.

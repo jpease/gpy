@@ -35,7 +35,7 @@ do is `core.untrackedCache`, chosen with `--untracked-cache`:
 
 | Mode | Fixture | Why |
 |---|---|---|
-| `unset` (default) | key removed, cache primed | a typical machine; GPY switches it on itself, Starship never uses it |
+| `unset` (default) | key removed, cache primed | a typical machine; the fixture primes the cache, as your own git commands would (GPY's one-shot path does not add it, the agent does), Starship never uses it |
 | `on` | pinned `true`, cache primed | identical inputs for both tools |
 | `off` | pinned `false` | GPY honours an explicit `false`, so it loses its fast path (a large repository takes about 2.5x longer) |
 

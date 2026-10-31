@@ -8,48 +8,14 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
+#[path = "common/setup_harness.rs"]
+mod setup_harness;
+
+use setup_harness::{assert_ok, block_count, repo_root, setup};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 use tempfile::TempDir;
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crate lives inside the repository")
-        .to_path_buf()
-}
-
-fn setup(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .arg("setup")
-        .args(["--non-interactive", "--from"])
-        .arg(repo_root())
-        .args(args)
-        .current_dir(home)
-        .env_clear()
-        .env("HOME", home)
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("GPY_NERD_FONT", "0")
-        .output()
-        .expect("failed to spawn gpy setup")
-}
-
-fn assert_ok(output: &Output) {
-    assert!(
-        output.status.success(),
-        "gpy setup failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn block_count(rc: &Path) -> usize {
-    fs::read_to_string(rc)
-        .unwrap()
-        .matches("# >>> gpy-init >>>")
-        .count()
-}
 
 #[test]
 fn zsh_setup_installs_files_and_wires_zshrc_once() {

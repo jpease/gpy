@@ -57,7 +57,7 @@ cd gpy
 
 `./install-dev.fish` installs into `~/.local/bin` and `~/.config`, so it refuses
 to run when a packaged gpy (for example Homebrew's) is already on `PATH`; pass
-`--allow-shadow` to override.
+`--allow-shadow` to override. It also warns about other `gpy` copies earlier on `PATH`; it never deletes them.
 
 To try a build without touching an installed release, run it in an isolated shell
 instead with `just dev` (or `./scripts/gpy-dev.sh`); `exit` returns to the

@@ -45,6 +45,13 @@ pub fn gpy_test_root() -> std::io::Result<PathBuf> {
     Ok(root)
 }
 
+/// Keep the returned listener open so the socket file exists but nothing
+/// answers.
+#[cfg(unix)]
+pub fn bind_silent_socket(path: &Path) -> std::os::unix::net::UnixListener {
+    std::os::unix::net::UnixListener::bind(path).expect("bind silent socket")
+}
+
 /// Aborts the wrapped server task on drop, including during panic unwinding.
 pub struct ServerGuard<T> {
     /// Always `Some` until `into_inner` takes it.

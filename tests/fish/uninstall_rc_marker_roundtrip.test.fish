@@ -365,7 +365,7 @@ else
 
     # Uninstall must target the same XDG-resolved fish config dir, and the
     # same XDG-resolved agent config/cache dirs.
-    printf '\n' | env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e sh scripts/uninstall.sh >/dev/null 2>&1
+    printf '\n' | env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e sh scripts/uninstall.sh --purge-config >/dev/null 2>&1
 
     if test -d "$xdg_config_e/fish/gpy"
         fail "uninstall.sh (XDG_CONFIG_HOME): fish/gpy still present after uninstall"
@@ -418,7 +418,7 @@ else
     mkdir -p "$xdg_config_f/gpy" "$xdg_cache_f/gpy"
     touch "$xdg_config_f/gpy/config.toml" "$xdg_cache_f/gpy/agent.log"
 
-    printf '\n' | env HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_CACHE_HOME=$xdg_cache_f GPY_SHELL=bash sh scripts/uninstall.sh >/dev/null 2>&1
+    printf '\n' | env HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_CACHE_HOME=$xdg_cache_f GPY_SHELL=bash sh scripts/uninstall.sh --purge-config >/dev/null 2>&1
 
     if test -d "$xdg_config_f/gpy"
         fail "uninstall.sh (XDG): \$XDG_CONFIG_HOME/gpy still present after uninstall"

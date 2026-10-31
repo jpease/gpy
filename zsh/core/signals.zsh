@@ -48,6 +48,25 @@ function __gpy_consume_shell_flags() {
     return $found
 }
 
+# A URG handler defined before GPY loaded (a TRAPURG function or a
+# `trap … URG` string) is saved here and run by TRAPURG after its own loop;
+# zsh has one slot per signal. One defined after GPY replaces GPY's, and live
+# reload then falls back to `precmd`. GPY's own handler is recognised by its
+# body so a re-source never saves it. A string trap is read from a pipeline
+# because `$(trap)` runs in a subshell that has no traps.
+if (( $+functions[TRAPURG] )); then
+    if [[ ${functions[TRAPURG]} != *__gpy_consume_shell_flags* ]]; then
+        functions[__gpy_prev_TRAPURG]=${functions[TRAPURG]}
+    fi
+elif (( ! $+functions[__gpy_prev_TRAPURG] && ! $+__gpy_prev_urg_trap )); then
+    trap | while IFS= read -r __gpy_l; do
+        if [[ $__gpy_l == "trap -- "*" URG" ]]; then
+            typeset -g __gpy_prev_urg_trap=${(Q)${${__gpy_l#trap -- }% URG}}
+        fi
+    done
+    unset __gpy_l
+fi
+
 # Zsh drops a SIGURG that arrives while this trap is still running (an agent
 # start rings `.reload`, then `.reregister`, back to back). The agent writes a
 # flag before it rings, so after acting and repainting the trap looks again,
@@ -66,6 +85,13 @@ function TRAPURG() {
         fi
         [[ -n "$base" && ( -e "$base.reregister" || -e "$base.reload" ) ]] || break
     done
+    if (( $+functions[__gpy_prev_TRAPURG] )); then
+        __gpy_prev_TRAPURG "$@"
+        return $?
+    elif [[ -n ${__gpy_prev_urg_trap:-} ]]; then
+        eval "$__gpy_prev_urg_trap"
+        return $?
+    fi
     return 0
 }
 

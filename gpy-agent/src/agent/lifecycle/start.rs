@@ -12,6 +12,9 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
+use super::SocketCheck;
+use super::{StartNotice, StartOutcome};
+#[cfg(unix)]
 use crate::ipc::registry::{
     ShellFlag, default_shell_dir, process_start_time_secs, ring_doorbell, write_shell_flag,
 };
@@ -21,16 +24,6 @@ use fork::Fork;
 use nix::sys::signal::kill;
 #[cfg(unix)]
 use nix::unistd::Pid;
-
-/// The progress line `gpy-agent start` prints on stderr before forking.
-/// `gpy restart` filters this exact line from its own normalized output.
-pub const START_PROGRESS_LINE: &str = "Starting GPY Agent in background...";
-
-/// Whether the agent is disabled via configuration (`agent.enabled = false`).
-#[cfg(unix)]
-fn agent_disabled() -> bool {
-    crate::config::loader::load_config().is_ok_and(|config| !config.agent.enabled)
-}
 
 /// Longest a start waits for another start on the same socket.
 #[cfg(unix)]
@@ -380,7 +373,7 @@ fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() ->
     }
 }
 
-/// Fork the agent daemon and return once it answers on `socket_path`.
+/// Fork the agent daemon and return its PID once it answers on `socket_path`.
 ///
 /// Explicit double fork rather than `fork::daemon()`, whose processes exit
 /// before anything can be awaited: the original waits for readiness holding
@@ -390,9 +383,10 @@ fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() ->
 ///
 /// # Errors
 /// Returns an error if the pipe or fork fails, the daemon never reports its
-/// PID, or it fails or is not ready in time. In the daemon, the agent's result.
+/// PID, or it fails or is not ready in time. The daemon process itself never
+/// returns: it exits after the agent stops.
 #[cfg(unix)]
-fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Result<()> {
+fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Result<u32> {
     use std::io::Read;
 
     let (mut reader, writer) =
@@ -405,19 +399,38 @@ fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Resul
             let read = reader.read_exact(&mut pid_bytes);
             let _ = fork::waitpid(intermediate_pid);
             read.map_err(|e| Error::process("fork", format!("Agent process did not start: {e}")))?;
-            let ready = StartupReport::new(reader).and_then(|report| {
-                wait_for_agent_ready(socket_path, i32::from_ne_bytes(pid_bytes), report)
-            });
+            let agent_pid = i32::from_ne_bytes(pid_bytes);
+            let ready = StartupReport::new(reader)
+                .and_then(|report| wait_for_agent_ready(socket_path, agent_pid, report));
             // Held until now so a daemon that never binds cannot let another start in.
             drop(start_lock);
-            ready
+            ready?;
+            u32::try_from(agent_pid).map_err(|e| Error::process("fork", e.to_string()))
         }
         Ok(Fork::Child) => {
             drop(reader);
             fork_daemon_from_intermediate();
-            run_daemon(announce_daemon(start_lock, writer)?)
+            exit_daemon(announce_daemon(start_lock, writer).and_then(run_daemon))
         }
         Err(e) => Err(Error::process("fork", e.to_string())),
+    }
+}
+
+/// End the daemon process with its result. The daemon must never return into
+/// the start command's outcome handling; stdio is `/dev/null`, so a failure is
+/// logged.
+#[cfg(unix)]
+#[expect(
+    clippy::exit,
+    reason = "the daemon must not return into the start command's outcome handling"
+)]
+fn exit_daemon(result: Result<()>) -> ! {
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            crate::warn_log!("agent", "Daemon failed: {e}");
+            std::process::exit(1)
+        }
     }
 }
 
@@ -487,7 +500,7 @@ fn run_daemon(startup: StartupHandoff) -> Result<()> {
     result
 }
 
-/// Leave the launch directory, write the version marker, build the runtime.
+/// Leave the launch directory and build the runtime.
 ///
 /// # Errors
 /// Returns an error if `chdir` or runtime construction fails.
@@ -499,23 +512,20 @@ fn enter_daemon() -> Result<tokio::runtime::Runtime> {
         return Err(Error::process("chdir", e.to_string()));
     }
 
-    if let Err(e) = super::write_agent_version() {
-        crate::warn_log!("agent", "Failed to write agent version file: {e}");
-    }
-
     tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime", e.to_string()))
 }
 
-/// Start the agent in background with race-free socket coordination.
+/// Start the agent in background with race-free socket coordination. Progress
+/// and advisories go to `on_notice`; nothing is printed here.
 ///
 /// # Errors
 /// Returns an error if socket operations, forking, or agent initialization fails.
-pub fn start_background_agent() -> Result<()> {
+pub fn start_background_agent(mut on_notice: impl FnMut(StartNotice)) -> Result<StartOutcome> {
     #[cfg(unix)]
     {
-        if agent_disabled() {
-            eprintln!("GPY Agent disabled via config (agent.enabled = false); skipping start");
-            return Ok(());
+        if !crate::config::loader::agent_enabled() {
+            on_notice(StartNotice::Disabled);
+            return Ok(StartOutcome::Disabled);
         }
 
         // The daemon runs in `/`: anchor relative inputs before the fork.
@@ -531,8 +541,8 @@ pub fn start_background_agent() -> Result<()> {
         crate::debug::init_path();
         super::ensure_runtime_dir()?;
         let socket_path = crate::paths::absolutize(&crate::paths::get_socket_path()?);
-        // Absolutize a relative `GPY_AGENT_SOCKET_PATH`; the default socket stays
-        // unset so it keeps the `agent.version` marker.
+        // Absolutize a relative `GPY_AGENT_SOCKET_PATH` so the daemon, which
+        // runs in `/`, binds the same path.
         if crate::paths::socket_path_override().is_some() {
             crate::paths::set_socket_override(&socket_path)?;
         }
@@ -545,16 +555,24 @@ pub fn start_background_agent() -> Result<()> {
         )?;
         let start_lock = acquire_start_lock(&socket_path)?;
 
-        if super::check_and_cleanup_socket(&socket_path) {
-            return Ok(());
-        }
+        let previous = match super::inspect_socket(&socket_path, &mut on_notice) {
+            SocketCheck::Done(outcome) => return Ok(outcome),
+            SocketCheck::Proceed { previous } => previous,
+        };
 
-        eprintln!("{START_PROGRESS_LINE}");
-        fork_agent(&socket_path, start_lock)
+        on_notice(StartNotice::Starting);
+        let pid = fork_agent(&socket_path, start_lock)?;
+        Ok(previous.map_or(StartOutcome::Started { pid }, |prior| {
+            StartOutcome::Replaced {
+                previous: prior,
+                pid,
+            }
+        }))
     }
 
     #[cfg(not(unix))]
     {
+        let _ = &mut on_notice;
         Err(Error::process(
             "platform",
             "Background agent only supported on Unix-like systems".to_owned(),
