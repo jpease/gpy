@@ -283,11 +283,12 @@ pub async fn query_agent_status() -> Result<AgentStatusInfo> {
     Err(crate::ipc::native_windows_unsupported())
 }
 
-/// Probe the agent's status (native Windows stub: there is no daemon).
+/// Probe the agent's status (native Windows stub: there is no daemon, so
+/// nothing is ever listening).
 #[cfg(not(unix))]
 #[must_use]
 pub fn probe_status(_socket_path: &Path) -> StatusProbe {
-    StatusProbe::Failed(crate::ipc::native_windows_unsupported())
+    StatusProbe::NotListening(crate::ipc::native_windows_unsupported())
 }
 
 /// The status carried by an agent's reply.

@@ -79,8 +79,10 @@ fn pathspec_status_matches_a_non_utf8_file_name() {
     )
     .expect("pathspec status");
 
-    assert!(
-        scan.files.get(&name).is_some_and(|status| status.unstaged),
+    // Keys are lossily decoded, so count the edit rather than look it up.
+    assert_eq!(
+        scan.files.values().filter(|status| status.unstaged).count(),
+        1,
         "the edit must be seen through the pathspec"
     );
 }
