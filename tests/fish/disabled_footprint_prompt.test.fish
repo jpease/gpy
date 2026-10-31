@@ -205,13 +205,13 @@ set -l scenario_d_probe (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_h
         fish --no-config -c \'echo "child=[$GPY_AGENT_ENABLED]"\'
     ' </dev/null 2>/dev/null | string collect)
 
-if string match -q '*enabled=\[no\]*' -- $scenario_d_probe
+if string match -qr 'enabled=\[no\]' -- $scenario_d_probe
     pass "install-not-found path disables __gpy_agent_enabled"
 else
     fail "install-not-found path left __gpy_agent_enabled on: $scenario_d_probe"
 end
 
-if string match -q '*child=\[0\]*' -- $scenario_d_probe
+if string match -qr 'child=\[0\]' -- $scenario_d_probe
     fail "install-not-found path exported GPY_AGENT_ENABLED=0 to children"
 else
     pass "install-not-found path did not export GPY_AGENT_ENABLED=0"
@@ -280,25 +280,25 @@ set -l scenario_e_probe (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_h
         env | string match -q "__gpy_load_failed=*"; and echo "leak=[yes]"; or echo "leak=[no]"
     ' </dev/null 2>/dev/null | string collect)
 
-if string match -q '*enabled=\[no\]*' -- $scenario_e_probe
+if string match -qr 'enabled=\[no\]' -- $scenario_e_probe
     pass "fallback-mode path disables __gpy_agent_enabled"
 else
     fail "fallback-mode path left __gpy_agent_enabled on: $scenario_e_probe"
 end
 
-if string match -q '*supervisor=\[no\]*' -- $scenario_e_probe
+if string match -qr 'supervisor=\[no\]' -- $scenario_e_probe
     pass "fallback-mode path disables __gpy_supervisor_enabled"
 else
     fail "fallback-mode path left __gpy_supervisor_enabled on: $scenario_e_probe"
 end
 
-if string match -q '*child=\[0\]*' -- $scenario_e_probe
+if string match -qr 'child=\[0\]' -- $scenario_e_probe
     fail "fallback-mode path exported GPY_AGENT_ENABLED=0 to children"
 else
     pass "fallback-mode path did not export GPY_AGENT_ENABLED=0"
 end
 
-if string match -q '*leak=\[no\]*' -- $scenario_e_probe
+if string match -qr 'leak=\[no\]' -- $scenario_e_probe
     pass "fallback-mode path did not export __gpy_load_failed"
 else
     fail "fallback-mode path exported __gpy_load_failed: $scenario_e_probe"
@@ -314,7 +314,7 @@ set -l scenario_e_retry (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_h
         __gpy_agent_enabled; and echo 'retry=[yes]'
     " </dev/null 2>/dev/null | string collect)
 
-if string match -q '*retry=\[yes\]*' -- $scenario_e_retry
+if string match -qr 'retry=\[yes\]' -- $scenario_e_retry
     pass "re-sourcing conf.d/gpy_init.fish after the fix re-enables GPY"
 else
     fail "re-sourcing conf.d/gpy_init.fish did not retry the load: $scenario_e_retry"

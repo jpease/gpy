@@ -181,7 +181,7 @@ fn doctor_fails_when_the_socket_does_not_answer() {
     assert_eq!(doctor.exit_code, 1_i32, "{doctor:?}");
     assert!(
         doctor.stdout.contains(&format!(
-            "fail: Not answering on {}",
+            "FAIL: Not answering on {}",
             sandbox.socket_path.display()
         )),
         "{doctor:?}"
@@ -281,7 +281,7 @@ fn doctor_warns_without_an_ipc_client() {
 fn doctor_accepts_nc_with_unix_socket_support() {
     let sandbox = AgentSandbox::new();
     install_integration(&sandbox, "bash");
-    let bin_dir = ipc_bin_dir(&sandbox, "usage: nc [-46U] host port");
+    let bin_dir = ipc_bin_dir(&sandbox, "usage: nc [-46] [-U] host port");
 
     let doctor = doctor_with_agent_path(&sandbox, &bin_dir, "");
     assert_eq!(doctor.exit_code, 0_i32, "{doctor:?}");

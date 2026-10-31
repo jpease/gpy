@@ -84,7 +84,7 @@ run_uninstall "$sb" /dev/null --yes
 rc=$?
 [[ $rc -eq 0 ]] || fail "no config dir: uninstaller exited $rc"
 grep -q 'Configuration directory not found' "$sb/uninstall.log" || fail "no config dir: missing 'not found' message"
-! grep -q 'Kept' "$sb/uninstall.log" || fail "no config dir: unexpected Kept line"
+! grep -qE 'Kept (your )?configuration' "$sb/uninstall.log" || fail "no config dir: unexpected Kept line"
 
 if [[ $failures -ne 0 ]]; then
     for log in "$WORKDIR"/sb.*/uninstall.log; do

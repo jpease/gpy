@@ -56,6 +56,14 @@ fn untracked_cache_setup_respects_explicit_false() {
         .status()
         .expect("run git config");
     assert!(status.success());
+    // A user-level `core.untrackedCache = true` makes `git add` in the
+    // fixture write the extension; start from an index without it.
+    let update = Command::new("git")
+        .args(["update-index", "--no-untracked-cache"])
+        .current_dir(&path)
+        .status()
+        .expect("run git update-index");
+    assert!(update.success());
 
     NativeGitBackend::get_complete_status(&path, 100, false, Duration::from_secs(5))
         .expect("status");

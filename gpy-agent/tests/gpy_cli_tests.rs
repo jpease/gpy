@@ -1485,15 +1485,21 @@ fn test_theme_save_named_existing_theme_declined_leaves_file_unchanged() {
 #[test]
 fn test_theme_save_without_an_answer_fails_and_writes_nothing() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
-    let target_path = env.themes_dir().join("default.toml");
+    let target_path = env.themes_dir().join("custom.toml");
+    let marker_content = "# pre-existing custom marker\n[segments]\n";
+    fs::write(&target_path, marker_content).expect("Failed to seed pre-existing theme");
 
     let output = env
-        .run_gpy_with_stdin(&["theme", "save"], "")
+        .run_gpy_with_stdin(&["theme", "save", "custom"], "")
         .expect("Failed to run gpy theme save");
 
     assert_eq!(output.exit_code, 1_i32, "{output:?}");
     assert!(output.stderr.contains("pass --yes"), "{output:?}");
-    assert!(!target_path.exists(), "nothing may be written unconfirmed");
+    assert_eq!(
+        fs::read_to_string(&target_path).expect("read theme"),
+        marker_content,
+        "nothing may be written unconfirmed"
+    );
 }
 
 #[test]
