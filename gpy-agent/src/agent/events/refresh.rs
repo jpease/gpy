@@ -1,11 +1,50 @@
 //! Which config changes require shells to redraw after a reload.
 
-use crate::config::Config;
+use super::AgentContext;
+use crate::config::{Config, GitSettings};
+use crate::theme::{GitState, ThemeConfig};
+use crate::watcher::{RepoFilter, WatchRegistry};
+use std::path::Path;
+use std::sync::Arc;
+
+/// Repository filter for the watcher: a repository under a `git.skip_paths`
+/// entry is not watched. Holds its own copy of the settings, so installing a
+/// filter never borrows the config.
+pub(crate) fn git_repo_filter(git: &GitSettings) -> RepoFilter {
+    let settings = git.clone();
+    Arc::new(move |root: &Path| !settings.is_path_skipped(root))
+}
+
+/// Apply the watcher-relevant git settings to `registry`.
+pub(super) fn apply_watch_settings(registry: &WatchRegistry, git: &GitSettings) {
+    registry.set_worktree_enabled(git.watch_worktree);
+    registry.set_repo_filter(git_repo_filter(git));
+}
+
+/// Background the git pill of the repository at `root` is drawn with, the
+/// `prev_bg` of the segment after it: the cached status's state colour (any
+/// age, upstream hidden as rendered), clean when nothing is cached.
+pub(crate) fn git_segment_bg<'a>(
+    ctx: &AgentContext,
+    root: &Path,
+    config: &Config,
+    theme: &'a ThemeConfig,
+) -> &'a str {
+    let state = ctx.cache.get_any(root).map_or(GitState::Clean, |status| {
+        let rendered = if config.git.show_upstream {
+            status
+        } else {
+            status.without_upstream()
+        };
+        GitState::from_status(&rendered)
+    });
+    theme.segments.git.get_bg_color(state)
+}
 
 /// Whether a config reload changes the rendered prompt and shells should redraw.
 /// Helpers destructure without `..` so a new config field fails to compile until
 /// classified. Script segment overrides change what the shells run.
-pub(super) fn config_refresh_required(old_config: &Config, new_config: &Config) -> bool {
+pub(crate) fn config_refresh_required(old_config: &Config, new_config: &Config) -> bool {
     let Config {
         agent: old_agent,
         git: old_git,

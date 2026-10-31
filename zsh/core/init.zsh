@@ -92,7 +92,7 @@ function __gpy_load_theme() {
     fi
 
     if command -v gpy-agent &>/dev/null; then
-        eval "$(gpy-agent theme export --format zsh 2>/dev/null)"
+        eval "$(gpy-agent theme export --shell zsh 2>/dev/null)"
         return $?
     else
         return 1
@@ -205,6 +205,8 @@ function __gpy_segment_would_render() {
 
 function __gpy_precmd() {
     local ret=$?
+    # Drop the dynamic-completion caches (zsh/completions/_gpy-dynamic).
+    unset __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
     # Kept for the signal handlers, which re-render outside precmd.
     __gpy_last_exit_code=$ret
 
@@ -319,6 +321,7 @@ function __gpy_render_prompt() {
                 if [[ -n "$g_tok" ]]; then
                     __gpy_g_colors "$g_tok" seg_bg seg_fg
                 else
+                    [[ "$seg" == "git" ]] && typeset -g __gpy_git_seg_status="$seg_status"
                     __gpy_segment_bg "$seg" seg_bg
                 fi
                 [[ -n "$seg_bg" ]] && prev_bg="$seg_bg"

@@ -1283,6 +1283,60 @@ fn config_reload_disables_and_reenables_watcher() {
     );
 }
 
+/// A reload adding a `git.skip_paths` entry for a watched repository stops
+/// watching it; removing the entry arms it again for the registered client.
+#[test]
+#[serial_test::serial(global_ttl)]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn config_reload_skip_path_stops_and_restores_watching() {
+    let (_tmp, repo) = create_temp_repo();
+    let ctx = make_agent_context();
+    let watcher_config = WatcherConfig::default();
+    let watcher = create_watcher(watcher_config, &ctx).expect("create real watcher");
+    let pid = std::process::id();
+    ctx.registry.register(pid, Some(repo.clone()));
+    watcher
+        .attach_client(pid, &repo)
+        .expect("register with watcher");
+    assert_eq!(watcher.watched_repo_count(), 1);
+    let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(Some(Arc::clone(&watcher))));
+
+    let original = Config::default();
+    let mut skipped = original.clone();
+    skipped.git.skip_paths = vec![repo.to_string_lossy().into_owned()];
+
+    handle_config_reload(
+        &ctx,
+        &watcher_slot,
+        watcher_config,
+        false,
+        &original,
+        &skipped,
+    )
+    .expect("reload adding the skip entry");
+    assert_eq!(
+        watcher.watched_repo_count(),
+        0,
+        "a newly skipped repository must stop being watched"
+    );
+
+    handle_config_reload(
+        &ctx,
+        &watcher_slot,
+        watcher_config,
+        false,
+        &skipped,
+        &original,
+    )
+    .expect("reload removing the skip entry");
+    assert_eq!(
+        watcher.watched_repo_count(),
+        1,
+        "removing the skip entry must watch the repository again"
+    );
+    assert_eq!(watcher.client_pids(), vec![pid]);
+}
+
 #[cfg(unix)]
 #[test]
 #[serial_test::serial(global_ttl)]
@@ -1395,9 +1449,8 @@ fn expect_watcher_state(watcher_slot: &SharedWatcherSlot, expect_some: bool, mes
 #[test]
 #[serial_test::serial(global_ttl)]
 fn config_reload_updates_language_ttl() {
-    use crate::cache::ttl_map::shared_cache_ttl_seconds;
-    use crate::language::version::set_version_cache_ttl;
-
+    use crate::cache::ttl_map::{LanguageTtlGuard, shared_cache_ttl_seconds};
+    let _ttl = LanguageTtlGuard::set(24);
     let ctx = make_agent_context();
     let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
     let watcher_config = WatcherConfig::default();
@@ -1431,9 +1484,6 @@ fn config_reload_updates_language_ttl() {
         "cache TTL should update to new value after reload"
     );
     assert_ne!(after, before, "TTL should change from previous value");
-
-    // Restore default for other tests.
-    set_version_cache_ttl(24);
 }
 
 #[test]

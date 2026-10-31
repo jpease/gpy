@@ -48,7 +48,7 @@ function segment_git_render --argument-names is_last is_first
             if test -n "$synced"
                 # The agent writes its own instant cache while handling this request.
                 printf '%s' "$synced"
-                set -g __gpy_last_segment_bg $__color_git_clean_bg
+                set -g __gpy_last_segment_bg (__gpy_git_segment_bg "$root")
                 return 0
             end
         end
@@ -65,11 +65,14 @@ function segment_git_render --argument-names is_last is_first
             set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS | string collect)
             if test -n "$synced"
                 printf '%s' "$synced"
-                set -g __gpy_last_segment_bg $__color_git_clean_bg
+                set -g __gpy_last_segment_bg (__gpy_git_segment_bg "$root")
                 return 0
             end
         end
     end
+
+    # Colour the pill was drawn in, unless the oneshot below drew it agent-free.
+    set -l agent_free 0
 
     # `test -S`, not __gpy_socket_ready: its connect probe can block up to 1s.
     if not __gpy_cache_status_stale $cache_status
@@ -84,14 +87,19 @@ function segment_git_render --argument-names is_last is_first
             set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
             if test -n "$fresh"
                 printf '%s' "$fresh"
+                set agent_free 1
             else
                 printf '%s' "$rendered_output"
             end
         end
     end
 
-    # Clean bg approximates the chevron colour; exact state is unknown here.
-    set -g __gpy_last_segment_bg $__color_git_clean_bg
+    # The agent records the pill's state colour; a stale file never colours an agent-free render.
+    if test $agent_free -eq 1
+        set -g __gpy_last_segment_bg $__color_git_clean_bg
+    else
+        set -g __gpy_last_segment_bg (__gpy_git_segment_bg "$root")
+    end
 
     return 0
 end

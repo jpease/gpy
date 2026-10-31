@@ -31,6 +31,8 @@ pub(super) fn prev_bg_token(prev_bg: Option<&str>) -> String {
 /// Segment a cache file holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CacheKind {
+    /// The background colour the git segment leaves for the next chevron.
+    GitBg,
     /// The git status segment.
     Git,
     /// The language segment.
@@ -39,14 +41,22 @@ pub(super) enum CacheKind {
 
 impl CacheKind {
     /// Every kind.
-    const ALL: [Self; 2] = [Self::Git, Self::Lang];
+    /// `GitBg` precedes `Git`: parsing takes the first kind whose name prefixes
+    /// the variant, and `git` would claim `git_bg`.
+    const ALL: [Self; 3] = [Self::GitBg, Self::Git, Self::Lang];
 
     /// Leading part of the variant, e.g. `git`.
     const fn as_str(self) -> &'static str {
         match self {
+            Self::GitBg => "git_bg",
             Self::Git => "git",
             Self::Lang => "lang",
         }
+    }
+
+    /// Whether the kind belongs to the git segment's cache (entry or colour).
+    pub(super) const fn is_git(self) -> bool {
+        matches!(self, Self::Git | Self::GitBg)
     }
 }
 

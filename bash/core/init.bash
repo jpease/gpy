@@ -81,7 +81,7 @@ __gpy_load_theme() {
         source "$cache_path"
         rc=$?
     elif command -v gpy-agent &>/dev/null; then
-        eval "$(gpy-agent theme export --format bash 2>/dev/null)"
+        eval "$(gpy-agent theme export --shell bash 2>/dev/null)"
         rc=$?
     fi
     __gpy_g_sync
@@ -163,6 +163,8 @@ __gpy_epoch_diff_ms() {
 
 __gpy_precmd() {
     local exit_code=$?
+    # Drop the dynamic-completion caches (bash/completions/gpy-dynamic.bash).
+    unset __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
 
     if [[ -n "$__gpy_cmd_start_time" ]]; then
         if [[ $__gpy_duration_method == "epochrealtime" ]]; then
@@ -342,6 +344,7 @@ __gpy_render_prompt() {
             if [[ -n "$segment_output" ]]; then
                 prompt_output+="$segment_output"
                 local segment_bg=""
+                [[ "$segment" == "git" ]] && __gpy_git_seg_status="$segment_status"
                 __gpy_segment_bg "$segment" segment_bg
                 [[ -n "$segment_bg" ]] && prev_bg="$segment_bg"
             fi

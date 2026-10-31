@@ -12,7 +12,7 @@ use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::palette::PaletteCache;
 use crate::sync_ext::MutexExt;
-use crate::theme::{GitState, ThemeConfig, ThemeManager};
+use crate::theme::{ThemeConfig, ThemeManager};
 use crate::watcher::{
     DebouncedEvent, FileEvent, GitPaths, WatcherConfig, multi_repo::MultiRepoWatcher,
 };
@@ -26,7 +26,7 @@ mod coalesce;
 mod refresh;
 pub use coalesce::RepoRefreshCoordinator;
 use coalesce::run_coalesced;
-use refresh::config_refresh_required;
+pub(crate) use refresh::{config_refresh_required, git_repo_filter, git_segment_bg};
 
 /// Shared thread-safe storage for the file watcher, allowing it to be replaced or stopped
 pub type SharedWatcherSlot = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
@@ -717,6 +717,7 @@ fn sync_watcher_state(
         // Existing watcher: apply the new `git.watch_worktree` to active repos.
         // Lock order: this slot before `MultiRepoWatcher`'s internal locks.
         watcher.resync_watch_worktree();
+        watcher.resync_repo_filter(&ctx.registry.get_registered_repos());
     }
     drop(watcher_guard);
 
@@ -781,8 +782,7 @@ pub(super) fn handle_config_reload(
     };
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
-    ctx.watch_registry
-        .set_worktree_enabled(new_config.git.watch_worktree);
+    refresh::apply_watch_settings(&ctx.watch_registry, &new_config.git);
 
     let refresh_required =
         theme_changed || palette_changed || config_refresh_required(old_config, new_config);
@@ -918,7 +918,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
 fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) -> bool {
     // One theme snapshot for both `lang_prev_bg` and the render, to avoid a torn read.
     let theme = ctx.theme_manager.get();
-    let lang_prev_bg = theme.segments.git.get_bg_color(GitState::Clean);
+    let lang_prev_bg = git_segment_bg(ctx, lang_root, config, &theme);
 
     refresh_language_for(
         ctx,

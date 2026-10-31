@@ -91,3 +91,9 @@ fn palette_color_value(color: &Color) -> Option<String> {
         Color::Palette(_) | Color::PrevFg | Color::PrevBg => None,
     }
 }
+
+/// `value`, a canonical theme color, in the spelling `theme export` prints for
+/// `shell`.
+pub(crate) fn resolve_shell_color(shell: Shell, palette: &Palette, value: &str) -> String {
+    ShellColors { shell, palette }.resolve(value).into_owned()
+}

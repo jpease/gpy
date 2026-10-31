@@ -4,7 +4,8 @@
 //! ([`CacheFileName`]): `{key}` from [`path_to_cache_key`], chunked into
 //! directories when long, `{variant}` the segment and its position, `{token}`
 //! the [`prev_bg_token`] (the ANSI bakes in the `fg:prev_bg` chevron), `{ext}`
-//! the [`PromptDialect::cache_ext`].
+//! the [`PromptDialect::cache_ext`]. The `git_bg` variant holds the colour the git
+//! pill leaves for the next chevron, in the dialect's shell spelling.
 
 pub(super) mod files;
 mod key;
@@ -17,13 +18,18 @@ use crate::debug_log;
 use crate::formatter::{Formatter, PromptDialect, PromptFormatter, RenderContext, SegmentPosition};
 use crate::git::RepositoryStatus;
 use crate::ipc::{LanguageInfo, Response};
+use crate::shell::Shell;
 use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::{Color, Palette, parse_color};
-use crate::theme::ThemeConfig;
+use crate::theme::export::resolve_shell_color;
+use crate::theme::{GitState, ThemeConfig};
 use crate::{Error, Result};
 use files::{create_private_dir, get_instant_cache_dir, write_atomic};
 use key::{NAME_MAX_BYTES, cache_file_parts, find_project_root, path_to_cache_key};
-use name::{CacheFileName, CacheKind, SEGMENT_POSITIONS, parse_cache_file_name, prev_bg_token};
+use name::{
+    CacheFileName, CacheKind, NO_PREV_BG_TOKEN, SEGMENT_POSITIONS, parse_cache_file_name,
+    prev_bg_token,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
@@ -187,14 +193,56 @@ impl InstantPromptCache {
         prev_bg: Option<&str>,
         palette: &Palette,
     ) -> Result<bool> {
-        let response = Response::RepositoryStatus(if config.git.show_upstream {
+        let key = path_to_cache_key(&find_project_root(path));
+        let rendered = if config.git.show_upstream {
             status.clone()
         } else {
             status.clone().without_upstream()
-        });
-        self.write_variants(path, CacheKind::Git, prev_bg, |position, prev_bg_color| {
-            render_all_dialects(&response, config, theme, palette, position, prev_bg_color)
-        })
+        };
+        // Before the variants: a shell woken by their write finds the colour.
+        let bg_changed = self.write_git_bg(&key, &rendered, theme, palette);
+        let response = Response::RepositoryStatus(rendered);
+        let variants_changed =
+            self.write_variants(&key, CacheKind::Git, prev_bg, |position, prev_bg_color| {
+                render_all_dialects(&response, config, theme, palette, position, prev_bg_color)
+            })?;
+        Ok(bg_changed || variants_changed)
+    }
+
+    /// Record the background the git pill of `rendered` is drawn with, per
+    /// dialect, for the segment after it; `true` when any file changed. A
+    /// failed write is logged: shells fall back to the clean colour.
+    fn write_git_bg(
+        &self,
+        key: &str,
+        rendered: &RepositoryStatus,
+        theme: &ThemeConfig,
+        palette: &Palette,
+    ) -> bool {
+        let bg = theme
+            .segments
+            .git
+            .get_bg_color(GitState::from_status(rendered));
+        let mut changed = false;
+        for dialect in PromptDialect::ALL {
+            let shell = match dialect {
+                PromptDialect::Ansi => Shell::Fish,
+                PromptDialect::BashPrompt => Shell::Bash,
+                PromptDialect::ZshPrompt => Shell::Zsh,
+            };
+            let name = CacheFileName {
+                key,
+                kind: CacheKind::GitBg,
+                position: SEGMENT_POSITIONS[0],
+                token: NO_PREV_BG_TOKEN,
+                dialect,
+            };
+            match self.write_cache_file(&name, &resolve_shell_color(shell, palette, bg)) {
+                Ok(wrote) => changed |= wrote,
+                Err(e) => debug_log!("cache", "Could not write git background cache: {e}"),
+            }
+        }
+        changed
     }
 
     /// Write every language variant, dialect and known `prev_bg` context;
@@ -214,12 +262,13 @@ impl InstantPromptCache {
         let response = Response::Language {
             languages: languages.to_vec(),
         };
-        self.write_variants(path, CacheKind::Lang, prev_bg, |position, prev_bg_color| {
+        let key = path_to_cache_key(&find_project_root(path));
+        self.write_variants(&key, CacheKind::Lang, prev_bg, |position, prev_bg_color| {
             render_all_dialects(&response, config, theme, palette, position, prev_bg_color)
         })
     }
 
-    /// Write `kind`'s cache for the project at `path` in every position, as
+    /// Write `kind`'s cache for the project keyed `key` in every position, as
     /// `render` renders it, for each known `prev_bg` context: background
     /// writers pass `None` but must refresh them all. Returns `true` when any
     /// content changed.
@@ -228,15 +277,14 @@ impl InstantPromptCache {
     /// errors beside a successful write are logged.
     fn write_variants(
         &self,
-        path: &Path,
+        key: &str,
         kind: CacheKind,
         prev_bg: Option<&str>,
         render: impl Fn(SegmentPosition, Option<Color>) -> Result<DialectPrompts>,
     ) -> Result<bool> {
-        let key = path_to_cache_key(&find_project_root(path));
         let mut wrote_any = false;
         let mut first_err = None;
-        for context in self.known_contexts(&key, prev_bg) {
+        for context in self.known_contexts(key, prev_bg) {
             let token = prev_bg_token(context.as_deref());
             let color = context.as_deref().and_then(|s| match parse_color(s) {
                 Ok(c) => Some(c),
@@ -258,7 +306,7 @@ impl InstantPromptCache {
                 };
                 for (dialect, prompt) in prompts {
                     let name = CacheFileName {
-                        key: &key,
+                        key,
                         kind,
                         position,
                         token: &token,
@@ -339,7 +387,7 @@ impl InstantPromptCache {
         let mut last_written = self.last_written.lock_or_recover();
         last_written.entries.retain(|name, _written| {
             !parse_cache_file_name(name)
-                .is_some_and(|parsed| parsed.kind == CacheKind::Git && parsed.key == key)
+                .is_some_and(|parsed| parsed.kind.is_git() && parsed.key == key)
         });
         remove_git_files(&self.cache_dir, &key);
         self.suppressed_git.lock_or_recover().insert(key, root);
@@ -370,9 +418,7 @@ impl InstantPromptCache {
 
         // Held across check, touch, write and record so the record equals disk.
         let mut cache = self.last_written.lock_or_recover();
-        if name.kind == CacheKind::Git
-            && self.suppressed_git.lock_or_recover().contains_key(name.key)
-        {
+        if name.kind.is_git() && self.suppressed_git.lock_or_recover().contains_key(name.key) {
             return Ok(false);
         }
         if cache
@@ -487,5 +533,7 @@ fn render_all_dialects(
         .collect()
 }
 
+#[cfg(test)]
+mod git_bg_tests;
 #[cfg(test)]
 mod tests;

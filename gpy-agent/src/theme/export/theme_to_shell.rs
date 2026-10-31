@@ -86,9 +86,9 @@ fn append_lang_marker_files(output: &mut String, shell: Shell) {
 }
 
 /// Chevron-relevant segments and their `__color_*_bg` var, in Bash/Zsh case-arm order.
-/// `status` is handled separately: its bg depends on the previous exit status.
+/// `git` and `status` are handled separately: the git bg is the state colour the
+/// agent cached, and the status bg depends on the previous exit status.
 pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
-    ("git", "__color_git_clean_bg"),
     ("language", "__color_language_bg"),
     ("directory", "__color_directory_bg"),
     ("duration", "__color_duration_bg"),
@@ -109,6 +109,16 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
     push_line(output, format_args!("__gpy_segment_bg() {{"));
     push_line(output, format_args!("    local __gpy_sbg=\"\""));
     push_line(output, format_args!("    case \"$1\" in"));
+    let helper_defined = match shell {
+        Shell::Zsh => "(( ${+functions[__gpy_git_segment_bg]} ))",
+        Shell::Bash | Shell::Fish => "declare -F __gpy_git_segment_bg >/dev/null",
+    };
+    push_line(
+        output,
+        format_args!(
+            "        git) if {helper_defined}; then __gpy_git_segment_bg __gpy_sbg; else __gpy_sbg=\"${{__color_git_clean_bg:-}}\"; fi ;;"
+        ),
+    );
     for (segment, var) in SEGMENT_BG_VARS {
         push_line(
             output,
