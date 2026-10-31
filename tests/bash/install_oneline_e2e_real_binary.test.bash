@@ -190,7 +190,7 @@ run_shell() {
     cd "$SHELL_E2E_ROOT" || exit 1
 
     supervisor_pid="$(cat "$XDG_RUNTIME_DIR/gpy/supervisor.pid" 2>/dev/null || true)"
-    printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
+    printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" --purge-config >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
     rc=$?
     if [ "$rc" -eq 0 ]; then
         pass "$shell: the uninstaller exited 0"

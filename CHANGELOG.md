@@ -13,6 +13,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of 0 (#1105).
 - On macOS, script segments whose file, directories or ancestors carry an ACL
   letting another principal write them are no longer trusted (#1106).
+- A detached HEAD no longer shows as `main` when git cannot report its short
+  hash; the prompt shows the commit's first 7 characters (#1138).
+- A `Makefile` no longer makes Go, Rust or other repositories show C. It counts
+  as C evidence only when no other language has any, and no longer marks a
+  project root outside git (#1139).
+- A background git revalidation that overlaps a file edit no longer discards
+  the fresh branch and ahead/behind counts, and the 30 s status TTL counts from
+  the last full scan (#1140).
+- `gpy-agent start` no longer evicts an agent that is only overloaded and
+  dropping connections (#1133).
+- `agent.enabled = false` now stops `gpy start`/`gpy-agent start` and the
+  shells' autostart even when another key in `config.toml` is invalid;
+  `gpy-agent theme export` then exports `GPY_AGENT_ENABLED=0` (#1135).
+- The Bash rc block written by `gpy setup` loads GPY only in interactive Bash,
+  so `bash -lc` no longer starts the agent, and the login loader no longer
+  makes `sh` login shells error on `source`. `gpy setup` upgrades an unedited
+  block and loader from an earlier release (#1120).
+- A Fish shell where GPY failed to load no longer exports
+  `GPY_AGENT_ENABLED=0`, so nested shells and new tmux panes still load GPY
+  (#1121).
+- The Zsh integration keeps a `TRAPURG` function or `trap ... URG` defined
+  before it loads and runs it after its own handler (#1122).
+- `scripts/uninstall.sh` keeps `~/.config/gpy` by default; `--purge-config`
+  deletes it (#1118).
+- The theme-export cache directory every shell sources is created owner-only
+  (`0700`) (#1123).
+- `install-dev.fish` warns about `gpy`/`gpy-agent` copies that shadow the
+  install and prints the `rm` command instead of deleting them (#1124).
+- `gpy doctor` exits 0 when its only findings are warnings (agent not running
+  yet or too busy to answer, outdated scripts, unknown config keys). An agent
+  that holds its socket but never answers now fails (#1175).
+- Config-changing commands no longer print "Agent not reloaded" when no agent
+  is running. `gpy config open` says when it created the file and which opener
+  it used, and fails with a hint when no editor is available (#1177).
+
+### Added
+
+- `gpy doctor` warns when Bash or Fish has no IPC client (`socat` or
+  `nc -U`) (#1175).
+- `gpy theme save --yes` skips the overwrite confirmation (#1177).
+
+### Changed
+
+- GPY no longer writes `core.untrackedCache = true` into repositories'
+  `.git/config`. The agent only adds the untracked cache to the index, and
+  `gpy-agent oneshot` leaves the repository untouched. Remove an earlier
+  GPY-written value with `git config --unset core.untrackedCache` (#1119).
+- File-edit refreshes run one pathspec `git status` instead of a full
+  status plus stash, branch and repository-state queries (#1140).
+- `gpy-agent start` reads the running agent's version and protocol from its
+  status reply and replaces an agent on a different protocol, even a newer
+  one. The `agent.version` marker file is no longer written (#1134).
+- **Breaking:** `gpy theme save` exits 1 when the overwrite is declined or
+  cannot be confirmed (it exited 0 after `Aborted.`) (#1177).
 
 ## [0.8.0] - 2026-10-29
 

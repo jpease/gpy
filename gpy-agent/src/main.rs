@@ -10,7 +10,10 @@ use clap::{Parser, Subcommand};
 use gpy_agent::{
     Result, VERSION,
     agent::{
-        lifecycle::start::start_background_agent,
+        lifecycle::{
+            START_PROGRESS_LINE, StartNotice, StatusProbe, probe_status, protocol_mismatch,
+            start_background_agent,
+        },
         oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request},
     },
     config::schema,
@@ -228,6 +231,7 @@ impl From<OneshotCommands> for OneshotRequest {
     reason = "oneshot failure must exit 1 after printing its JSON error; the caller returns no exit code"
 )]
 fn handle_oneshot_command(command: OneshotCommands) {
+    gpy_agent::git::native::NativeGitBackend::disable_untracked_cache_setup();
     let request = OneshotRequest::from(command);
 
     match handle_oneshot_request(&request) {
@@ -287,7 +291,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Commands::Start { socket } => {
             apply_socket_override(socket)?;
-            start_background_agent()?;
+            start_background_agent(|notice| eprintln!("{}", notice_text(&notice)))?;
         }
         Commands::Stop { socket } => {
             apply_socket_override(socket)?;
@@ -295,10 +299,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Commands::Status { socket } => {
             apply_socket_override(socket)?;
-            let liveness = tokio::runtime::Runtime::new()?.block_on(print_agent_status())?;
-            return Ok(match liveness {
-                AgentLiveness::Responding => ExitCode::SUCCESS,
-                AgentLiveness::NotRunning | AgentLiveness::Unreachable => {
+            let outcome = print_agent_status()?;
+            return Ok(match outcome {
+                StatusOutcome::Responding => ExitCode::SUCCESS,
+                StatusOutcome::Busy | StatusOutcome::NotRunning | StatusOutcome::Unreachable => {
                     ExitCode::from(STATUS_NOT_RUNNING_EXIT_CODE)
                 }
             });
@@ -320,21 +324,51 @@ const STATUS_NOT_RUNNING_EXIT_CODE: u8 = 1;
 
 /// What `gpy-agent status` found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentLiveness {
-    /// The socket exists and the agent answered a status query.
+pub(crate) enum StatusOutcome {
+    /// The agent answered a status query.
     Responding,
-    /// No socket file: nothing is listening.
+    /// The agent accepts connections but is closing them without a reply.
+    Busy,
+    /// No socket file, or nothing listening on it.
     NotRunning,
-    /// A socket file exists but the agent did not answer.
+    /// The agent did not answer, or the probe could not be made.
     Unreachable,
+}
+
+/// The stderr text for a start notice.
+fn notice_text(notice: &StartNotice) -> String {
+    match notice {
+        StartNotice::Disabled => {
+            "GPY Agent disabled via config (agent.enabled = false); skipping start".to_owned()
+        }
+        StartNotice::Unverifiable => {
+            "Could not verify whether the GPY agent is running; leaving its socket alone".to_owned()
+        }
+        StartNotice::EvictingUnanswered => "GPY agent accepted a connection but did not answer across every retry; evicting the wedged agent...".to_owned(),
+        StartNotice::VersionMismatch { running } => format!(
+            "Detected version mismatch (running: {running}, binary: {VERSION})\nRestarting agent with this binary's version ({VERSION})..."
+        ),
+        StartNotice::ProtocolMismatch { running } => format!(
+            "Detected protocol mismatch (running: protocol {running}, binary: protocol {})\nRestarting agent with this binary's version ({VERSION})...",
+            gpy_agent::ipc::protocol::PROTOCOL_VERSION
+        ),
+        StartNotice::StaleSocket => "Cleaning up stale socket...".to_owned(),
+        StartNotice::AlreadyRunning => "GPY Agent is already running and responsive".to_owned(),
+        StartNotice::Busy => {
+            "GPY Agent is running but too busy to answer; leaving it alone".to_owned()
+        }
+        StartNotice::NewerRunning { running } => format!(
+            "A newer GPY agent ({running}) is already running; not replacing it with {VERSION}"
+        ),
+        StartNotice::Starting => START_PROGRESS_LINE.to_owned(),
+    }
 }
 
 /// Print the status report and return what it found.
 ///
 /// # Errors
 /// Returns an error if the socket path cannot be determined.
-async fn print_agent_status() -> Result<AgentLiveness> {
-    use gpy_agent::agent::lifecycle::{check_protocol_version_compatibility, query_agent_status};
+fn print_agent_status() -> Result<StatusOutcome> {
     use gpy_agent::paths::get_socket_path;
 
     println!("GPY Agent Status");
@@ -353,11 +387,11 @@ async fn print_agent_status() -> Result<AgentLiveness> {
 
     if !socket_path.exists() {
         println!("Status: Not Running (socket not found)");
-        return Ok(AgentLiveness::NotRunning);
+        return Ok(StatusOutcome::NotRunning);
     }
 
-    match query_agent_status().await {
-        Ok(status) => {
+    Ok(match probe_status(&socket_path) {
+        StatusProbe::Answered(status) => {
             println!("Status: Running and Responding");
             println!("Agent Version: {}", status.version);
             println!("Protocol Version: {}", status.protocol_version);
@@ -365,14 +399,41 @@ async fn print_agent_status() -> Result<AgentLiveness> {
             println!("Registered Clients: {}", status.registered_clients);
             println!("Cache Entries: {}", status.cache_entries);
 
-            check_protocol_version_compatibility(status.protocol_version);
-            Ok(AgentLiveness::Responding)
+            if let Some(mismatch) = protocol_mismatch(status.protocol_version) {
+                print_protocol_mismatch(mismatch.running, mismatch.expected);
+            }
+            StatusOutcome::Responding
         }
-        Err(e) => {
+        StatusProbe::Busy => {
+            println!("Status: Running but busy (not answering right now)");
+            StatusOutcome::Busy
+        }
+        StatusProbe::NotListening(e) => {
             println!("Status: Connection failed - {e}");
-            Ok(AgentLiveness::Unreachable)
+            StatusOutcome::NotRunning
         }
-    }
+        StatusProbe::NoReply(e) | StatusProbe::Failed(e) => {
+            println!("Status: Connection failed - {e}");
+            StatusOutcome::Unreachable
+        }
+    })
+}
+
+/// Print the protocol-mismatch advice block.
+fn print_protocol_mismatch(running: u8, expected: u8) {
+    println!();
+    gpy_agent::commands::output::warn("Protocol version mismatch");
+    println!("=================================================");
+    println!("Running agent protocol version: {running}");
+    println!("Expected protocol version: {expected}");
+    println!();
+    println!("This may cause compatibility issues. Recommended actions:");
+    println!("  1. Restart the agent: gpy-agent stop && gpy-agent start");
+    println!("  2. If issues persist, update gpy and re-run: gpy setup");
+    println!();
+    println!("Fallback: Use oneshot mode if IPC fails:");
+    println!("  gpy-agent oneshot git --cwd . --format ansi");
+    println!("=================================================");
 }
 
 /// Stop the background agent gracefully.
@@ -444,7 +505,10 @@ fn export_theme(shell: gpy_agent::shell::Shell) -> Result<()> {
     // An invalid or half-written config must still export a usable prompt.
     let config = gpy_agent::config::loader::load_config().unwrap_or_else(|e| {
         gpy_agent::debug::warn_fallback("Config loading", "using defaults", &e);
-        gpy_agent::config::Config::default()
+        // Only the agent kill switch survives a broken file.
+        let mut config = gpy_agent::config::Config::default();
+        config.agent.enabled = gpy_agent::config::loader::agent_enabled();
+        config
     });
     let theme_name = &config.ui.theme;
 

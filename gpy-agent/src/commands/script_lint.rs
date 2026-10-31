@@ -5,9 +5,10 @@
 //! accepts bashisms that a real `sh` (the Debian/Ubuntu `dash`, BusyBox) rejects.
 //! The linters only read the file; they never run it.
 
+use super::utils::find_in_path;
 use crate::plugin::{InputName, ScriptSegmentManifest};
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// Result of linting one script.
@@ -19,15 +20,6 @@ pub(crate) enum Lint {
     Failed { tool: &'static str, report: String },
     /// Neither `shellcheck` nor `dash` is on `PATH`.
     Unavailable,
-}
-
-/// `name` as an executable on `PATH`.
-fn find_in_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
 }
 
 /// Lint the script at `script`.

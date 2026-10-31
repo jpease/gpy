@@ -16,6 +16,32 @@ pub fn load_config() -> Result<Config> {
     }
 }
 
+/// Whether the agent may run (`agent.enabled`), the one reader of that switch.
+/// Uses the typed config when it loads; when validation fails it falls back to
+/// the raw `agent.enabled` boolean, so the kill switch survives an otherwise
+/// broken file. A missing, unreadable or unparsable file means enabled.
+#[must_use]
+pub fn agent_enabled() -> bool {
+    match schema::resolve_active_config(&schema::get_config_paths()) {
+        Some((_, Some(existing))) => {
+            std::fs::read_to_string(existing).map_or(true, |contents| agent_enabled_in(&contents))
+        }
+        _ => true,
+    }
+}
+
+/// [`agent_enabled`] for one file's contents.
+fn agent_enabled_in(contents: &str) -> bool {
+    if let Ok(config) = parse_config_toml(contents) {
+        return config.agent.enabled;
+    }
+    contents
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|table| table.get("agent")?.get("enabled")?.as_bool())
+        .unwrap_or(true)
+}
+
 /// Load configuration from a specific TOML file.
 ///
 /// # Errors
@@ -417,5 +443,30 @@ mod load_theme_from_path_tests {
             message.contains("not-a-real-theme"),
             "error message must name the theme (its file stem), got: {message}"
         );
+    }
+}
+
+#[cfg(test)]
+mod agent_enabled_tests {
+    use super::agent_enabled_in;
+
+    #[test]
+    fn agent_enabled_reads_the_raw_key_when_validation_fails() {
+        assert!(!agent_enabled_in(
+            "[agent]\nenabled = false\n[ui]\ntheme = 42\n"
+        ));
+        assert!(agent_enabled_in(
+            "[agent]\nenabled = true\n[ui]\ntheme = 42\n"
+        ));
+        assert!(!agent_enabled_in("[agent]\nenabled = false\n"));
+    }
+
+    #[test]
+    fn agent_enabled_defaults_to_true_for_unparsable_toml() {
+        assert!(agent_enabled_in("[agent\nenabled = false"));
+        assert!(agent_enabled_in(""));
+        assert!(agent_enabled_in(
+            "[agent]\nenabled = \"no\"\n[ui]\ntheme = 42\n"
+        ));
     }
 }

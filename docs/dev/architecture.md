@@ -688,8 +688,9 @@ Per-op fields, `format` values and reply shapes:
 
 ### Protocol Versioning
 
-`PROTOCOL_VERSION = 2` (`gpy-agent/src/ipc/protocol/mod.rs`); shells compare
-for equality and restart the agent on mismatch. There is no negotiation.
+`PROTOCOL_VERSION` (`gpy-agent/src/ipc/protocol/mod.rs`); shells compare for
+equality and restart the agent on mismatch, and `gpy-agent start` replaces a
+running agent that reports another protocol. There is no negotiation.
 
 ### Performance Characteristics
 

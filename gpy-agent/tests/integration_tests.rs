@@ -42,7 +42,7 @@ fn test_ipc_server_creation() {
 #[serial_test::serial]
 fn test_git_status_integration() {
     let _env = set_test_env();
-    let status = load_repository_state(".", None, 0, true)
+    let status = load_repository_state(".", 0, true)
         .expect("Git status loading should succeed for current repository")
         .expect("Should detect git repository in current directory");
 
@@ -84,7 +84,7 @@ fn test_git_status_with_temp_repo() {
     common::git::git_init(temp_path);
     fs::write(temp_path.join("test.txt"), "test content").expect("write test.txt");
 
-    let status = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true)
+    let status = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true)
         .expect("Git status should succeed for freshly initialized repository")
         .expect("freshly initialized repository should be detected");
     assert!(
@@ -99,12 +99,7 @@ fn test_git_status_with_temp_repo() {
 
 #[test]
 fn test_git_status_error_handling() {
-    let result = load_repository_state(
-        "/absolutely/nonexistent/path/that/cannot/exist",
-        None,
-        0,
-        true,
-    );
+    let result = load_repository_state("/absolutely/nonexistent/path/that/cannot/exist", 0, true);
 
     assert!(
         matches!(result, Ok(None) | Err(_)),

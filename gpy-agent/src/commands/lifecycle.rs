@@ -1,7 +1,7 @@
 //! `gpy start|stop|restart|status`, delegated to the `gpy-agent` binary.
 
 use super::utils::agent_binary;
-use crate::agent::lifecycle::start::START_PROGRESS_LINE;
+use crate::agent::lifecycle::START_PROGRESS_LINE;
 use crate::deadline::Deadline;
 use crate::{Error, Result};
 use std::io::{BufRead, BufReader};
@@ -126,7 +126,7 @@ fn restart_start() -> Result<()> {
     forwarded?;
     ensure_success("start", status)?;
 
-    if !agent_enabled() {
+    if !crate::config::loader::agent_enabled() {
         return Ok(());
     }
 
@@ -152,12 +152,6 @@ fn forward_start_stderr(child: &mut Child) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// `agent.enabled`; `true` when the config cannot be loaded, so a failed
-/// start still surfaces through the readiness wait.
-fn agent_enabled() -> bool {
-    crate::config::loader::load_config().map_or(true, |config| config.agent.enabled)
 }
 
 /// Poll the agent socket until it responds, for up to [`AGENT_READY_WAIT`].

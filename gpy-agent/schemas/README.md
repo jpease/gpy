@@ -31,7 +31,7 @@ An unrecognized `format` silently falls back to `json`.
 
 ## Version Compatibility
 
-These schemas correspond to protocol version 2 (see `gpy-agent/src/ipc/protocol/mod.rs`).
+These schemas correspond to the protocol version defined by `PROTOCOL_VERSION` in `gpy-agent/src/ipc/protocol/mod.rs`.
 
 ## Usage
 

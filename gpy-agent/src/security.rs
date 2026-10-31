@@ -93,7 +93,16 @@ const MAX_PATH_LENGTH: usize = 4096;
 /// Wire-size cap shared by the connection guard and `ipc::protocol`.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 
+/// Connections accepted per second, shared by all clients. It bounds the accept
+/// loop's work when one client loops; an interactive prompt render sends about
+/// one request per segment, far below it. Over it, a connection is closed
+/// without a reply.
 const DEFAULT_MAX_CONNECTIONS_PER_SEC: u32 = 1000;
+
+/// Connections served at once. Each may hold a blocking-pool thread while its
+/// handler runs; 200 stays below tokio's default of 512 blocking threads, and
+/// the connection read/write timeouts (`agent.timeout_seconds`) bound how long
+/// a connection holds a slot.
 const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 200;
 
 /// Security limits for the IPC server.

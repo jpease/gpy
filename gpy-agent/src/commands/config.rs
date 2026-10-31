@@ -160,19 +160,26 @@ pub fn open() -> Result<()> {
         std::fs::create_dir_all(parent)
             .map_err(|e| Error::config(format!("failed to create config directory: {e}")))?;
     }
-    match crate::fs_util::create_new(&config_path, NEW_CONFIG_HEADER.as_bytes()) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+    let created = match crate::fs_util::create_new(&config_path, NEW_CONFIG_HEADER.as_bytes()) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
         Err(e) => {
             return Err(Error::config(format!(
                 "failed to create config file {}: {e}",
                 config_path.display()
             )));
         }
+    };
+    if created {
+        println!("Created config: {}", config_path.display());
     }
 
-    launch_editor(&config_path)?;
-    println!("Opened config: {}", config_path.display());
+    if let Some(program) = launch_editor(&config_path)? {
+        println!(
+            "Opened {} in the default editor ({program})",
+            config_path.display()
+        );
+    }
     Ok(())
 }
 
@@ -218,14 +225,16 @@ pub fn list(filter: Option<&str>) {
 const ACCESS_WIDTH: usize = "read-write".len();
 
 /// Launch `$VISUAL`, `$EDITOR`, or the platform opener on `config_path`.
-fn launch_editor(config_path: &std::path::Path) -> Result<()> {
+/// Returns the opener's program name when the platform opener ran (it returns
+/// before the user is done editing), `None` after a blocking editor.
+fn launch_editor(config_path: &std::path::Path) -> Result<Option<String>> {
     let configured = ["VISUAL", "EDITOR"]
         .into_iter()
         .filter_map(|var| std::env::var(var).ok())
         .find(|editor| !editor.trim().is_empty());
     configured.map_or_else(
-        || launch_default_editor(config_path),
-        |editor| launch_shell_editor(&editor, config_path),
+        || launch_default_editor(config_path).map(Some),
+        |editor| launch_shell_editor(&editor, config_path).map(|()| None),
     )
 }
 
@@ -272,7 +281,7 @@ fn linux_opener() -> &'static str {
 }
 
 /// Launch the platform-default file opener for the config path.
-fn launch_default_editor(config_path: &std::path::Path) -> Result<()> {
+fn launch_default_editor(config_path: &std::path::Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut cmd = Command::new("open");
@@ -295,12 +304,19 @@ fn launch_default_editor(config_path: &std::path::Path) -> Result<()> {
     };
 
     let program = command.get_program().to_string_lossy().into_owned();
-    let status = command
-        .status()
-        .map_err(|e| Error::process(program.clone(), e.to_string()))?;
+    let status = command.status().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            Error::config(format!(
+                "no editor found: set $VISUAL or $EDITOR (config file: {})",
+                config_path.display()
+            ))
+        } else {
+            Error::process(program.clone(), e.to_string())
+        }
+    })?;
 
     if status.success() {
-        Ok(())
+        Ok(program)
     } else {
         Err(Error::process(
             program,

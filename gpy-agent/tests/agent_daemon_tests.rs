@@ -390,7 +390,6 @@ fn agent_git_ansi(repo: &Path) -> Result<String> {
         .get();
     let status = gpy_agent::git::native::NativeGitBackend::get_complete_status(
         repo,
-        None,
         config.git.max_ahead_behind,
         config.git.stash_enabled,
         std::time::Duration::from_secs(config.git.timeout_seconds.get()),

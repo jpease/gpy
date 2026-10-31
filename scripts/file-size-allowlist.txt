@@ -1,4 +1,4 @@
 # Rust files over the 800-line cap (check-file-size.py). A listed file may
 # not grow; lower its size when it shrinks. Never add a file or raise a size
 # without saying why in the commit.
-942 gpy-agent/src/agent/events/mod.rs
+936 gpy-agent/src/agent/events/mod.rs

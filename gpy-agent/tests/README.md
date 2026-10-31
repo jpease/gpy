@@ -24,6 +24,8 @@ to the code in `src/`.
     that override one field; `wait_for_socket`.
   - `env_guard.rs` — `EnvGuard`: restores every environment variable it
     touched on drop, including when an assertion fails.
+  - `fake_agent.rs` — `FakeAgent`/`Behaviour`: a Unix-socket responder
+    modelling an alive, wedged, load-shedding or old-version agent (Unix-only).
   - `fixtures.rs` — `ServerGuard` (aborts a spawned server task on drop),
     `TempSocket`, `gpy_test_root()`.
   - `git.rs` — every git command the test code runs: `git`, `git_output`,

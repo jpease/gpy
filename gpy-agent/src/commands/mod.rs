@@ -13,6 +13,7 @@ pub mod debug_paths;
 /// System health checks.
 pub mod doctor;
 mod doctor_bundled;
+mod doctor_ipc;
 mod doctor_themes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
@@ -28,6 +29,8 @@ pub mod palette;
 pub mod plugin;
 /// Theme files shipped in a plugin's `themes/` directory, for `gpy plugin validate`.
 mod plugin_themes;
+/// The `gpy-init` rc-file block shared by the setup steps.
+mod rc_block;
 /// Static checks of script segment files for `gpy plugin validate`.
 mod script_lint;
 /// Timed trial run of a script segment for `gpy doctor`.

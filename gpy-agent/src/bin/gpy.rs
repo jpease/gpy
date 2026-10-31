@@ -171,13 +171,16 @@ enum ThemeAction {
     /// Save the active theme as a theme file that extends it (writes nothing
     /// when the active theme already is your theme file)
     Save {
-        /// Theme name to save as (defaults to the currently active theme's
-        /// own name, always prompting first)
+        /// Theme name to save as (default: the active theme's own name; asks
+        /// before writing unless --yes)
         name: Option<String>,
         /// Write a full, independent copy of the active theme instead of an
         /// overlay that follows it
         #[arg(long)]
         full: bool,
+        /// Skip the confirmation question
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Validate a theme by name or file path (defaults to active theme)
     Validate {
@@ -364,7 +367,9 @@ fn run_theme(action: ThemeAction) -> Result<()> {
         ThemeAction::New { name, from, full } => {
             commands::theme_write::new(&name, from.as_deref(), full)
         }
-        ThemeAction::Save { name, full } => commands::theme_write::save(name.as_deref(), full),
+        ThemeAction::Save { name, full, yes } => {
+            commands::theme_write::save(name.as_deref(), full, yes)
+        }
         ThemeAction::Validate { target } => commands::theme::validate(target.as_deref()),
         ThemeAction::Diff { name } => commands::theme_override::diff(&name),
         ThemeAction::Reset { name } => commands::theme_override::reset(&name),
@@ -496,6 +501,7 @@ fn strip_hidden_for_completions(cmd: &clap::Command) -> clap::Command {
 /// Report failures as one `Error: ...` line and exit 1; clap usage errors
 /// exit 2 before this runs.
 fn main() -> ExitCode {
+    gpy_agent::git::native::NativeGitBackend::disable_untracked_cache_setup();
     let default_hook = std::panic::take_hook();
     gpy_agent::error::install_broken_pipe_hook(move |info| default_hook(info));
     let cli = Cli::parse();

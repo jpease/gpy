@@ -26,7 +26,7 @@ use crate::warn_log;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Semaphore, broadcast};
@@ -366,6 +366,7 @@ impl EndpointHandle {
         ownership_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         ownership_timer.reset();
 
+        let mut rejections = RejectionLog::new();
         loop {
             tokio::select! {
                 result = listener.accept() => {
@@ -390,7 +391,12 @@ impl EndpointHandle {
                     debug_log!("server", "Connection accepted");
 
                     if !self.rate_limiter.allow_connection() {
-                        warn_log!("server", "Rate limit exceeded, rejecting connection");
+                        if let Some(count) = rejections.record(Instant::now()) {
+                            warn_log!(
+                                "server",
+                                "Rate limit exceeded: rejected {count} connections in the last second"
+                            );
+                        }
                         continue; // Implicit drop
                     }
 
@@ -506,7 +512,9 @@ impl EndpointHandle {
     }
 
     /// Close without replying when the connection semaphore is saturated. The
-    /// request format is unknown, and shells treat no reply as an unreachable agent.
+    /// request format is unknown, and shells treat no reply as an unreachable
+    /// agent. `gpy-agent start` reads the close as a busy agent and leaves it
+    /// running.
     #[cfg(unix)]
     fn reject_connection_busy(stream: UnixStream) {
         debug_log!(
@@ -538,6 +546,41 @@ impl EndpointHandle {
     /// Always fails on this platform.
     pub async fn start(&mut self) -> Result<()> {
         Err(crate::ipc::native_windows_unsupported())
+    }
+}
+
+/// Counts rate-limit rejections so the accept loop logs at most once per
+/// second, with the number rejected since the previous line.
+#[cfg(unix)]
+struct RejectionLog {
+    /// Start of the current one-second window; `None` before the first rejection.
+    window_start: Option<Instant>,
+    /// Rejections recorded since the last line.
+    count: u32,
+}
+
+#[cfg(unix)]
+impl RejectionLog {
+    /// A log that reports on its first rejection.
+    const fn new() -> Self {
+        Self {
+            window_start: None,
+            count: 0,
+        }
+    }
+
+    /// Record one rejection at `now`. Returns the number of rejections to log
+    /// (including this one) when a second has passed since the last line.
+    fn record(&mut self, now: Instant) -> Option<u32> {
+        self.count = self.count.saturating_add(1);
+        let due = self
+            .window_start
+            .is_none_or(|start| now.saturating_duration_since(start) >= Duration::from_secs(1));
+        if !due {
+            return None;
+        }
+        self.window_start = Some(now);
+        Some(std::mem::take(&mut self.count))
     }
 }
 
@@ -898,5 +941,21 @@ mod accept_error_tests {
         let err = Error::new(ErrorKind::PermissionDenied, "fatal");
         assert!(!accept_error_is_transient(&err));
         assert!(!accept_error_is_fd_exhaustion(&err));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod rejection_log_tests {
+    use super::RejectionLog;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn rejection_log_reports_once_per_second_with_the_count() {
+        let t0 = Instant::now();
+        let mut log = RejectionLog::new();
+        assert_eq!(log.record(t0), Some(1));
+        assert_eq!(log.record(t0 + Duration::from_millis(100)), None);
+        assert_eq!(log.record(t0 + Duration::from_millis(200)), None);
+        assert_eq!(log.record(t0 + Duration::from_millis(1100)), Some(3));
     }
 }

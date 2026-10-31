@@ -195,15 +195,9 @@ fn save_feedback_printed_after_leaving_alt_screen() {
     let leave = last_position(&output, LEAVE_ALT_SCREEN).expect("alt screen left");
     let saved = last_position(&output, b"Saved configuration to")
         .unwrap_or_else(|| panic!("no save confirmation; captured: {shown:?}"));
-    let notice = last_position(&output, b"Agent not reloaded")
-        .unwrap_or_else(|| panic!("no not-reloaded notice; captured: {shown:?}"));
     assert!(
         saved > leave,
         "save confirmation must follow leaving the alternate screen; captured: {shown:?}"
-    );
-    assert!(
-        notice > saved,
-        "not-reloaded notice must follow the confirmation; captured: {shown:?}"
     );
 }
 
