@@ -1,9 +1,9 @@
 //! `gpy-agent start`, `status` and `theme export` against fake and real
 //! agents. Socket-dependent, so Unix-only.
 #![cfg(unix)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
+#![allow(clippy::expect_used, reason = "test code may panic on failure")]
+#![allow(clippy::panic, reason = "test code may panic on failure")]
 
 mod common;
 

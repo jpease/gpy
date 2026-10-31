@@ -6,8 +6,8 @@
 //! `bash` and `dash` login shells in it.
 
 #![cfg(unix)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used, reason = "test code may panic on failure")]
+#![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
 
 #[path = "common/setup_harness.rs"]
 mod setup_harness;
