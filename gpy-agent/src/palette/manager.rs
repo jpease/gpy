@@ -105,9 +105,11 @@ impl PaletteManager {
         Self::user_palettes_dir().join(format!("{name}.toml"))
     }
 
+    /// Load only the embedded builtin `name`; never reads a user file.
+    ///
     /// # Errors
     /// Returns an error for an unknown builtin or invalid embedded TOML.
-    fn load_builtin(name: &str) -> Result<PaletteConfig> {
+    pub(crate) fn load_builtin(name: &str) -> Result<PaletteConfig> {
         let Some((_, content)) = BUILTIN_PALETTES.iter().find(|(n, _)| *n == name) else {
             return Err(Error::config(format!(
                 "No palette named '{name}' found (checked user path and builtins)"
@@ -122,14 +124,30 @@ impl PaletteManager {
     }
 
     /// # Errors
-    /// Returns an error if the file cannot be read or its TOML is invalid.
+    /// Returns an error naming the palette and file if it cannot be read,
+    /// parsed, or validated.
     fn load_from_path(path: &std::path::Path, stem_fallback: &str) -> Result<PaletteConfig> {
-        let content = std::fs::read_to_string(path).map_err(|e| Error::config(e.to_string()))?;
-        let mut cfg: PaletteConfig = toml::from_str(&content)?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            Error::config(format!(
+                "cannot read palette '{stem_fallback}' from {}: {e}",
+                path.display()
+            ))
+        })?;
+        let mut cfg: PaletteConfig = toml::from_str(&content).map_err(|e| {
+            Error::config(format!(
+                "invalid palette '{stem_fallback}' in {}: {e}",
+                path.display()
+            ))
+        })?;
         if cfg.name.is_empty() {
             stem_fallback.clone_into(&mut cfg.name);
         }
-        cfg.validate()?;
+        cfg.validate().map_err(|e| {
+            Error::config(format!(
+                "invalid palette '{stem_fallback}' in {}: {e}",
+                path.display()
+            ))
+        })?;
         Ok(cfg)
     }
 

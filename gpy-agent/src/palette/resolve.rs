@@ -2,10 +2,12 @@
 //!
 //! [`load_palette`] reports read/parse/validation failures so a long-lived owner
 //! (the daemon's reload) can keep its last good palette. The render-path helpers
-//! degrade to an empty palette so a bad `ui.palette` never breaks the prompt.
+//! degrade to the embedded builtin default palette so a bad `ui.palette` never
+//! breaks the prompt.
 
 use crate::Result;
 use crate::config::Config;
+use crate::config::types::PaletteName;
 use crate::palette::PaletteManager;
 use crate::template::Palette;
 
@@ -25,23 +27,32 @@ pub fn load_palette(name: &str) -> Result<Palette> {
     Ok(PaletteManager::new(name)?.get().to_template_palette())
 }
 
-/// Build the active [`Palette`] from `config.ui.palette`; empty on load failure.
+/// Build the active [`Palette`] from `config.ui.palette`; the builtin default on load failure.
 #[must_use]
 pub fn active_palette(config: &Config) -> Palette {
     palette_by_name(config.ui.palette.as_str())
 }
 
-/// Build a [`Palette`] for an arbitrary `name` (e.g. wizard preview); empty on load failure.
+/// Build a [`Palette`] for an arbitrary `name` (e.g. wizard preview); the
+/// builtin default palette on load failure (warned).
 #[must_use]
 pub fn palette_by_name(name: &str) -> Palette {
     load_palette(name).unwrap_or_else(|error| {
         crate::debug::warn_fallback(
             &format!("Palette '{name}' loading"),
-            "using empty palette",
+            "using the builtin default palette",
             &error,
         );
-        Palette::default()
+        builtin_default_palette()
     })
+}
+
+/// The embedded builtin default palette; never reads a user file.
+fn builtin_default_palette() -> Palette {
+    PaletteManager::load_builtin(PaletteName::DEFAULT)
+        .ok()
+        // Empty only with a corrupt binary: the embedded palette always parses.
+        .map_or_else(Palette::default, |cfg| cfg.to_template_palette())
 }
 
 // Builtin default resolution is tested in `tests/palette_manager_tests.rs`.
@@ -50,13 +61,27 @@ mod tests {
 
     use super::{active_palette, load_palette, palette_by_name};
     use crate::config::Config;
+    use crate::palette::PaletteManager;
 
     #[test]
-    fn palette_by_name_falls_back_to_empty_for_unknown_name() {
+    fn palette_by_name_falls_back_to_builtin_default_for_unknown_name() {
         let palette = palette_by_name("definitely-not-a-real-palette-name");
         assert!(
-            palette.get("green").is_none(),
-            "unknown palette name should fall back to an empty palette, not error"
+            palette.get("orange").is_some(),
+            "unknown palette name should fall back to the builtin default palette, not error"
+        );
+    }
+
+    #[test]
+    fn palette_by_name_ignores_a_broken_user_default_palette() {
+        let path = PaletteManager::palette_path("default");
+        std::fs::create_dir_all(path.parent().expect("palettes dir")).expect("create dir");
+        std::fs::write(&path, "name = [\n").expect("write broken palette");
+        let palette = palette_by_name("default");
+        std::fs::remove_file(&path).expect("remove broken palette");
+        assert!(
+            palette.get("orange").is_some(),
+            "a broken user default.toml must not shadow the embedded fallback"
         );
     }
 

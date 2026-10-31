@@ -275,6 +275,7 @@ fn non_segment_responses_render_empty() {
         watched_repos: 0,
         registered_clients: 0,
         cache_entries: 0,
+        pid: None,
     };
     for dialect in PromptDialect::ALL {
         for response in [&Response::Ack, &status] {

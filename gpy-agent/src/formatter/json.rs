@@ -143,8 +143,9 @@ mod tests {
                     watched_repos: 1,
                     registered_clients: 2,
                     cache_entries: 3,
+                    pid: Some(4321),
                 },
-                r#"{"AgentStatus":{"cache_entries":3,"protocol_version":2,"registered_clients":2,"version":"1.0.0","watched_repos":1}}"#,
+                r#"{"AgentStatus":{"cache_entries":3,"pid":4321,"protocol_version":2,"registered_clients":2,"version":"1.0.0","watched_repos":1}}"#,
             ),
             (
                 Response::Directory {

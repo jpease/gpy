@@ -13,7 +13,8 @@ pub struct PaletteCache {
 
 impl PaletteCache {
     /// Build the initial cache from the active config. With no earlier palette
-    /// to keep, an unusable one starts empty (warned) rather than failing startup.
+    /// to keep, an unusable one starts as the builtin default (warned) rather
+    /// than failing startup.
     #[must_use]
     pub fn from_config(config: &Config) -> Self {
         let palette = crate::palette::active_palette(config);
