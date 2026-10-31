@@ -4,6 +4,9 @@
 # core/init.fish itself is not gated: tests and ci-bench source it.
 status is-interactive; or return
 
+# A retry (re-sourcing this file after fixing the cause) starts clean.
+set -e __gpy_load_failed
+
 # Disabled mode must still leave fish_prompt's globals defined (see bottom).
 set -l gpy_needs_prompt_defaults 0
 
@@ -24,13 +27,11 @@ else
 
     if not test -f "$gpy_install_dir/core/init.fish"
         echo "gpy[init]: core files not found at $gpy_install_dir - GPY disabled" >&2
-        set -gx GPY_AGENT_ENABLED 0
-        set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
+        set -g __gpy_load_failed 1
         set gpy_needs_prompt_defaults 1
     else if not source "$gpy_install_dir/core/init.fish" 2>/dev/null
         echo "gpy[init]: failed to load GPY safely - using fallback mode" >&2
-        set -gx GPY_AGENT_ENABLED 0
-        set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
+        set -g __gpy_load_failed 1
         set gpy_needs_prompt_defaults 1
     end
 end

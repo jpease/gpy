@@ -163,6 +163,7 @@ echo "Scenario D: conf.d/gpy_init.fish install-not-found branch"
 set -l scenario_d_home (mktemp -d)
 mkdir -p "$scenario_d_home/.config/fish/gpy/core"
 cp "$repo_root/fish/core/defaults.fish" "$scenario_d_home/.config/fish/gpy/core/defaults.fish"
+cp "$repo_root/fish/core/flags.fish" "$scenario_d_home/.config/fish/gpy/core/flags.fish"
 
 set -l scenario_d_err (mktemp)
 set -l scenario_d_out (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_home/.config \
@@ -196,6 +197,26 @@ else
     fail "install-not-found path rendered an empty prompt"
 end
 
+set -l scenario_d_probe (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_home/.config \
+    GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
+    fish --no-config -i -c '
+        source fish/conf.d/gpy_init.fish
+        __gpy_agent_enabled; and echo "enabled=[yes]"; or echo "enabled=[no]"
+        fish --no-config -c \'echo "child=[$GPY_AGENT_ENABLED]"\'
+    ' </dev/null 2>/dev/null | string collect)
+
+if string match -q '*enabled=\[no\]*' -- $scenario_d_probe
+    pass "install-not-found path disables __gpy_agent_enabled"
+else
+    fail "install-not-found path left __gpy_agent_enabled on: $scenario_d_probe"
+end
+
+if string match -q '*child=\[0\]*' -- $scenario_d_probe
+    fail "install-not-found path exported GPY_AGENT_ENABLED=0 to children"
+else
+    pass "install-not-found path did not export GPY_AGENT_ENABLED=0"
+end
+
 rm -f $scenario_d_err
 rm -rf $scenario_d_home
 
@@ -211,6 +232,7 @@ set -l scenario_e_home (mktemp -d)
 mkdir -p "$scenario_e_home/.config/fish/gpy/core"
 echo 'return 1' >"$scenario_e_home/.config/fish/gpy/core/init.fish"
 cp "$repo_root/fish/core/defaults.fish" "$scenario_e_home/.config/fish/gpy/core/defaults.fish"
+cp "$repo_root/fish/core/flags.fish" "$scenario_e_home/.config/fish/gpy/core/flags.fish"
 
 set -l scenario_e_err (mktemp)
 set -l scenario_e_out (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
@@ -245,6 +267,58 @@ else
 end
 
 rm -f $scenario_e_err
+
+# A failed load disables this shell only: the failure is recorded in a
+# non-exported global, so children see no exported "0" and no leaked marker.
+set -l scenario_e_probe (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
+    GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
+    fish --no-config -i -c '
+        source fish/conf.d/gpy_init.fish
+        __gpy_agent_enabled; and echo "enabled=[yes]"; or echo "enabled=[no]"
+        __gpy_supervisor_enabled; and echo "supervisor=[yes]"; or echo "supervisor=[no]"
+        fish --no-config -c \'echo "child=[$GPY_AGENT_ENABLED]"\'
+        env | string match -q "__gpy_load_failed=*"; and echo "leak=[yes]"; or echo "leak=[no]"
+    ' </dev/null 2>/dev/null | string collect)
+
+if string match -q '*enabled=\[no\]*' -- $scenario_e_probe
+    pass "fallback-mode path disables __gpy_agent_enabled"
+else
+    fail "fallback-mode path left __gpy_agent_enabled on: $scenario_e_probe"
+end
+
+if string match -q '*supervisor=\[no\]*' -- $scenario_e_probe
+    pass "fallback-mode path disables __gpy_supervisor_enabled"
+else
+    fail "fallback-mode path left __gpy_supervisor_enabled on: $scenario_e_probe"
+end
+
+if string match -q '*child=\[0\]*' -- $scenario_e_probe
+    fail "fallback-mode path exported GPY_AGENT_ENABLED=0 to children"
+else
+    pass "fallback-mode path did not export GPY_AGENT_ENABLED=0"
+end
+
+if string match -q '*leak=\[no\]*' -- $scenario_e_probe
+    pass "fallback-mode path did not export __gpy_load_failed"
+else
+    fail "fallback-mode path exported __gpy_load_failed: $scenario_e_probe"
+end
+
+# Re-sourcing after the cause is fixed retries the load.
+set -l scenario_e_retry (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
+    GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
+    fish --no-config -i -c "
+        source fish/conf.d/gpy_init.fish
+        echo 'return 0' >$scenario_e_home/.config/fish/gpy/core/init.fish
+        source fish/conf.d/gpy_init.fish
+        __gpy_agent_enabled; and echo 'retry=[yes]'
+    " </dev/null 2>/dev/null | string collect)
+
+if string match -q '*retry=\[yes\]*' -- $scenario_e_retry
+    pass "re-sourcing conf.d/gpy_init.fish after the fix re-enables GPY"
+else
+    fail "re-sourcing conf.d/gpy_init.fish did not retry the load: $scenario_e_retry"
+end
 rm -rf $scenario_e_home
 
 # Summary
