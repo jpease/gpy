@@ -4,6 +4,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 
+#[cfg(unix)]
 use gpy_agent::config::defaults::DEFAULT_LANGUAGE_ICONS;
 use gpy_agent::config::types::DetectionMode;
 use gpy_agent::config::{Config, loader};

@@ -2,8 +2,10 @@
 //! sockets, fork, wait for readiness, and nudge registered shells after restart.
 
 #[cfg(unix)]
+use crate::Error;
+use crate::Result;
+#[cfg(unix)]
 use crate::deadline::Deadline;
-use crate::{Error, Result};
 #[cfg(unix)]
 use crate::{agent::Agent, debug_log};
 #[cfg(unix)]
