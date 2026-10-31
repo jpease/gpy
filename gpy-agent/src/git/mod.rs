@@ -131,6 +131,42 @@ pub(crate) fn parse_gitdir_link(content: &str, base: &Path) -> Option<PathBuf> {
     Some(resolve_relative_to(base, target))
 }
 
+/// Common git directory of a linked worktree; `None` for ordinary repos and
+/// submodules (no `commondir` pointer).
+pub(crate) fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
+    let common = crate::fs_util::read_small_file(&git_dir.join("commondir"), POINTER_READ_CAP)
+        .ok()
+        .and_then(|contents| join_commondir_pointer(git_dir, &contents))
+        .or_else(|| common_dir_from_worktrees_layout(git_dir))?;
+    (common != git_dir).then_some(common)
+}
+
+/// Parse `commondir` contents, joining relative paths onto `git_dir`.
+#[must_use]
+pub(crate) fn parse_commondir_pointer(git_dir: &Path, contents: &str) -> Option<PathBuf> {
+    let target = Path::new(contents.trim());
+    if target.as_os_str().is_empty() {
+        return None;
+    }
+    Some(resolve_relative_to(git_dir, target))
+}
+
+/// Resolve a `commondir` pointer (typically `../..`) to a canonical path.
+fn join_commondir_pointer(git_dir: &Path, contents: &str) -> Option<PathBuf> {
+    let resolved = parse_commondir_pointer(git_dir, contents)?;
+    fs::canonicalize(&resolved).ok()
+}
+
+/// Fallback when `commondir` is unreadable: git's (unpromised) layout is
+/// `<common>/worktrees/<name>`.
+fn common_dir_from_worktrees_layout(git_dir: &Path) -> Option<PathBuf> {
+    let parent = git_dir.parent()?;
+    if parent.file_name()? != "worktrees" {
+        return None;
+    }
+    fs::canonicalize(parent.parent()?).ok()
+}
+
 /// High-level repository states used for prompt rendering and IPC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

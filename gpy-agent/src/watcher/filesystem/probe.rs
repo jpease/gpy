@@ -203,7 +203,7 @@ pub(super) fn engage_poll_fallback(
     }
 
     // Built outside the lock: construction spawns a thread and scans.
-    let poll_watcher = match build_poll_watcher(event_tx, poll_interval) {
+    let poll_watcher = match build_poll_watcher(event_tx, poll_interval, Arc::clone(registry)) {
         Ok(watcher) => watcher,
         Err(error) => {
             // Keep the silent native backend; the reconcile remains the backstop.

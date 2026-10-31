@@ -3,12 +3,61 @@
 use super::{DebouncedEvent, PendingEvent, WatchRegistry, debouncer, filesystem};
 use crate::Result;
 use crate::sync_ext::MutexExt;
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+/// Threads that run debounced callbacks for one coordinator.
+const DISPATCH_WORKERS: usize = 4;
+
+/// Start the dispatch workers. They exit when every sender is gone, which
+/// happens once the flush thread ends; they are never joined, because a callback
+/// can run git for the full git timeout.
+fn spawn_dispatch_workers(
+    events: mpsc::Receiver<DebouncedEvent>,
+    callback: &Arc<EventCallback>,
+    stop_flag: &Arc<AtomicBool>,
+) {
+    let queue = Arc::new(Mutex::new(events));
+    for _ in 0..DISPATCH_WORKERS {
+        let queue_for_worker = Arc::clone(&queue);
+        let callback_for_worker = Arc::clone(callback);
+        let stop_for_worker = Arc::clone(stop_flag);
+        std::thread::spawn(move || {
+            dispatch_loop(&queue_for_worker, &callback_for_worker, &stop_for_worker);
+        });
+    }
+}
+
+/// Run callbacks for queued events until the queue closes or `stop_flag` is set.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a panicking callback must not shrink the dispatch pool"
+)]
+fn dispatch_loop(
+    queue: &Mutex<mpsc::Receiver<DebouncedEvent>>,
+    callback: &EventCallback,
+    stop_flag: &AtomicBool,
+) {
+    loop {
+        // Own statement: the receiver lock is released before the callback runs.
+        let next = queue.lock_or_recover().recv();
+        let Ok(event) = next else {
+            break;
+        };
+        if stop_flag.load(Ordering::Relaxed) {
+            break;
+        }
+        // A panicking callback must not shrink the pool.
+        if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(|| callback(event))) {
+            crate::debug_log!("watcher", "dispatch callback panicked: {panic:?}");
+        }
+    }
+}
 
 /// Callback invoked once an event has passed through debouncing.
 pub type EventCallback = Box<dyn Fn(DebouncedEvent) + Send + Sync>;
@@ -90,7 +139,8 @@ impl WatchCoordinator {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_flag_thread = Arc::clone(&stop_flag);
         let debouncer_for_thread = Arc::clone(&debouncer_arc);
-        let callback_for_thread = Arc::clone(&callback_arc);
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<DebouncedEvent>();
+        spawn_dispatch_workers(dispatch_rx, &callback_arc, &stop_flag);
         let flush_handle = std::thread::spawn(move || {
             loop {
                 while kick_rx.try_recv().is_ok() {}
@@ -101,14 +151,13 @@ impl WatchCoordinator {
                     let mut engine = debouncer_for_thread.lock_or_recover();
                     (engine.drain_expired_events(), engine.next_deadline())
                 };
-                // Dispatch each event on its own thread, off the flush loop
-                // and outside the debouncer lock, so a slow callback for one
-                // repo cannot delay flushing or delivery for another.
+                // Hand events to the fixed worker pool, off the flush loop and
+                // outside the debouncer lock, so up to `DISPATCH_WORKERS` slow
+                // repositories never delay another.
                 for event in expired {
-                    let callback_for_event = Arc::clone(&callback_for_thread);
-                    std::thread::spawn(move || {
-                        (callback_for_event)(event);
-                    });
+                    if dispatch_tx.send(event).is_err() {
+                        break;
+                    }
                 }
                 // A kick sent after the lock was released stays queued, so
                 // no wakeup is lost between the drain and this wait.

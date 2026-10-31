@@ -7,7 +7,11 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+
+/// Decides whether the repository rooted at the path may be watched. Built by
+/// the agent from configuration so the watcher does not depend on it.
+pub(crate) type RepoFilter = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
 
 /// All watcher state, shared by the coordinators and filesystem watcher of one
 /// process. Fields are independently locked: they are read on separate hot
@@ -24,6 +28,8 @@ pub struct WatchRegistry {
     config_paths: RwLock<HashSet<PathBuf>>,
     /// The effective `git.watch_worktree` setting.
     worktree_enabled: AtomicBool,
+    /// Which repositories may be watched; `None` allows all.
+    repo_filter: RwLock<Option<RepoFilter>>,
     /// Ignore caches consulted by the filesystem layer.
     ignore: filesystem::IgnoreCaches,
 }
@@ -43,6 +49,7 @@ impl WatchRegistry {
             common_gitdirs: RwLock::new(CommonGitDirs::new()),
             config_paths: RwLock::new(HashSet::new()),
             worktree_enabled: AtomicBool::new(env_watch_worktree_override().unwrap_or(true)),
+            repo_filter: RwLock::new(None),
             ignore,
         }
     }
@@ -56,6 +63,18 @@ impl WatchRegistry {
     pub(crate) fn set_worktree_enabled(&self, config_enabled: bool) {
         let effective = env_watch_worktree_override().unwrap_or(config_enabled);
         self.worktree_enabled.store(effective, Ordering::Relaxed);
+    }
+
+    /// Install the predicate deciding which repositories may be watched.
+    pub(crate) fn set_repo_filter(&self, filter: RepoFilter) {
+        *self.repo_filter.write_or_recover() = Some(filter);
+    }
+
+    /// Whether the repository at `root` may be watched; `true` until a filter is set.
+    pub(crate) fn repo_allowed(&self, root: &Path) -> bool {
+        // Clone out so the filter never runs under the lock.
+        let filter = self.repo_filter.read_or_recover().clone();
+        filter.is_none_or(|allowed| allowed(root))
     }
 
     /// The `.gitignore`/force-added caches for the watcher this registry backs.
@@ -91,14 +110,13 @@ impl WatchRegistry {
         self.roots.lock_or_recover().iter().cloned().collect()
     }
 
-    /// The longest watched root that is a prefix of `path`.
+    /// The deepest watched root that is an ancestor of (or equal to) `path`:
+    /// one hash lookup per path component, longest first.
     pub(crate) fn longest_root_prefix(&self, path: &Path) -> Option<PathBuf> {
         let guard = self.roots.lock_or_recover();
-        guard
-            .iter()
-            .filter(|root| path.starts_with(root))
-            .max_by_key(|root| root.as_os_str().len())
-            .cloned()
+        path.ancestors()
+            .find(|ancestor| guard.contains(*ancestor))
+            .map(Path::to_path_buf)
     }
 
     /// The subset of `candidates` that are registered watched roots.
@@ -158,6 +176,15 @@ impl WatchRegistry {
         let root = git_root.clone();
         drop(guard);
         is_significant.then_some(root)
+    }
+
+    /// Whether `path` lies under any registered external gitdir (submodule,
+    /// linked-worktree or `--separate-git-dir` gitdir), significant or not.
+    pub(crate) fn is_under_registered_external_gitdir(&self, path: &Path) -> bool {
+        self.external_gitdirs
+            .read_or_recover()
+            .keys()
+            .any(|git_dir| path.starts_with(git_dir))
     }
 
     /// Record that `git_root` (a canonical linked-worktree working root) depends on

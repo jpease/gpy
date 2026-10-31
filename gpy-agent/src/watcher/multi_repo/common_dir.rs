@@ -1,8 +1,8 @@
 //! Reference-counted watches on the common git directory shared by linked worktrees.
 
-use super::gitdir::resolve_common_dir;
 use super::{ArmedWatches, MultiRepoWatcher, WatchTarget, unwatch_logged};
 use crate::debug_log;
+use crate::git::resolve_common_dir;
 use crate::sync_ext::MutexExt;
 use crate::watcher::watch_set::WatchMode;
 use std::path::{Path, PathBuf};

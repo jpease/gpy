@@ -8,7 +8,9 @@
 //! `GPY_WATCH_WORKTREE` (`0`/`false`/`no`/`off` disables) overrides the config.
 
 mod common_dir;
-mod gitdir;
+mod scope;
+#[cfg(test)]
+mod scope_tests;
 
 use super::watch_set::WatchMode;
 use super::{EventCallback, WatchCoordinator, WatchRegistry, WatcherConfig};
@@ -176,6 +178,10 @@ impl MultiRepoWatcher {
     }
 }
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "the arming and scope helpers live in the `scope` submodule"
+)]
 impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// Attach `pid` to the repository containing `cwd` and begin watching it,
     /// detaching the client from any repository it was in before. When the new
@@ -221,6 +227,15 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             return Ok(None);
         };
 
+        if !self.registry.repo_allowed(&git_root) {
+            debug_log!(
+                "watcher",
+                "Repository {} is skipped; not watching",
+                git_root.display()
+            );
+            return Ok(None);
+        }
+
         let git_dir = crate::git::resolve_gitdir(&git_root)
             .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
             .ok_or_else(|| {
@@ -229,7 +244,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                     git_root.display()
                 ))
             })?;
-        let watch_worktree = self.registry.worktree_enabled();
+        let watch_worktree = self.worktree_watch_wanted(&git_root);
 
         debug_log!("watcher", "Found git root: {}", git_root.display());
         if watch_worktree {
@@ -243,6 +258,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             return Ok(Some(git_root));
         }
 
+        self.log_gitdir_only_scope(&git_root);
         debug_log!(
             "watcher",
             "Starting to watch gitdir {} for client {}",
@@ -623,17 +639,24 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
     pub fn resync_watch_worktree(&self) {
         let _ops_guard = self.ops_lock.lock_or_recover();
 
-        let desired = self.registry.worktree_enabled();
-
         let repos = self.watched_repos.lock_or_recover();
-        let stale: Vec<(PathBuf, PathBuf)> = repos
+        let snapshot: Vec<(PathBuf, PathBuf, bool)> = repos
             .values()
-            .filter(|repo| repo.worktree.requested() != desired)
-            .map(|repo| (repo.git_root.clone(), repo.git_dir.clone()))
+            .map(|repo| {
+                (
+                    repo.git_root.clone(),
+                    repo.git_dir.clone(),
+                    repo.worktree.requested(),
+                )
+            })
             .collect();
         drop(repos);
 
-        for (git_root, git_dir) in stale {
+        for (git_root, git_dir, requested) in snapshot {
+            let desired = self.worktree_watch_wanted(&git_root);
+            if requested == desired {
+                continue;
+            }
             debug_log!(
                 "watcher",
                 "Reconfiguring {} for watch_worktree={}",

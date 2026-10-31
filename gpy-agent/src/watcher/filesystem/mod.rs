@@ -15,9 +15,7 @@ use backend::{
     track_poll_expansion,
 };
 pub(crate) use ignore::IgnoreCaches;
-use ignore::{
-    IgnoreTokenHit, language_marker_is_ignored, path_is_gitignored, path_matches_ignored_patterns,
-};
+use ignore::{EventPathVerdict, IgnoreTokenHit, path_is_gitignored, path_matches_ignored_patterns};
 use notify::Event;
 use notify::event::{CreateKind, EventKind, MetadataKind, ModifyKind};
 use probe::{FallbackPolicy, ProbeTiming, spawn_health_probe};
@@ -99,7 +97,7 @@ impl FileSystemWatcher {
 
         let (watcher, kind) = match policy {
             FallbackPolicy::ForcePoll { poll_interval } => (
-                build_poll_watcher(&event_tx, poll_interval)?,
+                build_poll_watcher(&event_tx, poll_interval, Arc::clone(&shared_registry))?,
                 BackendKind::Poll,
             ),
             FallbackPolicy::NativeOnly | FallbackPolicy::ProbeThenFallback { .. } => {
@@ -417,24 +415,29 @@ impl FileSystemWatcher {
         pending: PendingEvent,
         callback_arc: &Arc<PendingCallback>,
     ) {
-        if matches!(
-            pending.event,
-            super::FileEvent::Language { .. }
-                | super::FileEvent::Config { .. }
-                | super::FileEvent::Theme { .. }
-        ) && let Some(repo) = worktree_git_repo(
+        let is_language = matches!(pending.event, super::FileEvent::Language { .. });
+        if !is_language
+            && !matches!(
+                pending.event,
+                super::FileEvent::Config { .. } | super::FileEvent::Theme { .. }
+            )
+        {
+            callback_arc(pending);
+            return;
+        }
+
+        // One attribution and ignore verdict serves both decisions below.
+        let verdict = EventPathVerdict::new(path, worktree_ctx.registry);
+        if let Some(repo) = worktree_git_repo_with(
             worktree_ctx.event,
-            path,
-            worktree_ctx.registry,
             worktree_ctx.worktree_enabled,
             RepoEvidence::GenuineRepoOnly,
+            &verdict,
         ) {
             callback_arc(PendingEvent::git(repo, path.to_path_buf()));
         }
 
-        if matches!(pending.event, super::FileEvent::Language { .. })
-            && language_marker_is_ignored(path, worktree_ctx.registry)
-        {
+        if is_language && verdict.language_marker_is_ignored() {
             return;
         }
 
@@ -541,6 +544,23 @@ fn worktree_git_repo(
     worktree_enabled: bool,
     repo_evidence: RepoEvidence,
 ) -> Option<PathBuf> {
+    worktree_git_repo_with(
+        event,
+        worktree_enabled,
+        repo_evidence,
+        &EventPathVerdict::new(path, registry),
+    )
+}
+
+/// [`worktree_git_repo`] over a verdict that may already hold the attribution
+/// and ignore result of the same path.
+fn worktree_git_repo_with(
+    event: &Event,
+    worktree_enabled: bool,
+    repo_evidence: RepoEvidence,
+    verdict: &EventPathVerdict<'_>,
+) -> Option<PathBuf> {
+    let path = verdict.path();
     if !worktree_enabled {
         return None;
     }
@@ -570,7 +590,7 @@ fn worktree_git_repo(
         return None;
     }
     // Attribute first: ignore tokens are scoped relative to the repo root.
-    let attribution = attribute_repo_detailed(path, registry)?;
+    let attribution = verdict.attribution()?;
     if matches!(repo_evidence, RepoEvidence::GenuineRepoOnly) && !attribution.is_genuine_repo() {
         return None;
     }
@@ -581,12 +601,11 @@ fn worktree_git_repo(
         Some(IgnoreTokenHit::Directory) if attribution.trusted_root().is_none() => return None,
         Some(IgnoreTokenHit::Directory) | None => {}
     }
-    let repo = attribution.into_repo();
     // Ignored files never show in `git status`.
-    if path_is_gitignored(&repo, path, registry) {
+    if verdict.is_gitignored() {
         return None;
     }
-    Some(repo)
+    Some(attribution.repo().to_path_buf())
 }
 
 /// Whether a `Create` event is a directory. `FSEvents` emits `Any`/`Other`, so stat
@@ -621,6 +640,13 @@ enum RepoAttribution {
 
 impl RepoAttribution {
     /// The attributed repo root.
+    fn repo(&self) -> &Path {
+        match self {
+            Self::WatchedRoot(root) | Self::AncestorGitDir(root) | Self::ParentGuess(root) => root,
+        }
+    }
+
+    /// The attributed repo root, owned.
     fn into_repo(self) -> PathBuf {
         match self {
             Self::WatchedRoot(root) | Self::AncestorGitDir(root) | Self::ParentGuess(root) => root,

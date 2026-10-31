@@ -263,6 +263,71 @@ fn force_added_tracked_file_is_not_suppressed() {
     );
 }
 
+/// A main repository with one commit (`.gitignore` = `gitignore`) and a linked
+/// worktree beside it; returns `(main, worktree)`.
+fn main_with_linked_worktree(tmp: &Path, gitignore: &str) -> (PathBuf, PathBuf) {
+    let base = std::fs::canonicalize(tmp).expect("canonicalize temp dir");
+    let worktree = base.join("linked");
+    let main = base.join("main");
+    std::fs::create_dir_all(&main).expect("main dir");
+    git_init(&main);
+    std::fs::write(main.join(".gitignore"), gitignore).expect("write gitignore");
+    git_in(&main, &["add", ".gitignore"]);
+    git_in(&main, &["commit", "-q", "-m", "init"]);
+    let worktree_arg = worktree.to_string_lossy().into_owned();
+    git_in(
+        &main,
+        &["worktree", "add", "-q", &worktree_arg, "-b", "feature"],
+    );
+    (main, worktree)
+}
+
+/// In a linked worktree `.git` is a pointer file, so a file force-added after the
+/// first lookup must still be noticed once the background refresh finishes.
+#[test]
+fn force_added_file_in_linked_worktree_is_not_suppressed() {
+    let registry = test_registry(true, HashSet::new());
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let (_main, worktree) = main_with_linked_worktree(tmp.path(), "*.log\n");
+    let first = worktree.join("first.log");
+    std::fs::write(&first, "tracked later\n").expect("write first.log");
+
+    assert!(
+        path_is_gitignored(&worktree, &first, &registry),
+        "an untracked file matching the ignore glob must be suppressed"
+    );
+
+    git_in(&worktree, &["add", "-f", "first.log"]);
+
+    // The first call after the index change starts the refresh; later calls see it.
+    let picked_up = wait_until(Duration::from_secs(5), || {
+        !path_is_gitignored(&worktree, &first, &registry)
+    });
+    assert!(
+        picked_up,
+        "a force-added file in a linked worktree must stop being suppressed"
+    );
+}
+
+/// The main repository's `info/exclude` applies in its linked worktrees.
+#[test]
+fn main_info_exclude_applies_in_linked_worktree() {
+    let registry = test_registry(true, HashSet::new());
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let (main, worktree) = main_with_linked_worktree(tmp.path(), "");
+    std::fs::create_dir_all(main.join(".git/info")).expect("info dir");
+    std::fs::write(main.join(".git/info/exclude"), "local-only.txt\n").expect("write exclude");
+
+    assert!(
+        path_is_gitignored(&worktree, &worktree.join("local-only.txt"), &registry),
+        "a main-repository info/exclude rule must suppress matching worktree paths"
+    );
+    assert!(
+        !path_is_gitignored(&worktree, &worktree.join("other.txt"), &registry),
+        "a non-matching path must not be suppressed"
+    );
+}
+
 /// Feed a content edit of `file` through `process_event` with `root` watched.
 fn events_for_edit(root: &Path, file: &Path) -> Vec<PendingEvent> {
     let registry = test_registry(true, HashSet::from([root.to_path_buf()]));

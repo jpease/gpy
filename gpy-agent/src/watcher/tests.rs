@@ -696,3 +696,41 @@ fn split_at_git_dir_modules_rejects_non_submodule_paths() {
     assert!(split_at_git_dir_modules(Path::new("/outer/nested/.git/HEAD")).is_none());
     assert!(split_at_git_dir_modules(Path::new("/main/.git/worktrees/wt/HEAD")).is_none());
 }
+
+#[test]
+fn longest_root_prefix_returns_deepest_ancestor_root() {
+    let registry = WatchRegistry::new();
+    registry.insert_root(PathBuf::from("/a"));
+    registry.insert_root(PathBuf::from("/a/b"));
+    registry.insert_root(PathBuf::from("/a/b/c/d"));
+
+    assert_eq!(
+        registry.longest_root_prefix(Path::new("/a/b/c/file.rs")),
+        Some(PathBuf::from("/a/b"))
+    );
+    assert_eq!(
+        registry.longest_root_prefix(Path::new("/a/b/c/d/e/file.rs")),
+        Some(PathBuf::from("/a/b/c/d"))
+    );
+    assert_eq!(
+        registry.longest_root_prefix(Path::new("/a/b")),
+        Some(PathBuf::from("/a/b")),
+        "a root is its own longest prefix"
+    );
+    assert_eq!(
+        registry.longest_root_prefix(Path::new("/other/file.rs")),
+        None
+    );
+}
+
+#[test]
+fn longest_root_prefix_ignores_sibling_prefixes() {
+    let registry = WatchRegistry::new();
+    registry.insert_root(PathBuf::from("/a/b"));
+
+    assert_eq!(
+        registry.longest_root_prefix(Path::new("/a/bc/file.rs")),
+        None
+    );
+    assert_eq!(registry.longest_root_prefix(Path::new("/a/bc")), None);
+}
