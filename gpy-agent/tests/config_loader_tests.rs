@@ -443,11 +443,14 @@ fn toml_leaf_paths(prefix: &str, table: &toml::Table) -> Vec<String> {
     out
 }
 
-/// `table` without `language.icons`: the template offers optional icons there,
-/// while the built-in default is an empty map.
-fn without_language_icons(mut table: toml::Table) -> toml::Table {
+/// `table` without `language.icons` and `git.icons`: the template offers
+/// optional icon overrides there, while the built-in defaults are unset.
+fn without_icon_tables(mut table: toml::Table) -> toml::Table {
     if let Some(toml::Value::Table(language)) = table.get_mut("language") {
         language.remove("icons");
+    }
+    if let Some(toml::Value::Table(git)) = table.get_mut("git") {
+        git.remove("icons");
     }
     table
 }
@@ -461,8 +464,8 @@ fn config_template_sets_every_config_key_at_its_default() {
     let raw: toml::Table = settings.parse().unwrap();
     let defaults = toml::Table::try_from(Config::default()).unwrap();
 
-    let template_keys = toml_leaf_paths("", &without_language_icons(raw));
-    let default_keys = toml_leaf_paths("", &without_language_icons(defaults.clone()));
+    let template_keys = toml_leaf_paths("", &without_icon_tables(raw));
+    let default_keys = toml_leaf_paths("", &without_icon_tables(defaults.clone()));
     let missing: Vec<&String> = default_keys
         .iter()
         .filter(|key| !template_keys.contains(key))
@@ -479,10 +482,38 @@ fn config_template_sets_every_config_key_at_its_default() {
 
     let loaded = parse_config_toml(&settings).unwrap();
     assert_eq!(
-        without_language_icons(toml::Table::try_from(&loaded).unwrap()),
-        without_language_icons(defaults),
+        without_icon_tables(toml::Table::try_from(&loaded).unwrap()),
+        without_icon_tables(defaults),
         "config.example.toml sets a value that differs from the built-in default"
     );
+}
+
+/// The commented `[git.icons]` values are the Unicode defaults.
+#[test]
+fn config_template_git_icons_are_the_unicode_defaults() {
+    let loaded = parse_config_toml(&template_settings()).unwrap();
+    assert_eq!(
+        loaded.git.icons,
+        gpy_agent::config::GitIcons::default().resolved(gpy_agent::config::GitIconSet::Unicode),
+    );
+}
+
+/// The commented `[language.icons]` entries are the built-in defaults.
+#[test]
+fn config_template_language_icons_are_the_builtin_defaults() {
+    let loaded = parse_config_toml(&template_settings()).unwrap();
+    let mut template: Vec<(&str, &str)> = loaded
+        .language
+        .icons
+        .icons
+        .iter()
+        .map(|(key, icon)| (key.as_str(), icon.as_str()))
+        .collect();
+    template.sort_unstable();
+    let mut builtin: Vec<(&str, &str)> =
+        gpy_agent::config::defaults::DEFAULT_LANGUAGE_ICONS.to_vec();
+    builtin.sort_unstable();
+    assert_eq!(template, builtin);
 }
 
 /// A copy of the template as shipped changes nothing, so installing it never

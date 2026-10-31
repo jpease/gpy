@@ -197,7 +197,7 @@ read_only_icon = "RO"
 gpy config set ui.show_icons false
 ```
 
-`show_icons` lives in `config.toml`, not the theme file. It applies to whichever theme is active.
+`show_icons` lives in `config.toml`, not the theme file. It applies to whichever theme is active. A theme's icons (`[segments.git]` `*_icon`, `[segments.language]` `<lang>_symbol`) win over `[git.icons]` and `[language.icons]` in `config.toml`; to change one, use a theme overlay (`gpy theme new`).
 
 **Pill formats for `status`, and `hostname` / `username` styling:**
 

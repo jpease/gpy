@@ -84,8 +84,8 @@ printf '%s\n' \
     "" \
     "set -l ready 0" \
     "for i in (seq 1 50)" \
-    "    if gpy-agent status 2>&1 | grep -q 'Running and Responding'" \
-    "        if env GPY_AGENT_SOCKET_PATH='$decoy_socket' gpy-agent status 2>&1 | grep -q 'Running and Responding'" \
+    "    if gpy-agent status >/dev/null 2>&1" \
+    "        if env GPY_AGENT_SOCKET_PATH='$decoy_socket' gpy-agent status >/dev/null 2>&1" \
     "            set ready 1" \
     "            break" \
     "        end" \
@@ -99,13 +99,13 @@ printf '%s\n' \
     "" \
     _stop_running_agent \
     "" \
-    "if gpy-agent status 2>&1 | grep -q 'Running and Responding'" \
+    "if gpy-agent status >/dev/null 2>&1" \
     "    echo OWN_STILL_RUNNING" \
     else \
     "    echo OWN_STOPPED" \
     end \
     "" \
-    "if env GPY_AGENT_SOCKET_PATH='$decoy_socket' gpy-agent status 2>&1 | grep -q 'Running and Responding'" \
+    "if env GPY_AGENT_SOCKET_PATH='$decoy_socket' gpy-agent status >/dev/null 2>&1" \
     "    echo DECOY_SURVIVED" \
     else \
     "    echo DECOY_KILLED" \

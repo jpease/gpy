@@ -7,7 +7,13 @@ use std::fmt;
 use super::DelimiterConfig;
 use super::defaults::literal;
 
-/// Language icons configuration (Nerd Fonts icons); unset entries use built-ins.
+/// Language icons from `[language.icons]`; a language without an entry uses the
+/// built-in Nerd Font icon when there is one, else its name.
+///
+/// Icon precedence, shared with [`GitIcons`](super::GitIcons): `ui.show_icons`
+/// gates first; then a theme icon (`[segments.language] <lang>_symbol`); then
+/// an explicit `config.toml` entry here; then the built-in default
+/// ([`DEFAULT_LANGUAGE_ICONS`](super::defaults::DEFAULT_LANGUAGE_ICONS)).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct LanguageIcons {
     /// Dynamic map of language icons
@@ -33,7 +39,8 @@ pub struct LanguageTheme {
     /// Per-language color overrides (e.g. `rust_bg_color`, `rust_text_color`).
     pub overrides: HashMap<String, super::types::ColorSpec>,
     /// Per-language symbol overrides (e.g., `rust_symbol = "🦀"`).
-    /// Takes precedence over config icons when `show_icons` is enabled.
+    /// Takes precedence over `[language.icons]` and the built-in icons when
+    /// `show_icons` is enabled.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub symbols: HashMap<String, String>,
     /// Per-language style attributes (e.g. `java_style = "dimmed"`); default `"bold"`.

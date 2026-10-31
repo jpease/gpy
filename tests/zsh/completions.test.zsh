@@ -56,6 +56,7 @@ fi
 
 echo "Generating structural completions from the debug gpy binary..."
 GENERATED_DIR=$(mktemp -d -t gpy-completions-zsh.XXXXXX)
+SANDBOX_DIR=$(mktemp -d -t gpy-zsh-sandbox.XXXXXX)
 if ! gpy completions zsh >"$GENERATED_DIR/_gpy"; then
     echo "FAIL: gpy completions zsh failed to generate structural completions"
     rm -rf "$GENERATED_DIR"
@@ -108,13 +109,13 @@ send() {
 
 cleanup() {
     zpty -d COMPPTY 2>/dev/null
-    rm -rf "$GENERATED_DIR"
+    rm -rf "$GENERATED_DIR" "$SANDBOX_DIR"
     rm -f "$CALLS_FILE" "$THEME_FILE" "$SEGMENT_FILE"
 }
 trap cleanup EXIT
 
 echo "Spawning nested zsh in a pty and wiring completions..."
-zpty COMPPTY "zsh -f"
+zpty COMPPTY "env HOME=${(q)SANDBOX_DIR} XDG_CONFIG_HOME=${(q)SANDBOX_DIR}/config XDG_DATA_HOME=${(q)SANDBOX_DIR}/data XDG_STATE_HOME=${(q)SANDBOX_DIR}/state XDG_CACHE_HOME=${(q)SANDBOX_DIR}/cache GPY_AGENT_ENABLED=0 zsh -f"
 export COLUMNS=200 LINES=50 TERM=xterm
 drain >/dev/null
 send "PROMPT='TESTPROMPT> '"
@@ -134,6 +135,15 @@ send "autoload -Uz _gpy-dynamic; autoload -Uz _gpy; compdef _gpy-dynamic gpy; pr
 out=$(drain WIRED:1)
 if [[ "$out" == *"not found"* || "$out" == *"error"* ]]; then
     echo "FAIL: setting up completions in the pty produced an error: $out"
+    failures=$((failures + 1))
+fi
+
+# Load the full integration so __gpy_precmd runs between commands, as in a
+# real session; its per-prompt cache reset is what the cache checks rely on.
+send "source ${(q)ROOT}/zsh/gpy.zsh; print -r -- LOADED:\$((1))"
+out=$(drain LOADED:1)
+if [[ "$out" == *"not found"* ]]; then
+    echo "FAIL: sourcing zsh/gpy.zsh in the pty produced an error: $out"
     failures=$((failures + 1))
 fi
 
@@ -194,8 +204,9 @@ check_candidates "gpy disable" "gpy disable " git status
 echo "Checking top-level completion delegates to structural _gpy..."
 check_candidates "gpy (top-level)" "gpy " theme enable palette
 
-# Per-session caching: __gpy_complete_cached must fork `gpy` at most
-# once per kind per session, and must never cache an empty/failed result.
+# Per-prompt caching: __gpy_complete_cached must fork `gpy` at most once per
+# kind per command line, refresh after the next prompt, and never cache an
+# empty/failed result.
 #
 # The checks above already drove `_gpy-dynamic` through a real TAB press, so
 # `__gpy_complete_cached` (a nested function -- see the comment in
@@ -213,7 +224,7 @@ check_candidates "gpy (top-level)" "gpy " theme enable palette
 # than embedding `printf '...\n...'` escapes in text typed through the pty --
 # both counter and candidates are real filesystem state, which (unlike a
 # shell variable) survives the subshell.
-echo "Checking per-session caching: gpy __complete forks at most once per kind..."
+echo "Checking per-prompt caching: gpy __complete forks once per kind per command line..."
 
 CALLS_FILE=$(mktemp -t gpy-zsh-cache-calls.XXXXXX)
 THEME_FILE=$(mktemp -t gpy-zsh-cache-theme.XXXXXX)
@@ -227,47 +238,64 @@ call_count() {
     print -r -- "${n// /}"
 }
 
-send "unset __gpy_complete_cache_theme __gpy_complete_cache_segment"
-drain >/dev/null
 send "gpy() { echo call >> ${(q)CALLS_FILE}; case \$2 in theme) cat ${(q)THEME_FILE} ;; segment) cat ${(q)SEGMENT_FILE} ;; esac }"
 drain >/dev/null
 
+# Both lookups share one command line, so no prompt (and no cache reset) falls
+# between them.
 : >"$CALLS_FILE"
-send "__gpy_complete_cached theme; print -r -- CACHE1:\$__gpy_complete_result"
-out1=$(drain CACHE1:default)
-send "__gpy_complete_cached theme; print -r -- CACHE2:\$__gpy_complete_result"
-out2=$(drain CACHE2:default)
+send "unset __gpy_complete_cache_theme __gpy_complete_cache_segment; __gpy_complete_cached theme; print -r -- CACHE1:\$__gpy_complete_result; __gpy_complete_cached theme; print -r -- CACHE2:\$__gpy_complete_result"
+out1=$(drain CACHE1:default CACHE2:default)
 
 if [[ "$(call_count)" == "1" ]]; then
-    echo "PASS: second warm theme lookup reuses the cache instead of re-forking gpy"
+    echo "PASS: second theme lookup on one command line reuses the cache"
 else
     echo "FAIL: expected exactly 1 gpy invocation for two theme lookups, got $(call_count)"
     failures=$((failures + 1))
 fi
-if contains "default" "$out1" && contains "default" "$out2"; then
+if contains "CACHE1:default" "$out1" && contains "CACHE2:default" "$out1"; then
     echo "PASS: cached candidates correct across both calls"
 else
-    echo "FAIL: cached candidates incorrect; out1=$out1 out2=$out2"
+    echo "FAIL: cached candidates incorrect; out=$out1"
     failures=$((failures + 1))
 fi
 
 echo "Checking a different kind's cache miss does not disturb an already-warm kind..."
 : >"$CALLS_FILE"
-send "__gpy_complete_cached segment; print -r -- SEG:\$__gpy_complete_result"
-seg_out=$(drain SEG:clock)
-send "__gpy_complete_cached theme; print -r -- THEME_AGAIN:\$__gpy_complete_result"
-theme_out=$(drain THEME_AGAIN:default)
+send "unset __gpy_complete_cache_theme __gpy_complete_cache_segment; __gpy_complete_cached theme; __gpy_complete_cached segment; print -r -- SEG:\$__gpy_complete_result; __gpy_complete_cached theme; print -r -- THEME_AGAIN:\$__gpy_complete_result"
+seg_out=$(drain SEG:clock THEME_AGAIN:default)
 
-if [[ "$(call_count)" == "1" ]]; then
-    echo "PASS: segment miss forks once, warm theme cache adds no extra fork"
+if [[ "$(call_count)" == "2" ]]; then
+    echo "PASS: one fork per kind, warm theme cache adds no extra fork"
 else
-    echo "FAIL: expected exactly 1 gpy invocation (segment miss only), got $(call_count)"
+    echo "FAIL: expected exactly 2 gpy invocations (1 per kind), got $(call_count)"
     failures=$((failures + 1))
 fi
-if contains "git" "$seg_out" && contains "default" "$theme_out"; then
+if contains "SEG:clock" "$seg_out" && contains "THEME_AGAIN:default" "$seg_out"; then
     echo "PASS: independent per-kind caches return correct candidates"
 else
-    echo "FAIL: per-kind candidates incorrect; seg_out=$seg_out theme_out=$theme_out"
+    echo "FAIL: per-kind candidates incorrect; out=$seg_out"
+    failures=$((failures + 1))
+fi
+
+echo "Checking the next prompt refreshes the cache..."
+: >"$CALLS_FILE"
+send "__gpy_complete_cached theme; print -r -- BEFORE:\$__gpy_complete_result"
+drain BEFORE:default >/dev/null
+printf 'default\nmine\n' >"$THEME_FILE"
+send "__gpy_complete_cached theme; print -r -- AFTER:\$__gpy_complete_result"
+after_out=$(drain AFTER:)
+
+if [[ "$(call_count)" == "2" ]]; then
+    echo "PASS: a completion after the next prompt runs gpy __complete again"
+else
+    echo "FAIL: expected 2 gpy invocations across two prompts, got $(call_count)"
+    failures=$((failures + 1))
+fi
+if contains "mine" "$after_out"; then
+    echo "PASS: refreshed completion includes the new theme"
+else
+    echo "FAIL: refreshed completion missing 'mine'; out=$after_out"
     failures=$((failures + 1))
 fi
 

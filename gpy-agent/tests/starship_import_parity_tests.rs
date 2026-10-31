@@ -83,7 +83,7 @@ impl Scenario {
                 status.to_string(),
             ]),
             Self::Layout => {
-                return ["theme", "export", "--format", "fish"]
+                return ["theme", "export", "--shell", "fish"]
                     .map(str::to_owned)
                     .to_vec();
             }

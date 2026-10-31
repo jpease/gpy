@@ -158,7 +158,7 @@ fn verify_theme_export_contains_plugin_file_var(
     xdg: &std::path::Path,
 ) {
     let export_output = Command::new(gpy_agent_cmd_path)
-        .args(["theme", "export", "--format", "fish"])
+        .args(["theme", "export", "--shell", "fish"])
         .current_dir(repo)
         .env("PATH", path)
         .env("XDG_CONFIG_HOME", xdg)
@@ -178,7 +178,7 @@ fn verify_theme_export_contains_plugin_file_var(
 }
 
 fn verify_plugin_segment_loads_in_fish(repo: &std::path::Path, path: &str, xdg: &std::path::Path) {
-    let fish_script = "source fish/core/init.fish; gpy-agent theme export --format fish 2>/dev/null | source; if set -q __gpy_plugin_segment_file_k8s_tools; echo FILE_VAR_OK; else echo FILE_VAR_MISSING; end; __gpy_load_segments k8s_tools; if functions -q segment_k8s_tools_render; echo SEGMENT_OK; segment_k8s_tools_render 1; echo; else echo SEGMENT_MISSING; end";
+    let fish_script = "source fish/core/init.fish; gpy-agent theme export --shell fish 2>/dev/null | source; if set -q __gpy_plugin_segment_file_k8s_tools; echo FILE_VAR_OK; else echo FILE_VAR_MISSING; end; __gpy_load_segments k8s_tools; if functions -q segment_k8s_tools_render; echo SEGMENT_OK; segment_k8s_tools_render 1; echo; else echo SEGMENT_MISSING; end";
 
     let output = Command::new("fish")
         .args(["-c", fish_script])

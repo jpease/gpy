@@ -39,10 +39,10 @@ const START_LOCK_WAIT_MAX: Duration = Duration::from_secs(10);
 #[cfg(unix)]
 fn acquire_start_lock(socket_path: &Path) -> Result<crate::fs_util::PathLock> {
     crate::fs_util::lock_beside(socket_path, START_LOCK_WAIT_MAX).map_err(|e| {
-        Error::process(
-            "start_lock",
-            format!("cannot take start lock for {}: {e}", socket_path.display()),
-        )
+        Error::agent(format!(
+            "cannot take start lock for {}: {e}",
+            socket_path.display()
+        ))
     })
 }
 
@@ -238,10 +238,10 @@ fn wait_for_agent_ready(
             return Err(startup_failed(report.failure().as_deref()));
         }
         if deadline.expired() {
-            return Err(Error::process(
-                "startup_timeout",
-                "Agent process did not become ready before timeout".to_owned(),
-            ));
+            return Err(Error::agent(format!(
+                "the daemon did not answer within {} s",
+                READY_WAIT_MAX.as_secs()
+            )));
         }
         std::thread::sleep(READY_WAIT_POLL);
     }
@@ -250,11 +250,10 @@ fn wait_for_agent_ready(
 /// The daemon died before it was ready, with its reported `reason` if any.
 #[cfg(unix)]
 fn startup_failed(reason: Option<&str>) -> Error {
-    let message = reason.map_or_else(
-        || "Agent process exited before it was ready".to_owned(),
-        |detail| format!("Agent process failed before it was ready: {detail}"),
-    );
-    Error::process("startup_failed", message)
+    Error::agent(reason.map_or_else(
+        || "the daemon exited before it was ready".to_owned(),
+        |detail| format!("the daemon failed before it was ready: {detail}"),
+    ))
 }
 
 /// Daemon half of the startup handshake with the waiting `gpy-agent start`:
@@ -298,7 +297,7 @@ impl StartupReport {
         use nix::fcntl::{FcntlArg, OFlag, fcntl};
 
         fcntl(&pipe, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))
-            .map_err(|e| Error::process("pipe", e.to_string()))?;
+            .map_err(|e| Error::agent(format!("cannot configure the startup pipe: {e}")))?;
         Ok(Self {
             pipe,
             text: Vec::new(),
@@ -389,8 +388,8 @@ fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() ->
 fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Result<u32> {
     use std::io::Read;
 
-    let (mut reader, writer) =
-        std::io::pipe().map_err(|e| Error::process("pipe", e.to_string()))?;
+    let (mut reader, writer) = std::io::pipe()
+        .map_err(|e| Error::agent(format!("cannot create the startup pipe: {e}")))?;
 
     match fork::fork() {
         Ok(Fork::Parent(intermediate_pid)) => {
@@ -398,21 +397,22 @@ fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Resul
             let mut pid_bytes = [0_u8; 4];
             let read = reader.read_exact(&mut pid_bytes);
             let _ = fork::waitpid(intermediate_pid);
-            read.map_err(|e| Error::process("fork", format!("Agent process did not start: {e}")))?;
+            read.map_err(|e| Error::agent(format!("the daemon did not start: {e}")))?;
             let agent_pid = i32::from_ne_bytes(pid_bytes);
             let ready = StartupReport::new(reader)
                 .and_then(|report| wait_for_agent_ready(socket_path, agent_pid, report));
             // Held until now so a daemon that never binds cannot let another start in.
             drop(start_lock);
             ready?;
-            u32::try_from(agent_pid).map_err(|e| Error::process("fork", e.to_string()))
+            u32::try_from(agent_pid)
+                .map_err(|e| Error::agent(format!("cannot fork the daemon: {e}")))
         }
         Ok(Fork::Child) => {
             drop(reader);
             fork_daemon_from_intermediate();
             exit_daemon(announce_daemon(start_lock, writer).and_then(run_daemon))
         }
-        Err(e) => Err(Error::process("fork", e.to_string())),
+        Err(e) => Err(Error::agent(format!("cannot fork the daemon: {e}"))),
     }
 }
 
@@ -463,7 +463,7 @@ fn announce_daemon(
 
     report
         .write_all(&nix::unistd::getpid().as_raw().to_ne_bytes())
-        .map_err(|e| Error::process("pipe", e.to_string()))?;
+        .map_err(|e| Error::agent(format!("cannot report the daemon PID: {e}")))?;
     Ok(StartupHandoff {
         _start_lock: start_lock,
         report,
@@ -509,10 +509,13 @@ fn enter_daemon() -> Result<tokio::runtime::Runtime> {
     // Inputs were absolutized pre-fork; don't keep the launch dir busy.
     if let Err(e) = fork::chdir() {
         crate::warn_log!("agent", "Failed to chdir to /: {e}");
-        return Err(Error::process("chdir", e.to_string()));
+        return Err(Error::agent(format!(
+            "cannot leave the launch directory: {e}"
+        )));
     }
 
-    tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime", e.to_string()))
+    tokio::runtime::Runtime::new()
+        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))
 }
 
 /// Start the agent in background with race-free socket coordination. Progress
@@ -560,7 +563,6 @@ pub fn start_background_agent(mut on_notice: impl FnMut(StartNotice)) -> Result<
             SocketCheck::Proceed { previous } => previous,
         };
 
-        on_notice(StartNotice::Starting);
         let pid = fork_agent(&socket_path, start_lock)?;
         Ok(previous.map_or(StartOutcome::Started { pid }, |prior| {
             StartOutcome::Replaced {
@@ -573,10 +575,7 @@ pub fn start_background_agent(mut on_notice: impl FnMut(StartNotice)) -> Result<
     #[cfg(not(unix))]
     {
         let _ = &mut on_notice;
-        Err(Error::process(
-            "platform",
-            "Background agent only supported on Unix-like systems".to_owned(),
-        ))
+        Err(crate::ipc::native_windows_unsupported())
     }
 }
 

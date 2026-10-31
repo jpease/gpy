@@ -75,11 +75,13 @@
 #watch_worktree = true
 # Capture the stash count and render $stash
 #stash_enabled = true
-# Glyph set for the stash, detached-HEAD and in-progress icons: unicode or
-# nerd_font (needs a patched font; icons you set in [git.icons] win)
+# Default glyphs for the stash, detached-HEAD and in-progress icons: unicode
+# or nerd_font (needs a patched font). The branch glyph and the powerline caps
+# follow ui.show_icons and need a patched font in either set.
 #icon_set = "unicode"
 
-# Git status indicators; an icon set here replaces the built-in glyph.
+# Git status indicators. Each line is an optional override of the default for
+# icon_set; a theme's *_icon wins over it.
 [git.icons]
 #ahead = "↑"
 #behind = "↓"
@@ -96,29 +98,34 @@
 #enabled = true
 # Show language versions
 #show_versions = true
-# Version cache TTL in hours (1-720)
+# Language version, mise and virtualenv lookup cache TTL in hours (1-720)
 #cache_ttl_hours = 24
 # Specific languages to detect (empty = detect all)
 # Example: enabled_languages = ["rust", "node", "python", "go"]
 #enabled_languages = []
-# Display mode: "icon" (glyphs from [language.icons], falling back to the
-# language name when none is set) or "text" (always the language name)
+# Display mode: "icon" (the theme's symbol, else the [language.icons] entry,
+# else the built-in icon, falling back to the language name when there is
+# none) or "text" (always the language name)
 #display = "icon"
 # Which detected languages to show:
 #   "all"     every detected language
 #   "primary" only the dominant language (highest confidence)
 #   "3"       the top N languages by confidence (any number)
 #filter = "all"
-# Detection strategy: content (rank by file prevalence), markers (require
-# project marker files) or hybrid (content ranking gated by a marker file)
-#detection_mode = "content"
+# Detection strategy: markers (default; require project marker files),
+# content (rank by file prevalence) or hybrid (content ranking gated by a
+# marker file)
+#detection_mode = "markers"
 # Minimum confidence (0.0-1.0) to display a language. Confidence is 70% file
 # size ratio + 30% file count ratio, so 0.05 hides languages under 5% of the
-# project (e.g. a single config.js in a Rust repository).
+# project (e.g. a single config.js in a Rust repository). Applies to content
+# and hybrid modes only.
 #confidence_threshold = 0.1
 
-# Language icons, from https://www.nerdfonts.com/cheat-sheet (needs a patched
-# font). default: none; a language without an icon shows its name.
+# Language icons, from https://www.nerdfonts.com/cheat-sheet. The listed glyphs
+# are the built-in defaults (they need a patched font and are drawn when
+# ui.show_icons = true); an entry here replaces one, and a theme's <lang>_symbol
+# wins over both. A language with no icon shows its name.
 [language.icons]
 #rust = "󱘗"      # nf-md-language_rust
 #python = "󰌠"    # nf-md-language_python

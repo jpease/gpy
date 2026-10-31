@@ -2,7 +2,12 @@
 
 use thiserror::Error;
 
-/// Main error type for GPY Agent operations
+/// Main error type for GPY Agent operations.
+///
+/// Message variants carry their cause in the message text, because `Display`
+/// is what IPC replies and logs show. `Config` and `Agent` also keep a
+/// `source`, which callers downcast (for example `config set` validation
+/// errors) and which `user_message` walks for CLI stderr.
 #[derive(Error, Debug)]
 pub enum Error {
     /// Git repository operation failed
@@ -58,14 +63,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     /// JSON serialization/deserialization failed
-    #[error("JSON processing failed: {message}")]
-    Json {
-        /// A description of the error.
-        message: String,
-        /// The underlying `serde_json` error.
-        #[source]
-        source: Option<serde_json::Error>,
-    },
+    #[error("JSON processing failed: {0}")]
+    Json(#[from] serde_json::Error),
 
     /// Starship importer translation failed
     #[error(transparent)]
@@ -75,10 +74,11 @@ pub enum Error {
     #[error(transparent)]
     Base16Import(#[from] crate::import::base16::ImportError),
 
-    /// Process execution failed
+    /// A program GPY executed (an editor, `gpy-agent <subcommand>`) failed;
+    /// `command` is that program.
     #[error("Process execution failed: command '{command}' {message}")]
     Process {
-        /// The command that failed to execute.
+        /// The program that failed to execute.
         command: String,
         /// A description of the error.
         message: String,
@@ -115,14 +115,6 @@ impl Error {
     pub fn ipc<S: Into<String>>(message: S) -> Self {
         Self::Ipc {
             message: message.into(),
-        }
-    }
-
-    /// Create a JSON error that has no underlying `serde_json::Error`
-    pub fn json<S: Into<String>>(message: S) -> Self {
-        Self::Json {
-            message: message.into(),
-            source: None,
         }
     }
 
@@ -238,15 +230,6 @@ where
         }
         report(info);
     }));
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Self::Json {
-            message: err.to_string(),
-            source: Some(err),
-        }
-    }
 }
 
 impl From<toml::de::Error> for Error {

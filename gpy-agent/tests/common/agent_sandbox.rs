@@ -7,7 +7,7 @@
 
 use super::cli_harness::{CliCommandResult, CliTestEnv};
 use super::fixtures::gpy_test_root;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -17,7 +17,9 @@ const READY_DEADLINE: Duration = Duration::from_secs(10);
 const STOP_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The `gpy status` line of a live, answering agent.
-pub const RUNNING_LINE: &str = "Status: Running and Responding";
+pub const RUNNING_LINE: &str = "state: running";
+/// The `gpy status` line when no agent runs.
+pub const NOT_RUNNING_LINE: &str = "state: not-running";
 
 /// A `CliTestEnv` plus a socket under `gpy_test_root()`, with a drop guard
 /// that stops the daemon through its own socket (there is no child handle to
@@ -101,6 +103,42 @@ impl Drop for AgentSandbox {
             let _ = self.gpy_agent(&["stop"]);
             // A daemon that ignores stop is left for cleanup-test-agents.sh.
             let _ = self.wait_until_socket_gone();
+        }
+    }
+}
+
+/// PIDs of processes whose command line mentions `needle`.
+pub fn pids_matching(needle: &Path) -> Vec<String> {
+    let output = std::process::Command::new("pgrep")
+        .arg("-f")
+        .arg("--")
+        .arg(needle)
+        .output()
+        .expect("run pgrep");
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `ps` rows (pid, parent, state, age, argv) for `pids`, so a failing
+/// duplicate-daemon assertion says what the survivors are.
+pub fn describe_pids(pids: &[String]) -> String {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "pid,ppid,stat,etime,args", "-p", &pids.join(",")])
+        .output()
+        .expect("run ps");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Sends `SIGTERM` to every daemon started with `--socket <path>`, so a
+/// failing run never leaks a duplicate agent the socket cannot reach.
+pub struct DaemonReaper(pub PathBuf);
+
+impl Drop for DaemonReaper {
+    fn drop(&mut self) {
+        for pid in pids_matching(&self.0) {
+            let _ = std::process::Command::new("kill").arg(&pid).status();
         }
     }
 }

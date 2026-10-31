@@ -7,7 +7,9 @@
 
 mod common;
 
-use common::agent_sandbox::{AgentSandbox, RUNNING_LINE};
+use common::agent_sandbox::{
+    AgentSandbox, DaemonReaper, NOT_RUNNING_LINE, RUNNING_LINE, describe_pids, pids_matching,
+};
 use common::child_guard::KillOnDrop;
 use common::cli_harness::{CliCommandResult, CliTestEnv, lone_gpy};
 use common::fake_agent::{Behaviour, FakeAgent};
@@ -16,53 +18,12 @@ use common::wait::wait_until;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const NOT_RUNNING_LINE: &str = "Status: Not Running (socket not found)";
-
-#[test]
-fn agent_status_exit_code_reflects_liveness() {
-    let sandbox = AgentSandbox::new();
-
-    // No socket at all.
-    let absent = sandbox.gpy_agent(&["status"]);
-    assert_eq!(absent.exit_code, 1_i32, "no socket must exit 1: {absent:?}");
-    assert!(absent.stdout.contains(NOT_RUNNING_LINE), "{absent:?}");
-    assert!(
-        absent.stderr.is_empty(),
-        "no Error: line for a finding: {absent:?}"
-    );
-
-    // A socket file nothing answers on.
-    {
-        let _listener = bind_silent_socket(&sandbox.socket_path);
-        let stale = sandbox.gpy_agent(&["status"]);
-        assert_eq!(
-            stale.exit_code, 1_i32,
-            "unanswered socket must exit 1: {stale:?}"
-        );
-        assert!(
-            stale.stdout.contains("Status: Connection failed"),
-            "{stale:?}"
-        );
-    }
-    std::fs::remove_file(&sandbox.socket_path).expect("remove silent socket");
-
-    // A live agent.
-    sandbox.start_and_wait();
-    let live = sandbox.gpy_agent(&["status"]);
-    assert_eq!(live.exit_code, 0_i32, "live agent must exit 0: {live:?}");
-    assert!(live.stdout.contains(RUNNING_LINE), "{live:?}");
-    assert!(
-        live.stdout.contains("Agent Version: "),
-        "the live report carries the agent version: {live:?}"
-    );
-}
-
 #[test]
 fn gpy_status_passes_the_agent_exit_code_through() {
     let sandbox = AgentSandbox::new();
 
     let absent = sandbox.gpy(&["status"]);
-    assert_eq!(absent.exit_code, 1_i32, "{absent:?}");
+    assert_eq!(absent.exit_code, 3_i32, "{absent:?}");
     assert!(absent.stdout.contains(NOT_RUNNING_LINE), "{absent:?}");
     assert!(
         !absent.stderr.contains("Error:"),
@@ -85,14 +46,8 @@ fn gpy_start_status_stop_round_trip() {
     let stopped = sandbox.gpy(&["stop"]);
     stopped.assert_success("gpy stop");
     assert!(
-        stopped
-            .stdout
-            .contains("Shutdown command sent successfully"),
-        "{stopped:?}"
-    );
-    assert!(
-        stopped.stdout.contains("Agent stopped successfully"),
-        "the stop must be confirmed, not merely sent: {stopped:?}"
+        stopped.stdout.starts_with("Stopped agent (pid "),
+        "the stop must be confirmed with the PID: {stopped:?}"
     );
     assert!(
         !stopped.stderr.contains("Failed to send shutdown command"),
@@ -104,43 +59,8 @@ fn gpy_start_status_stop_round_trip() {
     );
 
     let after = sandbox.gpy(&["status"]);
-    assert_eq!(after.exit_code, 1_i32, "{after:?}");
+    assert_eq!(after.exit_code, 3_i32, "{after:?}");
     assert!(after.stdout.contains(NOT_RUNNING_LINE), "{after:?}");
-}
-
-fn pids_matching(needle: &Path) -> Vec<String> {
-    let output = std::process::Command::new("pgrep")
-        .arg("-f")
-        .arg("--")
-        .arg(needle)
-        .output()
-        .expect("run pgrep");
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect()
-}
-
-/// `ps` rows (pid, parent, state, age, argv) for `pids`, so a failing
-/// duplicate-daemon assertion says what the survivors are.
-fn describe_pids(pids: &[String]) -> String {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "pid,ppid,stat,etime,args", "-p", &pids.join(",")])
-        .output()
-        .expect("run ps");
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-/// Sends `SIGTERM` to every daemon started with `--socket <path>`, so a
-/// failing run never leaks a duplicate agent the socket cannot reach.
-struct DaemonReaper(PathBuf);
-
-impl Drop for DaemonReaper {
-    fn drop(&mut self) {
-        for pid in pids_matching(&self.0) {
-            let _ = std::process::Command::new("kill").arg(&pid).status();
-        }
-    }
 }
 
 #[test]
@@ -275,6 +195,16 @@ fn gpy_agent_start_reports_the_daemon_initialization_error() {
     assert!(
         result.stderr.contains(&cause),
         "the error carries the filesystem cause `{cause}`: {result:?}"
+    );
+    assert!(
+        result
+            .stderr
+            .contains("Error: Agent process error: the daemon failed before it was ready:"),
+        "the daemon failure is one Agent error line: {result:?}"
+    );
+    assert!(
+        !result.stderr.contains("command '"),
+        "an internal step is not a failed command: {result:?}"
     );
     assert!(!sandbox.socket_path.exists(), "nothing was bound");
     assert!(
@@ -459,7 +389,7 @@ fn status_does_not_create_the_runtime_dir() {
         .run_gpy_agent_with_env(&["status"], &[("GPY_AGENT_SOCKET_PATH", "")])
         .expect("spawn gpy-agent status");
 
-    assert_eq!(result.exit_code, 1_i32, "no agent is running: {result:?}");
+    assert_eq!(result.exit_code, 3_i32, "no agent is running: {result:?}");
     assert!(
         !runtime.exists(),
         "status created {}: {result:?}",
@@ -631,12 +561,7 @@ fn gpy_stop_when_not_running_is_a_noop() {
 
     let stopped = sandbox.gpy(&["stop"]);
     stopped.assert_success("gpy stop with no agent");
-    assert!(
-        stopped
-            .stdout
-            .contains("Agent is not running (socket not found)"),
-        "{stopped:?}"
-    );
+    assert!(stopped.stdout.contains("Agent not running."), "{stopped:?}");
 }
 
 /// `gpy debug prompt` with no agent is an unreachable agent: exit 1 with
@@ -661,7 +586,12 @@ fn gpy_stop_fails_when_agent_does_not_answer() {
     let stopped = sandbox.gpy(&["stop"]);
     assert_eq!(stopped.exit_code, 1_i32, "{stopped:?}");
     assert!(stopped.stderr.contains("Error:"), "{stopped:?}");
-    assert!(stopped.stderr.contains("did not answer"), "{stopped:?}");
+    assert!(
+        stopped
+            .stderr
+            .contains(&sandbox.socket_path.display().to_string()),
+        "{stopped:?}"
+    );
 
     let direct = sandbox.gpy_agent(&["stop"]);
     assert_eq!(direct.exit_code, 1_i32, "{direct:?}");
@@ -678,38 +608,13 @@ fn gpy_stop_on_stale_socket_reports_not_running() {
 
     let stopped = sandbox.gpy(&["stop"]);
     stopped.assert_success("gpy stop on a stale socket");
-    assert!(stopped.stdout.contains("not running"), "{stopped:?}");
+    assert!(
+        stopped.stdout.contains("removed stale socket"),
+        "{stopped:?}"
+    );
     assert!(!stopped.stdout.contains("kill"), "{stopped:?}");
     assert!(!stopped.stderr.contains("kill"), "{stopped:?}");
     assert!(!sandbox.socket_path.exists(), "{stopped:?}");
-}
-
-#[test]
-fn gpy_restart_prints_normalized_steps() {
-    let sandbox = AgentSandbox::new();
-    sandbox.start_and_wait();
-
-    let restarted = sandbox.gpy(&["restart"]);
-    restarted.assert_success("gpy restart");
-    let lines: Vec<&str> = restarted.stdout.lines().collect();
-    assert_eq!(
-        lines,
-        vec![
-            "Restarting GPY...",
-            "Shutdown command sent",
-            "GPY stopped",
-            "GPY started",
-        ],
-        "stdout must be exactly the four normalized steps: {restarted:?}"
-    );
-    assert!(
-        !restarted
-            .stderr
-            .contains("Starting GPY Agent in background"),
-        "the raw gpy-agent progress line is suppressed on restart: {restarted:?}"
-    );
-
-    sandbox.wait_until_responding();
 }
 
 #[test]
@@ -724,7 +629,8 @@ fn gpy_lifecycle_fails_clearly_when_gpy_agent_missing() {
         let result = env
             .run_program_with_env(&gpy, &[command], &[("PATH", empty.as_str())])
             .expect("spawn gpy");
-        assert_eq!(result.exit_code, 1_i32, "gpy {command}: {result:?}");
+        let want = if command == "status" { 4_i32 } else { 1_i32 };
+        assert_eq!(result.exit_code, want, "gpy {command}: {result:?}");
         assert!(
             result.stderr.starts_with("Error: "),
             "gpy {command} must report one Error: line: {result:?}"

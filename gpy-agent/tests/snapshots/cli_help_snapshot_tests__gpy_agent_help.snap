@@ -10,6 +10,7 @@ Usage: gpy-agent <COMMAND>
 Commands:
   start    Start the agent as a background process
   stop     Stop the background agent process
+  restart  Stop the agent, then start it
   status   Show whether the agent is running, with its version and cache details
   theme    Export the active theme for the shell integrations
   oneshot  Render one segment without the daemon (the shells' fallback)
@@ -19,3 +20,8 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
+Exit status: 0 success; 1 failure (one `Error:` line on stderr); 2 usage error.
+status: 0 running (or busy); 3 not running; 4 not answering or unknown.
+start, restart: 6 disabled by agent.enabled = false.
+stop: 0 agent stopped afterwards, including not running.

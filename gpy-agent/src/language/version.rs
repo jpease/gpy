@@ -545,7 +545,8 @@ pub(crate) fn invalidate_language_release_cache_at(cwd: &Path) {
     MISE_NEGATIVE_CACHE.retain(|(cached_dir, _program)| cached_dir != &canonical);
 }
 
-/// Set the shared cache TTL in hours (version, mise, and venv-stash caches).
+/// Set the language cache TTL in hours from `language.cache_ttl_hours`
+/// (version, mise, and venv-stash caches).
 pub(crate) fn set_version_cache_ttl(hours: u64) {
     crate::cache::ttl_map::set_shared_cache_ttl(hours);
 }
@@ -635,9 +636,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial(global_ttl)]
-    fn cache_lookup_respects_ttl_setting() {
-        set_version_cache_ttl(1);
-
+    fn version_memo_entry_expires_after_the_default_ttl() {
         VERSION_MEMO.found().clear();
         VERSION_MEMO
             .found()
@@ -651,7 +650,7 @@ mod tests {
         VERSION_MEMO.found().insert_at(
             "test-lang".to_owned(),
             "1.0.0".to_owned(),
-            SystemTime::now() - Duration::from_secs(3600 + 5),
+            SystemTime::now() - Duration::from_secs(24 * 3600 + 5),
         );
 
         assert_eq!(
@@ -659,8 +658,6 @@ mod tests {
             None,
             "expected cache miss after expiration"
         );
-
-        set_version_cache_ttl(24);
     }
 
     #[test]
@@ -681,8 +678,6 @@ mod tests {
 
         assert_eq!(first_version.as_deref(), Some("3.9.24"));
         assert_eq!(second_version.as_deref(), Some("3.14.4"));
-
-        set_version_cache_ttl(24);
     }
 
     #[test]

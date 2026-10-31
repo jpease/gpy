@@ -632,17 +632,17 @@ impl FromStr for LanguageDisplay {
 
 /// Strategy for deciding which languages the prompt surfaces.
 ///
-/// `content`: rank by file prevalence; `markers`: require project markers;
-/// `hybrid`: content ranking gated by a marker file.
+/// `markers` (default): require project markers; `content`: rank by file
+/// prevalence; `hybrid`: content ranking gated by a marker file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DetectionMode {
-    /// Recursive content scan, ranked by prevalence (default).
-    #[default]
+    /// Recursive content scan, ranked by prevalence (opt-in).
     Content,
-    /// Marker-based: show a language only when its markers/extensions exist.
+    /// Marker-based: show a language only when its markers/extensions exist (default).
+    #[default]
     Markers,
-    /// Content scan filtered to languages whose project marker file is present.
+    /// Content scan filtered to languages whose project marker file is present (opt-in).
     Hybrid,
 }
 

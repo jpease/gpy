@@ -157,7 +157,7 @@ async fn test_agent_handles_rapid_fish_restarts() {
 
     let status_stdout = String::from_utf8_lossy(&status_output.stdout);
     assert!(
-        status_stdout.contains("Status: Running and Responding"),
+        status_stdout.contains("state: running"),
         "Agent should still be running after rapid Fish restarts. Status output: {status_stdout}"
     );
 }

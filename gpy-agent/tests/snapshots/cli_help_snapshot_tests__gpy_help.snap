@@ -29,3 +29,8 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
+Exit status: 0 success; 1 failure (one `Error:` line on stderr); 2 usage error.
+status: 0 running (or busy); 3 not running; 4 not answering or unknown.
+start, restart: 6 disabled by agent.enabled = false.
+doctor: 1 only when a check failed.

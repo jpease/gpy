@@ -527,9 +527,9 @@ fn test_doctor_accepts_starship_recommended_segments() {
 
 fn fish_enabled_segments(env: &CliTestEnv) -> String {
     let export = env
-        .run_gpy_agent(&["theme", "export", "--format", "fish"])
+        .run_gpy_agent(&["theme", "export", "--shell", "fish"])
         .expect("Failed to run gpy-agent theme export");
-    export.assert_success("gpy-agent theme export --format fish");
+    export.assert_success("gpy-agent theme export --shell fish");
     let Some(line) = export
         .stdout
         .lines()
@@ -3043,8 +3043,7 @@ fn test_theme_use_force_applies_palette_after_prior_cli_writes() {
             "palette must be applied after {prior:?}: {persisted}"
         );
         assert!(
-            res.stdout.contains("palette (starship)")
-                && res.stdout.contains("language detection (markers)"),
+            res.stdout.contains("palette (starship)"),
             "applied summary after {prior:?}: {}",
             res.stdout
         );

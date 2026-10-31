@@ -2,11 +2,11 @@
 # tests/fish/completions_dynamic_cache.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Per-session caching of
+# Per-command caching of
 # `gpy __complete <kind>` in fish/completions/gpy-dynamic.fish.
 #
 # `__gpy_complete_cached <kind>` is meant to fork `gpy __complete <kind>` at
-# most once per kind per shell session -- every TAB press after the first
+# most once per kind between commands -- every TAB press after the first
 # should be served from a session-global variable instead of re-forking. A
 # failed/empty result must NEVER be cached (so a transient failure, or `gpy`
 # not yet on PATH, self-heals on the next TAB instead of being stuck).
@@ -103,5 +103,31 @@ check "recovery forks gpy once more" 3 $gpy_call_count
 set -l recovered_again (__gpy_complete_cached theme)
 check "post-recovery call hits cache" nord "$recovered_again"
 check "post-recovery call does not re-fork gpy" 3 $gpy_call_count
+
+# 5. fish_preexec drops every cached kind, so the next call re-forks and
+# sees the current list.
+reset_cache_state
+function gpy
+    set -g gpy_call_count (math $gpy_call_count + 1)
+    if test $gpy_call_count -le 1
+        printf 'default\n'
+    else
+        printf 'default\nmine\n'
+    end
+end
+
+set -l before (__gpy_complete_cached theme)
+check "pre-preexec call returns the old list" default "$before"
+set -l before_again (__gpy_complete_cached theme)
+check "calls before preexec share one fork" 1 $gpy_call_count
+
+emit fish_preexec "gpy theme new mine"
+set -l cache_set no
+set -q __gpy_complete_cache_theme; and set cache_set yes
+check "preexec clears the theme cache" no $cache_set
+
+set -l after (__gpy_complete_cached theme)
+check "call after preexec forks gpy again" 2 $gpy_call_count
+check "call after preexec includes the new theme" "default mine" "$after"
 
 test_finish "completion cache tests"

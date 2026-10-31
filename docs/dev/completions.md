@@ -26,13 +26,16 @@ sourced file, but autoloads `completions/<command>.fish` only for the command of
 that name, so the installers append the glue to the generated output and write a
 single `completions/gpy.fish`.
 
-## Per-session cache
+## Cache lifetime
 
 Each kind's result is memoized in a session-global variable
-(`__gpy_complete_cache_<kind>`), so warm TAB presses never fork `gpy`. Only a
-non-empty result is cached; a failed or empty call leaves the variable unset so
-the next TAB retries. Themes, palettes or segments installed mid-session appear
-in a new shell.
+(`__gpy_complete_cache_<kind>`), so repeated TAB presses on one command line
+never fork `gpy`. Only a non-empty result is cached; a failed or empty call
+leaves the variable unset so the next TAB retries. The cache lives until the
+next prompt: Bash and Zsh `unset` the variables in `__gpy_precmd`, and Fish
+does so from a `fish_preexec` handler defined in the completion file. A theme,
+palette or segment created by the previous command therefore completes on the
+next line.
 
 - Bash 3.2 has no associative arrays, so the cache is one plain variable per kind
   read with `${!name}`; Zsh uses the `(P)` flag the same way.

@@ -292,6 +292,56 @@ echo "Checking an empty/failed gpy __complete is never cached..."
     echo "PASS: failed/empty gpy __complete retries instead of caching the failure"
 ) || failures=$((failures + 1))
 
+echo "Checking the next prompt refreshes the cache and keeps the exit status..."
+(
+    sandbox="$(mktemp -d -t gpy-cache-refresh.XXXXXX)"
+    trap 'rm -rf "$sandbox"' EXIT
+    export HOME="$sandbox" GPY_AGENT_ENABLED=0
+    export XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data"
+    export XDG_STATE_HOME="$sandbox/state" XDG_CACHE_HOME="$sandbox/cache"
+    unset PROMPT_COMMAND
+    # shellcheck source=/dev/null
+    source "$ROOT/bash/gpy.bash"
+
+    : >"$gpy_calls_file"
+    gpy() {
+        echo call >>"$gpy_calls_file"
+        if [[ "$1" == "__complete" && "$2" == "theme" ]]; then
+            if [[ "$(wc -l <"$gpy_calls_file" | tr -d ' ')" -le 1 ]]; then
+                printf 'default\n'
+            else
+                printf 'default\nmine\n'
+            fi
+        fi
+    }
+
+    __gpy_complete_cached theme
+    __gpy_complete_cached theme
+    if [[ "$(gpy_call_count)" -ne 1 ]]; then
+        echo "FAIL: two lookups before a prompt must fork gpy once, got $(gpy_call_count)"
+        exit 1
+    fi
+
+    false
+    __gpy_precmd >/dev/null 2>&1
+    precmd_status=$?
+    if [[ "$precmd_status" -ne 1 ]]; then
+        echo "FAIL: __gpy_precmd must keep the previous exit status 1, got $precmd_status"
+        exit 1
+    fi
+
+    __gpy_complete_cached theme
+    if [[ "$(gpy_call_count)" -ne 2 ]]; then
+        echo "FAIL: lookup after the prompt must fork gpy again, got $(gpy_call_count) calls"
+        exit 1
+    fi
+    if [[ "$__gpy_complete_result" != *mine* ]]; then
+        echo "FAIL: refreshed candidates missing 'mine'; got: $__gpy_complete_result"
+        exit 1
+    fi
+    echo "PASS: the prompt clears the cache without changing the exit status"
+) || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "FAIL: $failures completion check(s) failed"
     exit 1

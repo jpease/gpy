@@ -322,9 +322,12 @@ enabled_segments = ["clock", "duration", "directory", "git"]
 "#;
 
     let (exit_code, stdout, stderr) = run_gpy_agent_with_config(DISABLED_CONFIG, &["start"]);
-    assert_eq!(exit_code, 0_i32, "start command failed: {stderr}");
+    assert_eq!(
+        exit_code, 6_i32,
+        "start must exit 6 when disabled: {stderr}"
+    );
     assert!(
-        stderr.contains("GPY Agent disabled via config"),
+        stderr.contains("Agent disabled in config"),
         "expected disabled notice in stderr, got '{stderr}'"
     );
     assert!(
@@ -340,7 +343,7 @@ fn test_cli_start_is_unsupported_on_native_windows() {
     let (exit_code, stdout, stderr) = run_gpy_agent_with_config("", &["start"]);
     assert_eq!(exit_code, 1_i32, "start must fail on Windows: {stderr}");
     assert!(
-        stderr.contains("Background agent only supported on Unix-like systems"),
+        stderr.contains("not yet implemented for native Windows"),
         "expected the unsupported-platform notice in stderr, got '{stderr}'"
     );
     assert!(
@@ -427,7 +430,7 @@ enabled_segments = ["clock", "duration", "directory", "git"]
 "#;
 
     let (exit_code, stdout, stderr) =
-        run_gpy_agent_with_config(SUPERVISOR_CONFIG, &["theme", "export", "--format", "fish"]);
+        run_gpy_agent_with_config(SUPERVISOR_CONFIG, &["theme", "export", "--shell", "fish"]);
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
     assert!(
         stdout.contains("set -gx GPY_AGENT_SUPERVISOR_ENABLED \"0\""),
@@ -459,7 +462,7 @@ enabled_segments = ["directory", "git"]
 "#;
 
     let (exit_code, stdout, stderr) =
-        run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--format", "fish"]);
+        run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--shell", "fish"]);
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
 
     assert!(
@@ -492,7 +495,7 @@ enabled_segments = ["directory", "git"]
 "#;
 
     let (exit_code, zsh_stdout, stderr) =
-        run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--format", "zsh"]);
+        run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--shell", "zsh"]);
     assert_eq!(exit_code, 0_i32, "zsh theme export failed: {stderr}");
     assert!(
         zsh_stdout.contains("export GPY_UI_DIRECTORY_DISPLAY=\"full\"")
@@ -502,7 +505,7 @@ enabled_segments = ["directory", "git"]
     );
 
     let (bash_exit_code, bash_stdout, bash_stderr) =
-        run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--format", "bash"]);
+        run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--shell", "bash"]);
     assert_eq!(
         bash_exit_code, 0_i32,
         "bash theme export failed: {bash_stderr}"
@@ -721,11 +724,11 @@ fn test_cli_status_command() {
 
     // The shared env may or may not have an agent up; exit code must agree.
     assert!(!stdout.is_empty(), "status prints a report: {stderr}");
-    assert!(stdout.contains("GPY Agent Status"), "{stdout}");
-    let responding = stdout.contains("Status: Running and Responding");
+    assert!(stdout.contains("state: "), "{stdout}");
+    let responding = stdout.contains("state: running");
     assert_eq!(
         exit_code,
-        i32::from(!responding),
+        if responding { 0_i32 } else { 3_i32 },
         "exit code must reflect liveness. stdout: {stdout} stderr: {stderr}"
     );
 }
@@ -794,7 +797,7 @@ fn test_cli_git_status_json_format() {
 
 #[test]
 fn test_theme_export_includes_icon_prompt() {
-    let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
+    let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--shell", "fish"]);
 
     assert_eq!(exit_code, 0_i32, "Theme export failed: {stderr}");
 
@@ -920,7 +923,7 @@ fn test_fish_rendered_delimiter_when_is_last_lang() {
 /// colors unset.
 #[test]
 fn test_theme_export_produces_non_empty_output() {
-    let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
+    let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--shell", "fish"]);
 
     assert_eq!(
         exit_code, 0_i32,
@@ -962,7 +965,7 @@ fn test_theme_export_produces_non_empty_output() {
 
 #[test]
 fn test_theme_export_fish_syntax_valid() {
-    let (exit_code, stdout, _stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
+    let (exit_code, stdout, _stderr) = run_gpy_agent(&["theme", "export", "--shell", "fish"]);
 
     assert_eq!(exit_code, 0_i32);
     assert_ne!(stdout, "");
@@ -1018,7 +1021,7 @@ theme = "default"
     fs::write(config_dir.join("config.toml"), config_content).expect("Failed to write config file");
 
     let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-        .args(["theme", "export", "--format", "fish"])
+        .args(["theme", "export", "--shell", "fish"])
         .env("XDG_CONFIG_HOME", custom_config_dir.to_str().unwrap())
         .output()
         .expect("Failed to run command");
@@ -1067,10 +1070,10 @@ fn test_cli_oneshot_default_theme_pills_have_one_leading_space() {
     let close = '\u{e0bc}';
     let gap = ' ';
     let cases: [(&[&str], &str); 3] = [
-        (&["status", "--exit-code", "0"], "\u{f058}"),
-        (&["status", "--exit-code", "2"], "\u{f057}"),
+        (&["exit-status", "--exit-code", "0"], "\u{f058}"),
+        (&["exit-status", "--exit-code", "2"], "\u{f057}"),
         // A negative value parses as a value, not a flag, and is a failure.
-        (&["status", "--exit-code", "-1"], "\u{f057}"),
+        (&["exit-status", "--exit-code", "-1"], "\u{f057}"),
     ];
     for (args, content) in cases {
         let first = default_theme_pill_text(&env, args, &["--first", "--not-last"]);
@@ -1090,7 +1093,7 @@ fn test_cli_oneshot_default_theme_pills_have_one_leading_space() {
 
 #[test]
 fn test_theme_export_contains_enabled_segments_from_config() {
-    let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
+    let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--shell", "fish"]);
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
 
     let enabled_line = stdout
@@ -1193,10 +1196,8 @@ directory.max_length = 80
 enabled_segments = ["clock", "directory", "git"]
 "#;
 
-    let (exit_code, stdout, stderr) = run_gpy_agent_with_config(
-        CONFIG_GIT_DISABLED,
-        &["theme", "export", "--format", "fish"],
-    );
+    let (exit_code, stdout, stderr) =
+        run_gpy_agent_with_config(CONFIG_GIT_DISABLED, &["theme", "export", "--shell", "fish"]);
 
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
 
@@ -1230,7 +1231,7 @@ enabled_segments = ["clock", "directory", "git"]
 "#;
 
     let (exit_code, stdout_enabled, stderr) =
-        run_gpy_agent_with_config(CONFIG_GIT_ENABLED, &["theme", "export", "--format", "fish"]);
+        run_gpy_agent_with_config(CONFIG_GIT_ENABLED, &["theme", "export", "--shell", "fish"]);
     assert_eq!(
         exit_code, 0_i32,
         "theme export failed with git enabled: {stderr}"
@@ -1244,10 +1245,8 @@ enabled_segments = ["clock", "directory", "git"]
         "GPY_GIT_ENABLED should be 1 when enabled. Got: {stdout_enabled}"
     );
 
-    let (disabled_exit_code, stdout_disabled, disabled_stderr) = run_gpy_agent_with_config(
-        CONFIG_GIT_DISABLED,
-        &["theme", "export", "--format", "fish"],
-    );
+    let (disabled_exit_code, stdout_disabled, disabled_stderr) =
+        run_gpy_agent_with_config(CONFIG_GIT_DISABLED, &["theme", "export", "--shell", "fish"]);
     assert_eq!(
         disabled_exit_code, 0_i32,
         "theme export failed with git disabled: {disabled_stderr}"
@@ -1338,7 +1337,7 @@ fn test_oneshot_lang_invalid_format() {
 
 #[test]
 fn test_theme_export_invalid_format() {
-    let (exit_code, _stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "xml"]);
+    let (exit_code, _stdout, stderr) = run_gpy_agent(&["theme", "export", "--shell", "xml"]);
 
     assert_ne!(exit_code, 0_i32, "Invalid theme format should fail");
     assert!(

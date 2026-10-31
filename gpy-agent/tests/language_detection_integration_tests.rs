@@ -4,6 +4,8 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 
+use gpy_agent::config::defaults::DEFAULT_LANGUAGE_ICONS;
+use gpy_agent::config::types::DetectionMode;
 use gpy_agent::config::{Config, loader};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -106,6 +108,10 @@ fn create_language_test_dir(language: &str) -> TempDir {
 }
 
 fn setup_test_env() -> (TempDir, PathBuf) {
+    setup_test_env_with_detection(DetectionMode::Markers)
+}
+
+fn setup_test_env_with_detection(mode: DetectionMode) -> (TempDir, PathBuf) {
     let home = TempDir::new().expect("Failed to create temp home");
     let config_root = home.path().join(".config");
     let cache_root = home.path().join(".cache");
@@ -117,11 +123,13 @@ fn setup_test_env() -> (TempDir, PathBuf) {
 
     let config_path = gpy_config_dir.join("config.toml");
     let default_config = Config::default();
+    let mut updated = default_config.clone();
+    updated.language.detection_mode = mode;
     loader::save_config(
         &config_path,
         &default_config,
-        &default_config,
-        &["ui.show_icons"],
+        &updated,
+        &["ui.show_icons", "language.detection_mode"],
     )
     .expect("write default config");
 
@@ -147,7 +155,8 @@ fn test_all_languages_detected() {
     let languages = vec![
         "node", "python", "rust", "go", "swift", "elixir", "erlang", "ruby", "java", "fish",
     ];
-    let (home_env, config_path) = setup_test_env();
+    // The fish fixture keeps its evidence under `functions/`, which only the content scan reads.
+    let (home_env, config_path) = setup_test_env_with_detection(DetectionMode::Content);
 
     for lang in languages {
         let test_dir = create_language_test_dir(lang);
@@ -189,7 +198,8 @@ fn test_version_detection_for_all_languages() {
     let languages = vec![
         "node", "python", "rust", "go", "swift", "elixir", "erlang", "ruby", "java", "fish",
     ];
-    let (home_env, config_path) = setup_test_env();
+    // The fish fixture keeps its evidence under `functions/`, which only the content scan reads.
+    let (home_env, config_path) = setup_test_env_with_detection(DetectionMode::Content);
 
     for lang in languages {
         let test_dir = create_language_test_dir(lang);
@@ -376,9 +386,14 @@ fn test_ipc_format_parameter() {
         !response.contains(r#""languages""#),
         "IPC should return ansi format, not JSON. Got: {response:?}"
     );
+    // The default config renders the built-in Rust icon instead of the language name.
+    let rust_icon = DEFAULT_LANGUAGE_ICONS
+        .iter()
+        .find_map(|(key, glyph)| (*key == "rust").then_some(*glyph))
+        .expect("rust has a built-in icon");
     assert!(
-        response.contains("rust"),
-        "the rendered segment should name the detected language. Got: {response:?}"
+        response.contains(rust_icon),
+        "the rendered segment should show the detected language's icon. Got: {response:?}"
     );
 }
 
@@ -667,7 +682,7 @@ fn write_fifo_git_repo(root: &Path) {
 #[cfg(unix)]
 #[test]
 fn test_fifo_repository_files_do_not_hang_oneshot() {
-    let (home_env, config_path) = setup_test_env();
+    let (home_env, config_path) = setup_test_env_with_detection(DetectionMode::Content);
 
     let control = home_env.path().join("regular-venv");
     write_fifo_venv_project(&control);
@@ -721,7 +736,7 @@ fn ipc_request(socket_path: &Path, request: &str) -> String {
 #[cfg(unix)]
 #[test]
 fn test_daemon_answers_for_fifo_repositories() {
-    let (home_env, config_path) = setup_test_env();
+    let (home_env, config_path) = setup_test_env_with_detection(DetectionMode::Content);
     let daemon = RunningAgent::start(&home_env, &config_path);
 
     let repo = home_env.path().join("fifo-repo");

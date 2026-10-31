@@ -36,8 +36,8 @@ bg_color = "transparent"
 [ui.recommended]
 enabled_segments = ["clock", "duration", "language", "directory", "git"]
 show_icons = true
-# Stock GPY behavior: content-scan detection (clean round-trip from markers presets).
-language_detection = "content"
+# Stock GPY behavior: marker detection.
+language_detection = "markers"
 
 [ui.recommended.directory]
 display = "basename"
@@ -138,3 +138,11 @@ node_bg_color = "green"
 go_bg_color = "cyan"
 java_bg_color = "blue"
 ruby_bg_color = "red"
+swift_bg_color = "red"
+elixir_bg_color = "magenta"
+php_bg_color = "blue"
+csharp_bg_color = "magenta"
+cpp_bg_color = "blue"
+c_bg_color = "blue"
+erlang_bg_color = "red"
+fish_bg_color = "green"

@@ -57,7 +57,7 @@ pub(super) fn ping_agent_outcome(socket_path: &Path) -> Result<PingOutcome> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|e| Error::process("ping_runtime", e.to_string()))?;
+        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))?;
 
     rt.block_on(async {
         let Some(stream) = ping_connect(socket_path).await else {
@@ -266,7 +266,11 @@ pub fn probe_status(socket_path: &Path) -> StatusProbe {
         .build()
     {
         Ok(runtime) => runtime,
-        Err(e) => return StatusProbe::Failed(Error::process("status_runtime", e.to_string())),
+        Err(e) => {
+            return StatusProbe::Failed(Error::agent(format!(
+                "cannot create the async runtime: {e}"
+            )));
+        }
     };
     status_probe_from(runtime.block_on(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET)))
 }

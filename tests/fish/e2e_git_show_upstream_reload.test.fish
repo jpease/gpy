@@ -126,7 +126,7 @@ function test_git_show_upstream_reload
     end
 
     # Verify theme export includes GPY_GIT_SHOW_UPSTREAM=1
-    set -l theme1 (gpy-agent theme export --format fish 2>/dev/null)
+    set -l theme1 (gpy-agent theme export --shell fish 2>/dev/null)
 
     if echo "$theme1" | grep -q "set -gx GPY_GIT_SHOW_UPSTREAM \"1\""
         pass "Theme export shows GPY_GIT_SHOW_UPSTREAM=1"
@@ -165,7 +165,7 @@ function test_git_show_upstream_reload
     end
 
     # Verify theme export shows GPY_GIT_SHOW_UPSTREAM=0
-    set -l theme2 (gpy-agent theme export --format fish 2>/dev/null)
+    set -l theme2 (gpy-agent theme export --shell fish 2>/dev/null)
 
     if echo "$theme2" | grep -q "set -gx GPY_GIT_SHOW_UPSTREAM \"0\""
         pass "Theme export shows GPY_GIT_SHOW_UPSTREAM=0"

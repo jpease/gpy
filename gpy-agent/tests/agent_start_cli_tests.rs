@@ -22,15 +22,10 @@ fn status_reports_a_busy_agent_as_busy() {
 
     let status = sandbox.gpy_agent(&["status"]);
 
-    assert!(
-        status
-            .stdout
-            .contains("Status: Running but busy (not answering right now)"),
-        "{status:?}"
-    );
+    assert!(status.stdout.contains("state: busy"), "{status:?}");
     assert_eq!(
-        status.exit_code, 1_i32,
-        "status exits 1 for a busy agent until the exit codes change: {status:?}"
+        status.exit_code, 0_i32,
+        "status exits 0 for a busy agent: {status:?}"
     );
 }
 
@@ -44,9 +39,9 @@ fn start_honors_agent_disabled_in_an_otherwise_invalid_config() {
 
     let started = sandbox.gpy_agent(&["start"]);
 
-    assert_eq!(started.exit_code, 0_i32, "{started:?}");
+    assert_eq!(started.exit_code, 6_i32, "{started:?}");
     assert!(
-        started.stderr.contains("disabled via config"),
+        started.stderr.contains("Agent disabled in config"),
         "the disabled line must be printed: {started:?}"
     );
     assert!(
@@ -63,7 +58,7 @@ fn theme_export_keeps_agent_disabled_from_an_invalid_config() {
         .write_config(DISABLED_IN_INVALID_CONFIG)
         .expect("write config");
 
-    let exported = sandbox.gpy_agent(&["theme", "export", "--format", "bash"]);
+    let exported = sandbox.gpy_agent(&["theme", "export", "--shell", "bash"]);
 
     assert_eq!(exported.exit_code, 0_i32, "{exported:?}");
     let line = exported
@@ -86,12 +81,16 @@ fn start_prints_one_progress_line_and_leaves_an_answering_daemon() {
     assert_eq!(started.exit_code, 0_i32, "{started:?}");
     assert_eq!(
         started
-            .stderr
+            .stdout
             .lines()
-            .filter(|line| *line == "Starting GPY Agent in background...")
+            .filter(|line| line.starts_with("Started agent (pid "))
             .count(),
         1,
-        "start prints its outcome once, never from the daemon child: {started:?}"
+        "start prints its outcome once on stdout, never from the daemon child: {started:?}"
+    );
+    assert!(
+        started.stderr.is_empty(),
+        "start prints no progress on stderr: {started:?}"
     );
     sandbox.wait_until_responding();
     let status = sandbox.gpy_agent(&["status"]);

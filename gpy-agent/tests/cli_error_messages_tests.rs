@@ -143,7 +143,7 @@ fn agent_theme_export_into_a_closed_pipe_does_not_panic() {
 
     let mut child = KillOnDrop::new(
         Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-            .args(["theme", "export", "--format", "fish"])
+            .args(["theme", "export", "--shell", "fish"])
             .env("HOME", env.root())
             .env("XDG_CONFIG_HOME", env.xdg_config_home())
             .env("XDG_RUNTIME_DIR", env.xdg_runtime_dir())
@@ -198,11 +198,17 @@ fn over_long_socket_path_is_refused_with_the_length_and_the_fix() {
             .run_gpy_with_env(args, &[("GPY_AGENT_SOCKET_PATH", socket.as_str())])
             .expect("spawn gpy");
 
-        assert_eq!(result.exit_code, 1_i32, "gpy {label}: {result:?}");
+        let want = if args == ["status"] { 4_i32 } else { 1_i32 };
+        assert_eq!(result.exit_code, want, "gpy {label}: {result:?}");
         let line = result.stderr.lines().next().unwrap_or_default();
         assert!(
-            line.starts_with("Error: "),
-            "gpy {label}: the first stderr line is an `Error:` line: {result:?}"
+            line.starts_with("Error: ") && line.contains(&format!("is {socket_len} bytes")),
+            "gpy {label}: the first stderr line is the `Error:` line naming the length: {result:?}"
+        );
+        let second = result.stderr.lines().nth(1).unwrap_or_default();
+        assert!(
+            second.starts_with("  Remediation:"),
+            "gpy {label}: the second stderr line is the remediation: {result:?}"
         );
         for needle in [
             format!("is {socket_len} bytes"),

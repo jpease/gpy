@@ -378,4 +378,46 @@ rm -f "$__gpy_seen_file"
 [[ "$seen_git" == "git:dircolor" ]] || { echo "FAIL: second segment prev_bg not advanced to first segment bg ($seen_git)"; exit 1; }
 pass "render loop threads prev_bg and advances it across segments"
 
+# The segment after git is drawn after the colour the agent recorded for the
+# repository, through the `__gpy_segment_bg` that `theme export` generates; an
+# agent-free git render keeps the clean colour. Needs the built debug agent.
+AGENT_BIN="$ROOT/gpy-agent/target/debug/gpy-agent"
+if [[ -x "$AGENT_BIN" ]]; then
+    __gpy_run_git_bg_case() {
+        local git_status="$1" seen_file bg_dir key
+        seen_file="$(mktemp)"
+        (
+            eval "$("$AGENT_BIN" theme export --shell zsh 2>/dev/null)"
+            bg_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
+            mkdir -p "$parity_xdg_root/repo/.git" "$bg_dir"
+            cd "$parity_xdg_root/repo" || exit 1
+            :
+            __gpy_path_to_cache_key "$(realpath "$PWD")" key
+            printf 'red' > "$bg_dir/$key.git_bg.none.zsh"
+            __gpy_seen_file="$seen_file"
+            __gpy_segment_directory() { echo "DIR"; }
+            __gpy_segment_git() { echo "GIT"; return "$git_status"; }
+            __gpy_segment_language() { echo "language:${2:-EMPTY}" >> "$__gpy_seen_file"; echo "LANG"; }
+            __gpy_segment_directory_detect() { return 0; }
+            __gpy_segment_git_detect() { return 0; }
+            __gpy_segment_language_detect() { return 0; }
+            __gpy_request_character() { echo ""; }
+            __enabled_segments=(directory git language)
+            __gpy_render_prompt 0 >/dev/null
+            echo "clean:${__color_git_clean_bg:-}" >> "$seen_file"
+        )
+        cat "$seen_file"
+        rm -f "$seen_file"
+    }
+    git_bg_seen="$(__gpy_run_git_bg_case 0)"
+    [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:red" ]] || { echo "FAIL: language prev_bg is not the recorded git colour ($git_bg_seen)"; exit 1; }
+    pass "segment after git receives the recorded git background"
+    git_bg_seen="$(__gpy_run_git_bg_case "$GPY_SEG_STATUS_ONESHOT")"
+    clean_bg="${git_bg_seen##*clean:}"
+    [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:$clean_bg" ]] || { echo "FAIL: agent-free git render did not use the clean colour ($git_bg_seen)"; exit 1; }
+    pass "agent-free git render leaves the clean background for the next segment"
+else
+    echo "SKIP: $AGENT_BIN not built; git background threading not checked"
+fi
+
 test_finish "parity"

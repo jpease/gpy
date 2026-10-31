@@ -269,6 +269,9 @@ pub enum Response {
         registered_clients: usize,
         /// Number of cache entries
         cache_entries: usize,
+        /// Process ID of the answering agent; absent from older agents.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
     },
 
     /// Error response

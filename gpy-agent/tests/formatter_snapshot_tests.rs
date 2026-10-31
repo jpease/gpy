@@ -103,6 +103,7 @@ fn sample_agent_status() -> Response {
         watched_repos: 3,
         registered_clients: 5,
         cache_entries: 10,
+        pid: None,
     }
 }
 

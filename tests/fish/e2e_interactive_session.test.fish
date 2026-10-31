@@ -117,7 +117,7 @@ function session_stop_all
 end
 
 function registered_clients
-    gpy-agent status 2>/dev/null | string match -r 'Registered Clients: (\d+)' | tail -1
+    gpy-agent status 2>/dev/null | string match -r 'registered_clients: (\d+)' | tail -1
 end
 
 function __clients_are --argument-names n

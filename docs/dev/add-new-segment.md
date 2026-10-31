@@ -62,7 +62,7 @@ enabled_segments = ["clock", "duration", "language", "directory", "docker", "git
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Segment not appearing | `detect` returns 1, or the name is not in `ui.enabled_segments` | Debug `segment_<name>_detect` directly |
-| Wrong colors | Theme not loaded | `gpy-agent theme export --format fish \| source` |
+| Wrong colors | Theme not loaded | `gpy-agent theme export --shell fish \| source` |
 | Slow prompt | Expensive detection | Move the work into the agent |
 
 ## Common mistakes

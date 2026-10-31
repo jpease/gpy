@@ -17,18 +17,20 @@ pub(super) const RELEASED_THEME_HASHES: &[(&str, &str)] = &[
     ("default", "3d2e25f3f92fda88c3fc3d37f27fac4b4dca836dc85139247d2b560f6c180818"),
     // v0.6.0
     ("default", "208928bba1b5baa7ea8c4791e699ede5d9127fa10582ca6893af598f16c4e304"),
-    // v0.7.0 v0.7.1
+    // v0.7.0 v0.7.1 v0.8.0
     ("default", "024fce7e2b85bd21ccba6327424100fc61c69c1a7a585588c5d92e04d3e1d173"),
+    // unreleased
+    ("default", "4c3300065e1693bd57483d144ce0ee07882e543675d6f0dce36272a38599bc77"),
     // v0.1.0
     ("starship", "6ef84bf422acbe6b62e13ad67533be8d6ca8b16db55f1bdaa71e90b5605375f9"),
     // v0.2.0 v0.3.0 v0.3.1 v0.4.0 v0.5.0 v0.5.1
     ("starship", "0a530692470a9a6961b533c5c38bcaf341d9dcf9be87c1dcc61f48879fbd766f"),
     // v0.6.0
     ("starship", "669b93c7f43784d60e30579b36101bba79b7f8c0715e4ae0a69694c6fbb11692"),
-    // v0.7.0 v0.7.1
+    // v0.7.0 v0.7.1 v0.8.0
     ("starship", "bd224082470362988a18ed804ec8ec9e423ddc482f1b5c98d0dae4b23c19124e"),
     // v0.1.0 v0.2.0 v0.3.0 v0.3.1 v0.4.0 v0.5.0 v0.5.1 v0.6.0
     ("text", "4a09c6ca3dbf0a54f38fee2f2bd585a4c764895b9e38e99361279a404cfe1104"),
-    // v0.7.0 v0.7.1
+    // v0.7.0 v0.7.1 v0.8.0
     ("text", "b37e0eecc440bedf8f685a3c8fe1806290b5490186d3a888346441b12984c102"),
 ];

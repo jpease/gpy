@@ -62,6 +62,8 @@ while read -d \t -la cols
             set -l is_last (unescape_value "$cols[3]" | string collect -Na)
             set -l is_first (unescape_value "$cols[4]" | string collect -Na)
             check "$label" "$cols[5]" (__gpy_cache_variant_suffix $cols[2] "$is_last" "$is_first" | string collect)
+        case bgfile
+            check "$label" "$cols[3]" (__gpy_git_bg_file_tail "$cols[2]" | string collect)
         case status
             check "$label stale" "$cols[3]" (yes_no __gpy_cache_status_stale $cols[2])
             check "$label variant" "$cols[4]" (yes_no __gpy_cache_status_variant $cols[2])

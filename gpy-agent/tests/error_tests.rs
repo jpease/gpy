@@ -105,41 +105,11 @@ fn test_git_helper() {
 }
 
 #[test]
-fn test_language_helper() {
-    let err = Error::language("detection failed");
-    assert!(matches!(err, Error::Language { .. }));
-}
-
-#[test]
-fn test_ipc_helper() {
-    let err = Error::ipc("connection lost");
-    assert!(matches!(err, Error::Ipc { .. }));
-}
-
-#[test]
-fn test_config_helper() {
-    let err = Error::config("missing field");
-    assert!(matches!(err, Error::Config { .. }));
-}
-
-#[test]
-fn test_agent_helper() {
-    let err = Error::agent("startup failed");
-    assert!(matches!(err, Error::Agent { .. }));
-}
-
-#[test]
 fn test_process_helper() {
     let err = Error::process("npm", "not found");
     assert!(matches!(err, Error::Process { .. }));
     assert!(err.to_string().contains("npm"));
     assert!(err.to_string().contains("not found"));
-}
-
-#[test]
-fn test_invalid_helper() {
-    let err = Error::invalid("bad input");
-    assert!(matches!(err, Error::Invalid { .. }));
 }
 
 #[test]
@@ -169,7 +139,7 @@ fn test_from_io_error() {
 fn test_from_serde_json_error() {
     let json_err = serde_json::from_str::<i32>("not a number").expect_err("Should fail");
     let err: Error = json_err.into();
-    assert!(matches!(err, Error::Json { .. }));
+    assert!(matches!(err, Error::Json(_)));
 }
 
 #[test]

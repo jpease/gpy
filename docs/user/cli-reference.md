@@ -85,30 +85,40 @@ The agent runs as a daemon and handles git status detection, language detection,
 gpy start
 ```
 
-**Output** (on stderr; stdout stays empty so the command is safe in pipelines):
+**Output** (on stdout, one line; `gpy-agent start --quiet` prints nothing on
+success):
 ```
-Starting GPY Agent in background...
+Started agent (pid 4321).
 ```
 
 The command returns once the daemon answers on its socket; `gpy status`
-then reports `Running and Responding`. Starting is idempotent: with a
-matching agent already running it exits `0` without forking a second one,
-and with an older agent running it evicts it first (`Detected version
-mismatch`) so an upgrade never leaves a stale daemon serving new shells.
-It also replaces an agent that speaks a different protocol, even a newer
-one (`Detected protocol mismatch`): shells built for this protocol cannot use
-it. A newer agent on the same protocol is left alone. An agent that is
-running but too busy to answer (it closes new connections without a reply)
-is left alone too: `gpy-agent start` prints `GPY Agent is running but too
-busy to answer; leaving it alone` and exits `0`. `agent.enabled = false` is
-honored even when other keys in `config.toml` are invalid. If the new daemon exits or does not
-answer within 5 seconds, `gpy start` (and `gpy-agent start`) exits `1`
-with an `Error:` line; when the daemon fails before binding its socket, the
-line carries the daemon's own error, such as a cache directory it could not
-create and why. The daemon runs in `/`, so it never keeps the
+then reports `state: running` with that PID. Starting is idempotent: with a
+matching agent already running it prints `Agent already running.`, exits `0`
+and forks no second daemon, and with an older agent running it replaces it and
+prints `Replaced agent <old> with <new> (pid N).` so an upgrade never leaves a
+stale daemon serving new shells. It also replaces an agent that speaks a
+different protocol, even a newer one: shells built for this protocol cannot
+use it. A newer agent on the same protocol is left alone
+(`Agent <running> already running; it is newer than this gpy-agent (<this>) and
+was left in place.`). An agent that is running but too busy to answer (it
+closes new connections without a reply) is left alone too: `gpy-agent start`
+prints `Agent at <socket> is too busy to answer; leaving it running.` on
+stderr and exits `0`. `agent.enabled = false` is honored even when other keys
+in `config.toml` are invalid: `start` prints `Agent disabled in config
+(agent.enabled = false); not started.` on stderr, binds no socket, and exits
+`6`. If the new daemon exits or does not answer within 5 seconds, `gpy start`
+(and `gpy-agent start`) exits `1` with an `Error:` line; when the daemon fails
+before binding its socket, the line carries the daemon's own error, such as a
+cache directory it could not create and why. When `start` cannot tell whether
+an agent already owns the socket, it leaves the socket alone and exits `1`.
+The daemon runs in `/`, so it never keeps the
 directory you started it from (or its volume) busy; a relative `--socket`,
 `GPY_AGENT_SOCKET_PATH`, `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
 resolves against that directory.
+
+**Exit Codes:** `0` agent running afterwards (started, replaced an older one,
+already running, busy, or a newer one left in place), `1` error, `6` disabled
+by `agent.enabled = false`, `2` usage error.
 
 The socket's directory, default or `GPY_AGENT_SOCKET_PATH`/`--socket`, must
 be a real directory you own. `gpy start` exits `1` naming the directory if it
@@ -131,20 +141,27 @@ Sends a graceful shutdown signal to the agent.
 gpy stop
 ```
 
-**Output:**
+**Output** (stdout):
 ```
-Shutdown command sent successfully
-Agent stopped successfully
+Stopped agent (pid 4321).
 ```
 
-Stopping is idempotent: with no agent running it prints
-`Agent is not running (socket not found)` and still exits `0`.
+`gpy-agent stop --quiet` prints nothing on success. An agent that reports no
+PID prints `Stopped agent.`.
+
+Stopping is idempotent: with no agent running it prints `Agent not running.`
+and still exits `0`.
 
 A socket file with nothing listening is a leftover, not a running agent: `stop`
-removes it, prints `Agent is not running (stale socket removed)` and exits `0`.
-If an agent is there but cannot be stopped (it does not answer the shutdown
-request, or still answers after the shutdown wait), `stop` prints one `Error:`
-line on stderr and exits `1`.
+removes it, prints `Agent not running; removed stale socket <path>.` and exits
+`0`. If an agent is there but cannot be stopped (it does not answer the
+shutdown request, or still answers after the shutdown wait), `stop` prints one
+`Error:` line on stderr naming the socket (and `kill <pid>` when the agent
+reported its PID) and exits `1`.
+
+**Exit Codes:** `0` agent stopped afterwards (including not running), `1` the
+agent still answers or did not answer the shutdown, `2` usage error. `stop`
+never exits `6`: a disabled agent that is still running must be stoppable.
 
 ---
 
@@ -152,34 +169,32 @@ line on stderr and exits `1`.
 
 Restart the background agent.
 
-Equivalent to running `gpy stop` followed by `gpy start`, reporting each
-step as it completes.
+Runs `gpy-agent restart`, which stops the agent and then starts it. A failed
+stop (for example an agent that never answers) is printed as a `warn:` line on
+stderr and does not abort, because `start` evicts an agent that does not
+answer.
 
 **Example:**
 ```bash
 gpy restart
 ```
 
-**Output:**
+**Output** (stdout; the stop line is `Agent not running.` when nothing ran):
 ```
-Restarting GPY...
-Shutdown command sent
-GPY stopped
-GPY started
+Stopped agent (pid 4321).
+Started agent (pid 4388).
 ```
+
+**Exit Codes:** as `gpy start`: `0` agent running afterwards, `1` error, `6`
+disabled by `agent.enabled = false`, `2` usage error.
 
 ---
 
 #### `gpy status`
 
-Display agent status and diagnostics.
-
-Shows:
-- Socket path and configuration file location
-- Whether the agent answered (`Running and Responding`), is absent, or
-  failed to answer
-- Agent version and protocol version
-- Watched repositories, registered clients and cache entries
+Display agent status. `gpy status` runs `gpy-agent status`, so both print the
+same fixed lowercase `key: value` lines on stdout, in this order, and nothing
+else.
 
 **Example:**
 ```bash
@@ -188,28 +203,43 @@ gpy status
 
 **Output:**
 ```
-GPY Agent Status
-================
-Socket Path: /run/user/1000/gpy/gpy.sock
-Config: /home/user/.config/gpy/config.toml
-
-Status: Running and Responding
-Agent Version: 0.1.0
-Protocol Version: 1
-Watched Repos: 1
-Registered Clients: 1
-Cache Entries: 2
+state: running
+pid: 41235
+version: 0.9.0
+protocol: 2
+socket: /run/user/1000/gpy/gpy.sock
+config: /home/user/.config/gpy/config.toml
+watched_repos: 1
+registered_clients: 1
+cache_entries: 2
 ```
 
-**Exit Codes:**
-- `0` - The agent answered (`Status: Running and Responding`)
-- `1` - No agent is running (`Status: Not Running (socket not found)`), the
-  socket exists but nothing answered (`Status: Connection failed - ...`), or
-  the agent is running but closing connections without a reply
-  (`Status: Running but busy (not answering right now)`)
+`state` is one of `running`, `busy`, `not-running` and `not-answering`, and it
+always agrees with the exit code:
 
-The exit code is what scripts and `gpy doctor` rely on; the report is
-printed either way. `gpy-agent status` follows the same contract.
+| Situation | `state` | Exit |
+|---|---|---|
+| The agent answered the status request | `running` | `0` |
+| The agent accepted the connection and dropped it unanswered (it is shedding load) | `busy` | `0` |
+| No socket file, or the socket refuses connections (a stale file) | `not-running` | `3` |
+| The socket accepts but no valid reply arrives (wedged), or the status could not be determined | `not-answering` | `4` |
+
+`pid`, `version`, `protocol`, `watched_repos`, `registered_clients` and
+`cache_entries` are printed only for a `running` agent (`pid` is omitted when
+an older agent did not report it). `config` is the active config file, or
+`none (built-in defaults)`. `error` is the reason for a `not-answering` agent,
+for a `busy` agent (`agent closed the connection without a reply`) and for a
+`not-running` state caused by a socket file that refused the connection. A
+status that cannot even resolve the socket path prints one `Error:` line, no
+`key: value` lines, and exits `4`.
+
+Scripts test liveness with the exit code and read values with
+`awk -F': '`. A protocol mismatch adds one `warn:` line on stderr.
+`gpy-agent status` follows the same contract.
+
+**Exit Codes:** `0` running or busy, `3` not running, `4` not answering or
+unknown, `2` usage error. `gpy status` never exits `1`: when `gpy-agent` cannot
+be run it prints one `Error:` line and exits `4`.
 
 ---
 
@@ -941,7 +971,7 @@ Updates the configuration file and reloads the running agent.
 - `ui.directory.max_length` - Maximum displayed length for the rendered directory string
 - `language.display` - Language segment display: `icon` or `text`
 - `language.filter` - Languages to show: `all`, `primary`, or top N (e.g. `3`)
-- `language.detection_mode` - Detection strategy: `content`, `markers`, or `hybrid`
+- `language.detection_mode` - Detection strategy: `markers` (default), `content`, or `hybrid`
 - `language.icons.<lang>` - Icon for one language, e.g. `language.icons.rust`; aliases such as `rs` resolve to the same entry
 - `git.max_ahead_behind` - Maximum ahead/behind count to report (`0` = unlimited)
 - `git.stash_enabled` - Enable/disable the stash count
@@ -1427,11 +1457,12 @@ commands.
 
 | Command | What it does |
 |---|---|
-| `gpy-agent start [--socket <path>]` | Start the daemon in the background (idempotent; replaces an agent whose version or protocol differs, leaves a busy one alone). `--socket` overrides the socket path, mainly for tests. |
-| `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
-| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
-| `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
-| `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
+| `gpy-agent start [--socket <path>] [--quiet]` | Start the daemon in the background (idempotent; replaces an agent whose version or protocol differs, leaves a busy one alone) and print one outcome line with its PID. `--socket` overrides the socket path, mainly for tests; `--quiet` prints nothing on success. |
+| `gpy-agent stop [--socket <path>] [--quiet]` / `gpy-agent status [--socket <path>]` | Same behaviour and exit codes as the `gpy` equivalents above. |
+| `gpy-agent restart [--socket <path>] [--quiet]` | Stop the agent (a failed stop is a `warn:` line, not an abort), then start it; prints the stop line and the start line and exits with `start`'s code. |
+| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. The old name `status` for `exit-status` is deprecated and prints a warning on stderr. |
+| `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). The old `--format` flag for the shell is deprecated and prints a warning on stderr. |
+| `gpy-agent config reload [--socket <path>]` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 
 ---
 
@@ -1473,14 +1504,22 @@ These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY
 
 ## Exit Codes
 
-- `0` - Success
-- `1` - The command failed; stderr carries one line starting with `Error:`
-  that names the problem (an unknown theme, segment, config key, section or
-  value, an agent that could not be reached, ...). `gpy status` also exits
-  `1` when no agent is running, with the report on stdout and no `Error:` line.
-- `2` - Usage error from the argument parser: an unknown subcommand, a missing
-  argument, or a value outside the allowed set (for example
-  `gpy lang versions maybe`, which lists the possible values).
+| Command | 0 | 1 | 2 | 3 | 4 | 6 |
+|---|---|---|---|---|---|---|
+| `gpy status`, `gpy-agent status` | the agent answered, or it is alive but shedding load (busy) | – | usage error | not running: no socket, or the socket refuses connections (stale file) | the socket accepts but the agent never replies (wedged), or the status could not be determined (an `Error:` line names it) | – |
+| `gpy start`, `gpy-agent start` | agent running afterwards: started, replaced an older agent, already running (including busy), or a newer agent left in place | error, including "could not verify whether an agent is running" | usage error | – | – | disabled by `agent.enabled = false` |
+| `gpy stop`, `gpy-agent stop` | agent stopped afterwards, including "was not running" and "removed a stale socket" | the agent is still answering or did not answer the shutdown | usage error | – | – | – |
+| `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | as `start` |
+| `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – |
+| `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – |
+| `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – |
+
+`stop` never exits `6`: a disabled agent that is not running is already in the
+requested state, and one that is still running must be stoppable. `2` is the
+argument parser's usage error: an unknown subcommand, a missing argument, or a
+value outside the allowed set (for example `gpy lang versions maybe`, which
+lists the possible values). Every one of these commands lists its codes in
+`--help`.
 
 Output piped into a reader that stops early (`gpy segments | head -1`,
 `gpy completions fish | head -c 1`) ends quietly with `0`; it is never

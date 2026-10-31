@@ -461,7 +461,7 @@ mod tests {
     #[test]
     #[serial_test::serial(global_ttl)]
     fn stash_freshness_tracks_the_shared_cache_ttl_knob() {
-        crate::language::version::set_version_cache_ttl(1); // narrow to 1h
+        let narrow_ttl = crate::cache::ttl_map::LanguageTtlGuard::set(1);
 
         let repo = tempfile::tempdir().unwrap();
         let venv = repo.path().join(".venv");
@@ -477,7 +477,7 @@ mod tests {
 
         // Re-stamp at the same age, then widen the shared TTL: entry is fresh again.
         VENV_STASH.insert_at(key, venv.clone(), stamped_at);
-        crate::language::version::set_version_cache_ttl(24);
+        drop(narrow_ttl); // restores the 24h default
         assert_eq!(
             stashed_project_venv(repo.path()),
             Some(PythonVenv::Forwarded(venv)),

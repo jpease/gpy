@@ -55,7 +55,10 @@ pub fn show(section: Option<&str>) -> Result<()> {
 /// Rendered from the serialized config so new fields appear automatically;
 /// headers are TOML comments so the full output parses as one document.
 fn show_section(config: &config::Config, section: &str, title: &str) -> Result<()> {
-    let table = toml::Table::try_from(config)
+    // Every icon is printed with its effective glyph, not just explicit overrides.
+    let mut shown = config.clone();
+    shown.git.icons = config.git.icons.resolved(config.git.icon_set);
+    let table = toml::Table::try_from(&shown)
         .map_err(|e| Error::config(format!("failed to serialize config to TOML: {e}")))?;
     let mut selected = toml::Table::new();
     if let Some(value) = table.get(section) {

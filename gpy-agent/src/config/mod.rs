@@ -29,7 +29,7 @@ pub use defaults::{
 };
 pub use language_icons::{LanguageIcons, LanguageTheme};
 
-use defaults::{DEFAULT_ENABLED_SEGMENTS, literal};
+use defaults::{DEFAULT_ENABLED_SEGMENTS, GIT_GLYPHS_NERD_FONT, GIT_GLYPHS_UNICODE, literal};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -124,7 +124,7 @@ pub struct GitSettings {
     pub watch_worktree: bool,
     /// Git icons configuration
     pub icons: GitIcons,
-    /// Glyph set for the stash/detached/in-progress icons only.
+    /// Default glyph set for the stash, detached-HEAD and in-progress icons only.
     pub icon_set: GitIconSet,
     /// Enable the `git stash list` capture (and `$stash` rendering).
     pub stash_enabled: bool,
@@ -147,14 +147,17 @@ impl Default for GitSettings {
     }
 }
 
-/// Glyph set selector for the stash/detached-HEAD/in-progress icons.
+/// Default-glyph selector for the stash, detached-HEAD and in-progress icons.
+///
+/// It does not touch the branch glyph or the powerline caps: those follow
+/// `ui.show_icons` and need a patched font in either set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GitIconSet {
-    /// Plain Unicode glyphs (default; no special font required).
+    /// Plain Unicode glyphs for the three icons (default).
     #[default]
     Unicode,
-    /// Nerd Font glyphs (requires a patched font).
+    /// Nerd Font glyphs for the three icons (requires a patched font).
     NerdFont,
 }
 impl std::fmt::Display for GitIconSet {
@@ -182,42 +185,106 @@ impl std::str::FromStr for GitIconSet {
     }
 }
 
-/// Git icons configuration (semantic icons)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Git icons configuration (semantic icons).
+///
+/// Every field is an optional override. Icon precedence, shared with
+/// [`LanguageIcons`]: `ui.show_icons` gates first; then a theme icon
+/// (`[segments.git] *_icon`, `[segments.language] <lang>_symbol`); then an
+/// explicit `config.toml` icon (`[git.icons]`, `[language.icons]`); then the
+/// built-in default, which for git depends on `git.icon_set`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GitIcons {
-    /// Ahead indicator (default: "↑")
-    pub ahead: types::Icon,
-    /// Behind indicator (default: "↓")
-    pub behind: types::Icon,
-    /// Staged files indicator (default: "✚")
-    pub staged: types::Icon,
-    /// Unstaged files indicator (default: "✱")
-    pub unstaged: types::Icon,
-    /// Untracked files indicator (default: "?")
-    pub untracked: types::Icon,
-    /// Conflicts indicator (default: "✖")
-    pub conflicts: types::Icon,
-    /// Stash indicator (default: "≡"); `icon_set` may swap in a Nerd Font glyph.
-    pub stash: types::Icon,
-    /// Detached-HEAD indicator (default: "➦"); `icon_set` may swap it.
-    pub detached: types::Icon,
-    /// In-progress-operation indicator (default: "↻"); `icon_set` may swap it.
-    pub in_progress: types::Icon,
+    /// Ahead indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<types::Icon>,
+    /// Behind indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<types::Icon>,
+    /// Staged files indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staged: Option<types::Icon>,
+    /// Unstaged files indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unstaged: Option<types::Icon>,
+    /// Untracked files indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub untracked: Option<types::Icon>,
+    /// Conflicts indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflicts: Option<types::Icon>,
+    /// Stash indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stash: Option<types::Icon>,
+    /// Detached-HEAD indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detached: Option<types::Icon>,
+    /// In-progress-operation indicator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_progress: Option<types::Icon>,
 }
 
-impl Default for GitIcons {
-    fn default() -> Self {
+/// One git status icon, for [`GitIcons::glyph`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitIconKind {
+    /// Ahead indicator
+    Ahead,
+    /// Behind indicator
+    Behind,
+    /// Staged files indicator
+    Staged,
+    /// Unstaged files indicator
+    Unstaged,
+    /// Untracked files indicator
+    Untracked,
+    /// Conflicts indicator
+    Conflicts,
+    /// Stash indicator
+    Stash,
+    /// Detached-HEAD indicator
+    Detached,
+    /// In-progress-operation indicator
+    InProgress,
+}
+
+impl GitIcons {
+    /// The icon to draw for `kind`: the explicit `[git.icons]` value, else the
+    /// built-in glyph for `set`.
+    #[must_use]
+    pub fn glyph(&self, kind: GitIconKind, set: GitIconSet) -> &str {
+        let table = match set {
+            GitIconSet::Unicode => &GIT_GLYPHS_UNICODE,
+            GitIconSet::NerdFont => &GIT_GLYPHS_NERD_FONT,
+        };
+        let (explicit, default) = match kind {
+            GitIconKind::Ahead => (&self.ahead, table.ahead),
+            GitIconKind::Behind => (&self.behind, table.behind),
+            GitIconKind::Staged => (&self.staged, table.staged),
+            GitIconKind::Unstaged => (&self.unstaged, table.unstaged),
+            GitIconKind::Untracked => (&self.untracked, table.untracked),
+            GitIconKind::Conflicts => (&self.conflicts, table.conflicts),
+            GitIconKind::Stash => (&self.stash, table.stash),
+            GitIconKind::Detached => (&self.detached, table.detached),
+            GitIconKind::InProgress => (&self.in_progress, table.in_progress),
+        };
+        explicit.as_ref().map_or(default, types::Icon::as_str)
+    }
+
+    /// Every icon filled with its effective value (explicit, else the default
+    /// for `set`), for `config show` and key enumeration.
+    #[must_use]
+    pub fn resolved(&self, set: GitIconSet) -> Self {
+        let fill = |kind: GitIconKind| types::Icon::new(self.glyph(kind, set)).ok();
         Self {
-            ahead: literal("↑"),
-            behind: literal("↓"),
-            staged: literal("✚"),
-            unstaged: literal("✱"),
-            untracked: literal("?"),
-            conflicts: literal("✖"),
-            stash: literal("≡"),
-            detached: literal("➦"),
-            in_progress: literal("↻"),
+            ahead: fill(GitIconKind::Ahead),
+            behind: fill(GitIconKind::Behind),
+            staged: fill(GitIconKind::Staged),
+            unstaged: fill(GitIconKind::Unstaged),
+            untracked: fill(GitIconKind::Untracked),
+            conflicts: fill(GitIconKind::Conflicts),
+            stash: fill(GitIconKind::Stash),
+            detached: fill(GitIconKind::Detached),
+            in_progress: fill(GitIconKind::InProgress),
         }
     }
 }
@@ -230,7 +297,7 @@ pub struct LanguageSettings {
     pub enabled: bool,
     /// Enable version detection
     pub show_versions: bool,
-    /// Version cache TTL in hours
+    /// Language version, mise and virtualenv lookup cache TTL in hours
     pub cache_ttl_hours: types::CacheTtlHours,
     /// Languages to detect (empty = all)
     pub enabled_languages: Vec<String>,
@@ -238,7 +305,7 @@ pub struct LanguageSettings {
     pub display: types::LanguageDisplay,
     /// Filter mode: all, primary, or top N
     pub filter: types::LanguageFilter,
-    /// Detection strategy: `content` scan (default), project `markers`, or `hybrid`
+    /// Detection strategy: `markers` (default), `content` scan, or `hybrid`
     pub detection_mode: types::DetectionMode,
     /// Minimum confidence threshold (0.0-1.0)
     pub confidence_threshold: types::ConfidenceThreshold,

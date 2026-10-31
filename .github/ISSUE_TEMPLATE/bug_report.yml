@@ -72,7 +72,11 @@ body:
       description: Output of `gpy status`. If the agent will not start, say so and include what `gpy start` prints.
       placeholder: |
         $ gpy status
-        Agent running (PID 12345), socket connected, protocol v3
+        state: running
+        pid: 12345
+        version: 0.9.0
+        protocol: 2
+        socket: /run/user/1000/gpy/gpy.sock
     validations:
       required: true
 

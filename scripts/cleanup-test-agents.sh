@@ -46,7 +46,7 @@ while IFS= read -r line; do
         kill -9 "$pid" 2>/dev/null || true
     fi
     ((KILLED += 1))
-done < <(pgrep -lf "gpy-agent start" 2>/dev/null || true)
+done < <(pgrep -lf "gpy-agent (start|restart)" 2>/dev/null || true)
 
 if [[ $KILLED -eq 0 ]]; then
     echo "No orphaned test agents found"

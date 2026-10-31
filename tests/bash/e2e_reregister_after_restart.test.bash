@@ -76,11 +76,11 @@ if shell_e2e_poll 5 flag_consumed; then
 else
     fail "the .reregister flag is still present after re-registration"
 fi
-counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 1'; }
+counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'registered_clients: 1'; }
 if shell_e2e_poll 5 counted; then
     pass "gpy-agent status lists the client again"
 else
-    fail "gpy-agent status does not list the client: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep Registered)"
+    fail "gpy-agent status does not list the client: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep registered_clients)"
 fi
 if shell_e2e_wait_for 'TRUNC/' 5 "$off_restart" >/dev/null; then
     pass "the next prompt shows the restarted agent's directory render"

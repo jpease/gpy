@@ -1,7 +1,7 @@
 //! Registry and parsers for dot-notation config keys (`config list/get/set`).
 
 use crate::config::validation::{ValidationError, ValidationErrorKind};
-use crate::config::{Config, types};
+use crate::config::{Config, GitIconKind, types};
 use crate::{Error, Result};
 use std::str::FromStr;
 
@@ -32,16 +32,22 @@ pub struct ConfigKeyMeta {
     pub description: &'static str,
 }
 
-/// One `git.icons.<name>` entry: get/set through [`types::Icon`].
+/// One `git.icons.<name>` entry: `get` is the effective glyph for the current
+/// `git.icon_set`, `set` stores an explicit override.
 macro_rules! git_icon_key {
-    ($field:ident, $description:expr) => {
+    ($field:ident, $kind:ident, $description:expr) => {
         ConfigKeyMeta {
             key: concat!("git.icons.", stringify!($field)),
-            get: |c| c.git.icons.$field.to_string(),
+            get: |c| {
+                c.git
+                    .icons
+                    .glyph(GitIconKind::$kind, c.git.icon_set)
+                    .to_owned()
+            },
             set: Some(|c, v| {
-                c.git.icons.$field = types::Icon::new(v).ok().ok_or_else(|| {
+                c.git.icons.$field = Some(types::Icon::new(v).ok().ok_or_else(|| {
                     invalid_value(concat!("git.icons.", stringify!($field)), "icon", v)
-                })?;
+                })?);
                 Ok(())
             }),
             description: $description,
@@ -211,15 +217,15 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         }),
         description: "Glyph set for stash/detached/in-progress icons: 'unicode' or 'nerd_font'",
     },
-    git_icon_key!(ahead, "Ahead indicator"),
-    git_icon_key!(behind, "Behind indicator"),
-    git_icon_key!(staged, "Staged files indicator"),
-    git_icon_key!(unstaged, "Unstaged files indicator"),
-    git_icon_key!(untracked, "Untracked files indicator"),
-    git_icon_key!(conflicts, "Conflicts indicator"),
-    git_icon_key!(stash, "Stash indicator"),
-    git_icon_key!(detached, "Detached-HEAD indicator"),
-    git_icon_key!(in_progress, "In-progress operation indicator"),
+    git_icon_key!(ahead, Ahead, "Ahead indicator"),
+    git_icon_key!(behind, Behind, "Behind indicator"),
+    git_icon_key!(staged, Staged, "Staged files indicator"),
+    git_icon_key!(unstaged, Unstaged, "Unstaged files indicator"),
+    git_icon_key!(untracked, Untracked, "Untracked files indicator"),
+    git_icon_key!(conflicts, Conflicts, "Conflicts indicator"),
+    git_icon_key!(stash, Stash, "Stash indicator"),
+    git_icon_key!(detached, Detached, "Detached-HEAD indicator"),
+    git_icon_key!(in_progress, InProgress, "In-progress operation indicator"),
     ConfigKeyMeta {
         key: "language.enabled",
         get: |c| c.language.enabled.to_string(),
@@ -262,7 +268,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
                     .ok_or_else(|| invalid_value("language.cache_ttl_hours", "cache TTL", v))?;
             Ok(())
         }),
-        description: "Version cache TTL in hours",
+        description: "Language version, mise and virtualenv lookup cache TTL in hours",
     },
     ConfigKeyMeta {
         key: "language.display",
@@ -459,7 +465,9 @@ fn unknown_key(key: &str) -> Error {
 ///
 /// # Errors
 /// Returns an error if the config key is unknown, or names a
-/// `language.icons.<lang>` entry that is not set.
+/// `language.icons.<lang>` entry that is not set. That lookup reads user
+/// configuration only, so it errors even though built-in language icons apply
+/// at prompt render time.
 pub fn get_config_value(config: &Config, key: &str) -> Result<String> {
     for meta in CONFIG_KEYS {
         if meta.key == key {
@@ -622,7 +630,9 @@ mod tests {
     }
 
     fn default_config_leaves() -> Vec<String> {
-        let table = toml::Table::try_from(Config::default()).expect("serialize default config");
+        let mut config = Config::default();
+        config.git.icons = config.git.icons.resolved(config.git.icon_set);
+        let table = toml::Table::try_from(config).expect("serialize default config");
         let mut leaves = Vec::new();
         leaf_paths("", &toml::Value::Table(table), &mut leaves);
         leaves
@@ -779,6 +789,19 @@ mod tests {
     }
 
     #[test]
+    fn git_icon_get_reports_effective_glyph_for_icon_set() {
+        let mut cfg = Config::default();
+        assert_eq!(get_config_value(&cfg, "git.icons.stash").unwrap(), "≡");
+        cfg.git.icon_set = crate::config::GitIconSet::NerdFont;
+        assert_eq!(
+            get_config_value(&cfg, "git.icons.stash").unwrap(),
+            "\u{f187}"
+        );
+        set_config_value(&mut cfg, "git.icons.stash", "≡").unwrap();
+        assert_eq!(get_config_value(&cfg, "git.icons.stash").unwrap(), "≡");
+    }
+
+    #[test]
     fn new_scalar_keys_round_trip() {
         let mut cfg = Config::default();
         for (key, value) in [
@@ -786,7 +809,7 @@ mod tests {
             ("git.max_ahead_behind", "5"),
             ("git.stash_enabled", "false"),
             ("git.icon_set", "nerd_font"),
-            ("language.detection_mode", "markers"),
+            ("language.detection_mode", "hybrid"),
             ("git.icons.ahead", "A"),
             ("git.icons.in_progress", "P"),
         ] {

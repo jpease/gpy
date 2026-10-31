@@ -128,7 +128,7 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
   one-time Fish startup and GPY init. (macOS `date` has no `%N`, so amortization
   is the portable way to get per-render resolution.)
 - The memory scenario starts a live daemon, confirms its PID and that its socket
-  reports `Running and Responding`, samples RSS, then shuts it down cleanly.
+  reports `state: running`, samples RSS, then shuts it down cleanly.
 - A broken measurement — non-zero exit, empty prompt output, unparseable timing,
   zero/empty RSS, or an unresponsive daemon — is a **hard failure in every mode**
   and can never be silently reported as a passing zero. Only a *valid* result

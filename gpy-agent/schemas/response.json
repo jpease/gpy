@@ -257,6 +257,11 @@
               "type": "integer",
               "minimum": 0,
               "description": "Cache entries"
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Process ID of the answering agent; absent from older agents"
             }
           }
         }

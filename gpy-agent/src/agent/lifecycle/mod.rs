@@ -10,8 +10,7 @@ pub mod start;
 #[cfg(unix)]
 pub use client::probe_status;
 pub use outcome::{
-    ProtocolMismatch, START_PROGRESS_LINE, SocketCheck, StartNotice, StartOutcome, StatusProbe,
-    protocol_mismatch,
+    ProtocolMismatch, SocketCheck, StartNotice, StartOutcome, StatusProbe, protocol_mismatch,
 };
 pub use start::start_background_agent;
 
@@ -153,8 +152,10 @@ pub async fn send_shutdown_command() -> Result<()> {
     if is_ack(&response) {
         Ok(())
     } else {
+        crate::debug_log!("agent", "Unexpected shutdown response: {response:?}");
         Err(Error::ipc(format!(
-            "Unexpected shutdown response: {response:?}"
+            "agent at {} sent an unexpected reply to the shutdown request",
+            socket_path.display()
         )))
     }
 }
@@ -204,9 +205,13 @@ pub async fn send_config_reload_command() -> Result<ConfigReload> {
         Ok(crate::ipc::Response::Error { message }) => {
             Ok(ConfigReload::Rejected(message.trim_end().to_owned()))
         }
-        Ok(other) => Err(Error::ipc(format!(
-            "Unexpected config reload response: {other:?}"
-        ))),
+        Ok(other) => {
+            crate::debug_log!("agent", "Unexpected config reload response: {other:?}");
+            Err(Error::ipc(format!(
+                "agent at {} sent an unexpected reply to the config reload request",
+                socket_path.display()
+            )))
+        }
         Err(_) if socket_is_stale(&socket_path) => Ok(ConfigReload::NotRunning),
         Err(e) => Err(e.into()),
     }
@@ -256,6 +261,8 @@ pub struct AgentStatusInfo {
     pub registered_clients: usize,
     /// The number of entries in the agent's cache.
     pub cache_entries: usize,
+    /// The agent's process ID, when it reports one.
+    pub pid: Option<u32>,
 }
 
 /// Query the running agent for its status via IPC.
@@ -304,16 +311,21 @@ fn agent_status_from(response: crate::ipc::Response) -> Result<AgentStatusInfo> 
             watched_repos,
             registered_clients,
             cache_entries,
+            pid,
         } => Ok(AgentStatusInfo {
             version,
             protocol_version,
             watched_repos,
             registered_clients,
             cache_entries,
+            pid,
         }),
-        other => Err(Error::ipc(format!(
-            "Expected an AgentStatus response, got: {other:?}"
-        ))),
+        other => {
+            crate::debug_log!("agent", "Expected an AgentStatus response, got: {other:?}");
+            Err(Error::ipc(
+                "the agent sent an unexpected reply to the status request",
+            ))
+        }
     }
 }
 
@@ -562,7 +574,7 @@ fn status_blocking(socket_path: &Path) -> Result<AgentStatusInfo> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|e| Error::process("status_runtime", e.to_string()))?;
+        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))?;
     runtime.block_on(query_status_at(socket_path))
 }
 
@@ -698,6 +710,7 @@ mod version_order_tests {
                 watched_repos: 0,
                 registered_clients: 0,
                 cache_entries: 0,
+                pid: None,
             };
             assert_eq!(
                 verdict(&status),
@@ -803,7 +816,7 @@ mod stale_socket_tests {
     /// # Errors
     /// Always.
     fn local_failure() -> crate::Result<PingOutcome> {
-        Err(Error::process("ping_runtime", "simulated".to_owned()))
+        Err(Error::agent("simulated"))
     }
 
     #[test]
@@ -1261,6 +1274,7 @@ mod stale_socket_tests {
             watched_repos: 5_usize,
             registered_clients: 2_usize,
             cache_entries: 12_usize,
+            pid: Some(4321_u32),
         };
         let mut reply = serde_json::to_vec(&status).expect("AgentStatus serializes");
         reply.push(b'\n');
@@ -1272,6 +1286,7 @@ mod stale_socket_tests {
         assert_eq!(info.watched_repos, 5_usize);
         assert_eq!(info.registered_clients, 2_usize);
         assert_eq!(info.cache_entries, 12_usize);
+        assert_eq!(info.pid, Some(4321_u32));
     }
 
     /// A partial status payload is an error, not a defaulted status.
