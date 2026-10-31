@@ -285,7 +285,8 @@ row() {
     if [ "$expect" = binaries-only ]; then
         if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
-        leftovers="$(find "$XDG_CONFIG_HOME" -iname '*gpy*' 2>/dev/null)"
+        # `gpy-agent start` itself creates $XDG_CONFIG_HOME/gpy/themes; only shell files count.
+        leftovers="$(find "$XDG_CONFIG_HOME" -iname '*gpy*' ! -path "$XDG_CONFIG_HOME/gpy" ! -path "$XDG_CONFIG_HOME/gpy/themes" 2>/dev/null)"
         if [ -z "$leftovers" ]; then pass "$name: no shell tree created"; else fail "$name: shell files created: $leftovers"; fi
         if [ -x "$HOME/.local/bin/gpy-agent" ] && [ -x "$HOME/.local/bin/gpy" ]; then pass "$name: both binaries installed"; else fail "$name: a binary is missing"; fi
         if grep -q 'GPY_SHELL=fish, zsh or bash' "$SB/install.log"; then pass "$name: output names GPY_SHELL=fish, zsh or bash"; else fail "$name: no GPY_SHELL hint"; fi

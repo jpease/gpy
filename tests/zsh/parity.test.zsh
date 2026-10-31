@@ -401,6 +401,7 @@ if [[ -x "$AGENT_BIN" ]]; then
             __gpy_segment_directory_detect() { return 0; }
             __gpy_segment_git_detect() { return 0; }
             __gpy_segment_language_detect() { return 0; }
+            __gpy_segment_language_omit() { return 1; }
             __gpy_request_character() { echo ""; }
             __enabled_segments=(directory git language)
             __gpy_render_prompt 0 >/dev/null

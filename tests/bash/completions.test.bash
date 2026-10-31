@@ -302,6 +302,7 @@ echo "Checking the next prompt refreshes the cache and keeps the exit status..."
     unset PROMPT_COMMAND
     # shellcheck source=/dev/null
     source "$ROOT/bash/gpy.bash"
+    unset __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
 
     : >"$gpy_calls_file"
     gpy() {
