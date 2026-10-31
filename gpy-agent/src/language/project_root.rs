@@ -6,7 +6,7 @@
 use crate::cache::ttl_map::TtlMap;
 use crate::language::ancestors::{MAX_ANCESTOR_DEPTH, bounded_ancestors, home_dir};
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
-use crate::language::metadata::marker_file_names;
+use crate::language::metadata::project_root_marker_names;
 
 use std::path::{Path, PathBuf};
 
@@ -99,7 +99,7 @@ const MARKER_SCAN_LIMIT: usize = 1024;
 /// case-insensitive filesystem); other spellings only within the first
 /// [`MARKER_SCAN_LIMIT`] entries.
 fn has_marker_file(dir: &Path) -> bool {
-    let markers = marker_file_names();
+    let markers = project_root_marker_names();
     if markers
         .iter()
         .any(|marker| dir.join(marker).symlink_metadata().is_ok())
@@ -239,6 +239,21 @@ mod tests {
             resolve_non_git_root(&scratch, Some(&home)),
             scratch,
             "with no marker ancestor the request directory stays the root"
+        );
+    }
+
+    #[test]
+    fn makefile_alone_is_not_a_project_root() {
+        let (_temp_dir, home) = canonical_temp_dir();
+        let parent = home.join("parent");
+        let child = parent.join("child");
+        std::fs::create_dir_all(&child).expect("child dir");
+        std::fs::write(parent.join("Makefile"), "").expect("weak marker");
+
+        assert_eq!(
+            resolve_non_git_root(&child, Some(&home)),
+            child,
+            "a Makefile alone must not make an ancestor the project root"
         );
     }
 

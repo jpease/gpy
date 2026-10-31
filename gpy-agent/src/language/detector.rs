@@ -171,7 +171,7 @@ fn marker_evidence(
     path: &Path,
     include_extensions: bool,
 ) -> std::collections::HashMap<&'static str, usize> {
-    use crate::language::metadata::LANGUAGES;
+    use crate::language::metadata::{LANGUAGES, WEAK_MARKER_FILES};
     use std::collections::HashMap;
 
     let Ok(entries) = std::fs::read_dir(path) else {
@@ -179,9 +179,15 @@ fn marker_evidence(
     };
 
     let mut evidence: HashMap<&'static str, usize> = HashMap::new();
+    let mut weak_hits: Vec<&'static str> = Vec::new();
     for entry in entries.flatten() {
         let raw_name = entry.file_name();
         let name = raw_name.to_string_lossy();
+        for (file, language) in WEAK_MARKER_FILES {
+            if file.eq_ignore_ascii_case(name.as_ref()) {
+                weak_hits.push(language);
+            }
+        }
         let extension = Path::new(name.as_ref())
             .extension()
             .and_then(|ext| ext.to_str());
@@ -201,6 +207,13 @@ fn marker_evidence(
                 let count = evidence.entry(language.canonical).or_insert(0_usize);
                 *count = count.saturating_add(1_usize);
             }
+        }
+    }
+    // A weak marker counts only when no other language has evidence here.
+    for language in weak_hits {
+        if evidence.keys().all(|other| *other == language) {
+            let count = evidence.entry(language).or_insert(0_usize);
+            *count = count.saturating_add(1_usize);
         }
     }
     evidence
@@ -515,5 +528,42 @@ mod tests {
     fn marker_evidence_unreadable_directory_is_empty() {
         let missing = Path::new("/does/not/exist/at/all");
         assert!(marker_evidence(missing, true).is_empty());
+    }
+
+    fn detected_names(files: &[&str]) -> Vec<String> {
+        let tmp = tempfile::tempdir().unwrap();
+        for file in files {
+            let path = tmp.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        Detector::detect_directory_markers(tmp.path())
+            .into_iter()
+            .map(|language| language.name)
+            .collect()
+    }
+
+    #[test]
+    fn go_repo_with_makefile_detects_only_go() {
+        assert_eq!(
+            detected_names(&["go.mod", "Makefile", "cmd/x/main.go"]),
+            vec!["go"]
+        );
+    }
+
+    #[test]
+    fn makefile_only_c_project_detects_c() {
+        assert_eq!(detected_names(&["Makefile", "src/x.c"]), vec!["c"]);
+    }
+
+    #[test]
+    fn c_sources_with_makefile_detect_c() {
+        assert_eq!(detected_names(&["Makefile", "x.c"]), vec!["c"]);
+    }
+
+    #[test]
+    fn makefile_with_go_source_detects_go() {
+        assert_eq!(detected_names(&["Makefile", "main.go"]), vec!["go"]);
+        assert_eq!(detected_names(&["Makefile", "index.js"]), vec!["node"]);
     }
 }
