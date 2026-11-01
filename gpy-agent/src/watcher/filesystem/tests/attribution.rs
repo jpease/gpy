@@ -193,7 +193,7 @@ fn nested_event_attributes_to_watched_root_via_prefix_match() {
     ));
 }
 
-/// An event outside every watched root falls back to `find_git_dir_only`, then the parent.
+/// An event outside every watched root falls back to `find_worktree_root`, then the parent.
 #[test]
 fn event_outside_watched_roots_falls_back_to_ancestor_walk() {
     let tmp = tempfile::TempDir::new().expect("temp dir");
@@ -210,7 +210,7 @@ fn event_outside_watched_roots_falls_back_to_ancestor_walk() {
         vec![file.clone()],
     );
 
-    let expected_repo = crate::git::find_git_dir_only(&file)
+    let expected_repo = crate::git::find_worktree_root(&file)
         .or_else(|| file.parent().map(Path::to_path_buf))
         .expect("fallback always yields a parent for an absolute path");
 

@@ -37,12 +37,6 @@ pub(crate) const BUILTIN_PALETTES: &[(&str, &str)] = &[
     ("gruvbox-dark-medium", palette_file!("gruvbox-dark-medium")),
 ];
 
-/// Source metadata for a discovered palette (`Plugin` is never used).
-pub type PaletteSource = Source;
-
-/// A palette entry exposed to CLI/runtime discovery.
-pub type DiscoveredPalette = Discovered;
-
 /// Loads a palette by name. Short-lived per call, so no hot-reload here;
 /// long-lived state lives in [`crate::palette::PaletteCache`].
 pub struct PaletteManager {
@@ -84,8 +78,8 @@ impl PaletteManager {
 
     /// Discover all palettes; user sources override builtins of the same name.
     #[must_use]
-    pub fn discover_available_palettes() -> Vec<DiscoveredPalette> {
-        let mut merged: BTreeMap<String, DiscoveredPalette> = BTreeMap::new();
+    pub fn discover_available_palettes() -> Vec<Discovered> {
+        let mut merged: BTreeMap<String, Discovered> = BTreeMap::new();
 
         discovery::insert_builtins(&mut merged, BUILTIN_PALETTES);
         Self::insert_user_palettes(&mut merged);
@@ -151,8 +145,8 @@ impl PaletteManager {
         Ok(cfg)
     }
 
-    fn insert_user_palettes(merged: &mut BTreeMap<String, DiscoveredPalette>) {
-        discovery::insert_toml_dir(merged, &Self::user_palettes_dir(), &PaletteSource::User);
+    fn insert_user_palettes(merged: &mut BTreeMap<String, Discovered>) {
+        discovery::insert_toml_dir(merged, &Self::user_palettes_dir(), &Source::User);
     }
 }
 

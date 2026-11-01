@@ -2,7 +2,10 @@
 //!
 //! Shelling out lets git use its own optimizations (fsmonitor, untracked cache).
 
-use super::{CompleteStatus, PathspecScan, RebaseProgress, RepositoryState, RepositoryStatus};
+use super::{
+    CompleteStatus, PathspecScan, RebaseProgress, RepositoryState, RepositoryStatus,
+    StatusAggregate,
+};
 use crate::Error;
 use crate::Result;
 use crate::cache::bounded::NATIVE_GIT_CONFIG_CACHE_CAPACITY;
@@ -19,7 +22,18 @@ use std::time::{Duration, Instant};
 /// Git output parsing logic.
 pub mod parser;
 
-use parser::{BranchHead, V2ParseResult};
+use parser::{BranchHead, V2ParseState};
+
+/// One `git status` capture: the resolved head plus the parsed counts and files.
+/// `parsed.branch` is consumed by head resolution and is `None`.
+struct StatusV2 {
+    /// The resolved branch name.
+    branch: String,
+    /// Whether HEAD is detached.
+    detached: bool,
+    /// Parser output; its `branch` has been taken.
+    parsed: V2ParseState,
+}
 
 /// How long a repository's `core.untrackedCache` check is trusted. Fixed, not
 /// tied to `language.cache_ttl_hours`.
@@ -250,7 +264,7 @@ impl NativeGitBackend {
         repo_path: &Path,
         max_ahead_behind: usize,
         deadline: Instant,
-    ) -> Result<V2ParseResult> {
+    ) -> Result<StatusV2> {
         let _t = Timer::new("native_get_status_v2");
         Self::ensure_untracked_cache(repo_path, deadline);
 
@@ -261,25 +275,17 @@ impl NativeGitBackend {
             deadline,
         )?;
 
-        let records = parser::parse_v2_records(&output, max_ahead_behind);
-        let Some(branch_head) = records.branch else {
+        let mut parsed = parser::parse_v2_records(&output, max_ahead_behind);
+        let Some(branch_head) = parsed.branch.take() else {
             return Err(Error::git("git status printed no branch header".to_owned()));
         };
         let (branch, detached) =
-            Self::resolve_branch_head(branch_head, records.oid.as_deref(), repo_path, deadline)?;
+            Self::resolve_branch_head(branch_head, parsed.oid.as_deref(), repo_path, deadline)?;
 
-        Ok(V2ParseResult {
+        Ok(StatusV2 {
             branch,
             detached,
-            ahead: records.ahead,
-            behind: records.behind,
-            ahead_capped: records.ahead_capped,
-            behind_capped: records.behind_capped,
-            staged: records.staged,
-            unstaged: records.unstaged,
-            untracked: records.untracked,
-            conflicts: records.conflicts,
-            files: records.files,
+            parsed,
         })
     }
 
@@ -398,7 +404,7 @@ impl NativeGitBackend {
         max_ahead_behind: usize,
         stash_enabled: bool,
         deadline: Instant,
-    ) -> Result<(Result<V2ParseResult>, Option<RepositoryState>, u32)> {
+    ) -> Result<(Result<StatusV2>, Option<RepositoryState>, u32)> {
         let (status_v2_join_result, state_join_result, stash_join_result) =
             std::thread::scope(|s| {
                 let status_v2_handle =
@@ -453,36 +459,41 @@ impl NativeGitBackend {
         let (status_v2_res, state_opt, stash_count) =
             Self::run_parallel_captures(&repo_root, max_ahead_behind, stash_enabled, deadline)?;
 
-        let v2 = status_v2_res?;
+        let StatusV2 {
+            branch,
+            detached,
+            parsed,
+        } = status_v2_res?;
+        let counts = StatusAggregate::from_file_statuses(parsed.files.values());
 
         let state = resolve_overall_state(
-            v2.conflicts,
+            counts.conflicts,
             state_opt,
-            v2.staged,
-            v2.unstaged,
-            v2.untracked,
+            counts.staged,
+            counts.unstaged,
+            counts.untracked,
         );
         let rebase_progress = Self::get_rebase_progress(&repo_root);
 
         let status = RepositoryStatus {
-            branch: v2.branch,
-            ahead: v2.ahead,
-            behind: v2.behind,
-            ahead_capped: v2.ahead_capped,
-            behind_capped: v2.behind_capped,
-            staged: v2.staged,
-            unstaged: v2.unstaged,
-            untracked: v2.untracked,
-            conflicts: v2.conflicts,
+            branch,
+            ahead: parsed.ahead,
+            behind: parsed.behind,
+            ahead_capped: parsed.ahead_capped,
+            behind_capped: parsed.behind_capped,
+            staged: counts.staged,
+            unstaged: counts.unstaged,
+            untracked: counts.untracked,
+            conflicts: counts.conflicts,
             state,
             stash_count,
-            detached: v2.detached,
+            detached,
             rebase_progress,
         };
 
         Ok(Some(CompleteStatus {
             status,
-            files: v2.files,
+            files: parsed.files,
         }))
     }
 

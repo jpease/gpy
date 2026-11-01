@@ -222,7 +222,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// # Errors
     /// Returns an error if the repository cannot be discovered or watched.
     fn attach_to_repo_containing(&self, pid: u32, cwd: &Path) -> Result<Option<PathBuf>> {
-        let Some(git_root) = crate::git::find_git_dir_only(cwd) else {
+        let Some(git_root) = crate::git::find_worktree_root(cwd) else {
             debug_log!("watcher", "No git root found for {}", cwd.display());
             return Ok(None);
         };

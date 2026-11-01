@@ -2,6 +2,7 @@ use super::refresh::{
     agent_refresh_required, git_refresh_required, language_refresh_required, ui_refresh_required,
 };
 use super::*;
+use crate::Result;
 use crate::config::Config;
 use crate::git::{FileStatus, RepositoryState, StatusAggregate};
 use crate::ipc::ClientDirectory;

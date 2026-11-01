@@ -17,7 +17,7 @@ use common::endpoint::endpoint;
 use common::endpoint::wait_for_socket;
 use common::env_guard::EnvGuard;
 use gpy_agent::git::status::load_repository_state;
-use gpy_agent::language::version::{NodeDetector, detect_language_release, get_version_detectors};
+use gpy_agent::language::version::{NodeDetector, detect_version, get_version_detectors};
 use std::fs;
 #[cfg(unix)]
 use std::sync::Arc;
@@ -64,7 +64,7 @@ fn test_language_detection_integration() {
     ); // Should have all 10 language detectors (including Fish)
 
     let node_detector = NodeDetector;
-    let version_result = detect_language_release(&node_detector);
+    let version_result = detect_version(&node_detector);
 
     if let Some(version) = version_result {
         assert!(

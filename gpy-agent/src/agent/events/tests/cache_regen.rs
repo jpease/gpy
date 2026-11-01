@@ -1,4 +1,7 @@
 use super::*;
+use crate::agent::events::reload::{
+    regen_language_caches, regenerate_instant_caches_for_theme_change,
+};
 
 fn cache_file_names(dir: &Path) -> Vec<String> {
     fs::read_dir(dir)

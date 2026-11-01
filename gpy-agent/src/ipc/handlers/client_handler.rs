@@ -168,7 +168,7 @@ impl ClientHandler {
     fn trigger_initial_scan(&self, path: &std::path::Path) {
         use crate::git::status::load_repository_state;
 
-        let Some(git_root) = crate::git::find_git_dir_only(path) else {
+        let Some(git_root) = crate::git::find_worktree_root(path) else {
             return;
         };
 

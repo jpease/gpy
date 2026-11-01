@@ -176,7 +176,7 @@ pub fn should_trigger_update(path: &Path, registry: &WatchRegistry) -> Option<Pe
     filter_ignored(path)?;
     let event = classify_event(path, registry)?;
     let repo =
-        crate::git::find_git_dir_only(path).or_else(|| path.parent().map(Path::to_path_buf))?;
+        crate::git::find_worktree_root(path).or_else(|| path.parent().map(Path::to_path_buf))?;
 
     Some(PendingEvent { event, repo })
 }

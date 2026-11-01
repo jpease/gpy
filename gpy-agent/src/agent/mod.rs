@@ -303,7 +303,7 @@ impl Agent {
             palette_cache: Arc::clone(&palette_cache),
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry,
-            theme_export_dir: crate::cache::theme_export::theme_export_dir()?,
+            theme_export_dir: crate::paths::gpy_cache_dir()?,
             announce_gate: Arc::new(Mutex::new(())),
         };
 

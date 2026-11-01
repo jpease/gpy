@@ -9,5 +9,5 @@ pub mod resolve;
 
 pub use cache::PaletteCache;
 pub use config::PaletteConfig;
-pub use manager::{DiscoveredPalette, PaletteManager, PaletteSource};
+pub use manager::PaletteManager;
 pub use resolve::{active_palette, load_active_palette};

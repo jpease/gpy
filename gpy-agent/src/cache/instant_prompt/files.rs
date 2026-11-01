@@ -80,17 +80,9 @@ pub(in crate::cache) fn write_atomic(dir: &Path, name: &str, content: &str) -> R
     })
 }
 
-/// GPY base cache directory (`~/.cache/gpy`, XDG, or `%LOCALAPPDATA%\gpy`).
-/// # Errors
-/// Returns an error if neither `XDG_CACHE_HOME` nor `HOME`/`LOCALAPPDATA` is set.
-pub(in crate::cache) fn get_gpy_cache_dir() -> Result<PathBuf> {
-    crate::paths::cache_root()
-        .ok_or_else(|| Error::config("No cache directory found (XDG_CACHE_HOME or HOME not set)"))
-}
-
 /// Instant-prompt cache directory (`<base>/instant-prompts/`).
 /// # Errors
 /// Returns an error if the base cache directory cannot be determined.
 pub(super) fn get_instant_cache_dir() -> Result<PathBuf> {
-    get_gpy_cache_dir().map(|d| d.join("instant-prompts"))
+    crate::paths::gpy_cache_dir().map(|d| d.join("instant-prompts"))
 }

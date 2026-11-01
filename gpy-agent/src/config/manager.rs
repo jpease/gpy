@@ -48,7 +48,7 @@ impl ConfigManager {
     /// # Errors
     /// Returns an error if no config path can be determined.
     pub fn from_config(config: Config) -> Result<Self> {
-        let candidates = Self::ambient_candidates();
+        let candidates = get_config_paths();
         Self::ensure_candidates(&candidates)?;
         Ok(Self::from_parts(candidates, config))
     }
@@ -85,11 +85,7 @@ impl ConfigManager {
     /// # Errors
     /// Returns an error if a config file exists but is invalid.
     pub fn new() -> Result<Self> {
-        Self::from_candidates(Self::ambient_candidates())
-    }
-
-    fn ambient_candidates() -> Vec<PathBuf> {
-        get_config_paths()
+        Self::from_candidates(get_config_paths())
     }
 
     fn ensure_candidates(candidates: &[PathBuf]) -> Result<()> {

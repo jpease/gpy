@@ -1,6 +1,6 @@
 use super::*;
+use crate::paths::gpy_cache_dir;
 use crate::sync_ext::MutexExt;
-use files::get_gpy_cache_dir;
 use key::{
     FLAT_CACHE_KEY_MAX_CHARS, WINDOWS_CACHE_KEY_MAX_LEN, cache_key_path_for, path_to_cache_key_for,
 };
@@ -1042,11 +1042,11 @@ fn test_path_to_cache_key_windows_length_cap() {
     assert_eq!(short, "_susers_sfoo_sproject");
 }
 
-/// `new()` succeeds exactly when `get_gpy_cache_dir` resolves; the env is
+/// `new()` succeeds exactly when `gpy_cache_dir` resolves; the env is
 /// read, not set (`set_var` needs unsafe).
 #[test]
 fn instant_cache_creation_follows_the_environment() {
-    let resolved_root = get_gpy_cache_dir();
+    let resolved_root = gpy_cache_dir();
 
     let cache = InstantPromptCache::new();
 
