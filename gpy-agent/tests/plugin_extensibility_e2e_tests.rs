@@ -7,8 +7,9 @@
 )]
 
 use gpy_agent::config::Config;
+use gpy_agent::config::discovery::Source;
 use gpy_agent::shell::Shell;
-use gpy_agent::theme::{ThemeManager, ThemeSource};
+use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
 use std::fs;
 use std::path::PathBuf;
@@ -244,8 +245,7 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
         .iter()
         .find(|theme| theme.name == "community")
         .expect("plugin theme should be discovered");
-    assert!(matches!(community.source, ThemeSource::Plugin { .. }));
-
+    assert!(matches!(community.source, Source::Plugin { .. }));
     let manager = ThemeManager::new("community").expect("load plugin theme");
     let mut config = Config::default();
     config.ui.enabled_segments = vec!["clock".to_owned(), "k8s_tools".to_owned()];

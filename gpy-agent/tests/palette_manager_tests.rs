@@ -10,11 +10,10 @@ mod env_guard;
 
 use env_guard::EnvGuard;
 use gpy_agent::config::Config;
+use gpy_agent::config::discovery::Source;
 use gpy_agent::config::types::PaletteName;
 use gpy_agent::palette::resolve::palette_by_name;
-use gpy_agent::palette::{
-    PaletteCache, PaletteManager, PaletteSource, active_palette, load_active_palette,
-};
+use gpy_agent::palette::{PaletteCache, PaletteManager, active_palette, load_active_palette};
 use serial_test::serial;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -75,7 +74,7 @@ fn discovery_includes_builtin_default_and_starship() {
         assert!(
             found
                 .iter()
-                .any(|p| p.name == name && matches!(p.source, PaletteSource::Builtin)),
+                .any(|p| p.name == name && matches!(p.source, Source::Builtin)),
             "{name} is discovered as a builtin: {found:?}"
         );
     }
@@ -219,7 +218,7 @@ fn user_palettes_dir_keeps_a_non_utf8_xdg_config_home() {
     assert!(
         found
             .iter()
-            .any(|p| p.name == "odd_bytes" && matches!(p.source, PaletteSource::User)),
+            .any(|p| p.name == "odd_bytes" && matches!(p.source, Source::User)),
         "the user palette under the non-UTF-8 root must be discovered"
     );
 }

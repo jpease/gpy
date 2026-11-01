@@ -1,197 +1,179 @@
 # Build a Segment Plugin
 
-How to add a custom prompt segment without modifying GPY itself.
+How to create a custom prompt segment plugin that runs across Bash, Zsh, and Fish.
 
-If you want the contract details first, read [Plugin Framework](plugins.md).
+For complete specification and contract details, see [Plugin Framework](plugins.md).
 
-> **Fish only:** plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them. Details in [Plugin Framework](plugins.md#segment-runtime-contract). `validate`/`list` for `.fish` plugins repeat this, and `gpy enable` warns for their segments when a Bash or Zsh integration is installed. `gpy plugin new` scaffolds a script plugin (`entry_type = "script"`, a POSIX `sh` script that Bash, Zsh and Fish all run) instead; see [Script Segments](plugins.md#script-segments) and the [example plugins](examples/plugins/). This guide writes a Fish plugin by hand.
+## Overview
 
-## Before You Start
+GPY script plugins (`entry_type = "script"`) provide segments implemented as POSIX `sh` scripts. They run consistently across all supported shells (Bash, Zsh, and Fish) without requiring shell-specific prompt code.
 
-The simplest reference implementations are existing first-party Fish segments:
+Each script plugin consists of:
+- `plugin.toml`: Top-level plugin package manifest
+- `segments/<name>.toml`: Segment manifest declaring inputs, triggers, cache TTL, and settings
+- `bin/<script>.sh`: POSIX `sh` executable script rendering segment output
 
-- [`fish/segments/clock.fish`](../../fish/segments/clock.fish)
-- [`fish/segments/directory.fish`](../../fish/segments/directory.fish)
+Reference implementations are available in [`docs/dev/examples/plugins/`](examples/plugins/):
+- `k8s-context`: Demonstrates environment inspection (`KUBECONFIG`) and typed settings
+- `hostname-example` and `username-example`: Session-scoped segments with variant styling
 
-They are not shipped as standalone external plugins, but they use the same detect/render contract that plugin segments use at runtime. For most plugin authors, `clock` is the best minimal reference and `directory` is a good reference for theme-driven rendering.
+## Scaffolding a New Plugin
 
-## Plugin Layout
+Use `gpy plugin new` to scaffold the directory structure and starter files:
 
-Create this directory structure:
-
-```text
-~/.config/gpy/plugins/<plugin-id>/
-├── plugin.toml
-└── segments/
-    └── <segment-id>.fish
+```bash
+gpy plugin new acme-tools --segment acme-status
 ```
 
-Example:
+This creates:
 
 ```text
-~/.config/gpy/plugins/acme-tools/
+acme-tools/
 ├── plugin.toml
-└── segments/
-    └── acme-tools.fish
+├── segments/
+│   └── acme-status.toml
+└── bin/
+    └── acme-status.sh
 ```
 
-## Step 1: Create `plugin.toml`
+### 1. Plugin Manifest (`plugin.toml`)
 
-Start from [templates/plugin.toml](templates/plugin.toml):
+The top-level manifest defines the plugin identity and provided segments:
 
 ```toml
 id = "acme-tools"
 name = "Acme Tools"
 version = "0.1.0"
 api_version = "v1"
-entry_type = "file"
-provided_segments = ["acme-tools"]
-description = "Example plugin segment for Acme tooling status"
+entry_type = "script"
+provided_segments = ["acme-status"]
+description = "Acme tooling prompt status"
 
 [compatibility_constraints]
 min_gpy_version = "0.1.0"
 ```
 
-Guidance:
+### 2. Segment Manifest (`segments/<name>.toml`)
 
-- `id` identifies the plugin package.
-- `provided_segments` lists the segment ids this plugin contributes.
-- `api_version = "v1"` means the plugin targets the current public plugin contract.
-- `min_gpy_version` is recommended for community plugins. It gives users a clear diagnostic when the plugin needs a newer GPY.
+Configure runtime behavior, cache rules, triggers, and settings:
 
-## Step 2: Implement the Segment File
+```toml
+description = "Acme status indicator"
+command = "bin/acme-status.sh"
+inputs = ["is_ssh"]
+ttl_secs = 5
+timeout_ms = 300
+require_command = "bin/acme-status.sh"
 
-Create `~/.config/gpy/plugins/<plugin-id>/segments/<segment-id>.fish`.
-
-Minimal example:
-
-```fish
-function segment_acme-tools_detect
-    command -sq acme
-end
-
-function segment_acme-tools_render --argument-names is_last
-    set -l bg_color (set -q __color_acme_tools_bg; and echo $__color_acme_tools_bg; or echo blue)
-    set -l fg_color (set -q __color_acme_tools_fg; and echo $__color_acme_tools_fg; or echo white)
-    set -l icon (set -q __icon_acme_tools; and echo $__icon_acme_tools; or echo "A")
-
-    gpy_section_start $bg_color $fg_color "$icon acme"
-    gpy_section_end $bg_color $is_last
-end
+[settings.style]
+type = "string"
+default = "normal"
+choices = ["normal", "bold"]
+description = "Display style"
 ```
 
-Contract:
+- **Inputs**: Pass shell state such as `is_ssh` or `pwd`. See [Inputs: public shell state](plugins.md#inputs-public-shell-state).
+- **Settings**: Declare typed options users can configure under `[plugin.<segment>]`. See [Settings](plugins.md#settings).
 
-- `segment_<segment-id>_detect`
-  - exit `0` to show the segment
-  - exit non-zero to hide it
-- `segment_<segment-id>_render`
-  - prints the rendered segment
-  - receives `is_last` as its first argument: `true` when the segment is the
-    last one in the prompt, empty otherwise
-  - optionally receives `is_first` as its second argument, in the same shape:
-    `true` when the segment is the first one, empty otherwise
+### 3. Segment Script (`bin/<script>.sh`)
 
-Supported public rendering helpers:
+The script runs with `/bin/sh` and outputs up to two lines:
+1. Segment text to display (empty output hides the segment)
+2. Optional style variant name matching `^[a-z0-9_]{1,32}$`
 
-- `gpy_section_start`
-- `gpy_section_append`
-- `gpy_section_end`
-- `gpy_section_standalone`
+```sh
+#!/bin/sh
+if ! command -v acme >/dev/null 2>&1; then
+    exit 0
+fi
 
-Those helper names are the supported shell helper surface for plugin authors. Avoid depending on undocumented `__gpy_*` internals.
+status=$(acme status 2>/dev/null)
+if [ -n "$status" ]; then
+    printf '%s\n' "$status"
+    # Optional line 2 variant:
+    # printf '%s\n' "active"
+fi
+```
 
-## Step 3: Validate Discovery
+See [Output protocol](plugins.md#output-protocol) for formatting and sanitization rules.
 
-Run:
+## Installation and Trust Checks
+
+Script segments run under strict ownership and permissions requirements to ensure security:
+- The script and every parent directory up to the plugin root must be owned by you or root.
+- No directory or file in the path may be group- or world-writable.
+
+See [Trust](plugins.md#trust) for the full trust model.
+
+Use `gpy plugin install` to copy the plugin to `$XDG_CONFIG_HOME/gpy/plugins/` with the appropriate file modes and permissions:
 
 ```bash
-gpy plugin validate ~/.config/gpy/plugins/<plugin-id>
+gpy plugin install acme-tools/
+```
+
+## Validation and Discovery
+
+Validate the plugin against the contract schema and trust constraints:
+
+```bash
+gpy plugin validate ~/.config/gpy/plugins/acme-tools
+```
+
+Check that GPY discovers the plugin and its segment:
+
+```bash
 gpy plugin list
 gpy segments
 ```
 
-You should see:
+## Enabling the Segment
 
-- the plugin listed by `gpy plugin list`
-- the segment id listed by `gpy segments`
-
-## Step 4: Enable the Segment
-
-Run:
+Enable the segment in your active prompt configuration:
 
 ```bash
-gpy enable <segment-id>
+gpy enable acme-status
 ```
 
-Then verify the config contains the segment under `ui.enabled_segments`:
+Verify that the segment appears in `ui.enabled_segments`:
 
 ```bash
 gpy config get ui.enabled_segments
 ```
 
-## Step 5: Add Theme Styling
+## Styling in Themes
 
-Add a segment table to your theme:
+Define styling for your segment in your theme file (`~/.config/gpy/themes/<theme>.toml`):
 
 ```toml
-[segments.acme-tools]
+[segments.acme-status]
 icon = "A"
 bg_color = "#1d3557"
 text_color = "#f1faee"
 ```
 
-Then validate and activate:
+For variants emitted on line 2 (e.g. `active`), define variant styles:
+
+```toml
+[segments.acme-status]
+icon = "A"
+bg_color = "#1d3557"
+text_color = "#f1faee"
+active_bg_color = "#457b9d"
+active_text_color = "#ffffff"
+```
+
+Validate and apply the theme:
 
 ```bash
 gpy theme validate
-gpy theme use <theme-name>
+gpy theme use <theme>
 ```
 
-For a full theme workflow, see [Create a Theme](create-theme.md).
+For full theme documentation, see [Create a Theme](create-theme.md).
 
-## Design Guidance
+## Performance and Best Practices
 
-Prefer these patterns:
-
-- Keep `detect` cheap.
-- Keep `render` deterministic and fast.
-- Use theme variables instead of hardcoded colors and icons.
-- Gracefully degrade when the backing tool is absent.
-- Cache or precompute expensive state outside prompt render if the plugin needs heavier logic.
-
-Avoid these patterns:
-
-- Running slow network calls during render.
-- Printing extra logging or debugging text from render functions.
-- Depending on GPY private shell internals beyond the documented detect/render contract.
-
-## Troubleshooting
-
-Plugin not discovered:
-
-- confirm the manifest is at `~/.config/gpy/plugins/<plugin-id>/plugin.toml`
-- confirm `provided_segments` includes the segment id
-- run `gpy plugin validate <path>`
-
-Segment not rendering:
-
-- confirm `gpy enable <segment-id>` was run
-- confirm `segment_<segment-id>_detect` returns `0`
-- confirm `segment_<segment-id>_render` prints output
-
-Colors or icons not applying:
-
-- confirm the theme has `[segments.<segment-id>]`
-- run `gpy theme validate`
-- inspect a simple built-in segment like [`fish/segments/directory.fish`](../../fish/segments/directory.fish) for the expected theme-variable pattern
-
-## Performance Expectations
-
-Plugin discovery budgets are documented in [performance/plugin-budgets.md](performance/plugin-budgets.md).
-
-Runtime expectations for segment authors:
-
-- detection should usually be sub-millisecond
-- rendering should avoid subprocess storms
-- prompt rendering should stay imperceptible to the user
+- **Keep execution fast**: Script timeouts are capped at 500 ms (default 300 ms).
+- **Use triggers**: Use `require_env`, `require_files`, or `require_command` so scripts only run when necessary.
+- **Cache appropriately**: Configure `ttl_secs` to avoid running scripts on every single prompt.
+- Discovery budgets are documented in [Plugin Budgets](performance/plugin-budgets.md).

@@ -139,7 +139,7 @@ fn prime_watch(repos: &[&Path], mut delivered: impl FnMut() -> bool) {
 fn non_repo_dir() -> TempDir {
     let dir = tempdir().expect("create temp dir");
     assert!(
-        gpy_agent::git::find_git_dir_only(dir.path()).is_none(),
+        gpy_agent::git::find_worktree_root(dir.path()).is_none(),
         "TMPDIR ({}) must not be inside a git repository",
         dir.path().display()
     );
@@ -155,12 +155,12 @@ fn idle_watcher() -> MultiRepoWatcher {
 }
 
 #[test]
-fn test_find_git_root_finds_root() {
+fn test_find_worktree_root_finds_root() {
     let repo = temp_repo();
     let nested = repo.path().join("src").join("deep");
     std::fs::create_dir_all(&nested).expect("create nested dir");
 
-    let git_root = gpy_agent::git::find_git_dir_only(&nested).expect("git root from nested dir");
+    let git_root = gpy_agent::git::find_worktree_root(&nested).expect("git root from nested dir");
 
     assert_eq!(
         git_root,
@@ -169,11 +169,11 @@ fn test_find_git_root_finds_root() {
 }
 
 #[test]
-fn test_find_git_root_no_repo() {
+fn test_find_worktree_root_no_repo() {
     let dir = tempdir().expect("create temp dir");
 
     assert_eq!(
-        gpy_agent::git::find_git_dir_only(dir.path()),
+        gpy_agent::git::find_worktree_root(dir.path()),
         None,
         "TMPDIR ({}) must not be inside a git repository",
         dir.path().display()
@@ -182,14 +182,14 @@ fn test_find_git_root_no_repo() {
 
 #[test]
 #[cfg(unix)]
-fn test_find_git_root_symlink_path() {
+fn test_find_worktree_root_symlink_path() {
     let repo_dir = temp_repo();
     let repo_path = repo_dir.path();
 
     let symlink_dir = repo_dir.path().join("symlink");
     symlink(repo_path, &symlink_dir).expect("create symlink");
 
-    let git_root = gpy_agent::git::find_git_dir_only(&symlink_dir).expect("git root from symlink");
+    let git_root = gpy_agent::git::find_worktree_root(&symlink_dir).expect("git root from symlink");
     let canonical_repo = std::fs::canonicalize(repo_path).expect("canonical repo path");
 
     assert_eq!(git_root, canonical_repo);
@@ -443,7 +443,7 @@ fn test_slow_callback_in_one_repo_does_not_delay_another() {
     let fast_repo = temp_repo();
 
     let slow_root =
-        gpy_agent::git::find_git_dir_only(slow_repo.path()).expect("slow repo should resolve");
+        gpy_agent::git::find_worktree_root(slow_repo.path()).expect("slow repo should resolve");
 
     let state = Arc::new(Dispatch::default());
     let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = {

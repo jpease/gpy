@@ -49,7 +49,7 @@ static NON_GIT_ROOT_CACHE: TtlMap<PathBuf, PathBuf> =
 /// marker ancestor below `$HOME` (bounded by [`MAX_ANCESTOR_DEPTH`]), else `path`.
 #[must_use]
 pub fn project_root(path: &Path) -> ProjectRoot {
-    crate::git::find_git_dir_only(path)
+    crate::git::find_worktree_root(path)
         .map_or_else(|| ProjectRoot::NonGit(non_git_root(path)), ProjectRoot::Git)
 }
 

@@ -8,4 +8,4 @@ pub(crate) mod ttl_map;
 
 pub use instant_prompt::InstantPromptCache;
 pub use policy::CachePolicy;
-pub use theme_export::{get_theme_export_cache_path, write_theme_export_cache};
+pub use theme_export::{fish_theme_export_path, write_theme_export_cache};

@@ -6,7 +6,7 @@ Accepted (2026-10).
 
 ## Context
 
-Shipped binaries are built with `panic = "abort"`: it is set in `[profile.release]` in `gpy-agent/Cargo.toml` (and in `gpy-agent/.cargo/config.toml`), and the `release-dist` profile inherits it. Until now nothing recorded why.
+Shipped binaries are built with `panic = "abort"`: it is set in `[profile.release]` in `gpy-agent/Cargo.toml`, and the `release-dist` profile inherits it. Until now nothing recorded why.
 
 The agent runs several long-lived threads that nothing supervises: the watcher flush thread (`watcher/mod.rs`), the config and theme hot-reload poll threads (`watcher/hot_reload.rs`), and the event-dispatch threads (`agent/events/mod.rs`). Under unwinding, a panic on one of these threads ends that thread only. The daemon keeps answering IPC, so shells see a healthy agent, but live updates or hot reload have silently stopped, and nothing restarts them.
 

@@ -65,3 +65,39 @@ First recorded figure (2026-09-07, macOS, `cargo llvm-cov nextest
 | Date | Lines | Functions | Regions | Notes |
 |---|---|---|---|---|
 | 2026-09-07 | 91.92% (37402 lines, 3021 missed) | 89.59% (4208 functions, 438 missed) | 91.96% | first measurement, local macOS run, 2109 tests |
+
+## CI coverage by platform
+
+The support limits are stated in
+[INSTALL.md](../INSTALL.md#operating-systems); this section lists what CI runs
+behind them. The Windows and WSL workflows are in the tiers table above.
+
+`pr-gate.yml` runs on every pull request to `main` (and on manual dispatch).
+`cross-platform-test.yml` runs after every push to `main`, weekly, and on
+manual dispatch. The PR gate runs, each as its own job so one failure never
+hides another's verdict:
+
+- the Rust gate (format, strict clippy, nextest, doc tests, `cargo audit`,
+  `cargo deny`, a release build);
+- the strict `just lint` layer;
+- the Fish, Bash and Zsh integration suites on `ubuntu-latest` and
+  `macos-latest`;
+- the absolute performance budgets (`just bench-ci`'s Rust micro-benchmarks);
+- a clean-container fresh install on `ubuntu:24.04`;
+- the Windows leg.
+
+The Rust and shell legs run through the reusable `gate-legs.yml`, so their
+checks are named `gate-legs / …`, and `cross-platform-test.yml` calls the same
+workflow after a merge. The one check to require in the branch ruleset is
+`gate-result`, which fails unless every one of those jobs succeeded. The PR
+gate runs on pull requests from forks with a read-only token and no secrets.
+
+| Platform | What CI runs |
+|---|---|
+| Linux x86_64 | Every tier on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), including the shell end-to-end suites against a real agent on a pseudo-terminal; `scripts/test-fresh-install.sh` in a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash |
+| Linux aarch64 | Built and checked against the glibc floor (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`); not run |
+| Linux release binaries | The release job rejects a binary that references a newer glibc than the floor and runs the x86_64 binaries in `ubuntu:20.04` |
+| macOS Apple Silicon | Every tier, including the shell end-to-end suites, on every pull request on `macos-latest` |
+| macOS Intel | Built and checksummed in the release; not run |
+| Windows native | `windows-gate.yml` builds the agent with `cargo build --locked`, runs the library unit tests with `cargo test --locked --lib`, and runs six CLI integration targets through nextest: `gpy_cli_tests`, `cli_config_mutation_tests`, `config_concurrent_save_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`. It runs no Fish, Bash or Zsh suites, because the prompt talks to the agent over a Unix domain socket, which native Windows does not provide; end-to-end behaviour there is unmeasured |
+| WSL | `wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite, when its own files change, weekly and on demand; it is not part of the PR gate |

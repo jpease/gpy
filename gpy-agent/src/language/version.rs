@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Trait for detecting language versions
-pub trait ReleaseSource: Send + Sync {
+pub trait VersionSource: Send + Sync {
     /// Language name this detector handles
     fn language_name(&self) -> &'static str;
 
@@ -34,11 +34,11 @@ pub trait ReleaseSource: Send + Sync {
 }
 
 /// Execute version command and parse output, bypassing the cache.
-/// `pub` for Criterion benches.
+/// Bypasses the cache; public for `benches/agent_startup_bench.rs`.
 ///
 /// # Errors
 /// If the version command cannot be executed successfully.
-pub fn execute_version_command<P: ReleaseSource + ?Sized>(
+pub fn execute_version_command<P: VersionSource + ?Sized>(
     detector: &P,
     cwd: Option<&Path>,
 ) -> Result<Option<String>> {
@@ -230,7 +230,7 @@ fn parse_ruby_version(contents: &str) -> Option<String> {
     (!version.trim().is_empty()).then(|| version.trim().to_owned())
 }
 
-fn parse_version_output<P: ReleaseSource + ?Sized>(
+fn parse_version_output<P: VersionSource + ?Sized>(
     detector: &P,
     output: &Output,
 ) -> Option<String> {
@@ -245,11 +245,12 @@ fn parse_version_output<P: ReleaseSource + ?Sized>(
 
 /// Cached version detection without a working directory.
 #[must_use]
-pub fn detect_language_release<P: ReleaseSource + ?Sized>(detector: &P) -> Option<String> {
-    detect_language_release_at(detector, None)
+pub fn detect_version<P: VersionSource + ?Sized>(detector: &P) -> Option<String> {
+    detect_version_at(detector, None)
 }
 
 /// Whether a version lookup may run a probe command on a cache miss.
+/// See [`crate::language::display::Versions`] for the display-level form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbePolicy {
     /// Run the version command on a miss; it is bounded by its own timeout.
@@ -268,21 +269,21 @@ pub struct ColdVersion;
 /// project. Failures are cached for [`FAILURE_TTL`](crate::language::probe_memo::FAILURE_TTL) so a broken
 /// tool costs one probe round per window.
 #[must_use]
-pub fn detect_language_release_at<P: ReleaseSource + ?Sized>(
+pub fn detect_version_at<P: VersionSource + ?Sized>(
     detector: &P,
     cwd: Option<&Path>,
 ) -> Option<String> {
-    lookup_language_release_at(detector, cwd, ProbePolicy::Spawn)
+    lookup_version_at(detector, cwd, ProbePolicy::Spawn)
         .ok()
         .flatten()
 }
 
-/// [`detect_language_release_at`] under `policy`; `Ok(None)` is no version
+/// [`detect_version_at`] under `policy`; `Ok(None)` is no version
 /// (or a recent failure).
 ///
 /// # Errors
 /// [`ColdVersion`] when nothing is cached and `policy` forbids the probe.
-pub fn lookup_language_release_at<P: ReleaseSource + ?Sized>(
+pub fn lookup_version_at<P: VersionSource + ?Sized>(
     detector: &P,
     cwd: Option<&Path>,
     policy: ProbePolicy,
@@ -301,7 +302,7 @@ fn nth_word(output: &str, n: usize) -> Option<String> {
 
 /// Node.js version detector
 pub struct NodeDetector;
-impl ReleaseSource for NodeDetector {
+impl VersionSource for NodeDetector {
     fn language_name(&self) -> &'static str {
         "node"
     }
@@ -315,7 +316,7 @@ impl ReleaseSource for NodeDetector {
 
 /// Python version detector
 pub struct PythonDetector;
-impl ReleaseSource for PythonDetector {
+impl VersionSource for PythonDetector {
     fn language_name(&self) -> &'static str {
         "python"
     }
@@ -334,7 +335,7 @@ impl ReleaseSource for PythonDetector {
 
 /// Rust version detector
 pub struct RustDetector;
-impl ReleaseSource for RustDetector {
+impl VersionSource for RustDetector {
     fn language_name(&self) -> &'static str {
         "rust"
     }
@@ -348,7 +349,7 @@ impl ReleaseSource for RustDetector {
 
 /// Go version detector
 pub struct GoDetector;
-impl ReleaseSource for GoDetector {
+impl VersionSource for GoDetector {
     fn language_name(&self) -> &'static str {
         "go"
     }
@@ -364,7 +365,7 @@ impl ReleaseSource for GoDetector {
 
 /// Swift version detector
 pub struct SwiftDetector;
-impl ReleaseSource for SwiftDetector {
+impl VersionSource for SwiftDetector {
     fn language_name(&self) -> &'static str {
         "swift"
     }
@@ -383,7 +384,7 @@ impl ReleaseSource for SwiftDetector {
 
 /// Elixir version detector
 pub struct ElixirDetector;
-impl ReleaseSource for ElixirDetector {
+impl VersionSource for ElixirDetector {
     fn language_name(&self) -> &'static str {
         "elixir"
     }
@@ -402,7 +403,7 @@ impl ReleaseSource for ElixirDetector {
 
 /// Erlang version detector
 pub struct ErlangDetector;
-impl ReleaseSource for ErlangDetector {
+impl VersionSource for ErlangDetector {
     fn language_name(&self) -> &'static str {
         "erlang"
     }
@@ -421,7 +422,7 @@ impl ReleaseSource for ErlangDetector {
 
 /// Ruby version detector
 pub struct RubyDetector;
-impl ReleaseSource for RubyDetector {
+impl VersionSource for RubyDetector {
     fn language_name(&self) -> &'static str {
         "ruby"
     }
@@ -435,7 +436,7 @@ impl ReleaseSource for RubyDetector {
 
 /// Java version detector
 pub struct JavaDetector;
-impl ReleaseSource for JavaDetector {
+impl VersionSource for JavaDetector {
     fn language_name(&self) -> &'static str {
         "java"
     }
@@ -459,7 +460,7 @@ impl ReleaseSource for JavaDetector {
 
 /// Fish shell version detector
 pub struct FishDetector;
-impl ReleaseSource for FishDetector {
+impl VersionSource for FishDetector {
     fn language_name(&self) -> &'static str {
         "fish"
     }
@@ -472,7 +473,7 @@ impl ReleaseSource for FishDetector {
 }
 
 /// Registered version detectors, built once.
-static VERSION_DETECTORS: OnceLock<Vec<Box<dyn ReleaseSource + Sync + Send>>> = OnceLock::new();
+static VERSION_DETECTORS: OnceLock<Vec<Box<dyn VersionSource + Sync + Send>>> = OnceLock::new();
 
 /// Probe results and recent failures per `language[:cwd]`.
 static VERSION_MEMO: ProbeMemo<String> = ProbeMemo::new(VERSION_CACHE_CAPACITY);
@@ -530,7 +531,7 @@ fn record_mise_negative(program: &str, cwd: Option<&Path>) {
 }
 
 /// Clear cached versions (successes and failures) for a project directory.
-pub(crate) fn invalidate_language_release_cache_at(cwd: &Path) {
+pub(crate) fn invalidate_version_cache_at(cwd: &Path) {
     let scoped_path = version_cache_path_key(cwd);
     let keep_other_dirs = |cache_key: &String| {
         cache_key
@@ -560,7 +561,7 @@ pub fn has_version_detector(language: &str) -> bool {
 }
 
 /// Get all registered version detectors.
-pub fn get_version_detectors() -> &'static Vec<Box<dyn ReleaseSource + Sync + Send>> {
+pub fn get_version_detectors() -> &'static Vec<Box<dyn VersionSource + Sync + Send>> {
     VERSION_DETECTORS.get_or_init(|| {
         vec![
             Box::new(NodeDetector),
@@ -613,7 +614,7 @@ mod tests {
     }
 
     struct CwdVersionFileDetector;
-    impl ReleaseSource for CwdVersionFileDetector {
+    impl VersionSource for CwdVersionFileDetector {
         fn language_name(&self) -> &'static str {
             "python-test"
         }
@@ -673,8 +674,8 @@ mod tests {
         VERSION_MEMO.found().clear();
 
         let detector = CwdVersionFileDetector;
-        let first_version = detect_language_release_at(&detector, Some(first.path()));
-        let second_version = detect_language_release_at(&detector, Some(second.path()));
+        let first_version = detect_version_at(&detector, Some(first.path()));
+        let second_version = detect_version_at(&detector, Some(second.path()));
 
         assert_eq!(first_version.as_deref(), Some("3.9.24"));
         assert_eq!(second_version.as_deref(), Some("3.14.4"));
@@ -696,7 +697,7 @@ mod tests {
             .found()
             .insert(second_key.clone(), "4.0.5".to_owned());
 
-        invalidate_language_release_cache_at(first.path());
+        invalidate_version_cache_at(first.path());
 
         assert_eq!(
             VERSION_MEMO.found().get(&first_key),
@@ -758,7 +759,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    impl ReleaseSource for StubDetector<'_> {
+    impl VersionSource for StubDetector<'_> {
         fn language_name(&self) -> &'static str {
             self.name
         }
@@ -892,13 +893,13 @@ mod tests {
             fallbacks: vec![],
         };
 
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
 
         write_script(
             &script,
             &format!("echo spawn >> '{}'\necho v 1.2.3", count.display()),
         );
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
         assert!(
             !count.exists(),
             "a recent probe failure must suppress re-spawning"
@@ -923,11 +924,11 @@ mod tests {
         };
         let key = version_cache_key(stub.name, Some(dir));
 
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 1);
 
         std::fs::write(dir.join("ok"), "").expect("mark tool installed");
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 1, "no re-probe within the failure TTL");
 
         VERSION_MEMO.failed().insert(
@@ -935,14 +936,14 @@ mod tests {
             SystemTime::now() - FAILURE_TTL - Duration::from_secs(1),
         );
         assert_eq!(
-            detect_language_release_at(&stub, Some(dir)).as_deref(),
+            detect_version_at(&stub, Some(dir)).as_deref(),
             Some("1.2.3")
         );
         assert_eq!(spawn_count(&count), 2);
         assert_eq!(VERSION_MEMO.failed().get(&key), None);
 
         assert_eq!(
-            detect_language_release_at(&stub, Some(dir)).as_deref(),
+            detect_version_at(&stub, Some(dir)).as_deref(),
             Some("1.2.3")
         );
         assert_eq!(spawn_count(&count), 2, "successes stay cached");
@@ -961,13 +962,13 @@ mod tests {
             fallbacks: vec![],
         };
 
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 1);
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 1, "failure recorded");
 
-        invalidate_language_release_cache_at(dir);
-        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        invalidate_version_cache_at(dir);
+        assert_eq!(detect_version_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 2, "invalidation must force a re-probe");
     }
 
@@ -985,18 +986,18 @@ mod tests {
         };
 
         assert_eq!(
-            lookup_language_release_at(&stub, Some(dir), ProbePolicy::CachedOnly),
+            lookup_version_at(&stub, Some(dir), ProbePolicy::CachedOnly),
             Err(ColdVersion),
             "a cold version is reported, not probed"
         );
         assert_eq!(spawn_count(&count), 0);
 
         assert_eq!(
-            detect_language_release_at(&stub, Some(dir)).as_deref(),
+            detect_version_at(&stub, Some(dir)).as_deref(),
             Some("1.2.3")
         );
         assert_eq!(
-            lookup_language_release_at(&stub, Some(dir), ProbePolicy::CachedOnly),
+            lookup_version_at(&stub, Some(dir), ProbePolicy::CachedOnly),
             Ok(Some("1.2.3".to_owned()))
         );
         assert_eq!(spawn_count(&count), 1, "the cached-only read did not spawn");

@@ -70,7 +70,7 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
         .and_then(Path::parent)
         .map(Path::to_path_buf);
 
-    let theme_export_file = crate::cache::theme_export::get_theme_export_cache_path().ok();
+    let theme_export_file = crate::cache::theme_export::fish_theme_export_path().ok();
     let config_path = super::utils::active_config_path().ok();
     let config_candidates = config_candidates().join(LIST_SEPARATOR);
     let theme_dir = crate::theme::ThemeManager::user_themes_dir();

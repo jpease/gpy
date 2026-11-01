@@ -1,33 +1,26 @@
 //! Theme-export cache files, sourced by shells at startup and on reload so they
 //! never spawn the binary on the hot path.
 
-use super::instant_prompt::files::{create_private_dir, get_gpy_cache_dir, write_atomic};
+use super::instant_prompt::files::{create_private_dir, write_atomic};
 use crate::Result;
 use std::path::PathBuf;
 
-/// Export file per shell; the fish entry is the one `get_theme_export_cache_path` names.
+const FISH_EXPORT_FILE: &str = "theme-export.fish";
+
+/// Export file per shell.
 const EXPORT_FILES: [(crate::shell::Shell, &str); 3] = [
-    (crate::shell::Shell::Fish, "theme-export.fish"),
+    (crate::shell::Shell::Fish, FISH_EXPORT_FILE),
     (crate::shell::Shell::Bash, "theme-export.bash"),
     (crate::shell::Shell::Zsh, "theme-export.zsh"),
 ];
-
-/// Return the directory the theme exports are cached in.
-///
-/// # Errors
-///
-/// Returns an error if neither `XDG_CACHE_HOME` nor `HOME` is set.
-pub fn theme_export_dir() -> Result<PathBuf> {
-    get_gpy_cache_dir()
-}
 
 /// Return the path used to cache the Fish-format theme export.
 ///
 /// # Errors
 ///
 /// Returns an error if neither `XDG_CACHE_HOME` nor `HOME` is set.
-pub fn get_theme_export_cache_path() -> Result<PathBuf> {
-    theme_export_dir().map(|d| d.join(EXPORT_FILES[0].1))
+pub fn fish_theme_export_path() -> Result<PathBuf> {
+    crate::paths::gpy_cache_dir().map(|d| d.join(FISH_EXPORT_FILE))
 }
 
 /// Write the theme exports atomically (temp-file + rename); returns whether any file changed.
@@ -40,7 +33,12 @@ pub fn write_theme_export_cache(
     config: &crate::config::Config,
     palette: &crate::template::Palette,
 ) -> Result<bool> {
-    write_theme_export_to_dir(&theme_export_dir()?, theme_manager, config, palette)
+    write_theme_export_to_dir(
+        &crate::paths::gpy_cache_dir()?,
+        theme_manager,
+        config,
+        palette,
+    )
 }
 
 /// Write fish/bash/zsh theme exports atomically into `cache_dir`.

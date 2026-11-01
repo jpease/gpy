@@ -677,7 +677,7 @@ fn attribute_repo_detailed(path: &Path, registry: &WatchRegistry) -> Option<Repo
         return Some(RepoAttribution::WatchedRoot(root));
     }
 
-    if let Some(root) = crate::git::find_git_dir_only(path) {
+    if let Some(root) = crate::git::find_worktree_root(path) {
         return Some(RepoAttribution::AncestorGitDir(root));
     }
 

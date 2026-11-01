@@ -7,12 +7,15 @@ use std::hash::Hash;
 /// Maximum number of repositories tracked by the git status cache.
 pub const GIT_STATUS_CACHE_CAPACITY: usize = 512;
 
-/// Estimated bytes of change detail held per file in a git-status entry.
+/// Rough budget unit, not a measurement: bytes charged per dirty file in a
+/// git-status entry. Composition: a `PathBuf` header (24 B), about 48 B of
+/// relative path text, and the `FileStatus` value and hash-map slot, rounded
+/// up to 80 B.
 pub const FILE_DETAIL_BYTES_PER_FILE: usize = 80;
 
-/// Byte budget for per-file change detail across all git-status entries; the
-/// oldest entries lose file maps first. At [`FILE_DETAIL_BYTES_PER_FILE`] per
-/// file, that is about 0.8 MB per repo with 10,000 dirty files.
+/// Approximate byte budget for per-file change detail across all git-status
+/// entries; the oldest entries lose file maps first. At
+/// [`FILE_DETAIL_BYTES_PER_FILE`] per file this is about 131 000 files.
 pub const GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES: usize = 10 * 1024 * 1024;
 
 /// Maximum number of directories tracked by the language detection cache.

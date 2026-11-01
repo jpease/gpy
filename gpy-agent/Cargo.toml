@@ -206,7 +206,8 @@ name = "plugin_bench"
 harness = false
 
 # Local `--release` builds and `cargo bench` (the bench profile inherits this).
-# Shipped binaries use `release-dist`, which inherits only `panic` from here.
+# Keep symbols in local --release and bench builds (Cargo would default to strip = "debuginfo").
+# Shipped binaries use `release-dist`, which inherits this profile and overrides `lto` and `strip`.
 [profile.release]
 opt-level = 3
 lto = true
@@ -223,7 +224,5 @@ overflow-checks = false
 # Shipped binaries (build-release-binaries.sh and the release workflow).
 [profile.release-dist]
 inherits = "release"
-opt-level = 3
 lto = "thin"
-codegen-units = 1
 strip = true

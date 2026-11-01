@@ -445,7 +445,7 @@ This table documents which modules own which pieces of state and how state is sh
 | **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | Allowed: `watcher.register(repo)` via agent<br>Allowed: Agent creates watcher in `Agent::new()`<br>Not allowed: Creating watcher outside agent module |
 | **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get_current()`, `reload()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | Allowed: `config_mgr.get_current()` in handlers<br>Allowed: `config_mgr.reload()` on file events<br>Not allowed: Storing `Config` directly (stale data risk) |
 | **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates Fish exports<br>• Consumers: Call `export_fish()` for Fish vars, `get()` to clone config<br>• Hot-reload: Theme can change, always call methods | Allowed: `theme_mgr.export_fish(&config)` in agent<br>Allowed: `let theme = theme_mgr.get()` to clone<br>Not allowed: Caching theme colors locally |
-| **Language Version Cache** | `language::version` module | Global `VERSION_CACHE` in `gpy-agent/src/language/version.rs` | `TtlMap<String, String>` (capped at `VERSION_CACHE_CAPACITY`): successful probes only; failures go to `VERSION_FAILURE_CACHE` | • Owner: `language::version` module manages global cache<br>• Consumers: Version detectors use implicitly via `detect_language_release()`; the IPC request path reads it only (`ProbePolicy::CachedOnly`) and leaves a cold version to a background probe job ([ADR-0009](adr/adr-0009-deferred-language-version-probes.md))<br>• TTL: 24 hour expiration (configurable)<br>• Thread-safe: `TtlMap` is internally synchronized | Allowed: Call `detect_language_release()`, cache automatic<br>Allowed: Cache shared globally, TTL handles staleness<br>Not allowed: Creating separate per-request version caches<br>Not allowed: Probing a version on the IPC request path |
+| **Language Version Cache** | `language::version` module | Global `VERSION_CACHE` in `gpy-agent/src/language/version.rs` | `TtlMap<String, String>` (capped at `VERSION_CACHE_CAPACITY`): successful probes only; failures go to `VERSION_FAILURE_CACHE` | • Owner: `language::version` module manages global cache<br>• Consumers: Version detectors use implicitly via `detect_version()`; the IPC request path reads it only (`ProbePolicy::CachedOnly`) and leaves a cold version to a background probe job ([ADR-0009](adr/adr-0009-deferred-language-version-probes.md))<br>• TTL: 24 hour expiration (configurable)<br>• Thread-safe: `TtlMap` is internally synchronized | Allowed: Call `detect_version()`, cache automatic<br>Allowed: Cache shared globally, TTL handles staleness<br>Not allowed: Creating separate per-request version caches<br>Not allowed: Probing a version on the IPC request path |
 | **IPC Server State** | `ipc::server::EndpointHandle` | Socket listener | Owned by `Agent` | • Owner: Agent creates and holds server<br>• Lifecycle: Lives until agent shutdown<br>• Thread-safe: Tokio runtime handles connections | Allowed: Agent creates in `Agent::new()`<br>Allowed: Server runs in `Agent::start_background()`<br>Not allowed: Multiple server instances |
 
 #### State Access Patterns
@@ -460,7 +460,7 @@ clients.notify_repaint(None);            // ClientDirectory::notify_repaint()
 impl Agent {
     fn handle_file_event(cache: &GitStatusCache, event: &Event) {
         cache.invalidate(&event.repo);    // Coordinate invalidation
-        let status = load_repository_state(&event.repo);
+        let status = refresh_incremental(cache, &event.repo, &event.paths);
         cache.set(&event.repo, status);   // Coordinate refresh
     }
 }
@@ -569,7 +569,7 @@ security::validate_path(path) → reject if suspicious
 git_cache.get(repo_path) → check freshness
   ↓
 if stale:
-    git::status::load_repository_state()
+    git::status::load_repository_state(path, max_ahead_behind, stash_enabled)
       ↓
     native backend: git status --porcelain=v2 --branch
       ↓
@@ -586,6 +586,8 @@ Render response in ansi format:
   ↓
 Fish: printf '%s' $response
 ```
+
+A file-event refresh instead runs one pathspec `git status --porcelain=v2 -z -- <paths>` (`get_pathspec_status`) and merges the result into the cached status.
 
 ### File Watcher Event
 

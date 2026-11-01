@@ -15,17 +15,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Repository-root lookups, cheapest first:
-/// - [`find_git_dir_only`]: one stat per level, `.git` entries only; the
-///   watcher's `MultiRepoWatcher::find_git_root` is this function.
-/// - [`find_repo_root`]: that walk, then a fallback that also finds bare
-///   repos and resolves relative paths; for request handling and the CLI.
-///
 /// Walk up from `path` to the canonical directory containing a `.git` entry
-/// (directory or pointer file). One stat per level; ignores bare repos and
-/// does not absolutize relative paths (see [`find_repo_root`]).
+/// (directory or pointer file). One stat per level; no bare repos, no
+/// absolutizing (see [`find_repo_root`]).
 #[must_use]
-pub fn find_git_dir_only(path: &Path) -> Option<PathBuf> {
+pub fn find_worktree_root(path: &Path) -> Option<PathBuf> {
     let mut current = path;
     loop {
         let git_dir = current.join(".git");
@@ -47,7 +41,7 @@ fn is_bare_repo_dir(path: &Path) -> bool {
 }
 
 /// Walk up recognizing bare repos, absolutizing relative paths and starting
-/// from a file's parent. Costlier than [`find_git_dir_only`]; used as its fallback.
+/// from a file's parent. Costlier than [`find_worktree_root`]; used as its fallback.
 fn find_repo_root_bare_and_relative_aware(path: &Path) -> Option<PathBuf> {
     let mut current = if path.is_absolute() {
         path.to_path_buf()
@@ -78,7 +72,7 @@ fn find_repo_root_bare_and_relative_aware(path: &Path) -> Option<PathBuf> {
 /// The watcher deliberately uses the cheap walk to exclude bare repos.
 #[must_use]
 pub fn find_repo_root(path: &Path) -> Option<PathBuf> {
-    find_git_dir_only(path).or_else(|| find_repo_root_bare_and_relative_aware(path))
+    find_worktree_root(path).or_else(|| find_repo_root_bare_and_relative_aware(path))
 }
 
 /// Resolve `target` against `base` unless absolute. No filesystem access.
@@ -476,7 +470,7 @@ mod tests {
 
         // Otherwise an ancestor repo would make this test vacuous.
         assert_eq!(
-            find_git_dir_only(&bare),
+            find_worktree_root(&bare),
             None,
             "temp dir must not sit inside a repository for this test to mean anything"
         );

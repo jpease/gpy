@@ -17,7 +17,7 @@ mod wait;
 
 use env_guard::EnvGuard;
 use gpy_agent::shell::Shell;
-use gpy_agent::theme::{ThemeManager, ThemeSource};
+use gpy_agent::{config::discovery::Source, theme::ThemeManager};
 use serial_test::serial;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -848,7 +848,7 @@ fn test_theme_discovery_includes_starship_builtin() {
         .iter()
         .find(|theme| theme.name == "starship")
         .expect("starship preset present as builtin");
-    assert_eq!(starship.source, ThemeSource::Builtin);
+    assert_eq!(starship.source, Source::Builtin);
 
     // The other builtins remain discoverable.
     assert!(themes.iter().any(|t| t.name == "default"));
@@ -872,7 +872,7 @@ fn test_theme_discovery_includes_user_themes() {
         .iter()
         .find(|theme| theme.name == "community")
         .expect("community theme present");
-    assert_eq!(community.source, ThemeSource::User);
+    assert_eq!(community.source, Source::User);
     assert!(community.path.is_some());
 }
 
@@ -912,7 +912,7 @@ provided_segments = ["demo"]
         .iter()
         .find(|theme| theme.name == "shared")
         .expect("shared theme present");
-    assert_eq!(shared.source, ThemeSource::User);
+    assert_eq!(shared.source, Source::User);
 }
 
 #[test]

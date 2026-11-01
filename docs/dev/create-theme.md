@@ -209,6 +209,12 @@ Plugin segment does not look right:
 - confirm the plugin segment id matches the table name exactly
 - confirm the plugin segment actually reads theme variables for the keys you set
 
+## Themes Shipped in a Plugin
+
+A plugin's `themes/` directory may hold full themes or overlays. A plugin overlay must extend a builtin theme (`extends = "starship"`) and always gets the embedded builtin, never a user or another plugin's theme of that name; `gpy plugin validate` checks it.
+
+Users who customize a plugin theme with `gpy theme new <name> --from <plugin-theme>`, `gpy theme save` or `gpy config wizard` get an overlay that extends it, so their theme depends on your plugin: `gpy` names the plugin when it writes the file, and the theme stops loading if the plugin is removed or disabled. Renaming or removing a shipped theme therefore breaks such overlays. `--full` gives users an independent copy instead.
+
 ## Compatibility Notes
 
 Theme authors can rely on:

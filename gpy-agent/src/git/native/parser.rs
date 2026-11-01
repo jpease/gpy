@@ -1,6 +1,6 @@
 //! Pure parser for `git status --porcelain=v2 --branch -z` output.
 
-use crate::git::{FileStatus, StatusAggregate};
+use crate::git::FileStatus;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -31,58 +31,6 @@ impl BranchHead {
             named => Self::Named(named.to_owned()),
         }
     }
-}
-
-/// The accumulated result of parsing Git porcelain v2 status output.
-pub struct V2ParseResult {
-    /// The current branch name.
-    pub branch: String,
-    /// Whether HEAD is detached (not on a branch).
-    pub detached: bool,
-    /// Number of commits ahead of upstream.
-    pub ahead: u32,
-    /// Number of commits behind upstream.
-    pub behind: u32,
-    /// Whether the ahead count was capped due to `max_ahead_behind`.
-    pub ahead_capped: bool,
-    /// Whether the behind count was capped due to `max_ahead_behind`.
-    pub behind_capped: bool,
-    /// Number of staged changes.
-    pub staged: u32,
-    /// Number of unstaged changes.
-    pub unstaged: u32,
-    /// Number of untracked files.
-    pub untracked: u32,
-    /// Number of conflicted files.
-    pub conflicts: u32,
-    /// Map of file paths to their status.
-    pub files: HashMap<PathBuf, FileStatus>,
-}
-
-/// Pure parse result; `branch` stays unresolved (see [`BranchHead`]).
-pub struct V2ParseRecords {
-    /// The unresolved branch identity; `None` when no `# branch.head` line was printed.
-    pub branch: Option<BranchHead>,
-    /// Commit id from `# branch.oid`; `None` for an unborn branch or a missing header.
-    pub oid: Option<String>,
-    /// Number of commits ahead of upstream.
-    pub ahead: u32,
-    /// Number of commits behind upstream.
-    pub behind: u32,
-    /// Whether the ahead count was capped due to `max_ahead_behind`.
-    pub ahead_capped: bool,
-    /// Whether the behind count was capped due to `max_ahead_behind`.
-    pub behind_capped: bool,
-    /// Number of staged changes.
-    pub staged: u32,
-    /// Number of unstaged changes.
-    pub unstaged: u32,
-    /// Number of untracked files.
-    pub untracked: u32,
-    /// Number of conflicted files.
-    pub conflicts: u32,
-    /// Map of file paths to their status.
-    pub files: HashMap<PathBuf, FileStatus>,
 }
 
 /// Accumulator state for parsing Git porcelain v2 output line by line.
@@ -126,32 +74,12 @@ impl V2ParseState {
         entry.untracked |= status.untracked;
         entry.conflicted |= status.conflicted;
     }
-
-    /// Converts into records, deriving counts via [`StatusAggregate`] so full
-    /// scans and incremental recounts agree.
-    #[must_use]
-    pub fn into_records(self) -> V2ParseRecords {
-        let aggregate = StatusAggregate::from_file_statuses(self.files.values());
-        V2ParseRecords {
-            branch: self.branch,
-            oid: self.oid,
-            ahead: self.ahead,
-            behind: self.behind,
-            ahead_capped: self.ahead_capped,
-            behind_capped: self.behind_capped,
-            staged: aggregate.staged,
-            unstaged: aggregate.unstaged,
-            untracked: aggregate.untracked,
-            conflicts: aggregate.conflicts,
-            files: self.files,
-        }
-    }
 }
 
 /// Parses UTF-8-decoded `git status --porcelain=v2 --branch -z` output.
 #[must_use]
-pub fn parse_v2_records(output: &str, max_ahead_behind: usize) -> V2ParseRecords {
-    parse_v2_state(output, max_ahead_behind).into_records()
+pub fn parse_v2_records(output: &str, max_ahead_behind: usize) -> V2ParseState {
+    parse_v2_state(output, max_ahead_behind)
 }
 
 /// Parses the file records of `git status --porcelain=v2 -z` output, ignoring
@@ -319,6 +247,8 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::StatusAggregate;
+    use std::path::Path;
 
     #[test]
     fn ahead_behind_below_limit_is_uncapped() {
@@ -488,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_from_file_map_matches_record_counts() {
+    fn aggregate_counts_each_v2_record_kind() {
         // Conflict, `git rm --cached f` (staged delete + untracked), worktree edit.
         let output = concat!(
             "# branch.head main\0",
@@ -497,17 +427,8 @@ mod tests {
             "1 .M N... 100644 100644 100644 eeee eeee g\0",
             "? f\0",
         );
-        let records = parse_v2_records(output, 0);
-        assert_eq!(
-            (
-                records.staged,
-                records.unstaged,
-                records.untracked,
-                records.conflicts
-            ),
-            (1, 1, 1, 1)
-        );
-        let aggregate = StatusAggregate::from_file_statuses(records.files.values());
+        let parsed = parse_v2_records(output, 0);
+        let aggregate = StatusAggregate::from_file_statuses(parsed.files.values());
         assert_eq!(
             (
                 aggregate.staged,
@@ -515,13 +436,50 @@ mod tests {
                 aggregate.untracked,
                 aggregate.conflicts
             ),
-            (
-                records.staged,
-                records.unstaged,
-                records.untracked,
-                records.conflicts
-            ),
-            "record counts must equal the aggregate of the file map"
+            (1, 1, 1, 1)
         );
+    }
+
+    /// `-z` status parsing keys renames by destination and clamps ahead/behind.
+    /// The rename record's trailing original path must be skipped.
+    #[test]
+    fn parse_v2_output_handles_rename_and_clamps_counts() {
+        let output = concat!(
+            "# branch.head main\0",
+            "# branch.ab +3 -1\0",
+            "2 R. N... 100644 100644 100644 abc abc R100 new name.txt\0",
+            "old name.txt\0",
+            "? untracked.txt\0",
+        );
+
+        let result = parse_v2_records(output, 2);
+
+        assert_eq!(result.branch, Some(BranchHead::Named("main".to_owned())));
+        // Ahead 3 > max 2 -> clamped and capped; behind 1 <= max -> verbatim.
+        assert_eq!(result.ahead, 2);
+        assert!(result.ahead_capped);
+        assert_eq!(result.behind, 1);
+        assert!(!result.behind_capped);
+
+        // The rename is one staged change, keyed by its destination.
+        let aggregate = StatusAggregate::from_file_statuses(result.files.values());
+        assert_eq!(aggregate.staged, 1);
+        assert_eq!(aggregate.untracked, 1);
+        assert!(result.files.contains_key(Path::new("new name.txt")));
+        assert!(
+            !result.files.contains_key(Path::new("old name.txt")),
+            "the original-path record must be consumed, not stored as an entry"
+        );
+        assert!(
+            !result
+                .files
+                .contains_key(Path::new("new name.txt old name.txt")),
+            "destination and original paths must not be concatenated"
+        );
+        let renamed = result
+            .files
+            .get(Path::new("new name.txt"))
+            .expect("renamed file present");
+        assert!(renamed.staged);
     }
 }

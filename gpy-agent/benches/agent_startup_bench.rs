@@ -10,7 +10,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::cache::theme_export::write_theme_export_to_dir;
 use gpy_agent::config::Config;
 use gpy_agent::config::loader::load_config_from_file;
-use gpy_agent::language::version::{ReleaseSource, execute_version_command};
+use gpy_agent::language::version::{VersionSource, execute_version_command};
 use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
 use std::fs;
@@ -138,7 +138,7 @@ fn bench_theme_export(c: &mut Criterion) {
 /// Near-instant no-op command, so only our spawn/parse overhead is measured.
 struct FastStubDetector;
 
-impl ReleaseSource for FastStubDetector {
+impl VersionSource for FastStubDetector {
     fn language_name(&self) -> &'static str {
         "bench-stub"
     }
@@ -160,7 +160,7 @@ impl ReleaseSource for FastStubDetector {
 }
 
 /// `execute_version_command`'s spawn, process-group, reader thread, timeout, and parse.
-/// No cache at this layer (it lives in `detect_language_release_at`), and
+/// No cache at this layer (it lives in `detect_version_at`), and
 /// `cwd: None` skips the mise probe.
 fn bench_version_command_spawn(c: &mut Criterion) {
     let detector = FastStubDetector;

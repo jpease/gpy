@@ -12,7 +12,8 @@
 - [Configuration Examples](configuration-examples.md) - Task-oriented cookbook of copy-paste config/theme snippets.
 - [Theme Customization](theme-customization.md) - Guide to changing your prompt's look, from the wizard up to hand-editing a theme file.
 - [Color Palettes](palettes.md) - Palette roles and file format, builtin schemes, and importing tinted-theming base16/base24 schemes.
-- [Advanced Configuration](advanced-configuration.md) - Advanced `config.toml` settings.
+- [Environment Variables](environment-variables.md) - Every `GPY_*` and XDG variable GPY reads, with defaults and deprecated names.
+- [Advanced Configuration](advanced-configuration.md) - Agent on/off, debug logging, live clock, security limits and socket location.
 - [CLI Reference](cli-reference.md) - The `gpy` command-line tool.
 
 ## Back to Project

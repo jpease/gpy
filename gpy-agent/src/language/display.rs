@@ -8,7 +8,7 @@ use crate::debug_log;
 use crate::ipc::LanguageInfo;
 use crate::language::detector::DetectedLanguage;
 use crate::language::venv::PythonVenv;
-use crate::language::version::{ColdVersion, ProbePolicy, ReleaseSource, get_version_detectors};
+use crate::language::version::{ColdVersion, ProbePolicy, VersionSource, get_version_detectors};
 use crate::theme::ThemeConfig;
 use std::collections::HashSet;
 use std::path::Path;
@@ -81,7 +81,7 @@ pub struct DisplayRequest<'a> {
     settings: &'a LanguageSettings,
     version_cwd: Option<&'a Path>,
     python_venv: Option<&'a PythonVenv>,
-    sources: &'a [Box<dyn ReleaseSource + Sync + Send>],
+    sources: &'a [Box<dyn VersionSource + Sync + Send>],
 }
 
 impl<'a> DisplayRequest<'a> {
@@ -120,7 +120,7 @@ impl<'a> DisplayRequest<'a> {
 
     /// Probe through `sources` instead of the registered ones.
     #[cfg(test)]
-    const fn with_sources(mut self, sources: &'a [Box<dyn ReleaseSource + Sync + Send>]) -> Self {
+    const fn with_sources(mut self, sources: &'a [Box<dyn VersionSource + Sync + Send>]) -> Self {
         self.sources = sources;
         self
     }
@@ -247,7 +247,7 @@ where
 /// a probe `policy` forbids could answer.
 fn language_version(
     detected_lang: &DetectedLanguage,
-    probe: Option<&(dyn ReleaseSource + Sync + Send)>,
+    probe: Option<&(dyn VersionSource + Sync + Send)>,
     version_cwd: Option<&Path>,
     python_venv: Option<&PythonVenv>,
     policy: ProbePolicy,
@@ -281,7 +281,7 @@ fn language_version(
         return Ok(Some(version));
     }
     probe.map_or(Ok(None), |source| {
-        crate::language::version::lookup_language_release_at(source, version_cwd, policy)
+        crate::language::version::lookup_version_at(source, version_cwd, policy)
     })
 }
 
@@ -297,7 +297,7 @@ mod tests {
     use crate::config::LanguageSettings;
     use crate::language::detector::DetectedLanguage;
     use crate::language::version::ColdVersion;
-    use crate::language::version::ReleaseSource;
+    use crate::language::version::VersionSource;
     use crate::theme::ThemeConfig;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -305,7 +305,7 @@ mod tests {
     /// A `rust` release source counting how often its version command is read.
     struct CountingSource(Arc<AtomicUsize>);
 
-    impl ReleaseSource for CountingSource {
+    impl VersionSource for CountingSource {
         fn language_name(&self) -> &'static str {
             "rust"
         }
@@ -324,7 +324,7 @@ mod tests {
     /// shown or hidden, probing from a fresh directory so no cached version answers.
     fn probes_for(show_versions: bool) -> usize {
         let probes = Arc::new(AtomicUsize::new(0));
-        let sources: Vec<Box<dyn ReleaseSource + Sync + Send>> =
+        let sources: Vec<Box<dyn VersionSource + Sync + Send>> =
             vec![Box::new(CountingSource(Arc::clone(&probes)))];
         let detected = vec![DetectedLanguage {
             name: "rust".to_owned(),

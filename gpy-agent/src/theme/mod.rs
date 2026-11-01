@@ -12,7 +12,7 @@ pub mod retire;
 pub mod user_copy;
 pub mod warnings;
 
-pub use manager::{ThemeManager, ThemeSource};
+pub use manager::ThemeManager;
 pub use model::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitState, GitTextElement, GitTheme,
     PluginSegmentTheme, RecommendedDirectory, RecommendedUi, SegmentThemes, StatusTheme,

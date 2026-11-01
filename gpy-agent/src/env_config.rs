@@ -631,3 +631,35 @@ mod tests {
         assert!(rows > 0, "no vectors read from {}", path.display());
     }
 }
+
+#[cfg(test)]
+mod reference_doc_tests {
+    use super::AGENT_ENV_VARS;
+    use crate::doc_tables::tables;
+
+    /// Every variable the agent reads has a row on the environment page.
+    #[test]
+    fn every_agent_env_var_has_a_reference_row() {
+        let doc = include_str!("../../docs/user/environment-variables.md");
+        let documented: Vec<String> = tables(doc)
+            .iter()
+            .filter_map(|table| table.column("Variable").map(|col| (table, col)))
+            .flat_map(|(table, col)| {
+                table
+                    .rows
+                    .iter()
+                    .filter_map(move |row| row.get(col))
+                    .map(|cell| cell.replace('`', ""))
+            })
+            .collect();
+        let missing: Vec<&str> = AGENT_ENV_VARS
+            .iter()
+            .map(|var| var.name)
+            .filter(|name| !documented.iter().any(|cell| cell == *name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "docs/user/environment-variables.md has no row for: {missing:?}"
+        );
+    }
+}

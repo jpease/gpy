@@ -730,48 +730,6 @@ fn resolve_overall_state_clean() {
     assert_eq!(state, RepositoryState::Clean);
 }
 
-/// `-z` status parsing keys renames by destination and clamps ahead/behind.
-/// The rename record's trailing original path must be skipped.
-#[test]
-fn parse_v2_output_handles_rename_and_clamps_counts() {
-    let output = concat!(
-        "# branch.head main\0",
-        "# branch.ab +3 -1\0",
-        "2 R. N... 100644 100644 100644 abc abc R100 new name.txt\0",
-        "old name.txt\0",
-        "? untracked.txt\0",
-    );
-
-    let result = parser::parse_v2_records(output, 2);
-
-    assert_eq!(result.branch, Some(BranchHead::Named("main".to_owned())));
-    // Ahead 3 > max 2 -> clamped and capped; behind 1 <= max -> verbatim.
-    assert_eq!(result.ahead, 2);
-    assert!(result.ahead_capped);
-    assert_eq!(result.behind, 1);
-    assert!(!result.behind_capped);
-
-    // The rename is one staged change, keyed by its destination.
-    assert_eq!(result.staged, 1);
-    assert_eq!(result.untracked, 1);
-    assert!(result.files.contains_key(Path::new("new name.txt")));
-    assert!(
-        !result.files.contains_key(Path::new("old name.txt")),
-        "the original-path record must be consumed, not stored as an entry"
-    );
-    assert!(
-        !result
-            .files
-            .contains_key(Path::new("new name.txt old name.txt")),
-        "destination and original paths must not be concatenated"
-    );
-    let renamed = result
-        .files
-        .get(Path::new("new name.txt"))
-        .expect("renamed file present");
-    assert!(renamed.staged);
-}
-
 /// `core.ignorecase` is read from the repository's config and
 /// decides whether pathspecs fold case.
 #[test]

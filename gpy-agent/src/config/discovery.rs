@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Where a discovered artifact came from (re-exported as `ThemeSource`/`PaletteSource`).
+/// Where a discovered artifact came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// Built into the GPY distribution.
@@ -53,7 +53,7 @@ pub fn validate_config_name(kind: &str, name: &str) -> crate::Result<()> {
     }
 }
 
-/// A discovered artifact (re-exported as `DiscoveredTheme`/`DiscoveredPalette`).
+/// A discovered artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovered {
     /// Artifact name (the file stem, or the builtin's registered name).

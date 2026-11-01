@@ -379,6 +379,17 @@ pub fn cache_root() -> Option<PathBuf> {
     )
 }
 
+/// GPY base cache directory (`~/.cache/gpy`, XDG, or `%LOCALAPPDATA%\gpy`).
+///
+/// # Errors
+///
+/// Returns an error if neither `XDG_CACHE_HOME` nor `HOME`/`LOCALAPPDATA` is set.
+pub fn gpy_cache_dir() -> crate::Result<PathBuf> {
+    cache_root().ok_or_else(|| {
+        crate::Error::config("No cache directory found (XDG_CACHE_HOME or HOME not set)")
+    })
+}
+
 /// The data root, where `gpy setup` installs the shell trees and bundled
 /// plugins: `$XDG_DATA_HOME/gpy` (absolute per `os`), then
 /// `$HOME/.local/share/gpy` on Unix or `%LOCALAPPDATA%/gpy` on Windows.

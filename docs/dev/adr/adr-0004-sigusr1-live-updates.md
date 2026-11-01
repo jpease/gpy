@@ -36,7 +36,7 @@ File change -> watcher (notify) -> debouncer -> recompute -> signal registered s
 - Debounce window: `GPY_DEBOUNCE_MS`, default 100 ms.
 - Minimum interval between repaint signals to one shell: `GPY_SIGURG_THROTTLE_MS` (named `GPY_SIGUSR1_THROTTLE_MS` while repaints used SIGUSR1), default 150 ms.
 - `GPY_DISABLE_WATCHER=1` disables the repository watcher.
-- A periodic reconcile (default 45 s) catches changes the watcher missed, and polling backends exist for filesystems that deliver no events (see [Troubleshooting](../../user/troubleshooting.md#diagnostic-and-fallback-environment-variables)).
+- A periodic reconcile (default 45 s) catches changes the watcher missed, and polling backends exist for filesystems that deliver no events (see [Environment Variables](../../user/environment-variables.md#agent-tuning-and-diagnostics)).
 
 ## Consequences
 

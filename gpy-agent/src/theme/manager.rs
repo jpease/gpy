@@ -201,12 +201,6 @@ impl ReloadTarget {
     }
 }
 
-/// Source metadata for a discovered theme (shared with palettes).
-pub type ThemeSource = Source;
-
-/// A theme entry exposed to CLI/runtime discovery.
-pub type DiscoveredTheme = Discovered;
-
 impl ThemeManager {
     /// Create a new theme manager with the specified theme name.
     ///
@@ -546,8 +540,8 @@ impl ThemeManager {
 
     /// List available themes with source metadata and resolved path (if file-backed).
     #[must_use]
-    pub fn discover_available_themes() -> Vec<DiscoveredTheme> {
-        let mut merged: BTreeMap<String, DiscoveredTheme> = BTreeMap::new();
+    pub fn discover_available_themes() -> Vec<Discovered> {
+        let mut merged: BTreeMap<String, Discovered> = BTreeMap::new();
 
         discovery::insert_builtins(&mut merged, BUILTIN_THEMES);
         Self::insert_plugin_themes(&mut merged);
@@ -562,10 +556,10 @@ impl ThemeManager {
         crate::paths::config_root().join("themes")
     }
 
-    fn insert_plugin_themes(merged: &mut BTreeMap<String, DiscoveredTheme>) {
+    fn insert_plugin_themes(merged: &mut BTreeMap<String, Discovered>) {
         let discovery = discover_plugins();
         for plugin in discovery.plugins {
-            let source = ThemeSource::Plugin {
+            let source = Source::Plugin {
                 plugin_id: plugin.manifest.id.as_str().to_owned(),
             };
             if let Some(root) = &plugin.root {
@@ -574,8 +568,8 @@ impl ThemeManager {
         }
     }
 
-    fn insert_user_themes(merged: &mut BTreeMap<String, DiscoveredTheme>) {
-        discovery::insert_toml_dir(merged, &Self::user_themes_dir(), &ThemeSource::User);
+    fn insert_user_themes(merged: &mut BTreeMap<String, Discovered>) {
+        discovery::insert_toml_dir(merged, &Self::user_themes_dir(), &Source::User);
     }
 
     /// Poll target. The chain is re-resolved each tick (see [`poll_paths`]):
@@ -612,8 +606,9 @@ impl Drop for ThemeManager {
 #[cfg(test)]
 mod tests {
 
-    use super::{BUILTIN_THEMES, DiscoveredTheme, ThemeManager, ThemeSource};
+    use super::{BUILTIN_THEMES, ThemeManager};
     use crate::config::Config;
+    use crate::config::discovery::{Discovered, Source};
     use crate::shell::Shell;
     use crate::theme::ThemeConfig;
     use crate::theme::overlay::{self, ChainLink};
@@ -646,14 +641,14 @@ mod tests {
     /// (Real plugin discovery needs env mutation, which `forbid(unsafe_code)` prevents.)
     #[test]
     fn plugin_sourced_theme_candidate_resolves_via_discovered_path() {
-        let mut merged: BTreeMap<String, DiscoveredTheme> = BTreeMap::new();
+        let mut merged: BTreeMap<String, Discovered> = BTreeMap::new();
         let plugin_theme_path = PathBuf::from("/fake/plugin/themes/acme.toml");
 
         crate::config::discovery::merge_candidate(
             &mut merged,
-            DiscoveredTheme {
+            Discovered {
                 name: "acme".to_owned(),
-                source: ThemeSource::Plugin {
+                source: Source::Plugin {
                     plugin_id: "acme-plugin".to_owned(),
                 },
                 path: Some(plugin_theme_path.clone()),
@@ -850,7 +845,7 @@ mod tests {
             assert!(
                 discovered
                     .get(*name)
-                    .is_some_and(|theme| matches!(theme.source, ThemeSource::Builtin)),
+                    .is_some_and(|theme| matches!(theme.source, Source::Builtin)),
                 "discovery::insert_builtins should list \"{name}\" as a Builtin theme"
             );
         }

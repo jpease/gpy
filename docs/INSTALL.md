@@ -13,6 +13,8 @@ This guide covers all methods for installing GPY on your system.
 - [Building from Source](#building-from-source)
 - [Troubleshooting](#troubleshooting)
 - [Uninstallation](#uninstallation)
+- [Platform-Specific Notes](#platform-specific-notes)
+- [Support](#support)
 
 ## Supported Platforms and Shells
 
@@ -24,37 +26,12 @@ restating it.
 
 | OS | Support |
 |----|---------|
-| Linux (x86_64, aarch64) | Full on x86_64: every tier, including the shell end-to-end suites (Fish, Bash and Zsh against a real agent on a pseudo-terminal), runs on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), and a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). aarch64 binaries are built and checked against the glibc floor but not run in CI. Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`) |
-| macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on every pull request on `macos-latest` (Apple Silicon). Intel binaries are built and checksummed in the release but only the Apple Silicon ones are run |
-| Windows, via WSL | Recommended — run the Linux instructions inside WSL. `.github/workflows/wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite there, when its own files change, weekly and on demand (it is not part of the PR gate). See [Windows (WSL)](#windows-wsl) for what is WSL-specific |
-| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the six CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `config_concurrent_save_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
+| Linux (x86_64, aarch64) | Supported on x86_64; aarch64 binaries are built but not run in CI. See [Linux](#linux) |
+| macOS 11+ (Intel and Apple Silicon) | Supported on Apple Silicon; Intel binaries are built but not run in CI |
+| Windows via WSL | Supported; see [Windows (WSL)](#windows-wsl) |
+| Windows native | `gpy` CLI only; the prompt needs Unix sockets |
 
-What CI actually backs: `pr-gate.yml` runs on every pull request to `main`
-(and on manual dispatch), and `cross-platform-test.yml` runs after every push
-to `main`, weekly, and on manual dispatch. The PR gate runs the Rust gate
-(format, strict clippy, nextest, doc tests, `cargo audit`, `cargo deny`, a
-release build), the strict `just lint` layer, and the Fish, Bash and Zsh
-integration suites on `ubuntu-latest` and `macos-latest`, each as its own job
-so one failure never hides another's verdict (the Rust and shell legs run
-through the reusable `gate-legs.yml`, so their checks are named `gate-legs / …`,
-and `cross-platform-test.yml` calls the same workflow after a merge); the
-absolute performance budgets (`just bench-ci`'s Rust micro-benchmarks); a
-clean-container fresh install on `ubuntu:24.04`; and the Windows leg. The one check to require in the branch
-ruleset is `gate-result`, which fails unless every one of those jobs
-succeeded. The PR gate runs on pull requests from forks with a read-only
-token and no secrets.
-
-The Windows leg is one reusable workflow (`windows-gate.yml`) that
-`pr-gate.yml` and `cross-platform-test.yml` both call. It builds the agent
-with `cargo build --locked`, runs the library unit tests with `cargo test
---locked --lib`, and the six CLI integration targets listed in the table
-above through nextest.
-
-What CI does not cover on native Windows is the shell integration, and it
-never will: the prompt talks to the agent over a Unix domain socket, which
-native Windows does not provide. `pr-gate.yml`'s Windows leg deliberately runs
-no Fish, Bash or Zsh suites for that reason. End-to-end behaviour on native
-Windows is unmeasured.
+What CI runs on each platform is in [CI coverage by platform](dev/testing.md#ci-coverage-by-platform).
 
 ### Shells
 
@@ -221,9 +198,9 @@ files, and ask you to re-run with `GPY_SHELL=fish`, `zsh` or `bash`.
   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | GPY_VERSION=vX.Y.Z sh
   ```
 
-- **`GPY_NERD_FONT`**: Force the icon style instead of auto-detecting (see
-  [Icons and Nerd Fonts](#icons-and-nerd-fonts)). Accepts `1`/`true`/`yes`/`on`/`nerd`,
-  `0`/`false`/`no`/`off`/`none`/`ascii`, `unknown` (fonts cannot be detected, so ASCII) or `auto` (detect).
+- **`GPY_NERD_FONT`**: Force the icon style instead of detecting it (see
+  [Icons and Nerd Fonts](#icons-and-nerd-fonts)). Accepted values:
+  [Environment Variables](user/environment-variables.md#setup).
   ```bash
   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | GPY_NERD_FONT=none sh
   ```
@@ -285,9 +262,8 @@ install it, and set it as your terminal's font. Then re-run
 `gpy config set ui.show_icons true` (or reinstall) to switch on the glyphs.
 
 You can also force the choice with the `GPY_NERD_FONT` environment variable
-(`1`/`true`/`yes`/`on`/`nerd`, `0`/`false`/`no`/`off`/`none`/`ascii`, `unknown`, or `auto` to detect) — useful for provisioning scripts and
-non-interactive installs. A set override is taken as your answer: `gpy-agent
-init` writes `show_icons` from it and never opens the confirmation prompt,
+(accepted values: [Environment Variables](user/environment-variables.md#setup)) — useful for provisioning scripts and
+non-interactive installs. A set `GPY_NERD_FONT` is taken as your answer: `gpy setup` writes `show_icons` from it and does not ask,
 even when a terminal is attached.
 
 ### Shell Completions
@@ -396,7 +372,7 @@ manual download, or for confirming what an installer did.
 **Checksum:**
 
 ```bash
-VERSION=v0.7.1   # the release you downloaded
+VERSION=vX.Y.Z   # the release tag you are installing
 BASE=https://github.com/jpease/gpy/releases/download/$VERSION
 
 curl -fsSLO "$BASE/SHA256SUMS"
@@ -424,117 +400,53 @@ means in practice on macOS and Windows.
 
 ## Manual Installation
 
-For more control over the installation process:
+For more control over the installation process, install from the release
+assets and let [`gpy setup`](#gpy-setup) do the shell wiring.
 
-### 1. Download and Verify a Pre-Built Binary
+### 1. Download and verify the release assets
 
-Download the appropriate binary for your platform from the [releases page](https://github.com/jpease/gpy/releases),
-along with its checksum sidecar. Substitute the asset name for your platform:
-`gpy-agent-linux-x86_64`, `gpy-agent-linux-aarch64`, `gpy-agent-macos-aarch64`
-(Apple Silicon) or `gpy-agent-macos-x86_64` (Intel).
+Download these assets from the [releases page](https://github.com/jpease/gpy/releases),
+each with its `.sha256` sidecar: `gpy-agent-<platform>`, `gpy-<platform>` and
+`gpy-shell-files.tar.gz`. `<platform>` is `linux-x86_64`, `linux-aarch64`,
+`macos-aarch64` (Apple Silicon) or `macos-x86_64` (Intel).
 
 ```bash
-VERSION=v0.7.1
-ASSET=gpy-agent-linux-x86_64
+VERSION=vX.Y.Z   # the release tag you are installing
+PLATFORM=linux-x86_64
 BASE=https://github.com/jpease/gpy/releases/download/$VERSION
 
-wget "$BASE/$ASSET" "$BASE/$ASSET.sha256"
-sha256sum -c "$ASSET.sha256"     # macOS: shasum -a 256 -c "$ASSET.sha256"
-
-chmod +x "$ASSET"
-mv "$ASSET" ~/.local/bin/gpy-agent
+for f in "gpy-agent-$PLATFORM" "gpy-$PLATFORM" gpy-shell-files.tar.gz; do
+    curl -fsSLO "$BASE/$f" -O "$BASE/$f.sha256"
+    sha256sum -c "$f.sha256"     # macOS: shasum -a 256 -c "$f.sha256"
+done
 ```
 
 Do not skip the checksum step. It is the only thing standing between a
 corrupted or substituted download and a binary that runs on every prompt.
 
-The `gpy` CLI, which powers shell completions and subcommands, ships as a
-parallel asset (`gpy-linux-x86_64`, `gpy-macos-aarch64`, and so on) and
-installs the same way to `~/.local/bin/gpy`.
-
-### 2. Install Shell Files
-
-Clone the repository to get shell integration files:
+### 2. Install the binaries and run `gpy setup`
 
 ```bash
-git clone https://github.com/jpease/gpy.git /tmp/gpy
+mkdir -p ~/.local/bin
+install -m 755 "gpy-agent-$PLATFORM" ~/.local/bin/gpy-agent
+install -m 755 "gpy-$PLATFORM" ~/.local/bin/gpy
+
+# Unpack the shell files, then let gpy setup install them and wire your shell
+SHARE=$(mktemp -d)
+tar -xzf gpy-shell-files.tar.gz -C "$SHARE"
+~/.local/bin/gpy setup --from "$SHARE"
 ```
 
-`gpy setup --from /tmp/gpy` does everything below for you
-(see [`gpy setup`](#gpy-setup)); the manual steps are for those who want to see
-or change each one.
+Add `--shell fish|zsh|bash` to wire a shell other than your login shell.
+Make sure `~/.local/bin` is on your `PATH` (see
+[Troubleshooting](#agent-binary-not-found)).
 
-**For Fish:**
-```bash
-gpy_data="${XDG_DATA_HOME:-$HOME/.local/share}/gpy"
-mkdir -p "$gpy_data/fish" "$gpy_data/bash"
-cp -r /tmp/gpy/fish/* "$gpy_data/fish/"
-# The one script segment runner, which Fish runs in a Bash child, found in the
-# Bash tree beside the Fish tree
-cp -r /tmp/gpy/bash/* "$gpy_data/bash/"
+### 3. Verify the installation
 
-# Add to config.fish. Source conf.d/gpy_init.fish, the same fail-safe
-# entry point the installers use (it checks the layout before loading and
-# disables GPY cleanly when something is missing); the marker lines are
-# what `gpy uninstall` removes.
-echo '
-# >>> gpy-init >>>
-# GPY shell integration
-if status is-interactive
-    source ~/.local/share/gpy/fish/conf.d/gpy_init.fish
-end
-# <<< gpy-init <<<' >> ~/.config/fish/config.fish
-
-# Link prompt function
-mkdir -p ~/.config/fish/functions
-ln -sf ~/.local/share/gpy/fish/functions/fish_prompt.fish ~/.config/fish/functions/fish_prompt.fish
-```
-
-**For Zsh:**
-```bash
-gpy_data="${XDG_DATA_HOME:-$HOME/.local/share}/gpy"
-mkdir -p "$gpy_data/zsh" "$gpy_data/bash"
-cp -r /tmp/gpy/zsh/* "$gpy_data/zsh/"
-# The one script segment runner, which Zsh runs in a Bash child, found in the
-# Bash tree beside the Zsh tree
-cp -r /tmp/gpy/bash/* "$gpy_data/bash/"
-
-# Add to .zshrc (the marker lines are what `gpy uninstall` removes)
-printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.local/share/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
-```
-
-**For Bash:**
-```bash
-gpy_data="${XDG_DATA_HOME:-$HOME/.local/share}/gpy"
-mkdir -p "$gpy_data/bash"
-cp -r /tmp/gpy/bash/* "$gpy_data/bash/"
-
-# Add to .bashrc (the marker lines are what `gpy uninstall` removes)
-cat >> ~/.bashrc <<'EOF'
-
-# >>> gpy-init >>>
-# GPY shell integration
-case $- in
-    *i*) source ~/.local/share/gpy/bash/gpy.bash ;;
-esac
-# <<< gpy-init <<<
-EOF
-```
-
-### 3. Verify Installation
+Restart your shell, then run:
 
 ```bash
-# Check agent is installed
-gpy-agent --version
-
-# Check agent status
-gpy-agent status
-
-# Start agent if not running
-gpy-agent start
-
-# Restart shell
-exec fish  # or zsh, bash
+gpy doctor
 ```
 
 ## Building from Source
@@ -579,7 +491,7 @@ install -m 755 gpy-agent/target/release-dist/gpy-agent gpy-agent/target/release-
 ```
 
 `--from .` points setup at this checkout's `fish/`, `zsh/` and `bash/` trees.
-(`install-dev.fish` is the contributor workflow: it also rebuilds and verifies
+(`just install-dev` is the contributor workflow for Fish users: it also rebuilds and verifies
 hot reload, and needs Fish.)
 
 Make sure `~/.local/bin` is on your `PATH` (see
@@ -653,7 +565,7 @@ checksum. For a manual install, verify the checksum first, then:
 
 ```bash
 # Remove the quarantine attribute (only after `sha256sum -c` has passed)
-xattr -d com.apple.quarantine ~/.local/bin/gpy-agent
+xattr -d com.apple.quarantine ~/.local/bin/gpy-agent ~/.local/bin/gpy
 
 # Or allow it in System Settings:
 # System Settings → Privacy & Security → "Allow Anyway"

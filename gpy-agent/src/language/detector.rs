@@ -105,7 +105,7 @@ impl Detector {
             mode,
             crate::config::types::DetectionMode::Content
                 | crate::config::types::DetectionMode::Hybrid
-        ) && (crate::git::find_git_dir_only(path_ref).is_none()
+        ) && (crate::git::find_worktree_root(path_ref).is_none()
             || exceeds_file_budget(path_ref, budget));
         let bounded_mode = if needs_fallback {
             crate::config::types::DetectionMode::Markers
@@ -404,6 +404,15 @@ fn aggregate_totals<'a>(metrics: impl IntoIterator<Item = &'a LanguageMetrics>) 
         })
 }
 
+/// Weight of the byte share in a language's confidence. A project's language
+/// is mostly where its code volume is, so bytes dominate.
+const BYTES_WEIGHT: f64 = 0.7;
+
+/// Weight of the file-count share in a language's confidence. It keeps a
+/// language with many small files from disappearing behind one large file.
+/// The two weights sum to 1, so confidence stays in `0..=1`.
+const FILES_WEIGHT: f64 = 0.3;
+
 #[expect(clippy::cast_precision_loss, reason = "display-only ranking")]
 #[expect(clippy::cast_possible_truncation, reason = "ratio is in [0.0, 1.0]")]
 #[allow(
@@ -417,7 +426,7 @@ fn confidence_for(metrics: LanguageMetrics, totals: LanguageMetrics) -> f32 {
 
     let bytes_ratio = metrics.total_bytes as f64 / totals.total_bytes as f64;
     let files_ratio = metrics.file_count as f64 / totals.file_count as f64;
-    bytes_ratio.mul_add(0.7_f64, files_ratio * 0.3_f64) as f32
+    bytes_ratio.mul_add(BYTES_WEIGHT, files_ratio * FILES_WEIGHT) as f32
 }
 
 fn sort_by_confidence(languages: &mut [DetectedLanguage]) {
@@ -430,7 +439,10 @@ fn sort_by_confidence(languages: &mut [DetectedLanguage]) {
 }
 
 /// Max non-ignored files before [`Detector::detect_directory_bounded`] falls
-/// back from `Content` to `Markers`.
+/// back from `Content` to `Markers`. Past this many visited files the walk is
+/// over a tree that is not one project (`$HOME`, a monorepo root) and costs
+/// more than the language answer is worth, so detection falls back to marker
+/// files. 20 000 covers large single projects.
 const CONTENT_SCAN_FILE_BUDGET: usize = 20_000;
 
 /// Whether `path` has more than `budget` files, stopping early. Omits the

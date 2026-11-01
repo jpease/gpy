@@ -22,44 +22,20 @@ lowered with `python3 scripts/check-file-size.py --update` in the same commit
   `#[path = "common/<file>.rs"] mod <file>;`. `integration_harness.rs` and
   `pty.rs` use their siblings, so they are reachable only through
   `mod common;`.
-  - `agent_sandbox.rs` — `AgentSandbox`: a `CliTestEnv` plus a private socket
-    for a real daemon, stopped on drop; `pids_matching`, `DaemonReaper`
-    (Unix-only).
-  - `cli_harness.rs` — `CliTestEnv`: runs the `gpy`/`gpy-agent` binaries
-    against an isolated HOME/XDG tree.
-  - `child_guard.rs` — drop guards that terminate spawned processes on every
-    exit path: `KillOnDrop` (a `std::process::Child`), `PtyChild` (a
-    `portable_pty` child), `AgentStopGuard` (runs `gpy-agent stop` for a
-    daemonised agent).
-  - `endpoint.rs` — `endpoint(socket_path)` and
-    `endpoint_with_config(socket_path, config)`: in-process `EndpointHandle`s
-    with default subsystems (the second takes the `ConfigManager` the server
-    reads); `endpoint_deps_with_config` returns the `EndpointDeps` for tests
-    that override one field; `wait_for_socket`.
-  - `env_guard.rs` — `EnvGuard`: restores every environment variable it
-    touched on drop, including when an assertion fails.
-  - `fake_agent.rs` — `FakeAgent`/`Behaviour`: a Unix-socket responder
-    modelling an alive, wedged, load-shedding or old-version agent (Unix-only).
-  - `fixtures.rs` — `ServerGuard` (aborts a spawned server task on drop),
-    `TempSocket`, `gpy_test_root()`.
-  - `git.rs` — every git command the test code runs: `git`, `git_output`,
-    `git_stdout`, `git_command`, `git_init`, `git_bare`, `git_commit_all`,
-    `init_with_commit`, and the `TestRepo` fixture. Each command ignores the
-    global and system git config (`GIT_CONFIG_GLOBAL` at the null device,
-    `GIT_CONFIG_NOSYSTEM=1`) and commits as a fixed identity; a failing
-    command panics with git's stderr unless the caller asked for its
-    `Output`.
-  - `integration_harness.rs` — `IntegrationTestServer`: a real daemonized
-    agent plus a temp repository, configured through `TestConfig`.
-  - `pty.rs` — `open_pty`, `spawn_reader_thread`, and deadline waits on a
-    pty child's output and exit (Unix).
+  - `agent_sandbox.rs` — sets up an isolated daemon with a private socket and test environment.
+  - `cli_harness.rs` — runs `gpy` and `gpy-agent` binaries against an isolated HOME/XDG directory structure.
+  - `child_guard.rs` — drop guards that terminate spawned processes on every exit path.
+  - `endpoint.rs` — in-process IPC endpoints and socket helpers for testing.
+  - `env_guard.rs` — restores environment variables on drop.
+  - `fake_agent.rs` — fake Unix-socket agent for protocol testing.
+  - `fixtures.rs` — test fixtures and temporary socket helpers.
+  - `git.rs` — git repository setup and commands for tests. Each command ignores the global and system git config (`GIT_CONFIG_GLOBAL` at the null device, `GIT_CONFIG_NOSYSTEM=1`) and commits as a fixed identity.
+  - `integration_harness.rs` — daemonized agent test server with temporary repository fixtures.
+  - `pty.rs` — PTY terminal test helpers.
   - `sgr.rs` — ANSI SGR interpreter for asserting rendered styles.
-  - `sigurg.rs` — `SigurgCounter`: installs a counting SIGURG handler and
-    restores the previous one on drop (Unix). The only place a test changes
-    a signal disposition.
-  - `skip.rs` — `skip_test(reason)`.
-  - `wait.rs` — `wait_until` / `wait_until_async`: poll a condition with a
-    deadline.
+  - `sigurg.rs` — counting SIGURG signal handler for doorbell testing.
+  - `skip.rs` — skips tests with explanatory reasons.
+  - `wait.rs` — polling and waiting with deadlines.
 - `fixtures/` — the base16/Starship input files the import golden tests read,
   and `released_themes/` (`text-v0.6.0.toml`, `default-v0.7.1.toml`,
   `starship-v0.7.1.toml`), builtin themes as an older release shipped them
@@ -78,10 +54,7 @@ lowered with `python3 scripts/check-file-size.py --update` in the same commit
   `#[cfg(any(test, feature = "test-support"))]` when unit tests share them),
   and nowhere else. `gpy-agent` lists itself as a dev-dependency with that
   feature, so every test, bench and example build compiles the hooks with no
-  flag, while `--lib`, release and `cargo doc` builds never do. The hooks:
-  `Agent::register_test_client`, `Agent::active_palette_for_testing`,
-  `ClientDirectory::with_shell_dir`, `InstantPromptCache::new_for_test` and
-  `ThemeManager::watch_registry_for_test`. A test that needs a specific
+  flag, while `--lib`, release and `cargo doc` builds never do. List them with `git grep -n -A3 'feature = "test-support"' src`. A test that needs a specific
   config builds its manager with `ConfigManager::from_config`, or writes the
   file and calls `reload_now` to change it mid-test.
 - **Serialisation**: tests that touch process-global state (environment
