@@ -180,15 +180,28 @@ fn command_abouts_fit_one_line() {
     }
 }
 
-/// The valid `config show` sections come from `ConfigSection`, not help prose.
+/// The valid `config show` sections come from `ConfigSection`, not help prose:
+/// every variant clap knows must appear in the rendered `Possible values:` list.
 #[test]
 fn config_show_help_lists_the_sections() {
+    use clap::ValueEnum;
+    use gpy_agent::commands::config::ConfigSection;
+
     let env = CliTestEnv::new().expect("create isolated CLI test env");
     let help = help_of(&env, &["config", "show"]);
-    assert!(
-        help.contains("[possible values: agent, git, language, ui, plugin]"),
-        "{help}"
-    );
+    let variants = ConfigSection::value_variants();
+    assert!(!variants.is_empty(), "ConfigSection has no variants");
+    for variant in variants {
+        let name = variant
+            .to_possible_value()
+            .expect("ConfigSection variants are not skipped")
+            .get_name()
+            .to_owned();
+        assert!(
+            help.contains(&format!("- {name}:")),
+            "{name} missing:\n{help}"
+        );
+    }
 }
 
 #[test]
