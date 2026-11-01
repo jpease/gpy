@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SECURITY.md keeps the reporting policy and the user-facing trust statement;
+  the design and hardening record moved to `docs/dev/security-model.md` (#1187).
 - GPY no longer writes `core.untrackedCache = true` into repositories'
   `.git/config`. The agent only adds the untracked cache to the index, and
   `gpy-agent oneshot` leaves the repository untouched. Remove an earlier

@@ -662,7 +662,7 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 **Security**:
 - The socket is chmod'ed to `0600` right after bind
 - The socket's directory is trusted only if it is a real directory (not a symlink) owned by the user. An owned group- or world-writable directory is set to `0700` when it is the default runtime root and refused when it comes from `--socket` or `$GPY_AGENT_SOCKET_PATH`. `gpy-agent start` checks before it touches the directory, and the daemon checks again immediately before bind (`secure_socket_dir` in `ipc/server/socket_dir.rs`)
-- No handshake or peer-credential check: any process running as the user can connect. See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the full trust policy
+- No handshake or peer-credential check: any process running as the user can connect. See [security-model.md](security-model.md) for the full trust policy
 
 ### Operations
 
@@ -698,7 +698,7 @@ A cached git status costs one IPC round trip (`tests/performance-baselines.json`
 
 ### Security Considerations
 
-See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the trust boundaries, threat model and defenses.
+See [security-model.md](security-model.md) for the trust boundaries, threat model and defenses.
 
 ---
 
@@ -757,7 +757,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 
 ## Security Model
 
-See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the trust boundaries, threat model and defenses.
+See [security-model.md](security-model.md) for the trust boundaries, threat model and defenses.
 
 ---
 

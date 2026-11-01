@@ -277,8 +277,8 @@ Each prompt render will use oneshot mode, which is slower but requires no backgr
 The IPC guards (message size, connection rate limit, PID and path
 validation) are fixed in the agent and are not configurable from
 `config.toml`; there is no `[security]` section. Their current values are
-64 KiB per message and 1000 connections per second by default, and they are
-covered in [SECURITY.md](../../SECURITY.md).
+64 KiB per message and 1000 connections per second by default, and
+[SECURITY.md](../../SECURITY.md#trust-boundaries) summarises what they protect against.
 
 ---
 

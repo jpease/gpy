@@ -28,6 +28,7 @@ Plugin segments from v1 `.fish` files load in Fish only; see [Plugin Framework](
 
 ## Security & Audits
 
+- [Security Model](security-model.md) - Design record behind SECURITY.md: trust boundaries and hardening.
 - [Security Audit Notes](security-audit.md) - Dependency analysis and vulnerability tracking.
 
 ## Performance
