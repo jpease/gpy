@@ -31,16 +31,20 @@ fn copy_dir(from: &Path, to: &Path) {
 
 /// `gpy setup --shell <shell> --from <source>` in an isolated HOME.
 fn setup_from(home: &Path, source: &Path, shell: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .args(["setup", "--non-interactive", "--shell", shell, "--from"])
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_gpy"));
+    cmd.args(["setup", "--non-interactive", "--shell", shell, "--from"])
         .arg(source)
         .current_dir(home)
         .env_clear()
         .env("HOME", home)
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("GPY_NERD_FONT", "0")
-        .output()
-        .expect("failed to spawn gpy setup")
+        .env("GPY_NERD_FONT", "0");
+    // `env_clear` drops the profile path cargo-llvm-cov exports; without it an
+    // instrumented child writes `default_*.profraw` into its cwd (the temp HOME).
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile);
+    }
+    cmd.output().expect("failed to spawn gpy setup")
 }
 
 /// A copy of the shell trees without the runner.

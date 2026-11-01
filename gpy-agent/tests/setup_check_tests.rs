@@ -45,6 +45,11 @@ fn check_from(source: &Path, home: &Path, shell: &str, xdg_data_home: Option<&Pa
         .env_clear()
         .env("HOME", home)
         .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    // `env_clear` drops the profile path cargo-llvm-cov exports; without it an
+    // instrumented child writes `default_*.profraw` into its cwd (the temp HOME).
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile);
+    }
     if let Some(dir) = xdg_data_home {
         cmd.env("XDG_DATA_HOME", dir);
     }
