@@ -266,7 +266,13 @@ fn force_added_tracked_file_is_not_suppressed() {
 /// A main repository with one commit (`.gitignore` = `gitignore`) and a linked
 /// worktree beside it; returns `(main, worktree)`.
 fn main_with_linked_worktree(tmp: &Path, gitignore: &str) -> (PathBuf, PathBuf) {
-    let base = std::fs::canonicalize(tmp).expect("canonicalize temp dir");
+    // `canonicalize` yields a `\\?\` path on Windows, which `git worktree add`
+    // rejects; elsewhere it resolves symlinked temp roots such as macOS `/var`.
+    let base = if cfg!(windows) {
+        tmp.to_path_buf()
+    } else {
+        std::fs::canonicalize(tmp).expect("canonicalize temp dir")
+    };
     let worktree = base.join("linked");
     let main = base.join("main");
     std::fs::create_dir_all(&main).expect("main dir");

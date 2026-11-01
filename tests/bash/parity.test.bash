@@ -344,6 +344,7 @@ pass "render loop threads prev_bg and advances it across segments"
 # agent-free git render keeps the clean colour. Needs the built debug agent.
 AGENT_BIN="$ROOT/gpy-agent/target/debug/gpy-agent"
 if [[ -x "$AGENT_BIN" ]]; then
+    # shellcheck disable=SC2329
     __gpy_run_git_bg_case() {
         local git_status="$1" seen_file bg_dir key
         seen_file="$(mktemp)"

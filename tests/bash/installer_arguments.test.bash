@@ -31,7 +31,7 @@ run() {
 }
 
 for installer in install-oneline.sh install.sh; do
-    runner=sh
+    runner="sh"
     [[ "$installer" = install.sh ]] && runner=bash
     result="$(run "$runner" "$ROOT/$installer" --yes)"
     [[ "${result%%|*}" -eq 2 ]] ||
