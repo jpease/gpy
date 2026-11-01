@@ -18,7 +18,7 @@ functions -e segment_duration_render 2>/dev/null
 functions -e segment_duration_init 2>/dev/null
 
 set -e __enabled_segments
-set -gx GPY_MINIMAL_SEGMENTS 1
+set -g __gpy_test_segments directory
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
 # real, live dogfooding daemon's cache. init.fish redefines
@@ -36,7 +36,7 @@ source "$repo_root/fish/core/init.fish"
 # developer's installed copy — otherwise the assertion below measures Fish's
 # *default* prompt on a clean machine.
 source "$repo_root/fish/functions/fish_prompt.fish"
-set -e GPY_MINIMAL_SEGMENTS
+set -e __gpy_test_segments
 
 if functions -q segment_duration_detect
     check "duration segment is NOT loaded before reload" pass fail

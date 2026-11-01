@@ -6,7 +6,15 @@ typeset -g __icon_prompt="❯"
 typeset -g __icon_root_prompt="!❯!"
 typeset -g __root_prompt_color="red"
 
-typeset -g -a __enabled_segments=()
+# The segments shown when no theme export loaded. Keep equal to
+# DEFAULT_ENABLED_SEGMENTS in gpy-agent/src/config/defaults.rs;
+# tests/fixtures/default_segments.txt pins this copy, the Bash and Fish ones
+# and the agent's list to each other. Segments that cannot render without the
+# agent omit themselves.
+typeset -ga __gpy_fallback_segments=(clock duration language directory git)
+
+# The theme export overwrites this; an export that sets it empty stays empty.
+typeset -ga __enabled_segments=($__gpy_fallback_segments)
 
 # IPC round-trip bound (ms); __gpy_ms_to_secs rejects a non-numeric override.
 typeset -g GPY_IPC_TIMEOUT_MS=${GPY_IPC_TIMEOUT_MS:-150}

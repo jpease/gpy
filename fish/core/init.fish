@@ -39,8 +39,14 @@ source $__prompt_dir/ipc.fish
 source $__prompt_dir/supervisor.fish
 source $__prompt_dir/script.fish
 
+# The segments shown when no theme export loaded (no cache, agent missing or
+# failing). Keep equal to DEFAULT_ENABLED_SEGMENTS in
+# gpy-agent/src/config/defaults.rs; tests/fixtures/default_segments.txt pins
+# this copy, the Bash and Zsh ones and the agent's list to each other.
+# Segments that cannot render without the agent omit themselves.
+set -g __gpy_fallback_segments clock duration language directory git
+
 function __gpy_load_default_config
-    set -q __enabled_segments; or set -g __enabled_segments clock duration language directory git
     set -q __prompt_icons; or set -g __prompt_icons nerd
     set -q __prompt_theme; or set -g __prompt_theme default
 
@@ -169,14 +175,41 @@ end
 
 __gpy_load_theme >/dev/null
 
+# An export that set the list (even to nothing) wins; the fallback only fills
+# in when none did, and before the segment files load.
+set -q __enabled_segments; or set -g __enabled_segments $__gpy_fallback_segments
+
+# Test hook (non-exported, never set by the agent or the theme).
+if set -q __gpy_test_segments[1]
+    set -g __enabled_segments $__gpy_test_segments
+end
+
+# Deprecated Fish-only switches. They keep working for one minor release and
+# warn once at the first prompt (load-time output is discarded by conf.d).
+set -g __gpy_deprecated_switches
 if test "$GPY_SHOW_LANGUAGES" = 0
+    set -a __gpy_deprecated_switches GPY_SHOW_LANGUAGES
     set -g __enabled_segments clock duration directory git
 end
 
 if set -q GPY_MINIMAL_SEGMENTS
+    set -a __gpy_deprecated_switches GPY_MINIMAL_SEGMENTS
     set -g __enabled_segments directory
-else if set -q GPY_TEST_SEGMENTS
-    set -g __enabled_segments (string split ' ' $GPY_TEST_SEGMENTS)
+end
+
+if set -q GPY_TEST_SEGMENTS
+    set -a __gpy_deprecated_switches GPY_TEST_SEGMENTS
+    set -q GPY_MINIMAL_SEGMENTS; or set -g __enabled_segments (string split ' ' $GPY_TEST_SEGMENTS)
+end
+
+if set -q __gpy_deprecated_switches[1]
+    function __gpy_warn_deprecated --on-event fish_prompt
+        for name in $__gpy_deprecated_switches
+            echo "gpy: $name is deprecated; use gpy enable or gpy disable instead" >&2
+        end
+        set -e __gpy_deprecated_switches
+        functions -e __gpy_warn_deprecated
+    end
 end
 
 __gpy_load_segments $__enabled_segments

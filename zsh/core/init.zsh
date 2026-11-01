@@ -254,10 +254,6 @@ function __gpy_render_prompt() {
     # signal via GPY_SEG_STATUS_ONESHOT and later subshells inherit this by fork.
     local __gpy_oneshot_used=0
 
-    if [[ ${#__enabled_segments} -eq 0 ]]; then
-        __enabled_segments=(directory git)
-    fi
-
     for seg in $__enabled_segments; do
         if __gpy_segment_would_render "$seg"; then
             segments_to_render+=("$seg")

@@ -1,0 +1,7 @@
+# The segments enabled by default, in prompt order: DEFAULT_ENABLED_SEGMENTS in
+# gpy-agent/src/config/defaults.rs.
+# Read by the Rust test default_segments_fixture_matches and by the shells'
+# parity test (tests/bash/segment_defaults_parity.test.bash), which pins each
+# shell's __gpy_fallback_segments to it.
+# Readers skip blank lines and lines starting with #, then read the one line left.
+clock duration language directory git

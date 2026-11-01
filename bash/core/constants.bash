@@ -6,7 +6,13 @@ __icon_prompt="${__icon_prompt:-❯}"
 __icon_root_prompt="${__icon_root_prompt:-!❯!}"
 __root_prompt_color="${__root_prompt_color:-red}"
 
-__enabled_segments="${__enabled_segments:-directory git}"
+# The segments shown when no theme export loaded. Keep equal to
+# DEFAULT_ENABLED_SEGMENTS in gpy-agent/src/config/defaults.rs;
+# tests/fixtures/default_segments.txt pins this copy, the Fish and Zsh ones
+# and the agent's list to each other. Segments that cannot render without the
+# agent omit themselves.
+__gpy_fallback_segments="clock duration language directory git"
+__enabled_segments="${__enabled_segments:-$__gpy_fallback_segments}"
 
 # Tightens the nc fallback below nc's integer-second -w.
 GPY_IPC_TIMEOUT_MS="${GPY_IPC_TIMEOUT_MS:-150}"
