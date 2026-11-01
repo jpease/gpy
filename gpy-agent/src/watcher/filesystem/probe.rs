@@ -156,6 +156,7 @@ pub(super) fn apply_poll_swap(
         return None;
     }
 
+    // Drop the old watcher first so it stops before the poll backend takes over.
     backend_guard.watcher = None;
     backend_guard.watcher = Some(armed.watcher);
     backend_guard.kind = BackendKind::Poll;

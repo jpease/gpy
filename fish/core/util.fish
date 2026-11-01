@@ -37,8 +37,7 @@ function __gpy_read_file --argument-names file
     printf '%s' $content
 end
 
-# Milliseconds, reusing the per-render $__gpy_prompt_now to avoid forking `date`.
-# Reuses $__gpy_prompt_now (captured once per render in fish_prompt) to avoid
+# Epoch time in ms (second resolution); reuses $__gpy_prompt_now (set once per render) to avoid forking date.
 function __gpy_get_time_ms
     if set -q __gpy_prompt_now; and string match -qr '^[0-9]+$' -- "$__gpy_prompt_now"
         math "$__gpy_prompt_now * 1000"

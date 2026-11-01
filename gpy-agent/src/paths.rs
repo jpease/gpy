@@ -1,16 +1,13 @@
 //! Path resolution for GPY's runtime, cache, and config roots and the agent socket. Nothing here creates directories.
 //!
 //! The `*_for` resolvers take environment values as parameters (no ambient
-//! reads) so the precedence can be table-tested without `unsafe` `set_var`;
-//! `runtime_dir`, `config_root`, `cache_root`, `SocketPath::resolve`,
-//! `home_path`, `xdg_config_home`, `xdg_data_home`, `user_name` and
-//! `local_app_data` are the entry points that
-//! read the environment, and the only place the crate reads `HOME`, `USER`,
-//! `XDG_*` or `LOCALAPPDATA`. Every lookup is `Path`-based, so a non-UTF-8
-//! value resolves like any other. The runtime root
-//! stays separate from cache because `XDG_RUNTIME_DIR` is a 0700 tmpfs cleared
-//! at logout. Native Windows gets a cache branch only: IPC is Unix-socket
-//! based, so Windows is CLI-only and shell integration runs under WSL.
+//! reads) so the precedence can be table-tested without `unsafe` `set_var`.
+//! This module is the only reader of `HOME`, `USER`, `XDG_*` and
+//! `LOCALAPPDATA`. Every lookup is `Path`-based, so a non-UTF-8 value resolves
+//! like any other. The runtime root stays separate from cache because
+//! `XDG_RUNTIME_DIR` is a 0700 tmpfs cleared at logout. Native Windows gets a
+//! cache branch only: IPC is Unix-socket based, so Windows is CLI-only and
+//! shell integration runs under WSL.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};

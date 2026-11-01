@@ -8,7 +8,7 @@ use std::time::Instant;
 
 static PROFILE_ENABLED: OnceLock<bool> = OnceLock::new();
 
-/// Check if profiling is enabled via `GPY_PROFILE` set to a true flag value.
+/// Whether profiling is on (`GPY_PROFILE` set to a true flag value); read once and cached for the process.
 #[must_use]
 pub fn is_profile_enabled() -> bool {
     *PROFILE_ENABLED.get_or_init(|| {
@@ -34,7 +34,7 @@ pub fn is_profile_enabled() -> bool {
     })
 }
 
-/// Logs the elapsed time between construction and drop when `GPY_PROFILE` is a true value.
+/// Scope guard: on drop, logs `name` and the elapsed milliseconds when profiling is enabled.
 pub struct Timer {
     name: &'static str,
     start: Instant,
