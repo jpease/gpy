@@ -7,7 +7,6 @@
 
 /// What the `gpy-agent` lifecycle commands print and return.
 pub mod agent_report;
-#[cfg(unix)]
 mod backup_stamp;
 /// Hidden `gpy __complete <kind>` command used by shell completion glue.
 pub mod complete;
@@ -34,6 +33,8 @@ pub mod output;
 pub mod palette;
 /// Plugin discovery and validation commands.
 pub mod plugin;
+/// `gpy plugin install` and `gpy plugin remove`.
+pub mod plugin_install;
 /// Theme files shipped in a plugin's `themes/` directory, for `gpy plugin validate`.
 mod plugin_themes;
 /// The `gpy-init` rc-file block shared by the setup steps.

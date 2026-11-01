@@ -30,12 +30,12 @@ pub(crate) fn current_gpy_version() -> Result<GpyVersion> {
     GpyVersion::new(VERSION)
 }
 
-fn plugin_segment_file(root: &Path, segment: &crate::plugin::SegmentName) -> PathBuf {
+pub(super) fn plugin_segment_file(root: &Path, segment: &crate::plugin::SegmentName) -> PathBuf {
     root.join("segments").join(format!("{segment}.fish"))
 }
 
 /// Error for a manifest whose `entry_type` this runtime cannot load.
-fn unsupported_entry_type(entry_type: &EntryType) -> Error {
+pub(super) fn unsupported_entry_type(entry_type: &EntryType) -> Error {
     Error::invalid(format!(
         "unsupported entry_type '{}': only 'file' and 'script' plugins are loadable by this runtime",
         entry_type.as_str()
@@ -479,6 +479,10 @@ printf '%s\n' "{segment}"
 pub fn list() {
     let discovery = discover_plugins();
     let user_root = user_plugins_dir();
+    let has_user_plugin = discovery
+        .plugins
+        .iter()
+        .any(|plugin| matches!(plugin.source, PluginSource::User));
 
     output::heading("Plugins:");
     output::plain(format_args!("User plugin root: {}", user_root.display()));
@@ -523,6 +527,12 @@ pub fn list() {
             ));
         }
         output::plain("\nHint: run `gpy plugin validate <path-or-id>` for a specific plugin.");
+    }
+
+    if has_user_plugin {
+        output::plain("\nRemove one with: gpy plugin remove <id>");
+    } else {
+        output::plain("\nInstall one with: gpy plugin install <dir>");
     }
 }
 

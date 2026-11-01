@@ -506,7 +506,8 @@ Avoid:
 ## Example Plugins
 
 [`docs/dev/examples/plugins/`](examples/plugins/) holds script plugins you can
-copy into `~/.config/gpy/plugins/`; each passes `gpy plugin validate`:
+install with `gpy plugin install <dir>` (it fixes ownership and modes for the
+script trust check); each passes `gpy plugin validate`:
 
 | Plugin | Segment | Teaches |
 |---|---|---|

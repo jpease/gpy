@@ -41,6 +41,8 @@ gpy palette import <file>        # Import a base16/base24 scheme as a palette
 # Plugin management
 gpy plugin list                              # List discovered plugins
 gpy plugin new <id> [--segment <segment>]    # Create plugin scaffold
+gpy plugin install <dir> [--force]           # Copy a plugin into your plugins directory
+gpy plugin remove <id>                       # Back up a user plugin and disable its segments
 gpy plugin validate <id-or-path>             # Validate plugin files and manifest
 
 # Segment management
@@ -1240,6 +1242,34 @@ Next steps:
    3. Run `gpy plugin validate /home/user/.config/gpy/plugins/demo-tools`
    4. Run `gpy enable demo_status`
 ```
+
+#### `gpy plugin install <dir> [--force]`
+
+Copy the plugin in `<dir>` (it holds `plugin.toml`) into `~/.config/gpy/plugins/`.
+
+The source is checked for content and layout only: a source tree with a
+symlink, device, FIFO or socket is refused, and the files its manifests name
+must exist. The copy gets modes the script trust check accepts (directories
+0755, files 0644, or 0755 when the source file is owner-executable; never
+group or other writable), then is loaded to confirm it works; a copy that does
+not load is removed. Plugin code never runs.
+
+`--force` replaces an installed user plugin with the same id (the old
+directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
+needed to shadow a bundled plugin. Backups and staging live outside
+`plugins/` because discovery would load them as plugins.
+
+**Output:**
+```
+Installed plugin demo-tools 0.1.0 into /home/user/.config/gpy/plugins/demo-tools
+Enable its segments: gpy enable demo_status
+```
+
+#### `gpy plugin remove <id>`
+
+Move the user plugin `<id>` to `~/.config/gpy/plugins.bak/<id>.<timestamp>` and
+remove its segments from `ui.enabled_segments`. Plugins that ship with GPY are
+refused (disable their segments with `gpy disable`).
 
 #### `gpy plugin validate <id-or-path>`
 

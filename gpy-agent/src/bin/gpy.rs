@@ -318,6 +318,29 @@ enum PluginAction {
         #[arg(value_name = "ID_OR_PATH")]
         target: String,
     },
+    /// Copy a plugin directory into your plugins directory
+    ///
+    /// The copy gets the ownership and modes the script trust check accepts,
+    /// and is loaded to confirm it works. An installed plugin with the same
+    /// id, or one that shadows a bundled plugin, needs --force; the old copy
+    /// moves to `plugins.bak`.
+    Install {
+        /// Directory holding the plugin's `plugin.toml`
+        #[arg(value_name = "DIR")]
+        source: std::path::PathBuf,
+        /// Replace an installed plugin with the same id, or shadow a bundled plugin
+        #[arg(long)]
+        force: bool,
+    },
+    /// Move a user plugin to a backup and disable its segments
+    ///
+    /// The directory moves to `plugins.bak/<id>.<timestamp>` in the config
+    /// directory. Plugins that ship with GPY are refused.
+    Remove {
+        /// ID of an installed user plugin (see `gpy plugin list`)
+        #[arg(value_name = "ID")]
+        id: String,
+    },
 }
 
 /// Language configuration actions
@@ -463,6 +486,10 @@ fn run_plugin(action: PluginAction) -> Result<()> {
         PluginAction::List => commands::plugin::list(),
         PluginAction::New { id, segment } => commands::plugin::new(&id, segment.as_deref())?,
         PluginAction::Validate { target } => commands::plugin::validate(&target)?,
+        PluginAction::Install { source, force } => {
+            commands::plugin_install::install(&source, force)?;
+        }
+        PluginAction::Remove { id } => commands::plugin_install::remove(&id)?,
     }
     Ok(())
 }

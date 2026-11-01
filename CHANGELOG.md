@@ -67,6 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nc -U`) (#1175).
 - `gpy theme save --yes` skips the overwrite confirmation (#1177).
 - `gpy-agent restart` (#1173).
+- `gpy plugin install <dir>` and `gpy plugin remove <id>` (removal disables the
+  plugin's segments and keeps a backup under `~/.config/gpy/plugins.bak/`)
+  (#1178).
 
 ### Changed
 

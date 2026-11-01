@@ -25,6 +25,8 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["palette", "import"],
     &["plugin"],
     &["plugin", "new"],
+    &["plugin", "install"],
+    &["plugin", "remove"],
     &["enable"],
     &["disable"],
     &["segments"],
