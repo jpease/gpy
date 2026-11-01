@@ -636,7 +636,6 @@ const fn is_in_progress(state: crate::git::RepositoryState) -> bool {
             | crate::git::RepositoryState::Reverting
             | crate::git::RepositoryState::Bisecting
             | crate::git::RepositoryState::Applying
-            | crate::git::RepositoryState::InProgress
     )
 }
 

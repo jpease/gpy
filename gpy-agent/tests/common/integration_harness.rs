@@ -197,7 +197,7 @@ impl IntegrationTestServer {
                     .and_then(|v| {
                         serde_json::from_value::<gpy_agent::git::RepositoryState>(v.clone()).ok()
                     })
-                    .unwrap_or(gpy_agent::git::RepositoryState::InProgress);
+                    .unwrap_or(gpy_agent::git::RepositoryState::Clean);
 
                 let status = gpy_agent::git::RepositoryStatus {
                     branch: status_val

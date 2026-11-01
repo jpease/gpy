@@ -6,8 +6,6 @@ pub struct LanguageMeta {
     pub canonical: &'static str,
     /// List of aliases (including detector language names and file extensions)
     pub aliases: &'static [&'static str],
-    /// Key used for looking up the icon in `LanguageIcons`
-    pub icon_key: &'static str,
     /// Marker filenames (case-insensitive) signalling this language in `DetectionMode::Markers`.
     pub marker_files: &'static [&'static str],
     /// Marker file extensions (no dot) for `DetectionMode::Markers`.
@@ -19,14 +17,12 @@ pub const LANGUAGES: &[LanguageMeta] = &[
     LanguageMeta {
         canonical: "rust",
         aliases: &["rust", "rs"],
-        icon_key: "rust",
         marker_files: &["Cargo.toml"],
         marker_extensions: &["rs"],
     },
     LanguageMeta {
         canonical: "python",
         aliases: &["python", "py"],
-        icon_key: "python",
         marker_files: &[
             "pyproject.toml",
             "setup.py",
@@ -40,84 +36,72 @@ pub const LANGUAGES: &[LanguageMeta] = &[
     LanguageMeta {
         canonical: "node",
         aliases: &["node", "nodejs", "javascript", "js", "typescript", "ts"],
-        icon_key: "node",
         marker_files: &["package.json", "tsconfig.json"],
         marker_extensions: &["js", "mjs", "cjs", "ts", "jsx", "tsx"],
     },
     LanguageMeta {
         canonical: "go",
         aliases: &["go", "golang"],
-        icon_key: "go",
         marker_files: &["go.mod", "go.sum"],
         marker_extensions: &["go"],
     },
     LanguageMeta {
         canonical: "java",
         aliases: &["java"],
-        icon_key: "java",
         marker_files: &["pom.xml", "build.gradle", "build.gradle.kts"],
         marker_extensions: &["java"],
     },
     LanguageMeta {
         canonical: "ruby",
         aliases: &["ruby", "rb"],
-        icon_key: "ruby",
         marker_files: &["Gemfile", "Rakefile", ".ruby-version"],
         marker_extensions: &["rb"],
     },
     LanguageMeta {
         canonical: "swift",
         aliases: &["swift"],
-        icon_key: "swift",
         marker_files: &["Package.swift"],
         marker_extensions: &["swift"],
     },
     LanguageMeta {
         canonical: "elixir",
         aliases: &["elixir", "ex"],
-        icon_key: "elixir",
         marker_files: &["mix.exs"],
         marker_extensions: &["ex", "exs"],
     },
     LanguageMeta {
         canonical: "php",
         aliases: &["php"],
-        icon_key: "php",
         marker_files: &["composer.json"],
         marker_extensions: &["php"],
     },
     LanguageMeta {
         canonical: "csharp",
         aliases: &["csharp", "c#", "cs"],
-        icon_key: "csharp",
         marker_files: &[],
         marker_extensions: &["cs", "csproj", "sln"],
     },
     LanguageMeta {
         canonical: "cpp",
         aliases: &["cpp", "c++", "cplusplus"],
-        icon_key: "cpp",
         marker_files: &["CMakeLists.txt"],
         marker_extensions: &["cpp", "cxx", "cc", "hpp", "hh"],
     },
     LanguageMeta {
         canonical: "c",
         aliases: &["c"],
-        icon_key: "c",
         marker_files: &[],
         marker_extensions: &["c", "h"],
     },
     LanguageMeta {
         canonical: "erlang",
         aliases: &["erlang"],
-        icon_key: "erlang",
         marker_files: &["rebar.config"],
         marker_extensions: &["erl"],
     },
     LanguageMeta {
         canonical: "fish",
         aliases: &["fish"],
-        icon_key: "fish",
         marker_files: &[],
         marker_extensions: &["fish"],
     },
@@ -136,12 +120,6 @@ fn lookup(alias: &str) -> Option<&'static LanguageMeta> {
 #[must_use]
 pub fn get_canonical_name(alias: &str) -> Option<&'static str> {
     lookup(alias).map(|lang| lang.canonical)
-}
-
-/// Get the icon key for a language (case-insensitive lookup)
-#[must_use]
-pub fn get_icon_key(alias: &str) -> Option<&'static str> {
-    lookup(alias).map(|lang| lang.icon_key)
 }
 
 /// Marker files that count as evidence for a language only when the directory
@@ -201,18 +179,6 @@ mod tests {
                 *expected_canonical,
                 "alias: {alias:?}"
             );
-        }
-    }
-
-    #[test]
-    fn get_icon_key_table() {
-        let cases: &[(&str, Option<&str>)] = &[
-            ("rust", Some("rust")),
-            ("PY", Some("python")),
-            ("nope", None),
-        ];
-        for (alias, expected) in cases {
-            assert_eq!(get_icon_key(alias), *expected, "alias: {alias:?}");
         }
     }
 }

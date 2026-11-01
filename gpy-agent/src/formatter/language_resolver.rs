@@ -78,7 +78,7 @@ impl<'a> LanguageResolver<'a> {
         if let Some(symbol) = self.theme.segments.language.get_symbol(name) {
             return Some(symbol.to_owned());
         }
-        let icon_key = crate::language::metadata::get_icon_key(name).unwrap_or(name);
+        let icon_key = crate::language::metadata::get_canonical_name(name).unwrap_or(name);
         let display = self
             .config
             .language

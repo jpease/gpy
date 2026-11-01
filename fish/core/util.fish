@@ -48,7 +48,7 @@ function __gpy_get_time_ms
 end
 
 function __has_binary --argument-names bin
-    set -l cache_var __has_"$bin"_bin
+    set -l cache_var __gpy_has_"$bin"_bin
     if not set -q $cache_var
         if command -q $bin
             set -g $cache_var 1
