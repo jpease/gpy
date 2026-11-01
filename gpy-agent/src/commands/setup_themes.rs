@@ -26,7 +26,7 @@ pub(crate) fn retire_unmodified_themes() {
     let mut overlays = Vec::new();
     for copy in retire_unmodified_copies(&themes_dir) {
         match copy.outcome {
-            Outcome::Retired(backup) => println!(
+            Outcome::Retired(backup) => output::plain(format_args!(
                 "Retired {}, an unedited copy of the builtin '{}' theme: it is now {} and the builtin applies",
                 copy.path.display(),
                 copy.name,
@@ -34,7 +34,7 @@ pub(crate) fn retire_unmodified_themes() {
                     .file_name()
                     .unwrap_or(backup.as_os_str())
                     .to_string_lossy()
-            ),
+            )),
             Outcome::Modified if user_copy::is_overlay_file(&copy.path) => {
                 overlays.push(format!("{}.toml", copy.name));
             }
@@ -48,17 +48,17 @@ pub(crate) fn retire_unmodified_themes() {
         }
     }
     if !kept.is_empty() {
-        println!(
+        output::plain(format_args!(
             "Kept your theme files that override builtins in {}: {}",
             themes_dir.display(),
             kept.join(", ")
-        );
+        ));
     }
     if !overlays.is_empty() {
-        println!(
+        output::plain(format_args!(
             "Kept your theme overlays of builtins in {}: {}",
             themes_dir.display(),
             overlays.join(", ")
-        );
+        ));
     }
 }

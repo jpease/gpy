@@ -8,8 +8,10 @@
 //! Every report shares one layout: a [`heading`] (or [`section`]) at column 0,
 //! then [`detail`] lines indented one [`INDENT`] per nesting depth.
 
+#![expect(clippy::print_stdout, reason = "the one writer of command output")]
+
 use std::fmt::Display;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write as _};
 use std::sync::LazyLock;
 
 /// Outcome a status line reports.
@@ -122,6 +124,16 @@ pub fn blank() {
 /// Print `message` at column 0 without a marker.
 pub fn plain(message: impl Display) {
     println!("{message}");
+}
+
+/// Print `text` without a trailing newline and flush, so a question or a
+/// progress label stays on the line the answer or result completes.
+///
+/// # Errors
+/// Returns the error of flushing stdout.
+pub fn prompt(text: impl Display) -> std::io::Result<()> {
+    print!("{text}");
+    std::io::stdout().flush()
 }
 
 /// Print `label...` indented one level, leaving the line open for the result

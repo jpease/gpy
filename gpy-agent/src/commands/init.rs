@@ -31,7 +31,10 @@ pub fn run(options: InitOptions) -> Result<()> {
     let path = active_config_path()?;
 
     if path.exists() && !options.redetect {
-        println!("GPY config already exists at {}", path.display());
+        output::plain(format_args!(
+            "GPY config already exists at {}",
+            path.display()
+        ));
         output::detail("Leaving your existing settings unchanged.");
         return Ok(());
     }
@@ -123,7 +126,7 @@ fn confirm_icons(_capability: FontCapability, default_yes: bool) -> std::io::Res
 
 /// Print the outcome, with opt-in instructions whenever ASCII was chosen.
 fn report(path: &Path, capability: FontCapability, show_icons: bool) {
-    println!("Wrote ui.show_icons to {}", path.display());
+    output::plain(format_args!("Wrote ui.show_icons to {}", path.display()));
 
     if show_icons {
         output::detail("Icon style: Nerd Font glyphs (ui.show_icons = true)");

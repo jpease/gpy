@@ -252,6 +252,12 @@ fn debug_paths_json_shape() {
     ] {
         assert!(object.contains_key(key), "missing key {key}: {redacted}");
     }
+    assert!(
+        object["config_candidates"]
+            .as_array()
+            .is_some_and(|list| list.iter().all(serde_json::Value::is_string)),
+        "config_candidates must be an array of strings: {redacted}"
+    );
 
     with_settings!({description => "gpy debug paths --format json (root redacted)"}, {
         assert_snapshot!("gpy_debug_paths_json", redacted);

@@ -116,6 +116,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usage error (exit 2, listing the valid sections) instead of exit 1 (#1176).
 - `gpy theme import` takes `<FILE>`; `gpy --help` gains a getting-started
   paragraph (#1176).
+- **Breaking:** `gpy debug paths --format json` emits `config_candidates` as a
+  JSON array (was one `|`-joined string); scripts that split the string on `|`
+  should read the array (`--format kv` is unchanged) (#1179).
+- `gpy segments` shows each segment's plugin and whether it is on by default;
+  `gpy config list` lists `language.icons.<lang>`; `gpy plugin new` names the
+  ownership/permission rule (#1179).
 
 ## [0.8.0] - 2026-10-29
 

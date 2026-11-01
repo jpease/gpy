@@ -1,10 +1,9 @@
 //! Debugging tools for the GPY agent.
 
+use super::output;
 use crate::Result;
 #[cfg(unix)]
 use crate::paths::get_socket_path;
-#[cfg(unix)]
-use std::io::Write;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 #[cfg(unix)]
@@ -103,9 +102,9 @@ pub fn prompt() -> Result<()> {
         ));
     }
 
-    println!("GPY Prompt Timing Debugger");
-    println!("==========================");
-    println!("Socket: {}\n", socket_path.display());
+    output::plain("GPY Prompt Timing Debugger");
+    output::plain("==========================");
+    output::plain(format_args!("Socket: {}\n", socket_path.display()));
 
     tokio::runtime::Runtime::new()?.block_on(async {
         let mut stream = timeout(
@@ -126,33 +125,30 @@ pub fn prompt() -> Result<()> {
             .as_str()
             .ok_or_else(|| crate::Error::invalid("Current working directory is not valid UTF-8"))?;
 
-        print!("Ping (Baseline):      ");
-        std::io::stdout().flush()?;
+        output::prompt("Ping (Baseline):      ")?;
         let ping_duration = send_request(&mut stream, &serde_json::json!({"op": "ping"})).await?;
-        println!("{ping_duration:.2?}");
+        output::plain(format_args!("{ping_duration:.2?}"));
 
-        print!("Git Status:           ");
-        std::io::stdout().flush()?;
+        output::prompt("Git Status:           ")?;
         let git_duration = send_request(
             &mut stream,
             &serde_json::json!({"op": "git", "cwd": safe_cwd_str, "format": "json"}),
         )
         .await?;
-        println!("{git_duration:.2?}");
+        output::plain(format_args!("{git_duration:.2?}"));
 
-        print!("Language Detection:   ");
-        std::io::stdout().flush()?;
+        output::prompt("Language Detection:   ")?;
         let lang_duration = send_request(
             &mut stream,
             &serde_json::json!({"op": "lang", "cwd": safe_cwd_str, "format": "json", "is_last": true}),
         )
         .await?;
-        println!("{lang_duration:.2?}");
+        output::plain(format_args!("{lang_duration:.2?}"));
 
-        println!("--------------------------");
+        output::plain("--------------------------");
         let total = git_duration.checked_add(lang_duration).unwrap_or_default();
-        println!("Git + Language Total: {total:.2?}");
-        println!("\n(Note: Timings are roundtrip latencies including serialization, transport, and agent processing.)");
+        output::plain(format_args!("Git + Language Total: {total:.2?}"));
+        output::plain("\n(Note: Timings are roundtrip latencies including serialization, transport, and agent processing.)");
 
         Ok(())
     })
@@ -164,6 +160,6 @@ pub fn prompt() -> Result<()> {
 /// Never returns an error on this platform.
 #[cfg(not(unix))]
 pub fn prompt() -> Result<()> {
-    println!("Prompt timing debugger is not available on native Windows; run under WSL.");
+    output::plain("Prompt timing debugger is not available on native Windows; run under WSL.");
     Ok(())
 }

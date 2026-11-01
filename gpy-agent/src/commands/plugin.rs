@@ -201,7 +201,9 @@ fn joined<T>(items: &[T], show: impl Fn(&T) -> &str) -> String {
 
 /// One block per script segment: what runs, with what, how often and when.
 fn print_script_segments(segments: &ScriptSegments) {
-    print!("{}", script_segments_report(segments));
+    for text in script_segments_report(segments).lines() {
+        output::plain(text);
+    }
 }
 
 /// The text [`print_script_segments`] prints. The description is the only
@@ -479,19 +481,19 @@ pub fn list() {
     let user_root = user_plugins_dir();
 
     output::heading("Plugins:");
-    println!("User plugin root: {}", user_root.display());
+    output::plain(format_args!("User plugin root: {}", user_root.display()));
     if discovery.plugins.iter().any(is_fish_only_plugin) {
-        println!("{FISH_ONLY_NOTE}");
+        output::plain(FISH_ONLY_NOTE);
     }
 
     if discovery.plugins.is_empty() {
-        println!("(none discovered)");
+        output::plain("(none discovered)");
     } else {
         for plugin in discovery.plugins {
-            println!(
+            output::plain(format_args!(
                 "\n- {} {} [{}] (ready)",
                 plugin.manifest.id, plugin.manifest.version, plugin.source
-            );
+            ));
             output::detail(format_args!("api: {}", plugin.manifest.api_version));
             output::detail(format_args!(
                 "entry: {}",
@@ -511,16 +513,16 @@ pub fn list() {
     }
 
     if !discovery.diagnostics.is_empty() {
-        println!("\nDiagnostics:");
+        output::plain("\nDiagnostics:");
         for diagnostic in discovery.diagnostics {
-            println!(
+            output::plain(format_args!(
                 "- [{}] {}: {}",
                 diagnostic.source,
                 diagnostic.plugin_dir.display(),
                 diagnostic.message
-            );
+            ));
         }
-        println!("\nHint: run `gpy plugin validate <path-or-id>` for a specific plugin.");
+        output::plain("\nHint: run `gpy plugin validate <path-or-id>` for a specific plugin.");
     }
 }
 
@@ -666,7 +668,7 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     )?;
     write_new(&script_path, scaffold_script(&segment), "script")?;
 
-    println!("Created plugin scaffold");
+    output::plain("Created plugin scaffold");
     output::detail(format_args!("plugin: {}", plugin_id.as_str()));
     output::detail(format_args!("root: {}", plugin_root.display()));
     output::detail(format_args!("manifest: {}", manifest_path.display()));
@@ -675,13 +677,17 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
         segment_manifest_path.display()
     ));
     output::detail(format_args!("script: {}", script_path.display()));
-    println!("\nNext steps:");
+    output::plain("\nNext steps:");
     output::detail("1. Edit the generated files");
     output::detail(format_args!(
-        "2. Run `gpy plugin validate {}`",
+        "2. Keep {} and its directories owned by you and not writable by group or others; GPY skips a script segment that fails this check (`gpy plugin validate` says why).",
+        scaffold_script_path(&segment)
+    ));
+    output::detail(format_args!(
+        "3. Run `gpy plugin validate {}`",
         plugin_root.display()
     ));
-    output::detail(format_args!("3. Run `gpy enable {segment}`"));
+    output::detail(format_args!("4. Run `gpy enable {segment}`"));
     Ok(())
 }
 

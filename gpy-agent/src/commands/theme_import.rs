@@ -91,10 +91,10 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
 fn print_stdout(artifacts: &ImportArtifacts) -> Result<()> {
     let palette_toml = artifacts.palette_toml()?;
     let theme_toml = artifacts.theme_toml()?;
-    println!("# ---- palette ----");
-    println!("{palette_toml}");
-    println!("# ---- theme ----");
-    println!("{theme_toml}");
+    output::plain("# ---- palette ----");
+    output::plain(&palette_toml);
+    output::plain("# ---- theme ----");
+    output::plain(&theme_toml);
     Ok(())
 }
 
@@ -166,7 +166,9 @@ fn refuse_shadowing(name: &str) -> Result<()> {
 }
 
 fn print_activation_hints(artifacts: &ImportArtifacts, name: &str) {
-    println!("Imported starship config into palette + theme '{name}'");
+    output::plain(format_args!(
+        "Imported starship config into palette + theme '{name}'"
+    ));
     output::detail(format_args!("gpy palette use {name}"));
     output::detail(format_args!("gpy theme use {name}"));
     if !artifacts.segments.is_empty() {
@@ -189,7 +191,10 @@ fn apply_layout(segments: &[String]) -> Result<()> {
     config.ui.enabled_segments = segments.to_vec();
     crate::config::loader::save_config(&path, &original, &config, &[])?;
     crate::commands::utils::reload_agent_and_notify();
-    println!("Applied enabled_segments to {}", path.display());
+    output::plain(format_args!(
+        "Applied enabled_segments to {}",
+        path.display()
+    ));
     Ok(())
 }
 

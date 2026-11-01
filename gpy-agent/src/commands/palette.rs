@@ -37,7 +37,7 @@ pub fn use_palette(name: &str) -> Result<()> {
         config::types::PaletteName::try_from(name.to_owned()).map_err(Error::config)?;
     save_config(&path, &original, &config, &[])?;
 
-    println!("Switched to '{name}' palette");
+    super::output::plain(format_args!("Switched to '{name}' palette"));
 
     reload_agent_and_notify();
     Ok(())
@@ -49,7 +49,7 @@ pub fn use_palette(name: &str) -> Result<()> {
 /// Returns an error if the active config cannot be read, parsed, or validated.
 pub fn show() -> Result<()> {
     let config = read_config()?;
-    println!("{}", config.ui.palette);
+    super::output::plain(&config.ui.palette);
     Ok(())
 }
 
@@ -207,7 +207,10 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
             Error::config(format!("failed to write palette: {e}"))
         }
     })?;
-    println!("Imported palette '{stem}' → {}", dest.display());
+    super::output::plain(format_args!(
+        "Imported palette '{stem}' → {}",
+        dest.display()
+    ));
     Ok(())
 }
 

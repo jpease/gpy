@@ -120,6 +120,26 @@ fn test_segments_list() {
         output.contains("directory"),
         "Output should list directory segment"
     );
+    let line_of = |name: &str| {
+        output
+            .lines()
+            .find(|line| {
+                line.get(4..)
+                    .and_then(|rest| rest.split_whitespace().next())
+                    == Some(name)
+            })
+            .unwrap_or_else(|| panic!("no `{name}` line in:\n{output}"))
+    };
+    let clock = line_of("clock");
+    assert!(
+        clock.contains("gpy-core") && clock.contains("default"),
+        "a default builtin names its owner and says default: {clock}"
+    );
+    let status = line_of("status");
+    assert!(
+        status.contains("gpy-core") && !status.contains("default"),
+        "a non-default builtin names its owner only: {status}"
+    );
 }
 
 #[test]

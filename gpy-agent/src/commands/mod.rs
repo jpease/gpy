@@ -1,5 +1,10 @@
 //! Command implementations for the GPY CLI.
 
+#![warn(
+    clippy::print_stdout,
+    reason = "command output goes through `commands::output`"
+)]
+
 /// What the `gpy-agent` lifecycle commands print and return.
 pub mod agent_report;
 #[cfg(unix)]

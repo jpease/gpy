@@ -791,6 +791,8 @@ List all available segments and their current status.
 
 Shows which segments the prompt will actually render (`x`) and which it won't ( ). `git` and `language` show `x` only when they are listed in `ui.enabled_segments` **and** their feature flag is on; every other segment shows `x` when it is listed. `gpy config wizard` starts its segment checkboxes from the same rule.
 
+Each row also names the segment's owner: `gpy-core` for the built-in segments, or the plugin id with `(bundled)` or `(user)` for a plugin's segments. `default` marks a segment that a fresh config enables (`ui.enabled_segments` by default).
+
 **Example:**
 ```bash
 gpy segments
@@ -801,14 +803,14 @@ gpy segments
 Prompt Segments:
 ================
 
-[x] clock
-[x] duration
-[x] language
-[x] directory
-[x] git
-[ ] status
-[ ] username
-[ ] hostname
+[x] clock     gpy-core            default
+[x] duration  gpy-core            default
+[x] language  gpy-core            default
+[x] directory gpy-core            default
+[x] git       gpy-core            default
+[ ] status    gpy-core
+[ ] username  username (bundled)
+[ ] hostname  hostname (bundled)
 ```
 
 ---
@@ -871,7 +873,7 @@ untracked = "?"
 
 List every configuration key with its access mode and description.
 
-After the core keys it lists the `plugin.<segment>.<key>` overrides that installed script plugin segments accept (`ttl_secs`, `timeout_ms` and each declared setting, with its type, constraints and default).
+After the core keys it lists the `language.icons.<lang>` family (one row for the settable `[language.icons]` entries, e.g. `language.icons.rust`) and the `plugin.<segment>.<key>` overrides that installed script plugin segments accept (`ttl_secs`, `timeout_ms` and each declared setting, with its type, constraints and default).
 
 With a filter argument, lists only keys that start with it. The filter is a plain prefix, so `git.icons` matches every `git.icons.*` key. A filter that matches nothing prints a notice and still exits 0. Use `gpy config get <key>` to read a value and `gpy config set <key> <value>` to change it; the [configuration reference](configuration-reference.md) documents what each key accepts.
 
@@ -1174,6 +1176,13 @@ cache_root=/home/user/.cache/gpy
 ...
 ```
 
+With `--format json` the list-valued `config_candidates` is a JSON array of
+strings (`[]` when there are none); `--format kv` joins it with `|`:
+
+```json
+"config_candidates": ["/home/user/.config/gpy/config.toml"],
+```
+
 ---
 
 #### `gpy debug prompt`
@@ -1214,6 +1223,22 @@ If `--segment` is omitted, GPY uses the plugin id as the segment id.
 **Example:**
 ```bash
 gpy plugin new demo-tools --segment demo_status
+```
+
+**Output:**
+```
+Created plugin scaffold
+   plugin: demo-tools
+   root: /home/user/.config/gpy/plugins/demo-tools
+   manifest: /home/user/.config/gpy/plugins/demo-tools/plugin.toml
+   segment manifest: /home/user/.config/gpy/plugins/demo-tools/segments/demo_status.toml
+   script: /home/user/.config/gpy/plugins/demo-tools/bin/demo_status.sh
+
+Next steps:
+   1. Edit the generated files
+   2. Keep bin/demo_status.sh and its directories owned by you and not writable by group or others; GPY skips a script segment that fails this check (`gpy plugin validate` says why).
+   3. Run `gpy plugin validate /home/user/.config/gpy/plugins/demo-tools`
+   4. Run `gpy enable demo_status`
 ```
 
 #### `gpy plugin validate <id-or-path>`
