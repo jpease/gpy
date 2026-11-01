@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// A path that has passed [`PathValidator`] checks.
+/// A path that has passed [`validate_path`] checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafePath(PathBuf);
 
@@ -18,7 +18,7 @@ impl SafePath {
     /// # Errors
     /// Returns an error if the path fails security validation.
     pub fn new(path: &str) -> Result<Self> {
-        let validated = PathValidator::validate_path(path)?;
+        let validated = validate_path(path)?;
         Ok(Self(validated))
     }
 
@@ -150,60 +150,35 @@ pub(crate) fn reject_control_chars(field_name: &str, value: &str) -> Result<()> 
     Ok(())
 }
 
-/// Path security validation.
-pub struct PathValidator;
+/// Canonicalize and validate a path.
+///
+/// Paths that can be canonicalized are canonicalized (resolving `..` and
+/// symlinks) and then rejected if under `/etc`, `/proc`, `/sys` or `/dev`.
+/// Paths that cannot be canonicalized (missing, dangling symlink, unreadable)
+/// are rejected if they contain a `..` component (which could otherwise step
+/// past the denylist lexically) or start under a denied directory. This is a
+/// denylist, not a sandbox.
+///
+/// # Errors
+/// Returns an error for control characters, excess length, `..` components in
+/// non-canonicalizable paths, or system directories.
+pub fn validate_path(path: &str) -> Result<PathBuf> {
+    reject_control_chars("path", path)?;
 
-impl PathValidator {
-    /// Canonicalize and validate a path.
-    ///
-    /// # Errors
-    /// Returns an error for control characters, excess length, `..` components, or system directories.
-    pub fn validate_path(path: &str) -> Result<PathBuf> {
-        reject_control_chars("path", path)?;
-
-        if path.len() > MAX_PATH_LENGTH {
-            return Err(Error::invalid(format!(
-                "Path too long (max {MAX_PATH_LENGTH} characters)"
-            )));
-        }
-
-        let path_buf = PathBuf::from(path);
-
-        // Nonexistent paths get the same component checks.
-        if let Ok(canonical) = path_buf.canonicalize() {
-            Self::check_components(&canonical)?;
-            Ok(canonical)
-        } else {
-            Self::check_components(&path_buf)?;
-            Ok(path_buf)
-        }
+    if path.len() > MAX_PATH_LENGTH {
+        return Err(Error::invalid(format!(
+            "Path too long (max {MAX_PATH_LENGTH} characters)"
+        )));
     }
 
-    /// Denied system directories in literal and canonical form: existing
-    /// inputs are canonicalized (macOS `/etc` -> `/private/etc`), missing ones are not.
-    fn denylisted_system_prefixes() -> &'static [PathBuf] {
-        static PREFIXES: OnceLock<Vec<PathBuf>> = OnceLock::new();
-        PREFIXES.get_or_init(|| {
-            let mut prefixes: Vec<PathBuf> = Vec::new();
-            for raw in ["/etc", "/proc", "/sys", "/dev"] {
-                let literal = PathBuf::from(raw);
-                if let Ok(canonical) = std::fs::canonicalize(raw)
-                    && canonical != literal
-                {
-                    prefixes.push(canonical);
-                }
-                prefixes.push(literal);
-            }
-            prefixes
-        })
-    }
+    let path_buf = PathBuf::from(path);
 
-    /// Reject `..` components and denylisted system directories.
-    ///
-    /// # Errors
-    /// Returns an error on traversal or a protected directory.
-    fn check_components(path: &Path) -> Result<()> {
-        if path
+    if let Ok(canonical) = path_buf.canonicalize() {
+        // A canonical path never contains `..`; only the denylist applies.
+        check_denylist(&canonical)?;
+        Ok(canonical)
+    } else {
+        if path_buf
             .components()
             .any(|component| matches!(component, Component::ParentDir))
         {
@@ -211,72 +186,94 @@ impl PathValidator {
                 "Path traversal patterns not allowed".to_owned(),
             ));
         }
-
-        if Self::denylisted_system_prefixes()
-            .iter()
-            .any(|prefix| path.starts_with(prefix))
-        {
-            return Err(Error::invalid(
-                "Access to system directories denied".to_owned(),
-            ));
-        }
-
-        Ok(())
+        check_denylist(&path_buf)?;
+        Ok(path_buf)
     }
 }
 
-/// PID validation.
-pub struct PidValidator;
-
-impl PidValidator {
-    /// Probe whether `pid` is alive. Range checks live in `ClientPid`; this runs
-    /// once per request at route time so `GuardSettings::validate_pids` can gate it.
-    ///
-    /// # Errors
-    /// Returns an error if no such process exists; an inconclusive probe is allowed.
-    #[cfg(unix)]
-    pub fn validate_pid_liveness(pid: u32) -> Result<()> {
-        match Self::check_process_exists(pid) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(Error::invalid(format!("Process {pid} does not exist"))),
-            Err(_) => {
-                warn_log!("security", "Could not validate PID {pid}");
-                Ok(())
+/// Denied system directories in literal and canonical form: existing
+/// inputs are canonicalized (macOS `/etc` -> `/private/etc`), missing ones are not.
+fn denylisted_system_prefixes() -> &'static [PathBuf] {
+    static PREFIXES: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    PREFIXES.get_or_init(|| {
+        let mut prefixes: Vec<PathBuf> = Vec::new();
+        for raw in ["/etc", "/proc", "/sys", "/dev"] {
+            let literal = PathBuf::from(raw);
+            if let Ok(canonical) = std::fs::canonicalize(raw)
+                && canonical != literal
+            {
+                prefixes.push(canonical);
             }
+            prefixes.push(literal);
         }
+        prefixes
+    })
+}
+
+/// Reject paths under a denylisted system directory.
+///
+/// # Errors
+/// Returns an error when `path` is under a protected directory.
+fn check_denylist(path: &Path) -> Result<()> {
+    if denylisted_system_prefixes()
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+    {
+        return Err(Error::invalid(
+            "Access to system directories denied".to_owned(),
+        ));
     }
 
-    /// No Unix-socket peer to probe on native Windows; always succeeds.
-    ///
-    /// # Errors
-    /// Never.
-    #[cfg(not(unix))]
-    pub fn validate_pid_liveness(_pid: u32) -> Result<()> {
-        Ok(())
-    }
+    Ok(())
+}
 
-    /// `kill(pid, 0)`: `EPERM` still means the process exists.
-    ///
-    /// # Errors
-    /// Returns an error on unexpected `errno`.
-    #[cfg(unix)]
-    #[allow(
-        clippy::map_err_ignore,
-        reason = "the message already names the oversized PID; a TryFromIntError cause would append to the error text"
-    )]
-    fn check_process_exists(pid: u32) -> Result<bool> {
-        use nix::sys::signal::kill;
-        use nix::unistd::Pid;
-
-        let pid_i32 = i32::try_from(pid)
-            .map_err(|_| Error::invalid(format!("PID {pid} too large for platform")))?;
-
-        match kill(Pid::from_raw(pid_i32), None) {
-            // EPERM: the process exists but belongs to someone else.
-            Ok(()) | Err(nix::errno::Errno::EPERM) => Ok(true),
-            Err(nix::errno::Errno::ESRCH) => Ok(false),
-            Err(e) => Err(Error::ipc(format!("Failed to check process: {e}"))),
+/// Probe whether `pid` is alive. Range checks live in `ClientPid`; this runs
+/// once per request at route time so `GuardSettings::validate_pids` can gate it.
+///
+/// # Errors
+/// Returns an error if no such process exists; an inconclusive probe is allowed.
+#[cfg(unix)]
+pub fn validate_pid_liveness(pid: u32) -> Result<()> {
+    match check_process_exists(pid) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(Error::invalid(format!("Process {pid} does not exist"))),
+        Err(_) => {
+            warn_log!("security", "Could not validate PID {pid}");
+            Ok(())
         }
+    }
+}
+
+/// No Unix-socket peer to probe on native Windows; always succeeds.
+///
+/// # Errors
+/// Never.
+#[cfg(not(unix))]
+pub fn validate_pid_liveness(_pid: u32) -> Result<()> {
+    Ok(())
+}
+
+/// `kill(pid, 0)`: `EPERM` still means the process exists.
+///
+/// # Errors
+/// Returns an error on unexpected `errno`.
+#[cfg(unix)]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the message already names the oversized PID; a TryFromIntError cause would append to the error text"
+)]
+fn check_process_exists(pid: u32) -> Result<bool> {
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+
+    let pid_i32 = i32::try_from(pid)
+        .map_err(|_| Error::invalid(format!("PID {pid} too large for platform")))?;
+
+    match kill(Pid::from_raw(pid_i32), None) {
+        // EPERM: the process exists but belongs to someone else.
+        Ok(()) | Err(nix::errno::Errno::EPERM) => Ok(true),
+        Err(nix::errno::Errno::ESRCH) => Ok(false),
+        Err(e) => Err(Error::ipc(format!("Failed to check process: {e}"))),
     }
 }
 
@@ -345,22 +342,33 @@ mod tests {
 
     #[test]
     fn test_traversal_detection() {
-        assert!(PathValidator::validate_path("../../../etc/passwd").is_err());
-        assert!(PathValidator::validate_path("path/with/../traversal").is_err());
+        assert!(validate_path("../../../etc/passwd").is_err());
+        assert!(validate_path("path/with/../traversal").is_err());
 
-        let _result = PathValidator::validate_path("/etc/shadow");
+        let _result = validate_path("/etc/shadow");
 
-        assert!(PathValidator::validate_path("./src").is_ok());
-        assert!(PathValidator::validate_path("relative/path").is_ok());
+        assert!(validate_path("./src").is_ok());
+        assert!(validate_path("relative/path").is_ok());
     }
 
     /// `my..project` is not a `..` component.
     #[test]
     fn test_check_path_safety_allows_dotted_names_without_parent_dir_component() {
         assert!(
-            PathValidator::validate_path("relative/my..project").is_ok(),
+            validate_path("relative/my..project").is_ok(),
             "a directory literally named 'my..project' must not be rejected as traversal"
         );
+    }
+
+    /// Existing paths are canonicalized (resolving `..`) before the denylist runs.
+    #[test]
+    fn existing_path_with_parent_component_is_canonicalized_and_accepted() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let a = tmp.path().join("a");
+        std::fs::create_dir_all(&a).expect("create t/a");
+        let input = format!("{}/a/../a", tmp.path().display());
+        let got = validate_path(&input).expect("existing path with `..` is accepted");
+        assert_eq!(got, a.canonicalize().expect("canonicalize"));
     }
 
     /// Denied even when `/etc` is a symlink (macOS).
@@ -368,7 +376,7 @@ mod tests {
     fn test_traversal_detection_rejects_etc_hosts_regardless_of_symlinks() {
         if std::path::Path::new("/etc/hosts").exists() {
             assert!(
-                PathValidator::validate_path("/etc/hosts").is_err(),
+                validate_path("/etc/hosts").is_err(),
                 "/etc/hosts must be denied even after symlink resolution"
             );
         }
@@ -385,7 +393,7 @@ mod tests {
                 "test precondition: {candidate} must not exist"
             );
             assert!(
-                PathValidator::validate_path(candidate).is_err(),
+                validate_path(candidate).is_err(),
                 "{candidate} must be denied even though it does not exist"
             );
         }
@@ -399,7 +407,7 @@ mod tests {
         );
 
         assert!(
-            PathValidator::validate_path("/path\nwith\ttab\rand-cr").is_err(),
+            validate_path("/path\nwith\ttab\rand-cr").is_err(),
             "validate_path must reject a path containing control characters"
         );
     }
@@ -415,7 +423,7 @@ mod tests {
         assert!(ClientPid::pid_in_range(1));
 
         let current_pid = std::process::id();
-        assert!(PidValidator::validate_pid_liveness(current_pid).is_ok());
+        assert!(validate_pid_liveness(current_pid).is_ok());
     }
 
     /// Constructing a `ClientPid` must not probe liveness (route time only).

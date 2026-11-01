@@ -337,7 +337,7 @@ impl ClientDirectory {
 
             let mut stale: Vec<u32> = Vec::new();
 
-            // Already canonical (`PathValidator::validate_path`); no blocking canonicalize.
+            // Already canonical (`validate_path`); no blocking canonicalize.
             let target_owned = target.map(Path::to_path_buf);
 
             // Decided at most once per broadcast, not per client.
