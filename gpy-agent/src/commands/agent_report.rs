@@ -5,9 +5,8 @@
 use super::exit_codes::{DISABLED, NOT_RUNNING, STATUS_UNKNOWN};
 use super::output::warn_stderr;
 use crate::agent::lifecycle::{
-    AgentStatusInfo, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, probe_status,
-    protocol_mismatch, send_shutdown_command, socket_is_stale, start_background_agent,
-    wait_for_agent_shutdown,
+    AgentClient, AgentStatusInfo, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe,
+    protocol_mismatch, start_background_agent,
 };
 use crate::config::schema;
 use crate::paths::SocketPath;
@@ -101,9 +100,10 @@ struct StatusReport {
 /// Returns an error if the socket path cannot be determined.
 fn status_report(socket: Option<&Path>) -> Result<StatusReport> {
     let resolved = SocketPath::resolve(socket)?;
+    let client = AgentClient::new(&resolved)?;
     let socket_path = resolved.path();
     // No socket file is "not running" on every platform, without a probe.
-    let probe = socket_path.exists().then(|| probe_status(socket_path));
+    let probe = socket_path.exists().then(|| client.probe_status());
     let (state, outcome) = probe
         .as_ref()
         .map_or(("not-running", StatusOutcome::NotRunning), state_and_exit);
@@ -252,9 +252,12 @@ fn stop_agent(socket: &SocketPath, quiet: bool) -> Result<()> {
         return Ok(());
     }
 
+    // One client, so one runtime, for the whole stop. It is current-thread
+    // and dropped on return, so `restart` forks with none alive.
+    let client = AgentClient::new(socket)?;
     // Learn the PID before the shutdown so the outcome can name it; any
     // answer but a status skips the lookup.
-    let pid = match probe_status(socket_path) {
+    let pid = match client.probe_status() {
         StatusProbe::Answered(status) => status.pid,
         StatusProbe::Busy
         | StatusProbe::NotListening(_)
@@ -262,15 +265,8 @@ fn stop_agent(socket: &SocketPath, quiet: bool) -> Result<()> {
         | StatusProbe::Failed(_) => None,
     };
 
-    // A current-thread runtime spawns no worker threads: once any thread has
-    // existed, the forked daemon's first Objective-C use aborts on macOS, and
-    // `restart` forks after this runs.
-    let shutdown = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(send_shutdown_command(socket));
-    match shutdown {
-        Ok(()) if wait_for_agent_shutdown(socket_path) => {
+    match client.shutdown() {
+        Ok(()) if client.wait_for_shutdown() => {
             say(
                 quiet,
                 pid.map_or_else(
@@ -283,7 +279,7 @@ fn stop_agent(socket: &SocketPath, quiet: bool) -> Result<()> {
         Ok(()) => Err(did_not_stop(pid, socket_path)),
         // Only a refused connection proves the socket is stale; an
         // accepted-but-silent one is a live agent.
-        Err(_) if socket_is_stale(socket_path) => {
+        Err(_) if client.socket_is_stale() => {
             std::fs::remove_file(socket_path).or_else(|remove_err| {
                 if remove_err.kind() == std::io::ErrorKind::NotFound {
                     Ok(())

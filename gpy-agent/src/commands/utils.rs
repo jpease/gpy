@@ -119,15 +119,11 @@ pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
 /// config is already written, so there is nothing to return.
 #[cfg(unix)]
 pub fn reload_agent_and_notify() {
-    use crate::agent::lifecycle::ConfigReload;
+    use crate::agent::lifecycle::{AgentClient, ConfigReload};
 
-    let outcome = crate::paths::SocketPath::resolve(None).and_then(|socket| {
-        tokio::runtime::Runtime::new()
-            .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))
-            .and_then(|runtime| {
-                runtime.block_on(crate::agent::lifecycle::send_config_reload_command(&socket))
-            })
-    });
+    let outcome = crate::paths::SocketPath::resolve(None)
+        .and_then(|socket| AgentClient::new(&socket))
+        .and_then(|client| client.reload_config());
 
     match outcome {
         Ok(ConfigReload::Applied | ConfigReload::NotRunning) => {}

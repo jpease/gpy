@@ -2,13 +2,12 @@
 //! does about each: the ping rounds that decide, the wait for a stopping
 //! agent, eviction of a wedged or outdated one, and the version verdict.
 
-use super::client::{PingOutcome, ping_agent_outcome, send_shutdown_command, status_blocking};
+use super::client::{AgentClient, PingOutcome};
 use super::{AgentStatusInfo, SocketCheck, StartNotice, StartOutcome};
 use crate::Result;
 use crate::VERSION;
 use crate::deadline::Deadline;
 use crate::ipc::socket_identity::SocketIdentity;
-use crate::paths::SocketPath;
 use std::cmp::Ordering;
 use std::path::Path;
 use std::time::Duration;
@@ -93,8 +92,8 @@ enum AgentLiveness {
 }
 
 /// Ping the agent, retrying before concluding anything.
-fn ping_agent_liveness(socket_path: &Path) -> AgentLiveness {
-    ping_agent_liveness_with(|| ping_agent_outcome(socket_path), PING_STALE_BACKOFF)
+fn ping_agent_liveness(client: &AgentClient) -> AgentLiveness {
+    ping_agent_liveness_with(|| client.ping(), PING_STALE_BACKOFF)
 }
 
 /// [`ping_agent_liveness`] over an arbitrary ping, for tests. Any local
@@ -142,10 +141,10 @@ where
 /// Poll until the agent stops responding to pings, bounded by `SHUTDOWN_WAIT_MAX`.
 /// Returns `false` if still answering (or only indeterminate) when the budget ends.
 #[must_use]
-pub fn wait_for_agent_shutdown(socket_path: &Path) -> bool {
+pub(super) fn wait_for_agent_shutdown(client: &AgentClient) -> bool {
     let deadline = Deadline::after(SHUTDOWN_WAIT_MAX);
     loop {
-        if ping_agent_liveness(socket_path) == AgentLiveness::NotResponding {
+        if ping_agent_liveness(client) == AgentLiveness::NotResponding {
             return true; // Reached the socket every time, never answered: confirmed stopped.
         }
         if deadline.expired() {
@@ -179,15 +178,16 @@ fn socket_released(socket_path: &Path, identity: SocketIdentity) -> bool {
 /// Wait until the socket captured as `identity` stops answering or leaves the
 /// path, bounded by `SHUTDOWN_WAIT_MAX`. A replacement's answers end the wait.
 pub(crate) fn wait_for_socket_release(
-    socket_path: &Path,
+    client: &AgentClient,
     identity: SocketIdentity,
 ) -> ShutdownWait {
+    let socket_path = client.socket();
     let deadline = Deadline::after(SHUTDOWN_WAIT_MAX);
     loop {
         if socket_released(socket_path, identity) {
             return ShutdownWait::Released;
         }
-        if ping_agent_liveness(socket_path) == AgentLiveness::NotResponding {
+        if ping_agent_liveness(client) == AgentLiveness::NotResponding {
             // The round may have reached a replacement bound mid-round.
             return if socket_released(socket_path, identity) {
                 ShutdownWait::Released
@@ -217,29 +217,23 @@ fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
 /// responsive replacement already holds the path, so the caller must not fork
 /// another.
 fn evict_agent(
-    socket: &SocketPath,
+    client: &AgentClient,
     identity: SocketIdentity,
     previous: Option<String>,
     on_notice: &mut dyn FnMut(StartNotice),
 ) -> SocketCheck {
-    let socket_path = socket.path();
+    let socket_path = client.socket();
     // Best-effort graceful shutdown.
-    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        let _ = runtime.block_on(send_shutdown_command(socket));
-    }
+    let _ = client.shutdown();
 
     // Proceed either way, but only ever unlink the captured socket.
-    if wait_for_socket_release(socket_path, identity) != ShutdownWait::Released {
+    if wait_for_socket_release(client, identity) != ShutdownWait::Released {
         remove_socket_if_unchanged(socket_path, identity);
         return SocketCheck::Proceed { previous };
     }
 
     // A different, answering agent is the replacement: do not fork another.
-    if SocketIdentity::at(socket_path).is_ok()
-        && matches!(ping_agent_outcome(socket_path), Ok(PingOutcome::Answered))
+    if SocketIdentity::at(socket_path).is_ok() && matches!(client.ping(), Ok(PingOutcome::Answered))
     {
         on_notice(StartNotice::AlreadyRunning);
         return SocketCheck::Done(StartOutcome::AlreadyRunning);
@@ -275,13 +269,13 @@ fn verdict(running: &AgentStatusInfo) -> Verdict {
 
 /// Decide what to do about an agent that answered pings.
 fn inspect_responding(
-    socket: &SocketPath,
+    client: &AgentClient,
     identity: SocketIdentity,
     on_notice: &mut dyn FnMut(StartNotice),
 ) -> SocketCheck {
     // A failed query after a successful ping cannot be verified; leave the
     // agent alone rather than fork a duplicate.
-    let Ok(status) = status_blocking(socket.path()) else {
+    let Ok(status) = client.status() else {
         on_notice(StartNotice::Unverifiable);
         return SocketCheck::Done(StartOutcome::Unverifiable);
     };
@@ -302,13 +296,13 @@ fn inspect_responding(
             on_notice(StartNotice::VersionMismatch {
                 running: status.version.clone(),
             });
-            evict_agent(socket, identity, Some(status.version), on_notice)
+            evict_agent(client, identity, Some(status.version), on_notice)
         }
         Verdict::ReplaceProtocol => {
             on_notice(StartNotice::ProtocolMismatch {
                 running: status.protocol_version,
             });
-            evict_agent(socket, identity, Some(status.version), on_notice)
+            evict_agent(client, identity, Some(status.version), on_notice)
         }
     }
 }
@@ -316,14 +310,14 @@ fn inspect_responding(
 /// Inspect the socket before a start and clean up a stale one. `Proceed`
 /// means the socket is free and start may fork.
 #[must_use]
-pub fn inspect_socket(socket: &SocketPath, on_notice: &mut dyn FnMut(StartNotice)) -> SocketCheck {
-    let socket_path = socket.path();
+pub fn inspect_socket(client: &AgentClient, on_notice: &mut dyn FnMut(StartNotice)) -> SocketCheck {
+    let socket_path = client.socket();
     // Every later wait and unlink concerns this socket, never a replacement.
     let Ok(identity) = SocketIdentity::at(socket_path) else {
         return SocketCheck::Proceed { previous: None };
     };
 
-    match ping_agent_liveness(socket_path) {
+    match ping_agent_liveness(client) {
         // Wrongly treating a live agent as stale forks a duplicate; wrongly
         // treating a dead one as live costs one prompt. So leave an
         // unverifiable socket alone.
@@ -339,9 +333,9 @@ pub fn inspect_socket(socket: &SocketPath, on_notice: &mut dyn FnMut(StartNotice
         // Alive but wedged: evict rather than silently unlink.
         AgentLiveness::AcceptedNoReply => {
             on_notice(StartNotice::EvictingUnanswered);
-            evict_agent(socket, identity, None, on_notice)
+            evict_agent(client, identity, None, on_notice)
         }
-        AgentLiveness::Responding => inspect_responding(socket, identity, on_notice),
+        AgentLiveness::Responding => inspect_responding(client, identity, on_notice),
         // Unresponsive across every retry; unlink unless already replaced.
         AgentLiveness::NotResponding => {
             on_notice(StartNotice::StaleSocket);

@@ -280,11 +280,11 @@ fn handle_oneshot_command(command: OneshotCommands) -> Result<()> {
 /// Returns an error if the agent rejected the config (it keeps its previous
 /// one) or did not answer, or the socket path or async runtime is unavailable.
 fn reload_config(socket: Option<&Path>) -> Result<()> {
-    use gpy_agent::agent::lifecycle::{ConfigReload, send_config_reload_command};
+    use gpy_agent::agent::lifecycle::{AgentClient, ConfigReload};
     use gpy_agent::paths::SocketPath;
 
     let resolved = SocketPath::resolve(socket)?;
-    match tokio::runtime::Runtime::new()?.block_on(send_config_reload_command(&resolved)) {
+    match AgentClient::new(&resolved)?.reload_config() {
         Ok(ConfigReload::Applied) => println!("Running agent reloaded its configuration."),
         Ok(ConfigReload::NotRunning) => {
             println!("Agent is not running; configuration changes will apply on next start.");

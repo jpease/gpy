@@ -4,7 +4,7 @@ use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
 use super::doctor_ipc::check_ipc_client;
 use super::doctor_themes::check_theme_overrides;
 use super::utils::agent_binary;
-use crate::agent::lifecycle::StatusProbe;
+use crate::agent::lifecycle::{AgentClient, StatusProbe};
 use crate::commands::output::{self, Status};
 use crate::commands::validation::FailureKind;
 use crate::plugin::discover_plugins;
@@ -75,7 +75,8 @@ fn check_agent_status(cfg: Option<&config::Config>) -> bool {
     }
     match crate::paths::SocketPath::resolve(None) {
         Ok(socket) => {
-            let probe = crate::agent::lifecycle::probe_status(socket.path());
+            let probe = AgentClient::new(&socket)
+                .map_or_else(StatusProbe::Failed, |client| client.probe_status());
             report_agent_probe(probe, socket.path())
         }
         Err(err) => {

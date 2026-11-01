@@ -5,8 +5,11 @@ use super::{
     wait_for_agent_shutdown,
 };
 use crate::Error;
+use crate::agent::lifecycle::client::AgentClient;
+use crate::paths::SocketPath;
 use std::cell::RefCell;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -15,13 +18,19 @@ use std::time::{Duration, Instant};
 /// `client::tests::ack_wire_form_is_what_the_json_formatter_emits`.
 const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
 
+/// A client of the (possibly absent) agent on `socket_path`.
+fn client_at(socket_path: &Path) -> AgentClient {
+    let socket = SocketPath::resolve(Some(socket_path)).expect("resolve the test socket");
+    AgentClient::new(&socket).expect("build the agent client")
+}
+
 #[test]
 fn wait_for_agent_shutdown_returns_promptly_when_dead() {
     let tmp = tempfile::tempdir().unwrap();
     let socket_path = tmp.path().join("missing.sock"); // nothing listening
 
     let started = Instant::now();
-    let stopped = wait_for_agent_shutdown(&socket_path);
+    let stopped = wait_for_agent_shutdown(&client_at(&socket_path));
     let elapsed = started.elapsed();
 
     assert!(
@@ -49,7 +58,7 @@ fn wait_for_socket_release_sees_a_rebound_path_as_released() {
     drop(old);
 
     let started = Instant::now();
-    let outcome = wait_for_socket_release(&socket_path, identity);
+    let outcome = wait_for_socket_release(&client_at(&socket_path), identity);
     let elapsed = started.elapsed();
 
     assert_eq!(outcome, ShutdownWait::Released);
@@ -331,7 +340,7 @@ fn wait_for_agent_shutdown_reports_still_responding_on_timeout() {
     let server = spawn_fake_agent(listener, &stop, &counters);
 
     let started = Instant::now();
-    let stopped = wait_for_agent_shutdown(&socket_path);
+    let stopped = wait_for_agent_shutdown(&client_at(&socket_path));
     let elapsed = started.elapsed();
     let report = counters.snapshot();
 

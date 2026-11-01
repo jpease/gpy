@@ -1,13 +1,15 @@
-//! Talking to a running agent from the CLI: one request/reply exchange, the
-//! liveness ping, and the typed shutdown, config reload and status requests.
+//! Talking to a running agent from the CLI. [`AgentClient`] owns one
+//! current-thread runtime and turns every ping and request of an operation
+//! into a blocking call on it.
 
+use super::liveness::wait_for_agent_shutdown;
 use super::outcome::StatusProbe;
 use super::{AgentStatusInfo, ConfigReload};
 use crate::ipc::Response;
 use crate::paths::SocketPath;
 use crate::{Error, Result};
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// How long a ping waits for the agent to accept the connection.
@@ -34,7 +36,7 @@ async fn ping_connect(socket_path: &Path) -> Option<tokio::net::UnixStream> {
 /// Outcome of one ping attempt. `NotListening` is weak evidence (a busy
 /// runtime looks the same); the other non-answers mean something is alive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum PingOutcome {
+pub(crate) enum PingOutcome {
     /// The agent answered with a well-formed [`Response::Ack`].
     Answered,
     /// Nothing accepted the connection.
@@ -50,31 +52,22 @@ pub(super) enum PingOutcome {
 /// Ping the agent once and classify the attempt.
 ///
 /// # Errors
-/// Returns an error if runtime creation fails or the write to an accepted
-/// connection fails for a reason other than the agent closing it (a local
-/// failure, not evidence about the agent).
-pub(super) fn ping_agent_outcome(socket_path: &Path) -> Result<PingOutcome> {
-    // Current-thread: a pool per ping churns threads enough to make pings fail
-    // locally, which callers would mistake for agent death.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))?;
-
-    rt.block_on(async {
-        let Some(stream) = ping_connect(socket_path).await else {
-            return Ok(PingOutcome::NotListening);
-        };
-        // The reply is a `Response` decoded as such: a substring check would
-        // match any error message containing "ok". The daemon renders `Ack`
-        // through the JSON formatter (`ipc::ACK_WIRE_JSON`), which the decoder
-        // accepts alongside serde's own encoding.
-        // A read timeout is the wedged signature: the runtime accepted the
-        // connection into its backlog but never served it.
-        tokio::time::timeout(PING_REPLY_TIMEOUT, exchange(stream, r#"{"op":"ping"}"#))
-            .await
-            .map_or_else(|_| Ok(PingOutcome::AcceptedNoReply), classify_exchange)
-    })
+/// Returns an error if the write to an accepted connection fails for a reason
+/// other than the agent closing it (a local failure, not evidence about the
+/// agent).
+async fn ping_once(socket_path: &Path) -> Result<PingOutcome> {
+    let Some(stream) = ping_connect(socket_path).await else {
+        return Ok(PingOutcome::NotListening);
+    };
+    // The reply is a `Response` decoded as such: a substring check would
+    // match any error message containing "ok". The daemon renders `Ack`
+    // through the JSON formatter (`ipc::ACK_WIRE_JSON`), which the decoder
+    // accepts alongside serde's own encoding.
+    // A read timeout is the wedged signature: the runtime accepted the
+    // connection into its backlog but never served it.
+    tokio::time::timeout(PING_REPLY_TIMEOUT, exchange(stream, r#"{"op":"ping"}"#))
+        .await
+        .map_or_else(|_| Ok(PingOutcome::AcceptedNoReply), classify_exchange)
 }
 
 /// Whether `failure` is the agent closing or resetting the connection without
@@ -259,35 +252,6 @@ pub(super) fn status_probe_from(
     }
 }
 
-/// Ask the agent at `socket_path` for its status once and say what became of
-/// the attempt. This is the one place the CLI learns that an agent is busy.
-#[must_use]
-pub fn probe_status(socket_path: &Path) -> StatusProbe {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            return StatusProbe::Failed(Error::agent(format!(
-                "cannot create the async runtime: {e}"
-            )));
-        }
-    };
-    status_probe_from(runtime.block_on(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET)))
-}
-
-/// Blocking ping: whether the agent answered.
-///
-/// # Errors
-/// Returns an error if runtime creation or ping operations fail.
-pub fn ping_agent_blocking(socket_path: &Path) -> Result<bool> {
-    Ok(matches!(
-        ping_agent_outcome(socket_path)?,
-        PingOutcome::Answered
-    ))
-}
-
 /// Whether `response` is an acknowledgement. Decides on the decoded value, since
 /// a substring check would match an `Error` whose message contains "ok".
 #[must_use]
@@ -295,93 +259,150 @@ const fn is_ack(response: &Response) -> bool {
     matches!(response, Response::Ack)
 }
 
-/// Send shutdown command to agent.
-///
-/// # Errors
-/// Returns an error if the exchange fails or times out, or the reply is not an ack.
-pub async fn send_shutdown_command(socket: &SocketPath) -> Result<()> {
-    // Bounded so a wedged agent cannot hang `gpy-agent stop`.
-    let response = request(socket.path(), r#"{"op":"shutdown"}"#, REQUEST_BUDGET).await?;
-
-    if is_ack(&response) {
-        Ok(())
-    } else {
-        crate::debug_log!("agent", "Unexpected shutdown response: {response:?}");
-        Err(Error::ipc(format!(
-            "agent at {} sent an unexpected reply to the shutdown request",
-            socket.path().display()
-        )))
-    }
+/// A client of the agent listening on one socket. It owns a single
+/// current-thread runtime that every ping and request of the operation shares,
+/// so callers stay synchronous and a polling loop does not build a runtime per
+/// ping.
+pub struct AgentClient {
+    socket: PathBuf,
+    runtime: tokio::runtime::Runtime,
 }
 
-/// Ask the running agent to reload its configuration.
-///
-/// # Errors
-/// Returns an error if a listening agent does not answer the request (timeout,
-/// closed connection, or a reply that is neither an ack nor an error).
-pub async fn send_config_reload_command(socket: &SocketPath) -> Result<ConfigReload> {
-    let socket_path = socket.path();
-    if !socket_path.exists() {
-        return Ok(ConfigReload::NotRunning);
+impl AgentClient {
+    /// Build a client for the agent on `socket`.
+    ///
+    /// The runtime is current-thread: a pool churns threads enough to make
+    /// pings fail locally, which callers would mistake for agent death, and
+    /// once any thread has existed the forked daemon's first Objective-C use
+    /// aborts on macOS. Drop the client before a `fork` and build another
+    /// after it; no runtime may exist across one.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot be built.
+    pub fn new(socket: &SocketPath) -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))?;
+        Ok(Self {
+            socket: socket.path().to_path_buf(),
+            runtime,
+        })
     }
 
-    match request(
-        socket_path,
-        crate::ipc::protocol::CONFIG_RELOAD_JSON,
-        REQUEST_BUDGET,
-    )
-    .await
-    {
-        Ok(Response::Ack) => Ok(ConfigReload::Applied),
-        Ok(Response::Error { message }) => {
-            Ok(ConfigReload::Rejected(message.trim_end().to_owned()))
-        }
-        Ok(other) => {
-            crate::debug_log!("agent", "Unexpected config reload response: {other:?}");
+    /// The socket this client talks to.
+    pub(crate) fn socket(&self) -> &Path {
+        &self.socket
+    }
+
+    /// One request/reply exchange with the agent, within `budget`.
+    fn send(
+        &self,
+        message: &str,
+        budget: Duration,
+    ) -> std::result::Result<Response, RequestFailure> {
+        self.runtime
+            .block_on(request(&self.socket, message, budget))
+    }
+
+    /// Ping the agent once and classify the attempt.
+    ///
+    /// # Errors
+    /// Returns an error if the write to an accepted connection fails for a
+    /// reason other than the agent closing it (a local failure, not evidence
+    /// about the agent).
+    pub(crate) fn ping(&self) -> Result<PingOutcome> {
+        self.runtime.block_on(ping_once(&self.socket))
+    }
+
+    /// Whether the agent answered a ping.
+    ///
+    /// # Errors
+    /// Returns an error if the ping fails locally (see [`Self::ping`]).
+    pub fn is_answering(&self) -> Result<bool> {
+        Ok(matches!(self.ping()?, PingOutcome::Answered))
+    }
+
+    /// Ask the agent to shut down.
+    ///
+    /// # Errors
+    /// Returns an error if the exchange fails or times out, or the reply is not an ack.
+    pub fn shutdown(&self) -> Result<()> {
+        // Bounded so a wedged agent cannot hang `gpy-agent stop`.
+        let response = self.send(r#"{"op":"shutdown"}"#, REQUEST_BUDGET)?;
+
+        if is_ack(&response) {
+            Ok(())
+        } else {
+            crate::debug_log!("agent", "Unexpected shutdown response: {response:?}");
             Err(Error::ipc(format!(
-                "agent at {} sent an unexpected reply to the config reload request",
-                socket_path.display()
+                "agent at {} sent an unexpected reply to the shutdown request",
+                self.socket.display()
             )))
         }
-        Err(_) if socket_is_stale(socket_path) => Ok(ConfigReload::NotRunning),
-        Err(e) => Err(e.into()),
     }
-}
 
-/// Whether nothing is listening on `socket_path` (connection refused or file
-/// gone); an accepted connection means a live agent.
-#[must_use]
-pub fn socket_is_stale(socket_path: &Path) -> bool {
-    match std::os::unix::net::UnixStream::connect(socket_path) {
-        Ok(_) => false,
-        Err(e) => matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound),
+    /// Ask the running agent to reload its configuration.
+    ///
+    /// # Errors
+    /// Returns an error if a listening agent does not answer the request
+    /// (timeout, closed connection, or a reply that is neither an ack nor an
+    /// error).
+    pub fn reload_config(&self) -> Result<ConfigReload> {
+        if !self.socket.exists() {
+            return Ok(ConfigReload::NotRunning);
+        }
+
+        match self.send(crate::ipc::protocol::CONFIG_RELOAD_JSON, REQUEST_BUDGET) {
+            Ok(Response::Ack) => Ok(ConfigReload::Applied),
+            Ok(Response::Error { message }) => {
+                Ok(ConfigReload::Rejected(message.trim_end().to_owned()))
+            }
+            Ok(other) => {
+                crate::debug_log!("agent", "Unexpected config reload response: {other:?}");
+                Err(Error::ipc(format!(
+                    "agent at {} sent an unexpected reply to the config reload request",
+                    self.socket.display()
+                )))
+            }
+            Err(_) if self.socket_is_stale() => Ok(ConfigReload::NotRunning),
+            Err(e) => Err(e.into()),
+        }
     }
-}
 
-/// Query the running agent for its status via IPC.
-///
-/// # Errors
-/// Returns an error if the socket connection fails or the response is not an
-/// agent status.
-pub async fn query_agent_status(socket: &SocketPath) -> Result<AgentStatusInfo> {
-    query_status_at(socket.path()).await
-}
+    /// Query the running agent for its status.
+    ///
+    /// # Errors
+    /// Returns an error if the socket connection fails or the response is not
+    /// an agent status.
+    pub fn status(&self) -> Result<AgentStatusInfo> {
+        agent_status_from(self.send(r#"{"op":"status"}"#, REQUEST_BUDGET)?)
+    }
 
-/// [`query_agent_status`] against an explicit socket.
-async fn query_status_at(socket_path: &Path) -> Result<AgentStatusInfo> {
-    agent_status_from(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET).await?)
-}
+    /// Ask the agent for its status once and say what became of the attempt.
+    /// This is the one place the CLI learns that an agent is busy.
+    #[must_use]
+    pub fn probe_status(&self) -> StatusProbe {
+        status_probe_from(self.send(r#"{"op":"status"}"#, REQUEST_BUDGET))
+    }
 
-/// Query the agent's status on a private runtime.
-///
-/// # Errors
-/// Returns an error if the runtime cannot be built or the query fails.
-pub(super) fn status_blocking(socket_path: &Path) -> Result<AgentStatusInfo> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))?;
-    runtime.block_on(query_status_at(socket_path))
+    /// Whether nothing is listening on the socket (connection refused or file
+    /// gone); an accepted connection means a live agent.
+    #[must_use]
+    pub fn socket_is_stale(&self) -> bool {
+        match std::os::unix::net::UnixStream::connect(&self.socket) {
+            Ok(_) => false,
+            Err(e) => matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound),
+        }
+    }
+
+    /// Poll until the agent stops responding to pings, bounded by the shutdown
+    /// wait budget. Returns `false` if it is still answering (or only
+    /// indeterminate) when the budget ends.
+    #[must_use]
+    pub fn wait_for_shutdown(&self) -> bool {
+        wait_for_agent_shutdown(self)
+    }
 }
 
 /// The status carried by an agent's reply.
@@ -417,17 +438,25 @@ fn agent_status_from(response: Response) -> Result<AgentStatusInfo> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExchangeError, PingOutcome, RequestFailure, classify_exchange, closed_unanswered, is_ack,
-        ping_agent_blocking, query_status_at, request, status_probe_from,
+        AgentClient, ExchangeError, PingOutcome, RequestFailure, classify_exchange,
+        closed_unanswered, is_ack, status_probe_from,
     };
     use crate::agent::lifecycle::outcome::StatusProbe;
     use crate::ipc::Response;
+    use crate::paths::SocketPath;
     use std::io::{Error as IoError, ErrorKind, Read, Write};
+    use std::path::Path;
     use std::time::Duration;
 
     /// The daemon's wire `Response::Ack`, pinned by
     /// `ack_wire_form_is_what_the_json_formatter_emits`.
     const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
+
+    /// A client of the fake agent listening on `socket_path`.
+    fn client_at(socket_path: &Path) -> AgentClient {
+        let socket = SocketPath::resolve(Some(socket_path)).expect("resolve the fake socket");
+        AgentClient::new(&socket).expect("build the agent client")
+    }
 
     #[test]
     fn a_connection_reset_read_is_closed_unanswered() {
@@ -538,7 +567,7 @@ mod tests {
             drop(stream);
         });
 
-        let alive = ping_agent_blocking(&socket_path);
+        let alive = client_at(&socket_path).is_answering();
         server.join().expect("join fake server thread");
 
         assert!(
@@ -605,10 +634,10 @@ mod tests {
         assert!(is_ack(&Response::Ack));
     }
 
-    /// Run one `request()` exchange against a fake agent replying with `reply`.
+    /// Run one request exchange against a fake agent replying with `reply`.
     ///
     /// # Errors
-    /// Whatever `request()` reported.
+    /// Whatever the exchange reported.
     fn request_against(reply: &'static [u8]) -> crate::Result<Response> {
         let tmp = tempfile::tempdir().expect("tempdir");
         let socket_path = tmp.path().join("reply.sock");
@@ -624,16 +653,8 @@ mod tests {
             let _ = stream.write_all(reply);
         });
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build test runtime");
-        let outcome = runtime
-            .block_on(request(
-                &socket_path,
-                r#"{"op":"config_reload"}"#,
-                Duration::from_secs(2),
-            ))
+        let outcome = client_at(&socket_path)
+            .send(r#"{"op":"config_reload"}"#, Duration::from_secs(2))
             .map_err(crate::Error::from);
         server.join().expect("join fake server thread");
 
@@ -670,7 +691,7 @@ mod tests {
         );
     }
 
-    /// Run `query_status_at` against a fake agent that sends `reply`.
+    /// Run a status query against a fake agent that sends `reply`.
     ///
     /// # Errors
     /// Whatever the query reported.
@@ -689,11 +710,7 @@ mod tests {
             let _ = stream.write_all(&reply);
         });
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build test runtime");
-        let outcome = runtime.block_on(query_status_at(&socket_path));
+        let outcome = client_at(&socket_path).status();
         server.join().expect("join fake server thread");
 
         outcome

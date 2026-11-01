@@ -1,7 +1,7 @@
 //! Startup for `gpy-agent start`: check enablement, clean up stale sockets,
 //! fork the daemon, and wait for it to answer.
 
-use super::client::ping_agent_blocking;
+use super::client::AgentClient;
 use super::liveness::inspect_socket;
 use super::{SocketCheck, StartNotice, StartOutcome};
 use crate::Error;
@@ -51,7 +51,7 @@ const READY_WAIT_POLL: Duration = Duration::from_millis(10);
 /// Returns an error, with the daemon's reported reason when it sent one, if
 /// the daemon fails or does not answer within [`READY_WAIT_MAX`].
 fn wait_for_agent_ready(
-    socket_path: &Path,
+    client: &AgentClient,
     agent_pid: i32,
     mut report: StartupReport,
 ) -> Result<()> {
@@ -61,7 +61,7 @@ fn wait_for_agent_ready(
         if let Some(reason) = report.failure() {
             return Err(startup_failed(Some(&reason)));
         }
-        if ping_agent_blocking(socket_path)? {
+        if client.is_answering()? {
             return Ok(());
         }
         if kill(Pid::from_raw(agent_pid), None).is_err() {
@@ -179,8 +179,12 @@ fn fork_agent(socket: &SocketPath, start_lock: crate::fs_util::PathLock) -> Resu
             let _ = fork::waitpid(intermediate_pid);
             read.map_err(|e| Error::agent(format!("the daemon did not start: {e}")))?;
             let agent_pid = i32::from_ne_bytes(pid_bytes);
-            let ready = StartupReport::new(reader)
-                .and_then(|report| wait_for_agent_ready(socket.path(), agent_pid, report));
+            // Built after the fork, in the parent only: no runtime may exist
+            // across a fork.
+            let ready = StartupReport::new(reader).and_then(|report| {
+                let client = AgentClient::new(socket)?;
+                wait_for_agent_ready(&client, agent_pid, report)
+            });
             // Held until now so a daemon that never binds cannot let another start in.
             drop(start_lock);
             ready?;
@@ -330,9 +334,15 @@ pub fn start_background_agent(
     )?;
     let start_lock = acquire_start_lock(socket.path())?;
 
-    let previous = match inspect_socket(socket, &mut on_notice) {
-        SocketCheck::Done(outcome) => return Ok(outcome),
-        SocketCheck::Proceed { previous } => previous,
+    // The client's runtime is gone before the fork: the daemon child would
+    // inherit its epoll fd on Linux, and on macOS mio would close a kqueue fd
+    // number that may be another descriptor in the child.
+    let previous = {
+        let client = AgentClient::new(socket)?;
+        match inspect_socket(&client, &mut on_notice) {
+            SocketCheck::Done(outcome) => return Ok(outcome),
+            SocketCheck::Proceed { previous } => previous,
+        }
     };
 
     let pid = fork_agent(socket, start_lock)?;

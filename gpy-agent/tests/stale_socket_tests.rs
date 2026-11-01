@@ -12,7 +12,7 @@ mod common;
 use common::env_guard::EnvGuard;
 use common::fake_agent::{ACK_WIRE_FORM, Behaviour, FakeAgent};
 use gpy_agent::agent::lifecycle::{
-    SocketCheck, StartOutcome, StatusProbe, inspect_socket, probe_status,
+    AgentClient, SocketCheck, StartOutcome, StatusProbe, inspect_socket,
 };
 use gpy_agent::ipc::protocol::PROTOCOL_VERSION;
 use gpy_agent::paths::SocketPath;
@@ -43,7 +43,16 @@ fn redirect_runtime_dir(dir: &Path) -> EnvGuard {
 
 /// `inspect_socket` with notices discarded.
 fn inspect(socket: &SocketPath) -> SocketCheck {
-    inspect_socket(socket, &mut |_| {})
+    let client = AgentClient::new(socket).expect("build the agent client");
+    inspect_socket(&client, &mut |_| {})
+}
+
+/// One status probe of the agent (if any) on `socket_path`.
+fn probe_at(socket_path: &Path) -> StatusProbe {
+    let socket = SocketPath::resolve(Some(socket_path)).expect("resolve test socket");
+    AgentClient::new(&socket)
+        .expect("build the agent client")
+        .probe_status()
 }
 
 /// The socket that `redirect_runtime_dir` points the default path at.
@@ -118,7 +127,7 @@ fn wedged_agent_that_never_replies_is_evicted() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    // `send_shutdown_command` targets `SocketPath::resolve(None)`, so the fixture
+    // `AgentClient::shutdown` targets `SocketPath::resolve(None)`, so the fixture
     // must listen there to be reachable.
     let socket = redirected_socket();
     let socket_path = socket.path().to_path_buf();
@@ -133,7 +142,7 @@ fn wedged_agent_that_never_replies_is_evicted() {
     );
     assert!(
         agent.shutdown_requests() > 0,
-        "inspect_socket must attempt send_shutdown_command against a wedged \
+        "inspect_socket must attempt AgentClient::shutdown against a wedged \
          agent before evicting it, not go straight to unlinking its socket the way a \
          genuinely dead (connection-refused) agent does"
     );
@@ -174,7 +183,7 @@ fn status_probe_reports_a_dropping_agent_as_busy() {
     let socket_path = tmp.path().join("agent.sock");
     let _agent = FakeAgent::spawn_with(&socket_path, Behaviour::DropsUnread, Duration::ZERO);
 
-    let probe = probe_status(&socket_path);
+    let probe = probe_at(&socket_path);
 
     assert!(matches!(probe, StatusProbe::Busy), "got {probe:?}");
 }
@@ -189,7 +198,7 @@ fn status_probe_reports_a_refused_socket_as_not_listening() {
         "premise: a socket file is left behind"
     );
 
-    let probe = probe_status(&socket_path);
+    let probe = probe_at(&socket_path);
 
     assert!(
         matches!(probe, StatusProbe::NotListening(_)),

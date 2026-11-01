@@ -17,12 +17,9 @@ mod start;
 mod unsupported;
 
 #[cfg(unix)]
-pub use client::{
-    ping_agent_blocking, probe_status, query_agent_status, send_config_reload_command,
-    send_shutdown_command, socket_is_stale,
-};
+pub use client::AgentClient;
 #[cfg(unix)]
-pub use liveness::{inspect_socket, wait_for_agent_shutdown};
+pub use liveness::inspect_socket;
 pub use outcome::{
     ProtocolMismatch, SocketCheck, StartNotice, StartOutcome, StatusProbe, protocol_mismatch,
 };
@@ -31,10 +28,7 @@ pub(crate) use start::StartupHandoff;
 #[cfg(unix)]
 pub use start::start_background_agent;
 #[cfg(not(unix))]
-pub use unsupported::{
-    ping_agent_blocking, probe_status, query_agent_status, send_config_reload_command,
-    send_shutdown_command, socket_is_stale, start_background_agent, wait_for_agent_shutdown,
-};
+pub use unsupported::{AgentClient, start_background_agent};
 
 use crate::Result;
 use crate::paths::SocketPath;
