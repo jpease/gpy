@@ -2,7 +2,7 @@ function __gpy_segment_language_detect() {
     [[ "${GPY_LANGUAGE_ENABLED:-1}" != "0" ]] || return 1
 
     # Ancestor walk via parameter expansion only; markers come from the agent's export.
-    (( ${#__gpy_lang_marker_files[@]} )) || return 0
+    (( ${+__gpy_lang_marker_files} )) && (( ${#__gpy_lang_marker_files[@]} )) || return 0
     local dir="$PWD" marker
     while [[ -n "$dir" ]]; do
         [[ -e "$dir/.git" ]] && return 0

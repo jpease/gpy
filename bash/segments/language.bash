@@ -3,7 +3,7 @@ __gpy_segment_language_detect() {
 
     # Ancestor walk via parameter expansion only; markers come from the agent's export.
     # shellcheck disable=SC2154 # exported by `theme export`, unset until the agent has run
-    (( ${#__gpy_lang_marker_files[@]} )) || return 0
+    [[ -n "${__gpy_lang_marker_files[*]-}" ]] || return 0
     local dir="$PWD" marker
     while [[ -n "$dir" ]]; do
         [[ -e "$dir/.git" ]] && return 0
