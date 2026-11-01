@@ -7,7 +7,7 @@
 //! plus the export generator; it never reads back the agent's own state.
 //!
 //! One `const` row per change mechanism, all driven through one
-//! harness (`Agent::new()` against temp `XDG_*` dirs, the production wiring).
+//! harness (`Agent::new(socket)` against temp `XDG_*` dirs, the production wiring).
 //! The instant cache is not compared: `Agent` exposes no handle to its git
 //! cache, so the harness cannot seed a warm repo.
 
@@ -30,6 +30,7 @@ use gpy_agent::config::Config;
 use gpy_agent::config::defaults::DEFAULT_THEME_CONTENT;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::palette::active_palette;
+use gpy_agent::paths::SocketPath;
 use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
 use sigurg::SigurgCounter;
@@ -459,7 +460,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     }
 
     // `Agent::new` arms every watcher before it returns.
-    let agent = Agent::new().expect("agent starts");
+    let agent = Agent::new(SocketPath::resolve(None).expect("socket path")).expect("agent starts");
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
     let rang_before = harness.doorbells.count();
 

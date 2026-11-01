@@ -4,6 +4,7 @@
 use super::outcome::StatusProbe;
 use super::{AgentStatusInfo, ConfigReload};
 use crate::ipc::Response;
+use crate::paths::SocketPath;
 use crate::{Error, Result};
 use std::io::ErrorKind;
 use std::path::Path;
@@ -298,10 +299,9 @@ const fn is_ack(response: &Response) -> bool {
 ///
 /// # Errors
 /// Returns an error if the exchange fails or times out, or the reply is not an ack.
-pub async fn send_shutdown_command() -> Result<()> {
+pub async fn send_shutdown_command(socket: &SocketPath) -> Result<()> {
     // Bounded so a wedged agent cannot hang `gpy-agent stop`.
-    let socket_path = crate::paths::get_socket_path()?;
-    let response = request(&socket_path, r#"{"op":"shutdown"}"#, REQUEST_BUDGET).await?;
+    let response = request(socket.path(), r#"{"op":"shutdown"}"#, REQUEST_BUDGET).await?;
 
     if is_ack(&response) {
         Ok(())
@@ -309,7 +309,7 @@ pub async fn send_shutdown_command() -> Result<()> {
         crate::debug_log!("agent", "Unexpected shutdown response: {response:?}");
         Err(Error::ipc(format!(
             "agent at {} sent an unexpected reply to the shutdown request",
-            socket_path.display()
+            socket.path().display()
         )))
     }
 }
@@ -317,17 +317,16 @@ pub async fn send_shutdown_command() -> Result<()> {
 /// Ask the running agent to reload its configuration.
 ///
 /// # Errors
-/// Returns an error if the socket path cannot be computed, or a listening
-/// agent does not answer the request (timeout, closed connection, or a reply
-/// that is neither an ack nor an error).
-pub async fn send_config_reload_command() -> Result<ConfigReload> {
-    let socket_path = crate::paths::get_socket_path()?;
+/// Returns an error if a listening agent does not answer the request (timeout,
+/// closed connection, or a reply that is neither an ack nor an error).
+pub async fn send_config_reload_command(socket: &SocketPath) -> Result<ConfigReload> {
+    let socket_path = socket.path();
     if !socket_path.exists() {
         return Ok(ConfigReload::NotRunning);
     }
 
     match request(
-        &socket_path,
+        socket_path,
         crate::ipc::protocol::CONFIG_RELOAD_JSON,
         REQUEST_BUDGET,
     )
@@ -344,7 +343,7 @@ pub async fn send_config_reload_command() -> Result<ConfigReload> {
                 socket_path.display()
             )))
         }
-        Err(_) if socket_is_stale(&socket_path) => Ok(ConfigReload::NotRunning),
+        Err(_) if socket_is_stale(socket_path) => Ok(ConfigReload::NotRunning),
         Err(e) => Err(e.into()),
     }
 }
@@ -364,8 +363,8 @@ pub fn socket_is_stale(socket_path: &Path) -> bool {
 /// # Errors
 /// Returns an error if the socket connection fails or the response is not an
 /// agent status.
-pub async fn query_agent_status() -> Result<AgentStatusInfo> {
-    query_status_at(&crate::paths::get_socket_path()?).await
+pub async fn query_agent_status(socket: &SocketPath) -> Result<AgentStatusInfo> {
+    query_status_at(socket.path()).await
 }
 
 /// [`query_agent_status`] against an explicit socket.

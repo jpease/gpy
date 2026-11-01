@@ -8,6 +8,7 @@ use crate::Result;
 use crate::VERSION;
 use crate::deadline::Deadline;
 use crate::ipc::socket_identity::SocketIdentity;
+use crate::paths::SocketPath;
 use std::cmp::Ordering;
 use std::path::Path;
 use std::time::Duration;
@@ -216,17 +217,18 @@ fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
 /// responsive replacement already holds the path, so the caller must not fork
 /// another.
 fn evict_agent(
-    socket_path: &Path,
+    socket: &SocketPath,
     identity: SocketIdentity,
     previous: Option<String>,
     on_notice: &mut dyn FnMut(StartNotice),
 ) -> SocketCheck {
+    let socket_path = socket.path();
     // Best-effort graceful shutdown.
     if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
-        let _ = runtime.block_on(send_shutdown_command());
+        let _ = runtime.block_on(send_shutdown_command(socket));
     }
 
     // Proceed either way, but only ever unlink the captured socket.
@@ -273,13 +275,13 @@ fn verdict(running: &AgentStatusInfo) -> Verdict {
 
 /// Decide what to do about an agent that answered pings.
 fn inspect_responding(
-    socket_path: &Path,
+    socket: &SocketPath,
     identity: SocketIdentity,
     on_notice: &mut dyn FnMut(StartNotice),
 ) -> SocketCheck {
     // A failed query after a successful ping cannot be verified; leave the
     // agent alone rather than fork a duplicate.
-    let Ok(status) = status_blocking(socket_path) else {
+    let Ok(status) = status_blocking(socket.path()) else {
         on_notice(StartNotice::Unverifiable);
         return SocketCheck::Done(StartOutcome::Unverifiable);
     };
@@ -300,13 +302,13 @@ fn inspect_responding(
             on_notice(StartNotice::VersionMismatch {
                 running: status.version.clone(),
             });
-            evict_agent(socket_path, identity, Some(status.version), on_notice)
+            evict_agent(socket, identity, Some(status.version), on_notice)
         }
         Verdict::ReplaceProtocol => {
             on_notice(StartNotice::ProtocolMismatch {
                 running: status.protocol_version,
             });
-            evict_agent(socket_path, identity, Some(status.version), on_notice)
+            evict_agent(socket, identity, Some(status.version), on_notice)
         }
     }
 }
@@ -314,7 +316,8 @@ fn inspect_responding(
 /// Inspect the socket before a start and clean up a stale one. `Proceed`
 /// means the socket is free and start may fork.
 #[must_use]
-pub fn inspect_socket(socket_path: &Path, on_notice: &mut dyn FnMut(StartNotice)) -> SocketCheck {
+pub fn inspect_socket(socket: &SocketPath, on_notice: &mut dyn FnMut(StartNotice)) -> SocketCheck {
+    let socket_path = socket.path();
     // Every later wait and unlink concerns this socket, never a replacement.
     let Ok(identity) = SocketIdentity::at(socket_path) else {
         return SocketCheck::Proceed { previous: None };
@@ -336,9 +339,9 @@ pub fn inspect_socket(socket_path: &Path, on_notice: &mut dyn FnMut(StartNotice)
         // Alive but wedged: evict rather than silently unlink.
         AgentLiveness::AcceptedNoReply => {
             on_notice(StartNotice::EvictingUnanswered);
-            evict_agent(socket_path, identity, None, on_notice)
+            evict_agent(socket, identity, None, on_notice)
         }
-        AgentLiveness::Responding => inspect_responding(socket_path, identity, on_notice),
+        AgentLiveness::Responding => inspect_responding(socket, identity, on_notice),
         // Unresponsive across every retry; unlink unless already replaced.
         AgentLiveness::NotResponding => {
             on_notice(StartNotice::StaleSocket);

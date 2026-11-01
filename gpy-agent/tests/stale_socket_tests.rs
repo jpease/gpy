@@ -15,7 +15,7 @@ use gpy_agent::agent::lifecycle::{
     SocketCheck, StartOutcome, StatusProbe, inspect_socket, probe_status,
 };
 use gpy_agent::ipc::protocol::PROTOCOL_VERSION;
-use gpy_agent::paths::get_socket_path;
+use gpy_agent::paths::SocketPath;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -42,8 +42,13 @@ fn redirect_runtime_dir(dir: &Path) -> EnvGuard {
 }
 
 /// `inspect_socket` with notices discarded.
-fn inspect(socket_path: &Path) -> SocketCheck {
-    inspect_socket(socket_path, &mut |_| {})
+fn inspect(socket: &SocketPath) -> SocketCheck {
+    inspect_socket(socket, &mut |_| {})
+}
+
+/// The socket that `redirect_runtime_dir` points the default path at.
+fn redirected_socket() -> SocketPath {
+    SocketPath::resolve(None).expect("compute redirected socket path")
 }
 
 // A slow-but-alive agent that misses one ping must not be declared stale.
@@ -60,7 +65,8 @@ fn slow_but_alive_agent_is_not_declared_stale() {
     let _agent = FakeAgent::spawn(&socket_path, true, Duration::from_millis(650));
 
     let started = Instant::now();
-    let check = inspect(&socket_path);
+    let socket = SocketPath::resolve(Some(&socket_path)).expect("resolve test socket");
+    let check = inspect(&socket);
     let elapsed = started.elapsed();
 
     assert_eq!(
@@ -92,7 +98,8 @@ fn unresponsive_listener_is_cleaned_up() {
     let socket_path = tmp.path().join("agent.sock");
     let _agent = FakeAgent::spawn(&socket_path, false, Duration::ZERO);
 
-    let check = inspect(&socket_path);
+    let socket = SocketPath::resolve(Some(&socket_path)).expect("resolve test socket");
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -111,12 +118,13 @@ fn wedged_agent_that_never_replies_is_evicted() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    // `send_shutdown_command()` targets `get_socket_path()`, so the fixture must
-    // listen there to be reachable.
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    // `send_shutdown_command` targets `SocketPath::resolve(None)`, so the fixture
+    // must listen there to be reachable.
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     let agent = FakeAgent::spawn(&socket_path, false, Duration::ZERO);
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -145,10 +153,11 @@ fn busy_agent_that_drops_connections_is_left_running() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     let agent = FakeAgent::spawn_with(&socket_path, Behaviour::DropsUnread, Duration::ZERO);
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(check, SocketCheck::Done(StartOutcome::AlreadyRunning));
     assert_eq!(
@@ -200,7 +209,8 @@ fn dead_socket_file_is_removed() {
     let socket_path = tmp.path().join("agent.sock");
     std::fs::write(&socket_path, b"stale").unwrap();
 
-    let check = inspect(&socket_path);
+    let socket = SocketPath::resolve(Some(&socket_path)).expect("resolve test socket");
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -220,8 +230,9 @@ fn version_mismatched_agent_is_evicted() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    // Eviction targets `get_socket_path()`, so the fixture must listen there.
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    // Eviction targets `SocketPath::resolve(None)`, so the fixture must listen there.
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     // Acks pings, reports an old version and goes away once told to shut down.
     let agent = FakeAgent::spawn_reporting(
         &socket_path,
@@ -230,7 +241,7 @@ fn version_mismatched_agent_is_evicted() {
         PROTOCOL_VERSION,
     );
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -261,7 +272,8 @@ fn eviction_does_not_unlink_a_replacement_agents_socket() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     // Bind the replacement early but publish via rename at shutdown, so there is
     // no gap eviction could read as "no agent".
     let replacement_path = socket_path.with_file_name("next.sock");
@@ -283,7 +295,7 @@ fn eviction_does_not_unlink_a_replacement_agents_socket() {
         .expect("stat old agent socket before eviction")
         .ino();
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
     let (ino, ctime, ctime_nsec) = published_rx
         .try_recv()
         .expect("replacement fixture must publish before eviction returns");
@@ -322,10 +334,11 @@ fn version_matched_agent_is_left_running() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     let agent = FakeAgent::spawn(&socket_path, true, Duration::ZERO);
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -349,11 +362,12 @@ fn newer_running_agent_is_left_running() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     let agent =
         FakeAgent::spawn_reporting(&socket_path, Behaviour::Alive, "999.0.0", PROTOCOL_VERSION);
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -380,7 +394,8 @@ fn protocol_mismatched_newer_agent_is_evicted() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     let agent = FakeAgent::spawn_reporting(
         &socket_path,
         Behaviour::AliveUntilShutdown,
@@ -388,7 +403,7 @@ fn protocol_mismatched_newer_agent_is_evicted() {
         PROTOCOL_VERSION.wrapping_add(1),
     );
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(
         check,
@@ -410,10 +425,11 @@ fn failed_status_query_leaves_a_responding_agent_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = redirect_runtime_dir(tmp.path());
 
-    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let socket = redirected_socket();
+    let socket_path = socket.path().to_path_buf();
     let agent = FakeAgent::spawn_with(&socket_path, Behaviour::AliveStatusFails, Duration::ZERO);
 
-    let check = inspect(&socket_path);
+    let check = inspect(&socket);
 
     assert_eq!(check, SocketCheck::Done(StartOutcome::Unverifiable));
     assert_eq!(agent.shutdown_requests(), 0);

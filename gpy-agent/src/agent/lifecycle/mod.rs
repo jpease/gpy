@@ -37,14 +37,15 @@ pub use unsupported::{
 };
 
 use crate::Result;
+use crate::paths::SocketPath;
 
-/// Create the default runtime directory when the socket lives there (no
+/// Create the default runtime directory when `socket` lives there (no
 /// `--socket`/`GPY_AGENT_SOCKET_PATH` override). Only the start path calls this.
 ///
 /// # Errors
 /// Returns an error naming the runtime directory if it cannot be created.
-pub fn ensure_runtime_dir() -> Result<()> {
-    if crate::paths::socket_is_overridden() {
+pub fn ensure_runtime_dir(socket: &SocketPath) -> Result<()> {
+    if socket.is_override() {
         return Ok(());
     }
     let path = crate::paths::runtime_dir();
@@ -54,13 +55,13 @@ pub fn ensure_runtime_dir() -> Result<()> {
     })
 }
 
-/// How the socket's directory may be repaired, by where [`crate::paths::resolve_socket_path`]
-/// takes the path from: GPY's own runtime directory is tightened, while a
+/// How the directory of `socket` may be repaired, by where [`SocketPath`] took
+/// the path from: GPY's own runtime directory is tightened, while a
 /// user-chosen `--socket` or `GPY_AGENT_SOCKET_PATH` directory is never chmod'ed.
 #[cfg(unix)]
 #[must_use]
-pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
-    if crate::paths::socket_is_overridden() {
+pub const fn socket_dir_repair(socket: &SocketPath) -> crate::ipc::server::DirRepair {
+    if socket.is_override() {
         crate::ipc::server::DirRepair::Refuse
     } else {
         crate::ipc::server::DirRepair::Tighten

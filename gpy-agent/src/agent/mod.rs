@@ -21,6 +21,7 @@ use crate::ipc::{
     ClientDirectory,
     server::{EndpointDeps, EndpointHandle},
 };
+use crate::paths::SocketPath;
 use crate::sync_ext::MutexExt;
 use crate::theme::ThemeManager;
 use crate::watcher::WatcherConfig;
@@ -257,12 +258,11 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Create a new agent instance.
+    /// Create a new agent instance that will listen on `socket`.
     ///
     /// # Errors
     /// Returns an error if the IPC server or file watcher cannot be initialized.
-    ///
-    pub fn new() -> Result<Self> {
+    pub fn new(socket: SocketPath) -> Result<Self> {
         let watcher_config = WatcherConfig::from_env();
         let client_registry = ClientDirectory::new().shared();
         client_registry.set_throttle_ms(watcher_config.throttle_ms());
@@ -314,11 +314,13 @@ impl Agent {
 
         Self::init_watcher(&initial_config, watcher_config, &ctx, &watcher_slot);
 
-        crate::agent::lifecycle::ensure_runtime_dir()?;
+        crate::agent::lifecycle::ensure_runtime_dir(&socket)?;
+        #[cfg(unix)]
+        let socket_dir_repair = crate::agent::lifecycle::socket_dir_repair(&socket);
         let server = EndpointHandle::new(EndpointDeps {
-            socket_path: crate::paths::get_socket_path()?,
+            socket_path: socket.into_path(),
             #[cfg(unix)]
-            socket_dir_repair: crate::agent::lifecycle::socket_dir_repair(),
+            socket_dir_repair,
             security_config: crate::security::GuardSettings::default(),
             watcher_slot: Arc::clone(&watcher_slot),
             client_registry: Arc::clone(&ctx.registry),

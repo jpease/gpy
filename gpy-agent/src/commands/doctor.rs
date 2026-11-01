@@ -73,10 +73,10 @@ fn check_agent_status(cfg: Option<&config::Config>) -> bool {
         output::plain("Disabled via config (agent.enabled = false)");
         return true;
     }
-    match crate::paths::get_socket_path() {
-        Ok(socket_path) => {
-            let probe = crate::agent::lifecycle::probe_status(&socket_path);
-            report_agent_probe(probe, &socket_path)
+    match crate::paths::SocketPath::resolve(None) {
+        Ok(socket) => {
+            let probe = crate::agent::lifecycle::probe_status(socket.path());
+            report_agent_probe(probe, socket.path())
         }
         Err(err) => {
             output::fail(format_args!("Cannot resolve the agent socket: {err}"));

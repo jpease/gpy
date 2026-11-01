@@ -7,6 +7,7 @@ use super::{SocketCheck, StartNotice, StartOutcome};
 use crate::Error;
 use crate::Result;
 use crate::deadline::Deadline;
+use crate::paths::SocketPath;
 use crate::{agent::Agent, debug_log};
 use fork::Fork;
 use nix::sys::signal::kill;
@@ -152,7 +153,7 @@ impl StartupReport {
     }
 }
 
-/// Fork the agent daemon and return its PID once it answers on `socket_path`.
+/// Fork the agent daemon and return its PID once it answers on `socket`.
 ///
 /// Explicit double fork rather than `fork::daemon()`, whose processes exit
 /// before anything can be awaited: the original waits for readiness holding
@@ -164,7 +165,7 @@ impl StartupReport {
 /// Returns an error if the pipe or fork fails, the daemon never reports its
 /// PID, or it fails or is not ready in time. The daemon process itself never
 /// returns: it exits after the agent stops.
-fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Result<u32> {
+fn fork_agent(socket: &SocketPath, start_lock: crate::fs_util::PathLock) -> Result<u32> {
     use std::io::Read;
 
     let (mut reader, writer) = std::io::pipe()
@@ -179,7 +180,7 @@ fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Resul
             read.map_err(|e| Error::agent(format!("the daemon did not start: {e}")))?;
             let agent_pid = i32::from_ne_bytes(pid_bytes);
             let ready = StartupReport::new(reader)
-                .and_then(|report| wait_for_agent_ready(socket_path, agent_pid, report));
+                .and_then(|report| wait_for_agent_ready(socket.path(), agent_pid, report));
             // Held until now so a daemon that never binds cannot let another start in.
             drop(start_lock);
             ready?;
@@ -189,7 +190,10 @@ fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Resul
         Ok(Fork::Child) => {
             drop(reader);
             fork_daemon_from_intermediate();
-            exit_daemon(announce_daemon(start_lock, writer).and_then(run_daemon))
+            exit_daemon(
+                announce_daemon(start_lock, writer)
+                    .and_then(|startup| run_daemon(startup, socket.clone())),
+            )
         }
         Err(e) => Err(Error::agent(format!("cannot fork the daemon: {e}"))),
     }
@@ -246,12 +250,12 @@ fn announce_daemon(
     })
 }
 
-/// Daemon body: leave the launch directory, then run the agent; a failure
-/// before the socket is bound is reported through `startup`.
+/// Daemon body: leave the launch directory, then run the agent on `socket`; a
+/// failure before the socket is bound is reported through `startup`.
 ///
 /// # Errors
 /// Returns an error if `chdir`, runtime construction, or the agent fails.
-fn run_daemon(startup: StartupHandoff) -> Result<()> {
+fn run_daemon(startup: StartupHandoff, socket: SocketPath) -> Result<()> {
     let rt = match enter_daemon() {
         Ok(rt) => rt,
         Err(e) => {
@@ -260,7 +264,7 @@ fn run_daemon(startup: StartupHandoff) -> Result<()> {
         }
     };
     let result = rt.block_on(async move {
-        let mut agent = match Agent::new() {
+        let mut agent = match Agent::new(socket) {
             Ok(agent) => agent,
             Err(e) => {
                 startup.fail(&e);
@@ -296,7 +300,10 @@ fn enter_daemon() -> Result<tokio::runtime::Runtime> {
 ///
 /// # Errors
 /// Returns an error if socket operations, forking, or agent initialization fails.
-pub fn start_background_agent(mut on_notice: impl FnMut(StartNotice)) -> Result<StartOutcome> {
+pub fn start_background_agent(
+    socket: &SocketPath,
+    mut on_notice: impl FnMut(StartNotice),
+) -> Result<StartOutcome> {
     if !crate::config::loader::agent_enabled() {
         on_notice(StartNotice::Disabled);
         return Ok(StartOutcome::Disabled);
@@ -313,25 +320,22 @@ pub fn start_background_agent(mut on_notice: impl FnMut(StartNotice)) -> Result<
         );
     }
     crate::debug::init_path();
-    super::ensure_runtime_dir()?;
-    let socket_path = crate::paths::absolutize(&crate::paths::get_socket_path()?);
-    // Absolutize a relative `GPY_AGENT_SOCKET_PATH` so the daemon, which
-    // runs in `/`, binds the same path.
-    if crate::paths::socket_path_override().is_some() {
-        crate::paths::set_socket_override(&socket_path)?;
-    }
+    super::ensure_runtime_dir(socket)?;
 
     // Vet the directory before the lock file, stale-socket eviction, or
     // liveness ping relies on it; the daemon checks again at bind.
-    crate::ipc::server::socket_dir::secure_socket_dir(&socket_path, super::socket_dir_repair())?;
-    let start_lock = acquire_start_lock(&socket_path)?;
+    crate::ipc::server::socket_dir::secure_socket_dir(
+        socket.path(),
+        super::socket_dir_repair(socket),
+    )?;
+    let start_lock = acquire_start_lock(socket.path())?;
 
-    let previous = match inspect_socket(&socket_path, &mut on_notice) {
+    let previous = match inspect_socket(socket, &mut on_notice) {
         SocketCheck::Done(outcome) => return Ok(outcome),
         SocketCheck::Proceed { previous } => previous,
     };
 
-    let pid = fork_agent(&socket_path, start_lock)?;
+    let pid = fork_agent(socket, start_lock)?;
     Ok(previous.map_or(StartOutcome::Started { pid }, |prior| {
         StartOutcome::Replaced {
             previous: prior,

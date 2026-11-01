@@ -5,6 +5,7 @@
 use super::{AgentStatusInfo, ConfigReload, StartNotice, StartOutcome, StatusProbe};
 use crate::Result;
 use crate::ipc::native_windows_unsupported;
+use crate::paths::SocketPath;
 use std::path::Path;
 
 /// Blocking ping: no daemon, always `false`.
@@ -19,7 +20,7 @@ pub fn ping_agent_blocking(_socket_path: &Path) -> Result<bool> {
 ///
 /// # Errors
 /// Always returns an error on this platform.
-pub async fn send_shutdown_command() -> Result<()> {
+pub async fn send_shutdown_command(_socket: &SocketPath) -> Result<()> {
     Err(native_windows_unsupported())
 }
 
@@ -28,7 +29,7 @@ pub async fn send_shutdown_command() -> Result<()> {
 ///
 /// # Errors
 /// Never returns an error on this platform.
-pub async fn send_config_reload_command() -> Result<ConfigReload> {
+pub async fn send_config_reload_command(_socket: &SocketPath) -> Result<ConfigReload> {
     Ok(ConfigReload::NotRunning)
 }
 
@@ -42,7 +43,7 @@ pub fn socket_is_stale(_socket_path: &Path) -> bool {
 ///
 /// # Errors
 /// Always returns an error on this platform.
-pub async fn query_agent_status() -> Result<AgentStatusInfo> {
+pub async fn query_agent_status(_socket: &SocketPath) -> Result<AgentStatusInfo> {
     Err(native_windows_unsupported())
 }
 
@@ -63,6 +64,9 @@ pub fn wait_for_agent_shutdown(_socket_path: &Path) -> bool {
 ///
 /// # Errors
 /// Always returns an error on this platform.
-pub fn start_background_agent(_on_notice: impl FnMut(StartNotice)) -> Result<StartOutcome> {
+pub fn start_background_agent(
+    _socket: &SocketPath,
+    _on_notice: impl FnMut(StartNotice),
+) -> Result<StartOutcome> {
     Err(native_windows_unsupported())
 }

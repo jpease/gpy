@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nc -U`) (#1175).
 - `gpy theme save --yes` skips the overwrite confirmation (#1177).
 - `gpy-agent restart` (#1173).
+- `gpy-agent config reload --socket <path>`, matching `start`, `stop` and
+  `status` (#1131).
 
 ### Changed
 
@@ -112,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `serde_json::Error`; `GitIcons` fields are `Option<Icon>` (#1128, #1163).
 - **Breaking (library):** `agent::lifecycle::start` is no longer public; use
   the `agent::lifecycle` re-exports (`start_background_agent`) (#1136).
+- **Breaking (library):** `paths::{SOCKET_OVERRIDE, set_socket_override,
+  get_socket_path, resolve_socket_path, socket_override,
+  socket_is_overridden}` are replaced by `paths::SocketPath`; `Agent::new` and
+  the `agent::lifecycle` functions take a `&SocketPath` (#1131).
 
 ## [0.8.0] - 2026-10-29
 
