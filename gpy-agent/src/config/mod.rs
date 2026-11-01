@@ -104,7 +104,7 @@ impl Config {
 pub struct AgentSettings {
     /// Enable background agent mode
     pub enabled: bool,
-    /// Socket timeout in seconds
+    /// Agent-side request timeout in seconds
     pub timeout_seconds: types::AgentTimeout,
     /// Enable live updates via signals
     pub live_updates: bool,

@@ -304,6 +304,26 @@ gpy theme reset starship    # or drop the copy: moved to starship.toml.bak
 
 ---
 
+## Theme `[ui]` keys
+
+Every key a theme accepts under `[ui]`. These are theme keys, not `config.toml` keys.
+
+| Key | Type | Effect |
+|---|---|---|
+| `two_line` | bool | Puts the prompt character on its own line below the other segments. |
+| `add_newline` | bool | Prints a blank line before each prompt. |
+| `root_prompt_icon` | string | Prompt symbol shown when running as root. |
+| `root_prompt_color` | color | Color of the root prompt symbol. |
+| `prompt_open`, `prompt_close` | glyph table | Delimiters drawn at the start and end of the whole prompt; each takes `fg`/`bg` colors (`[ui.prompt_open]`, `[ui.prompt_close]`). |
+| `segment_open`, `segment_close` | glyph table | Default delimiters drawn around each segment, with `fg`/`bg` colors (`[ui.segment_open]`, `[ui.segment_close]`). |
+| `prompt_icon` | string | Deprecated; use `[segments.character] success_symbol` / `success_color` instead. |
+| `prompt_color` | color | Deprecated; use `[segments.character] success_symbol` / `success_color` instead. |
+| `recommended` | table | `[ui.recommended]`: settings the theme suggests (`enabled_segments`, `directory`, `language_detection`, `palette`), applied to `config.toml` only by `gpy theme use <name> --force`. `[ui.recommended] show_icons` is deprecated and ignored; `ui.show_icons` is set by `gpy setup`. |
+
+`default` and `starship` set `two_line`, and every bundled theme sets the root prompt keys: [`config/themes/`](../../config/themes/).
+
+---
+
 ## 5. Going further
 
 To design a theme from scratch, style every git state bucket, or theme a plugin segment, use these:

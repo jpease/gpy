@@ -24,7 +24,7 @@ gpy status           # Is the agent running? Socket path, client count
 GPY_DEBUG_LOG=/tmp/gpy-debug.log gpy restart   # Restart with debug logging, then tail the file
 ```
 
-`gpy doctor` and `gpy status` syntax/output are fully documented in the [CLI Reference](cli-reference.md#gpy-doctor). Debug logging, manual IPC pings via `socat`, and config reset are covered in [Advanced Configuration → Troubleshooting](advanced-configuration.md#troubleshooting).
+`gpy doctor` and `gpy status` syntax/output are fully documented in the [CLI Reference](cli-reference.md#gpy-doctor). Debug logging, the `gpy status` / `gpy debug paths` connection check, and config reset are covered in [Advanced Configuration → Troubleshooting](advanced-configuration.md#troubleshooting).
 
 ---
 
@@ -53,21 +53,8 @@ When this happens, git status, language versions, and theme edits stop refreshin
 
 ### Diagnostic and fallback environment variables
 
-All of these are off or default unless set. Every `GPY_*` variable follows one rule: flags accept `1/true/yes/on` and `0/false/no/off` (case-insensitive); an unrecognised value is ignored and logged once; a positive-integer variable ignores `0` and garbage; an empty value counts as unset. Precedence is environment variable, then `config.toml`, then the built-in default. `gpy doctor` lists the effective values in its "Agent tuning" section.
-
-| Variable | Effect |
-|---|---|
-| `GPY_PROFILE` | A true flag value (`1`/`true`/`yes`/`on`) logs `[PROFILE] <operation>: <ms>` lines for timed operations to stderr and the debug log (`profiling.rs`, `Timer`). Any other value leaves profiling off; `0`, `false`, `no`, `off` and an empty value log a one-time "no longer enables profiling" warning, an unrecognised word such as `debug` the ignored-value warning. |
-| `GPY_DISABLE_WATCHER` | Set to `1`/`true`/`yes`/`on` to skip creating the git/language repo file watcher entirely at agent startup. This *only* disables the git/language live-update watcher — it does **not** affect the separate theme or config hot-reload watchers below. Use this to rule the watcher in or out as the cause of a hang or high CPU. |
-| `GPY_THEME_WATCH_POLL_MS` | Unset or `0` (default): disabled — theme reload relies solely on `FSEvents`/`inotify`. Set to a positive integer: spawns an additional poll thread that, on that interval (floored at the watcher's debounce), re-resolves the active theme name (user, then plugin, then built-in, following an overlay's `extends` chain) and reloads when the content of any of its files changes or a file appears, disappears, or is replaced by one from another source (for example a plugin that now provides an overlay's base), independent of OS notifications. |
-| `GPY_CONFIG_WATCH_POLL_MS` | Same shape as the theme variable, for `config.toml`: unset/`0` = disabled (default); positive integer = poll interval in ms, floored at the 1-second config debounce. This is the fix if editing `config.toml` never applies until you manually `gpy restart`. |
-| `GPY_RECONCILE_INTERVAL_SECS` | Overrides the periodic git-status reconcile cadence (default 45 seconds — a backstop scan of all watched repos that catches changes the watcher missed, gated on `agent.live_updates`). Set to a positive integer to tighten it; unset gives 45s, and `0` or a non-number is ignored with a warning (logged once) and gives 45s. Lowering this trades CPU for freshness on environments with unreliable watcher events. |
-| `GPY_WATCH_FORCE_POLL` | `1`/`true`/`yes`/`on` starts the file watchers on the polling backend with no health probe, for a machine already known to deliver no filesystem events (a repository on a WSL `/mnt/<drive>`, a network mount). Default: start native and swap to polling only if the probe sees nothing. |
-| `GPY_WATCH_PROBE_MS` | How long (default 2000 ms) the native watcher gets to deliver the probe's own event before it is replaced by polling. `0` disables the probe and keeps the native backend whatever it does. |
-| `GPY_WATCH_POLL_MS` | Interval (default 2000 ms) of the polling backend, once armed or forced. Each tick stat-walks every watched root. Poll mode compares file contents only inside the git directory, and not in its `objects` store. A working-tree file rewritten within the same second at the same size shows at the next prompt instead of live. |
-| `GPY_DEBOUNCE_MS` | Debounce window (default 100ms) for the git/language repo watcher: coalesces bursts of filesystem events (e.g. `git commit` touching many files) into a single reconcile. Rarely needs changing; lower it only if you need faster reaction to rapid successive changes and can tolerate more work per event. |
-| `GPY_SIGURG_THROTTLE_MS` | Minimum interval (default 150ms) between repaint notifications (`SIGURG`) sent to a shell. Reload and re-register notifications are never throttled. Raise it if a very active repo (e.g. a build script touching many files) causes visible prompt flicker from rapid-fire repaints; lower it if you need faster reaction and can tolerate more signal traffic. |
-| `GPY_WATCH_WORKTREE` | Default: worktree watching is **on**. Set to `0`/`false`/`no`/`off` to stop watching the working-tree files themselves (only `.git/` metadata is watched) — an unrecognised value is ignored with a warning (logged once), so `git.watch_worktree` decides; an empty value counts as unset. An explicit recognised env var always wins over the `git.watch_worktree` config key at agent init; newly registered repos pick up the change, existing watches keep their setting until re-registration (e.g. `cd` or agent restart). Turn this off on very large or slow-to-stat working trees where per-file watching is too expensive. **Tradeoff:** with it off, pure working-tree changes (new untracked file, editing/removing a tracked file) touch nothing under `.git`, so they fire no event — dirty/untracked state then surfaces only on the next `.git` write (commit/stage/checkout) or the periodic reconcile scan (default 45s), not instantly. If that lag matters, lower `GPY_RECONCILE_INTERVAL_SECS` to bound it more tightly (at the cost of more frequent full rescans). |
+Every diagnostic and fallback variable, with its default, is on [Environment Variables](environment-variables.md#agent-tuning-and-diagnostics); `gpy doctor` lists their effective values.
+The recovery sequence below uses `GPY_DISABLE_WATCHER`, `GPY_THEME_WATCH_POLL_MS`, `GPY_CONFIG_WATCH_POLL_MS` and `GPY_RECONCILE_INTERVAL_SECS`.
 
 **Recommended recovery sequence** when live updates seem stuck:
 
@@ -78,17 +65,9 @@ All of these are off or default unless set. Every `GPY_*` variable follows one r
 
 ### WSL
 
-Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/mnt/d`, ...) is on drvfs/9p, not on the Linux filesystem, and `inotify` may not report changes made to it. Symptoms are the ones above: git status stays stale at an idle prompt, and `git` is slower on every command.
+- **Polling on a Windows drive**: `GPY_WATCH_FORCE_POLL=1 gpy restart` starts the watcher on the polling backend (a 2-second stat walk, `GPY_WATCH_POLL_MS` to change it) without waiting for the 2-second health probe to notice a silent backend. Expect the periodic reconcile (45 s) and the repaint on each command to be what updates the prompt otherwise.
 
-- **Move the repository** into the Linux filesystem (`~/src/...`). Nothing else is as reliable.
-- **Keep it on the Windows drive and poll**: `GPY_WATCH_FORCE_POLL=1 gpy restart` starts the watcher on the polling backend (a 2-second stat walk, `GPY_WATCH_POLL_MS` to change it) without waiting for the 2-second health probe to notice a silent backend. Expect the periodic reconcile (45 s) and the repaint on each command to be what updates the prompt otherwise.
-- **Skip it**: `gpy config set` cannot set list values; edit `config.toml` and add `skip_paths = ["/mnt/c"]` under `[git]` to turn git detection off for everything on that drive.
-- **Windows tools in the language segment**: WSL appends the Windows `PATH` to yours (interop). If the language segment reports a Windows-side tool or is slow, put `[interop]` / `appendWindowsPath = false` in `/etc/wsl.conf` and run `wsl --shutdown`. The agent runs `node`, `python3`, `mise` and the other version commands by bare name, so only an extensionless Windows file of that name can be picked up; this has not been traced on a real machine.
-- **Icons show as boxes**: GPY cannot see the Windows terminal's fonts, so `gpy setup` reports them as undetectable and writes ASCII icons. Install a Nerd Font on Windows, select it in the terminal, then `gpy config set ui.show_icons true`.
-- **`gpy config open` does nothing**: `xdg-open` is usually missing on WSL. Set `$EDITOR`, or install `wslu` (it provides `wslview`, which GPY prefers on WSL).
-- **Keep `$HOME`, the cache and the runtime directory on the Linux filesystem.** The agent serialises its start with a file lock and keeps its socket there; neither is tested on a drvfs or network `$HOME`.
-
-`scripts/wsl-smoke.sh` checks the font behaviour and `gpy-agent oneshot git` against a repository on each filesystem; run it inside your distribution (`cd gpy-agent && cargo build --locked`, then `scripts/wsl-smoke.sh`) to record a WSL run of your own. CI runs it, plus the cross-shell contract suite, in `.github/workflows/wsl-smoke.yml`.
+Install-time and filesystem notes: [Windows (WSL)](../INSTALL.md#windows-wsl).
 
 ---
 
@@ -97,8 +76,8 @@ Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/
 - **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
 - **Agent won't start / crash loop**: Bash, Zsh and Fish restart the agent the same way, with no background supervisor process. Each shell probes the agent on the prompt, at most once per `check_interval_seconds`; when the probe fails it runs `gpy-agent start` in the background. A crashed agent is restarted on the next checked prompt, not while the shell sits idle. A silent agent (connected, no answer) costs up to `GPY_IPC_TIMEOUT_MS` (150 ms by default) on the prompt that runs the check, and counts as down. `gpy-agent start` replaces an older-protocol agent and evicts one that is wedged and honours `shutdown`; a wedged agent that ignores `gpy-agent stop` is never killed by a shell, so stop it by hand (`gpy-agent stop`, then `kill <pid>`). A supervisor loop left running by an earlier Fish version is stopped at the first Fish prompt. Relevant `config.toml` keys, in increasing order of aggressiveness:
   - `[agent.supervisor] enabled = false` — disable only the restarts (useful while debugging a crash so it doesn't keep respawning under you). Each shell still starts the agent once at startup and registers with a running agent, so live updates keep working.
-  - `[agent.supervisor] check_interval_seconds` (default 30) — health-check cadence.
-  - `[agent.supervisor] max_restart_attempts` (default 5) — restarts a shell attempts before it gives up (a good probe resets the count).
+  - `[agent.supervisor] check_interval_seconds` — health-check cadence.
+  - `[agent.supervisor] max_restart_attempts` — restarts a shell attempts before it gives up (a good probe resets the count).
   - `[agent] enabled = false` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process). No restart is attempted either.
 
   An exported `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` or `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` wins over `config.toml`; unset, `config.toml` decides (the theme export never exports these names). If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` in the environment fish starts with — `gpy_init.fish` skips loading entirely when *both* are off (`0`, `false`, `no` or `off`) there.
@@ -141,11 +120,11 @@ See [`gpy theme migrate`](cli-reference.md#gpy-theme-migrate-name) for the rewri
 
 The agent communicates over a Unix domain socket, resolved in priority order (`$XDG_RUNTIME_DIR` → `$XDG_CACHE_HOME` → `~/.cache/gpy/gpy.sock`) — see [Advanced Configuration § Socket Location](advanced-configuration.md#socket-location) for the full priority list and how to find the active path with `gpy status`.
 
-- **`GPY_AGENT_SOCKET_PATH`**: overrides socket resolution everywhere (client, server, CLI commands) — highest priority, useful when running a non-standard install or multiple agent instances side by side.
+- **`GPY_AGENT_SOCKET_PATH`**: overrides socket resolution everywhere (client, server, CLI commands); see [Environment Variables](environment-variables.md#gpy_agent_socket_path).
 - **`refusing socket directory`**: `gpy-agent start` only publishes its socket in a real directory you own. A symlinked directory, or one owned by another user (such as `/tmp` itself), is refused before anything is written there. A directory you own that is group- or world-writable is set to `0700` when it is GPY's default runtime directory, but refused and left unchanged when `GPY_AGENT_SOCKET_PATH` or `--socket` points into it: run `chmod 700` on it, or point `XDG_RUNTIME_DIR` or `GPY_AGENT_SOCKET_PATH` at a private directory.
 - **Socket path too long**: a Unix socket path holds at most 103 bytes on macOS and 107 on Linux, so a long `$HOME`, `XDG_RUNTIME_DIR` or `GPY_AGENT_SOCKET_PATH` fails on macOS first. `gpy-agent start`, `stop` and `status` then exit with an `Error:` line naming the path's length and the limit, followed by a `Remediation:` line. Shorten `XDG_RUNTIME_DIR`, or set `GPY_AGENT_SOCKET_PATH` to a short path in a private directory, such as `/tmp/gpy-$USER/gpy.sock` after `mkdir -m 700 /tmp/gpy-$USER` (every shell and command must see the same value). `gpy debug paths` still prints the rejected path.
 - **Segments missing on some renders**: when the agent is reached but answers later than `GPY_IPC_TIMEOUT_MS` (default 150 ms), or `GPY_IPC_COLD_TIMEOUT_MS` (default 500 ms) when the shell has nothing cached for the segment, the shell omits that segment for the render instead of forking a second, blocking `gpy-agent oneshot`. It appears on a later render once the agent's cache is warm. On a heavily loaded machine, raise `GPY_IPC_COLD_TIMEOUT_MS`. Only an agent that cannot be reached at all falls back to oneshot.
-- **Manual ping**: use `socat` against the resolved socket to confirm the agent responds at the transport level, independent of the shell integration — example command in [Advanced Configuration § Test IPC Connection](advanced-configuration.md#test-ipc-connection).
+- **Connection check**: `gpy status` connects to the agent and reports whether it answered, and `gpy debug paths` prints the socket path every shell uses; see [Advanced Configuration § Test IPC Connection](advanced-configuration.md#test-ipc-connection).
 
 ---
 
@@ -153,7 +132,7 @@ The agent communicates over a Unix domain socket, resolved in priority order (`$
 
 Binary-not-found errors, agent-won't-start, macOS Gatekeeper quarantine (`xattr -d com.apple.quarantine`), and the "Bash on macOS is too old" case are all covered in the [Installation Guide § Troubleshooting](../INSTALL.md#troubleshooting). Start there for anything related to getting GPY installed and on `PATH`, before assuming it's a runtime/watcher issue.
 
-`GPY_CONFIG_PATH` overrides the config file location if you need to point GPY at a non-standard config for debugging; it's checked before the XDG/`HOME` fallback chain.
+To point GPY at a non-standard config for debugging, set `GPY_CONFIG_PATH` ([Environment Variables](environment-variables.md#locations)).
 
 **Every new shell prints `No such file or directory` for a path ending at a space** (for example `/Users/alice`): the `source` line in the `# >>> gpy-init >>>` block holds an unquoted path, so a `HOME` or `XDG_DATA_HOME` containing a space splits it. Re-running the installer does not rewrite an existing block, so edit it by hand and wrap the path in double quotes (`source "/Users/alice smith/.local/share/gpy/zsh/gpy.zsh"`), or remove the block and re-run the installer. The installers quote the path, and refuse (before writing anything) a data directory containing `"`, `$`, a backtick, a backslash or a newline.
 

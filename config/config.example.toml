@@ -47,7 +47,7 @@
 [agent]
 # Enable the background agent process
 #enabled = true
-# Request timeout in seconds (1-300)
+# Agent-side request timeout in seconds (1-300); the shell's wait is GPY_IPC_TIMEOUT_MS
 #timeout_seconds = 5
 # Enable live prompt updates via signals
 #live_updates = true

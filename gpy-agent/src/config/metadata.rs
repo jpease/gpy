@@ -79,7 +79,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
                     .ok_or_else(|| invalid_value("agent.timeout_seconds", "agent timeout", v))?;
             Ok(())
         }),
-        description: "Socket timeout in seconds",
+        description: "Agent-side request timeout in seconds",
     },
     ConfigKeyMeta {
         key: "agent.live_updates",
@@ -542,9 +542,7 @@ fn parse_field<T: FromStr>(s: &str, field_path: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
 
-    use super::{
-        CONFIG_KEYS, DYNAMIC_KEY_PREFIXES, canonical_config_key, get_config_value, set_config_value,
-    };
+    use super::{CONFIG_KEYS, canonical_config_key, get_config_value, set_config_value};
     use crate::Error;
     use crate::config::validation::ValidationError;
     use crate::config::{Config, types};
@@ -670,78 +668,58 @@ mod tests {
         );
     }
 
-    /// CLI reference "Common Keys" only names registered keys.
-    #[test]
-    fn cli_reference_common_keys_are_registered() {
-        let doc = include_str!("../../../docs/user/cli-reference.md");
-        let section = doc
-            .split("**Common Keys:**")
-            .nth(1)
-            .expect("cli-reference.md has a Common Keys list");
-        let keys: Vec<&str> = section
-            .lines()
-            .skip(1)
-            .take_while(|line| line.starts_with("- `"))
-            .filter_map(|line| line.strip_prefix("- `")?.split('`').next())
+    /// Delete the characters TOML syntax adds around a value and collapse
+    /// whitespace, so `["clock", "git"]` and `clock git` compare equal.
+    fn normalise_default(text: &str) -> String {
+        let stripped: String = text
+            .chars()
+            .filter(|c| !matches!(c, '"' | '[' | ']' | ','))
             .collect();
-        assert!(!keys.is_empty(), "Common Keys list parsed empty");
-
-        let unknown: Vec<&str> = keys
-            .into_iter()
-            .filter(|key| match key.split_once('<') {
-                // `git.icons.<name>`: a placeholder stands for a family of
-                // registered keys or a dynamic prefix.
-                Some((stem, _)) => {
-                    !CONFIG_KEYS.iter().any(|meta| meta.key.starts_with(stem))
-                        && !DYNAMIC_KEY_PREFIXES.contains(&stem)
-                }
-                None => !CONFIG_KEYS.iter().any(|meta| meta.key == *key),
-            })
-            .collect();
-        assert!(
-            unknown.is_empty(),
-            "cli-reference.md Common Keys not in CONFIG_KEYS: {unknown:?}"
-        );
+        stripped.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
-    /// Every key row in `configuration-reference.md` is a registered key and
-    /// every registered key has a row.
-    ///
-    /// A `## `/`### ` heading of the form ``[section.name]`` (with backticks)
-    /// opens a section; any other heading closes it. While a section is open,
-    /// a table row whose first cell is a backticked name documents
-    /// `section.name`.
+    /// `section` of a heading that is exactly one backticked `[section]`.
+    fn section_of_heading(heading: &str) -> Option<&str> {
+        let name = heading.strip_prefix("`[")?.strip_suffix("]`")?;
+        (!name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c == '_' || c == '.'))
+        .then_some(name)
+    }
+
+    /// One backticked span and nothing else: its content.
+    fn single_span(cell: &str) -> Option<&str> {
+        let inner = cell.strip_prefix('`')?.strip_suffix('`')?;
+        (!inner.contains('`')).then_some(inner)
+    }
+
+    /// Every key row in `configuration-reference.md` is a registered key,
+    /// every registered key has a row, and each row's Default is what
+    /// `gpy config get` prints for a default config.
     #[test]
-    fn reference_doc_matches_registry() {
+    fn configuration_reference_lists_every_key_with_its_default() {
         let doc = include_str!("../../../docs/user/configuration-reference.md");
-        let mut documented: Vec<String> = Vec::new();
-        let mut section: Option<&str> = None;
-        for line in doc.lines() {
-            if line.starts_with('#') {
-                let level = line.chars().take_while(|c| *c == '#').count();
-                let has_space = line[level..].starts_with(' ');
-                if (1..=6).contains(&level) && has_space {
-                    section = None;
-                    if (2..=3).contains(&level) {
-                        section = line[level + 1..]
-                            .strip_prefix("`[")
-                            .and_then(|rest| rest.split_once("]`"))
-                            .filter(|(name, tail)| {
-                                tail.is_empty()
-                                    && !name.is_empty()
-                                    && name
-                                        .chars()
-                                        .all(|c| c.is_ascii_lowercase() || c == '_' || c == '.')
-                            })
-                            .map(|(name, _)| name);
-                    }
+        let mut documented: Vec<(String, String)> = Vec::new();
+        for table in crate::doc_tables::tables(doc) {
+            let (Some(section), Some(key_col), Some(default_col)) = (
+                section_of_heading(&table.heading),
+                table.column("Key"),
+                table.column("Default"),
+            ) else {
+                continue;
+            };
+            for row in &table.rows {
+                let (Some(key_cell), Some(default_cell)) = (row.get(key_col), row.get(default_col))
+                else {
+                    continue;
+                };
+                if let Some(key) = single_span(key_cell)
+                    && !key.is_empty()
+                    && key.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                {
+                    documented.push((format!("{section}.{key}"), default_cell.clone()));
                 }
-            } else if let (Some(active), Some(row)) = (section, line.strip_prefix("| `"))
-                && let Some((key, _)) = row.split_once('`')
-                && !key.is_empty()
-                && key.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-            {
-                documented.push(format!("{active}.{key}"));
             }
         }
         assert!(
@@ -752,16 +730,35 @@ mod tests {
         let undocumented: Vec<&str> = CONFIG_KEYS
             .iter()
             .map(|meta| meta.key)
-            .filter(|key| !documented.iter().any(|d| d == key))
+            .filter(|key| !documented.iter().any(|(d, _)| d.as_str() == *key))
             .collect();
         let unregistered: Vec<&String> = documented
             .iter()
+            .map(|(d, _)| d)
             .filter(|d| !CONFIG_KEYS.iter().any(|meta| meta.key == d.as_str()))
             .collect();
         assert!(
             undocumented.is_empty() && unregistered.is_empty(),
             "configuration-reference.md drift: registered keys without a table row: \
              {undocumented:?}; table rows not in CONFIG_KEYS: {unregistered:?}"
+        );
+
+        let defaults = Config::default();
+        let mismatches: Vec<String> = documented
+            .iter()
+            .filter_map(|(key, cell)| {
+                let meta = CONFIG_KEYS.iter().find(|meta| meta.key == key.as_str())?;
+                let expected = (meta.get)(&defaults);
+                let matches = single_span(cell).map_or(expected.is_empty(), |span| {
+                    normalise_default(span) == normalise_default(&expected)
+                });
+                (!matches).then(|| format!("{key}: Default cell {cell:?}, expected {expected:?}"))
+            })
+            .collect();
+        assert!(
+            mismatches.is_empty(),
+            "configuration-reference.md Default cells differ from `gpy config get`:\n{}",
+            mismatches.join("\n")
         );
     }
 

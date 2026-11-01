@@ -2,13 +2,13 @@
 
 # GPY: Guppy Prompt, Yay!
 
-GPY is a shell prompt for Fish, Zsh and Bash. Its git and language detection
-runs in a small background daemon that watches your repositories, so the
-prompt draws from a cache instead of running `git status` each time. When the
-cache is warm, the prompt waits at most 150 ms (`GPY_IPC_TIMEOUT_MS`) for the
-agent. With nothing cached yet it waits up to 500 ms
-(`GPY_IPC_COLD_TIMEOUT_MS`), so a busy machine still draws the segment, and
-otherwise draws without it.
+GPY is a shell prompt for Fish, Zsh and Bash. A small background agent watches
+your repositories, so the prompt shows git and language state without running
+`git status` on every command.
+
+If the agent is not running, the prompt still draws; it computes each segment
+itself, which is slower. Timeouts and other tuning:
+[Environment Variables](docs/user/environment-variables.md).
 
 <p align="center">
   <img src="./assets/demo.gif" alt="GPY prompt in a git repository" width="90%">
@@ -25,33 +25,36 @@ otherwise draws without it.
 - [Palettes](docs/user/palettes.md), including import of [tinted-theming](https://github.com/tinted-theming/schemes)
   base16/base24 schemes
 
-## Not too slow
+## Performance
 
-Time for one git-status prompt segment (median, ms; lower is better).
+Measured on pinned repositories, a single `gpy-agent oneshot` git request from
+GPY 0.4.0 was as fast as Starship 1.26.0 on small repositories and 1.3 to 2
+times faster on large ones (2026-10-17). These are `oneshot` process timings,
+not prompt latency.
 
-| Repository (tracked files) | GPY (v0.4.0) | Starship (1.26.0) |
-|---|---:|---:|
-| tiny-express (225) | 10.2 | 10.7 |
-| small-redis (1,680) | 11.4 | 11.6 |
-| medium-kubernetes (27,597) | **55.8** | 113.7 |
-| large-tensorflow (34,570) | **51.8** | 71.1 |
-
-- Measured as a single process call on pinned repositories, clean working tree
-- Apple M4 Max (macOS 27.0.1, git 2.56.0)
-
-These numbers time the no-daemon `oneshot` path, the like-for-like process
-comparison. With the daemon running, the same request on the two large
-repositories takes about 3.5 ms (median, including starting `socat`). The GPY
-agent adds git's untracked cache to a repository's index where
-`core.untrackedCache` is unset, and your own git commands can add it too; the
-benchmark primes it itself before timing. `gpy-agent oneshot` never adds it,
-GPY never writes your git config, and a value you set yourself is respected.
-See [how it was measured and how to run it
-yourself](docs/user/performance-vs-starship.md).
+The large-repository lead depends on git's untracked cache being present in the
+repository's index. The GPY agent adds git's untracked cache to a repository's
+index where `core.untrackedCache` is unset, and your own git commands can add
+it too; the benchmark primes it itself before timing. `gpy-agent oneshot` never
+adds it, GPY never writes your git config, and a value you set yourself is
+respected. With the daemon running, the same request on the two large
+repositories takes about 3.5 ms (median, including starting `socat`).
+[How it was measured, and how to run it yourself](docs/user/performance-vs-starship.md).
 
 ## Install
 
 > More info: [Installation & Troubleshooting Guide](docs/INSTALL.md).
+
+### Requirements
+
+- Bash and Fish talk to the agent through `socat`, or an `nc` that supports
+  `-U` (`netcat-openbsd`); Zsh needs neither. Without one, every prompt starts a
+  `gpy-agent oneshot` process. `gpy doctor` reports a missing client.
+- The default prompt uses [Nerd Font](https://www.nerdfonts.com) glyphs. `gpy
+  setup` switches to ASCII icons when it finds no Nerd Font; see
+  [Icons and Nerd Fonts](docs/INSTALL.md#icons-and-nerd-fonts).
+- Supported systems and shell versions:
+  [Supported Platforms and Shells](docs/INSTALL.md#supported-platforms-and-shells).
 
 ### Curl
 
@@ -91,6 +94,8 @@ install -m 755 gpy-agent/target/release-dist/gpy-agent gpy-agent/target/release-
 gpy status                                # agent status and diagnostics
 gpy doctor                                # health checks
 gpy theme list
+gpy theme use <name>                      # switch theme
+gpy config wizard                         # interactive theme, palette and segment setup
 gpy theme import ~/.config/starship.toml --name my-prompt
 gpy palette import scheme.yaml
 ```

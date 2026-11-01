@@ -5,7 +5,6 @@ This document defines the v1 plugin contract for community segments.
 For an end-to-end contributor workflow (plugin + theme), see:
 - [Build a Segment Plugin](build-segment-plugin.md)
 - [Create a Theme](create-theme.md)
-- [Plugin + Theme Authoring Guide](plugin-theme-authoring.md)
 - [Plugin Manifest Template](templates/plugin.toml)
 - [Theme Template with Plugin Segment Styling](templates/theme.plugin-segment.toml)
 
@@ -137,6 +136,12 @@ tokens collide are rejected (see Identifier normalization above).
 Plugin segment files are Fish scripts sourced with your full user privileges; they are Fish-only, so these variables are exported for Fish only.
 
 That export variable naming is an implementation detail, not a plugin-author API. Plugin authors should rely on the manifest + segment-file contract, not on private shell variables.
+
+### Fish file segments (Fish only)
+
+Plugin segments written as Fish scripts (`entry_type = "file"`) define `segment_<id>_detect` and `segment_<id>_render` functions in `segments/<id>.fish`.
+They load in Fish only; Bash and Zsh prompts skip them.
+Use script plugins (`entry_type = "script"`) for cross-shell compatibility across Bash, Zsh, and Fish.
 
 ## Script Segments
 
@@ -459,12 +464,7 @@ Important distinction:
 - `username` and `hostname` are the exception: they are real script plugins
   (see [Bundled Plugins](#bundled-plugins)) and no longer part of `gpy-core`
 
-For community examples, the best current references are first-party segment implementations such as:
-
-- [`fish/segments/clock.fish`](../../fish/segments/clock.fish)
-- [`fish/segments/directory.fish`](../../fish/segments/directory.fish)
-
-These are good reference implementations, but they are not distributed as standalone external plugins.
+For community examples, see the standalone script plugins in [`docs/dev/examples/plugins/`](examples/plugins/), which run across Bash, Zsh, and Fish.
 
 ## Versioning Policy
 

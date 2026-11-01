@@ -4,6 +4,8 @@
 
 Accepted (2026-10). Option A: keep the registry and its guards.
 
+Guards `reference_doc_matches_registry` and `cli_reference_common_keys_are_registered` were replaced by `configuration_reference_lists_every_key_with_its_default`.
+
 Code references (`path:line`) are to commit `28f2477`.
 
 ## Context

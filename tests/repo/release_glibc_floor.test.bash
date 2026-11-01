@@ -8,7 +8,7 @@
 #   (c) a Linux build step runs scripts/check-glibc-floor.sh on both binaries
 #   (d) the checker rejects newer or absent GLIBC_ versions and accepts the floor
 #   (e) the smoke job runs both x86_64 binaries in GPY_GLIBC_FLOOR_IMAGE
-#   (f) docs/INSTALL.md states the same floor
+#   (f) docs/INSTALL.md's Linux notes state the same floor
 
 # Single-quoted `${{ … }}` and `$var` below are literal workflow/script text.
 # shellcheck disable=SC2016
@@ -380,12 +380,7 @@ else
     fi
 fi
 
-linux_row="$(grep '^| Linux (x86_64, aarch64) |' "$INSTALL_DOC")"
-if grep -qF "glibc $floor or newer" <<<"$linux_row"; then
-    pass "the INSTALL.md platform table states glibc $floor"
-else
-    fail "the INSTALL.md Linux platform row does not say 'glibc $floor or newer'"
-fi
+# The floor is stated once in docs/INSTALL.md, in the Linux platform notes.
 linux_notes="$(awk '/^### Linux$/{on=1; next} on && /^### /{exit} on' "$INSTALL_DOC")"
 if grep -qF "glibc $floor or newer" <<<"$linux_notes"; then
     pass "the INSTALL.md Linux notes state glibc $floor"

@@ -1,6 +1,6 @@
-# Adding a New Segment
+# Adding a First-Party Segment
 
-A short checklist for adding a shell-rendered segment to the Fish prompt (for example a Docker context). To ship a segment outside this repository, see [Build a Segment Plugin](build-segment-plugin.md).
+How to add a new first-party segment to GPY. To create a third-party community segment, see [Build a Segment Plugin](build-segment-plugin.md).
 
 ## 1. Decide where the data comes from
 
@@ -11,68 +11,68 @@ A short checklist for adding a shell-rendered segment to the Fish prompt (for ex
 | Command output under ~10 ms | Shell-only |
 | Slower command, external API, complex parsing | Agent-assisted |
 
-A shell-only segment runs synchronously on every prompt, so everything it does counts against the prompt budget (`prompt_render`: 20 ms target, 50 ms max in `benchmarks/perf-budgets.json`).
+A shell-only segment runs synchronously on prompt render, so everything it does counts against the prompt budget (`prompt_render`: 20 ms target, 50 ms max in `benchmarks/perf-budgets.json`).
 
-## 2. Write the segment file
+## 2. Implementation Routes
 
-Segments live in `fish/segments/<name>.fish` and define two functions, which `fish_prompt` calls for every name in `$__enabled_segments`:
+There are two routes for introducing a new first-party segment:
 
-- `segment_<name>_detect`: return 0 to show the segment, 1 to hide it. Keep it fast and fail early.
-- `segment_<name>_render`: print the segment, using the `gpy_section_*` helpers from `fish/core/renderer.fish` for consistent delimiters.
+### Route A: Bundled Script Plugin (Default)
 
-```fish
-# Docker context segment: shown when the active context is not "default".
+The default route is a bundled script plugin under `plugins/<id>/`, modelled on `plugins/hostname` and `plugins/username`.
 
-function segment_docker_detect
-    command -v docker >/dev/null 2>&1; or return 1
-    set -l context (docker context show 2>/dev/null)
-    test -n "$context" -a "$context" != default
-end
+Bundled script plugins run across Bash, Zsh, and Fish without modifying the core Rust agent binary. `gpy setup` automatically installs bundled plugins into the data directory (`$XDG_DATA_HOME/gpy/plugins`).
 
-function segment_docker_render
-    set -l context (docker context show 2>/dev/null)
-    gpy_section_start blue white "docker $context"
-end
+#### Plugin Structure
+
+Create the plugin directory under `plugins/<id>/`:
+```text
+plugins/<id>/
+├── plugin.toml
+├── segments/
+│   └── <id>.toml
+└── bin/
+    └── <id>.sh
 ```
 
-Common detect checks:
+#### Packaging and Release Checklists
 
-```fish
-command -v docker >/dev/null 2>&1; or return 1   # command exists
-test -f .dockerenv; or return 1                  # file exists
-test -n "$DOCKER_HOST"; or return 1              # environment variable set
-```
+When adding a bundled script plugin, add the new files to all expected-entry lists in packaging and tests:
+1. `tests/repo/release_packaging.test.bash` (the plugin tar/zip entries and the shell-files archive check)
+2. `scripts/package-release.sh` (archive entry list and `SHELL_FILES_REQUIRED`)
 
-## 3. Enable it
+Run `git grep -n 'plugins/username/plugin.toml' -- scripts tests` to find all four locations.
 
-Add the segment name to `ui.enabled_segments` in `config.toml`; segments render left to right in that order:
+### Route B: Agent-Rendered Segment (Rust resolver plus IPC)
+
+Segments that require direct Rust performance, low-level system APIs, or complex daemon caching (such as `git` or `language`) can be implemented as agent-rendered segments.
+
+Because this route modifies the IPC `Message` enum, schema protocols, and agent resolvers, **it requires an issue and maintainer approval first**.
+
+## 3. Enable It
+
+Add the segment name to `ui.enabled_segments` in `config.toml`:
 
 ```toml
 [ui]
-enabled_segments = ["clock", "duration", "language", "directory", "docker", "git"]
+enabled_segments = ["clock", "duration", "language", "directory", "<id>", "git"]
 ```
 
 ## 4. Test
 
-1. The segment appears when it should (`docker context use remote-prod`).
-2. It disappears when it should (`docker context use default`, or `docker` missing from `PATH`).
+1. The segment appears when active.
+2. It disappears when inactive or when required commands/files are missing.
 3. Colors and icons render correctly in your theme.
-4. `time fish_prompt` in an interactive shell stays within the prompt budget.
+4. Shell prompt render stays within prompt latency budgets.
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| Segment not appearing | `detect` returns 1, or the name is not in `ui.enabled_segments` | Debug `segment_<name>_detect` directly |
+| Segment not appearing | Script exited non-zero or empty, or name not in `ui.enabled_segments` | Test script directly and check `ui.enabled_segments` |
 | Wrong colors | Theme not loaded | `gpy-agent theme export --shell fish \| source` |
-| Slow prompt | Expensive detection | Move the work into the agent |
-
-## Common mistakes
-
-- Not checking that a command exists before running it.
-- Expensive work in `detect`, which runs on every prompt.
-- Not handling empty output or command failures.
-- Leaving stderr unredirected, so errors print into the prompt.
+| Slow prompt | Expensive detection | Cache with `ttl_secs` or move work into daemon |
 
 ## Related
 
-- [Troubleshooting Guide](../user/troubleshooting.md) - When a segment does not render
-- [Benchmarking Methodology](performance/benchmarking.md) - When the prompt is slow
+- [Build a Segment Plugin](build-segment-plugin.md) - Plugin authoring guide
+- [Plugin Framework](plugins.md) - Plugin discovery and execution contract
+- [Benchmarking Methodology](performance/benchmarking.md) - Prompt performance and budgets

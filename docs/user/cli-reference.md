@@ -13,6 +13,12 @@ Checks and validations mark each result with a colored ✓, ✗ or ! on a termin
 ## Quick Reference
 
 ```bash
+# Install
+gpy setup [--shell <shell>]  # Wire GPY into Fish, Zsh or Bash
+gpy setup --check             # Check the shell files and install path; change nothing
+gpy setup --redetect-icons   # Re-run Nerd Font detection for ui.show_icons
+gpy uninstall [--yes] [--purge-config]  # Remove GPY's integration, rc blocks, cache and binaries
+
 # Agent lifecycle
 gpy start                    # Start the background agent
 gpy stop                     # Stop the background agent
@@ -61,17 +67,73 @@ gpy config wizard            # Launch the interactive configuration wizard
 # Diagnostics
 gpy doctor                   # Run health checks
 gpy completions <shell>      # Generate shell completions
-
-# Install
-gpy setup [--shell <shell>]  # Wire GPY into Fish, Zsh or Bash
-gpy setup --check             # Check the shell files and install path; change nothing
-gpy setup --redetect-icons   # Re-run Nerd Font detection for ui.show_icons
-gpy uninstall [--yes] [--purge-config]  # Remove GPY's integration, rc blocks, cache and binaries
 ```
 
 ---
 
 ## Commands
+
+### Shell Setup
+
+```bash
+gpy setup [--shell fish|zsh|bash] [--from <dir>] [--non-interactive]
+gpy setup --check [--shell fish|zsh|bash] [--from <dir>]
+gpy setup --redetect-icons [--non-interactive]
+```
+
+Installs GPY's scripts for one shell and wires them into your rc file. Homebrew
+and source builds finish with this command; the curl installer does the same
+work itself. Safe to re-run. The shell comes from `--shell`, then `GPY_SHELL`,
+then `$SHELL`. `--from` names a directory holding the `fish/`, `zsh/` and
+`bash/` trees; without it, `GPY_SHARE_DIR`, then the `share/gpy` beside the
+binary, then the source checkout it was built in, then the data root
+(`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`) are tried. The shell trees
+and bundled plugins are installed into that data root; your config, themes and
+plugins stay in `~/.config/gpy`. See
+[`gpy setup`](../INSTALL.md#gpy-setup) for the full list of steps.
+
+The Bash block loads GPY only in interactive shells. Setup rewrites an
+unedited Bash block or login loader from an earlier release to that form and
+prints `Updated the GPY block in <file>`; a block whose text differs is left
+as it is, and setup says so.
+
+A theme file under `~/.config/gpy/themes/` named after a builtin theme replaces
+that builtin entirely. Setup moves one that is byte-identical to a version of
+the builtin released up to 0.7.1 to `<name>.toml.bak` and reports it, so the
+builtin applies again; an edited copy or a symlink is kept and listed. Set
+`ui.retire_unmodified_themes` to `false` to keep every copy.
+
+`--check` validates what setup would need and writes nothing: the source tree
+must hold every file the chosen shell needs (for Fish and Zsh, the script
+runner in `bash/core/` too), and the install path must be safe to source from
+an rc file. It prints `ok: <shell> files in <source> can be installed to <dir>`
+and exits 0, or prints the error setup itself would give and exits 1. The
+installers run it with the downloaded `gpy` before replacing any binary.
+
+The last step picks `ui.show_icons`: it detects whether a Nerd Font is
+installed and, on a terminal, shows a sample prompt line and asks whether the
+icons render (detection only sets the default answer). An existing config is
+left alone. `--redetect-icons` runs only this step and overwrites
+`ui.show_icons` in place, keeping the rest of the file; use it after
+installing or removing a Nerd Font. [`GPY_NERD_FONT`](environment-variables.md#setup) answers the question
+without a prompt, as does `--non-interactive`,
+which takes the detected default.
+
+### Uninstall
+
+```bash
+gpy uninstall [--yes] [--purge-config]
+```
+
+Removes what `gpy setup` and the installers create: the shell scripts and
+completions, the GPY block in your rc files (restored byte for byte), the fish
+prompt link (restoring your previous prompt), the cache and runtime files, and
+the running agent. `~/.config/gpy` is kept unless you pass `--purge-config`.
+The binaries are deleted only when this `gpy` lives in `~/.local/bin`, where the
+installers put it; otherwise remove them with the tool that installed them
+(`brew uninstall gpy` for Homebrew). It asks `Uninstall GPY? [y/N]`; with no
+terminal to answer, it removes nothing and exits `1` unless you pass `--yes`.
+See [Uninstallation](../INSTALL.md#uninstallation).
 
 ### Agent Lifecycle
 
@@ -114,14 +176,14 @@ cache directory it could not create and why. When `start` cannot tell whether
 an agent already owns the socket, it leaves the socket alone and exits `1`.
 The daemon runs in `/`, so it never keeps the
 directory you started it from (or its volume) busy; a relative `--socket`,
-`GPY_AGENT_SOCKET_PATH`, `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
+[`GPY_AGENT_SOCKET_PATH`](environment-variables.md#gpy_agent_socket_path), `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
 resolves against that directory.
 
 **Exit Codes:** `0` agent running afterwards (started, replaced an older one,
 already running, busy, or a newer one left in place), `1` error, `6` disabled
 by `agent.enabled = false`, `2` usage error.
 
-The socket's directory, default or `GPY_AGENT_SOCKET_PATH`/`--socket`, must
+The socket's directory, default or [`GPY_AGENT_SOCKET_PATH`](environment-variables.md#gpy_agent_socket_path)/`--socket`, must
 be a real directory you own. `gpy start` exits `1` naming the directory if it
 is a symlink or belongs to another user, so a socket directly in `/tmp` is
 refused. If the directory is yours but group- or world-writable, GPY's default
@@ -943,39 +1005,11 @@ Set a configuration value.
 
 Updates the configuration file and reloads the running agent.
 
-**Common Keys:**
-- `agent.enabled` - Enable/disable background agent
-- `agent.live_updates` - Enable/disable live prompt updates
-- `git.enabled` - Deprecated: use `gpy disable git` / `gpy enable git`
-- `git.show_upstream` - Show/hide ahead/behind indicators
-- `language.enabled` - Deprecated: use `gpy disable language` / `gpy enable language`
-- `language.show_versions` - Show/hide version numbers
-- `ui.theme` - Active theme name
-- `ui.show_icons` - Show/hide Nerd Font icons
-- `ui.transient_prompt` - Collapse submitted prompts to time, prompt symbol and command (Fish 4.2+, Zsh)
-- `ui.directory.display` - Directory segment display mode: `basename`, `abbreviated`, `truncated`, or `full`
-- `ui.directory.truncation_length` - Path components kept when `display = "truncated"` (default `3`)
-- `ui.directory.truncation_symbol` - Prefix shown before a truncated path, e.g. `…/` (default empty)
-- `ui.directory.max_length` - Maximum displayed length for the rendered directory string
-- `language.display` - Language segment display: `icon` or `text`
-- `language.filter` - Languages to show: `all`, `primary`, or top N (e.g. `3`)
-- `language.detection_mode` - Detection strategy: `markers` (default), `content`, or `hybrid`
-- `language.icons.<lang>` - Icon for one language, e.g. `language.icons.rust`; aliases such as `rs` resolve to the same entry
-- `git.max_ahead_behind` - Maximum ahead/behind count to report (`0` = unlimited)
-- `git.stash_enabled` - Enable/disable the stash count
-- `git.icon_set` - Glyph set for stash/detached/in-progress icons: `unicode` or `nerd_font`
-- `git.icons.<name>` - Git indicator icon; `<name>` is one of `ahead`, `behind`, `staged`, `unstaged`, `untracked`, `conflicts`, `stash`, `detached`, `in_progress`
-- `ui.palette` - Named color palette; must exist (checked before writing)
+`gpy config list` prints every key with its description; the [Configuration Reference](configuration-reference.md) gives each key's type, default and range.
 
 List-valued keys (`git.skip_paths`, `language.enabled_languages`, `ui.enabled_segments`) can be read with `gpy config get` (space-separated) but not set; `ui.enabled_segments` is edited with `gpy enable` / `gpy disable`, the others in `config.toml` (`gpy config open`). `gpy config list` shows every registered key.
 
 **Boolean values accept:** `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`
-
-**Directory display modes:**
-- `basename` - Show only the current directory name, for example `project`
-- `abbreviated` - Show the path with intermediate components shortened to their first character, for example `~/w/p/project`; a hidden directory keeps its leading dot plus one character (`~/.c/fish`)
-- `truncated` - Keep the last `ui.directory.truncation_length` path components, prefixed with `ui.directory.truncation_symbol`, for example `…/work/project`
-- `full` - Show the whole path with your home directory shown as `~`, for example `~/work/project`
 
 `ui.directory.max_length` applies after the directory mode is rendered, so it can truncate a basename, abbreviated, truncated, or full path if needed.
 
@@ -999,7 +1033,7 @@ Set git.show_upstream = false
 
 Open the active config file in your default editor.
 
-This command respects `GPY_CONFIG_PATH` when set. Otherwise it opens the standard config path under `XDG_CONFIG_HOME` or `~/.config/gpy/config.toml`. If the file does not exist yet, GPY creates it first as a short comment-only file that points at the [configuration reference](configuration-reference.md); defaults are not written out.
+This command respects [`GPY_CONFIG_PATH`](environment-variables.md#locations) when set. Otherwise it opens the standard config path under `XDG_CONFIG_HOME` or `~/.config/gpy/config.toml`. If the file does not exist yet, GPY creates it first as a short comment-only file that points at the [configuration reference](configuration-reference.md); defaults are not written out.
 
 Editor selection order:
 - `$VISUAL`
@@ -1339,68 +1373,6 @@ gpy completions zsh > ~/.zsh/completions/_gpy
 
 ---
 
-### Shell Setup
-
-```bash
-gpy setup [--shell fish|zsh|bash] [--from <dir>] [--non-interactive]
-gpy setup --check [--shell fish|zsh|bash] [--from <dir>]
-gpy setup --redetect-icons [--non-interactive]
-```
-
-Installs GPY's scripts for one shell and wires them into your rc file. Homebrew
-and source builds finish with this command; the curl installer does the same
-work itself. Safe to re-run. The shell comes from `--shell`, then `GPY_SHELL`,
-then `$SHELL`. `--from` names a directory holding the `fish/`, `zsh/` and
-`bash/` trees; without it, `GPY_SHARE_DIR`, then the `share/gpy` beside the
-binary, then the source checkout it was built in, then the data root
-(`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`) are tried. The shell trees
-and bundled plugins are installed into that data root; your config, themes and
-plugins stay in `~/.config/gpy`. See
-[`gpy setup`](../INSTALL.md#gpy-setup) for the full list of steps.
-
-The Bash block loads GPY only in interactive shells. Setup rewrites an
-unedited Bash block or login loader from an earlier release to that form and
-prints `Updated the GPY block in <file>`; a block whose text differs is left
-as it is, and setup says so.
-
-A theme file under `~/.config/gpy/themes/` named after a builtin theme replaces
-that builtin entirely. Setup moves one that is byte-identical to a version of
-the builtin released up to 0.7.1 to `<name>.toml.bak` and reports it, so the
-builtin applies again; an edited copy or a symlink is kept and listed. Set
-`ui.retire_unmodified_themes` to `false` to keep every copy.
-
-`--check` validates what setup would need and writes nothing: the source tree
-must hold every file the chosen shell needs (for Fish and Zsh, the script
-runner in `bash/core/` too), and the install path must be safe to source from
-an rc file. It prints `ok: <shell> files in <source> can be installed to <dir>`
-and exits 0, or prints the error setup itself would give and exits 1. The
-installers run it with the downloaded `gpy` before replacing any binary.
-
-The last step picks `ui.show_icons`: it detects whether a Nerd Font is
-installed and, on a terminal, shows a sample prompt line and asks whether the
-icons render (detection only sets the default answer). An existing config is
-left alone. `--redetect-icons` runs only this step and overwrites
-`ui.show_icons` in place, keeping the rest of the file; use it after
-installing or removing a Nerd Font. `GPY_NERD_FONT` answers the question
-without a prompt (see the environment table), as does `--non-interactive`,
-which takes the detected default.
-
-### Uninstall
-
-```bash
-gpy uninstall [--yes] [--purge-config]
-```
-
-Removes what `gpy setup` and the installers create: the shell scripts and
-completions, the GPY block in your rc files (restored byte for byte), the fish
-prompt link (restoring your previous prompt), the cache and runtime files, and
-the running agent. `~/.config/gpy` is kept unless you pass `--purge-config`.
-The binaries are deleted only when this `gpy` lives in `~/.local/bin`, where the
-installers put it; otherwise remove them with the tool that installed them
-(`brew uninstall gpy` for Homebrew). It asks `Uninstall GPY? [y/N]`; with no
-terminal to answer, it removes nothing and exits `1` unless you pass `--yes`.
-See [Uninstallation](../INSTALL.md#uninstallation).
-
 ### Shell Completion
 
 Tab-completion for the `gpy` CLI is installed automatically by the standard installers: the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up fish. Completions are regenerated with every install or upgrade, so they stay in sync with your binary.
@@ -1414,104 +1386,6 @@ Tab-completion for the `gpy` CLI is installed automatically by the standard inst
 - `gpy enable <TAB>` and `gpy disable <TAB>` — available segment names
 
 The `gpy completions <shell>` command (documented above) is the underlying generator. The standard installers run it for you. Completions require the `gpy` binary to be on your PATH.
-
----
-
-## Common Workflows
-
-### Minimal Prompt for Screenshots
-
-```bash
-gpy disable git
-gpy disable language
-gpy disable clock
-gpy theme use text
-```
-
-### Performance Mode
-
-Disable expensive operations for faster prompts:
-
-```bash
-gpy disable git
-gpy disable language
-```
-
-### Full-Featured Prompt
-
-```bash
-gpy theme use default
-gpy enable git
-gpy enable language
-gpy config set language.show_versions true
-```
-
-### Theme Customization
-
-```bash
-# Create a custom theme
-gpy theme new mytheme
-
-# Edit the theme file
-$EDITOR ~/.config/gpy/themes/mytheme.toml
-
-# Activate your theme
-gpy theme use mytheme
-```
-
-### Troubleshooting
-
-```bash
-# Check everything is working
-gpy doctor
-
-# View detailed configuration
-gpy config show
-
-# Check agent status
-gpy status
-
-# Restart if needed
-gpy restart
-```
-
----
-
-## Configuration File
-
-The main configuration file is located at `~/.config/gpy/config.toml`.
-
-You can edit it directly or use `gpy config set` commands to update values programmatically.
-
-**Example config.toml:**
-
-```toml
-[agent]
-enabled = true
-timeout_seconds = 5
-live_updates = true
-
-[git]
-enabled = true
-show_upstream = true
-timeout_seconds = 10
-
-[language]
-enabled = true
-show_versions = true
-cache_ttl_hours = 24
-
-[ui]
-show_icons = true
-theme = "default"
-enabled_segments = ["clock", "duration", "language", "directory", "git"]
-
-[ui.directory]
-display = "basename"
-truncation_length = 3
-truncation_symbol = ""
-max_length = 80
-```
 
 ---
 
@@ -1532,45 +1406,18 @@ commands.
 
 ---
 
-## Environment Variables
-
-GPY reads the following environment variables:
-
-| Variable | Effect |
-|---|---|
-| `GPY_CONFIG_PATH` | Explicit path to `config.toml`; checked before the XDG and `$HOME` locations. An empty value is ignored. |
-| `XDG_CONFIG_HOME` | Config root: `$XDG_CONFIG_HOME/gpy` (default `~/.config/gpy`), also where user themes and palettes live. |
-| `XDG_CACHE_HOME` | Cache root: `$XDG_CACHE_HOME/gpy` (default `~/.cache/gpy`): theme exports, instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
-| `XDG_RUNTIME_DIR` | Runtime root: `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
-| `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](#gpy-start)). |
-| `HOME` | Fallback for the config and cache roots when the XDG variables are unset. |
-| `GPY_NERD_FONT` | Tells `gpy setup` what to assume about icons instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown` (fonts cannot be detected, so ASCII icons), `auto` (detect); anything else is ignored with one warning and falls through to detection. Setting a recognised value other than `auto` skips the prompt. `gpy doctor` lists the effective value in its [Agent tuning](troubleshooting.md#diagnostic-and-fallback-environment-variables) section. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. |
-| `VISUAL`, `EDITOR` | The editor `gpy config open` launches, in that order, before the platform fallback. |
-| `GPY_DEBUG_LOG` | Path of the agent's trace log; the agent writes its debug lines there only when this is set; an empty value leaves logging off and warns once. (`GPY_DEBUG=1` turns on the *shell* integrations' own debug output.) See [Troubleshooting](troubleshooting.md). |
-| `GPY_IPC_TIMEOUT_MS` | Shell integrations only (Fish, Zsh, Bash alike): how long a prompt render waits for the agent's reply, in milliseconds. Default `150`. A value that is not a non-negative integer falls back to the default. Export it in `config.fish`, `.zshrc` or `.bashrc` before the GPY integration is sourced. An agent that is reached but replies later is not recomputed with a `gpy-agent oneshot` fork: that segment is omitted for the render. |
-| `GPY_IPC_COLD_TIMEOUT_MS` | Shell integrations only: the same wait when the prompt has nothing to show for a segment yet (a git instant cache that is cold, a directory not yet rendered in this shell), so a loaded machine still draws it. Default `500`, never shorter than `GPY_IPC_TIMEOUT_MS`; set and validated like `GPY_IPC_TIMEOUT_MS`. |
-| `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` | Shell integrations only: seconds after which the git instant-cache entry counts as stale. A stale entry is still shown at once and triggers a throttled background refresh. Default `5`; set and validated like `GPY_IPC_TIMEOUT_MS`. |
-| `GPY_LANGUAGE_CACHE_TTL_SECONDS` | Shell integrations only: the same for the language instant-cache entry. Default `30`. |
-
-`gpy debug paths` prints what the path variables resolve to on the current machine. An empty `HOME` counts as unset in every shell and in the agent: the passwd database's home directory is used instead.
-
-### Fish-only switches
-
-These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY_SHOW_STATUS` is read on every render.
-
-| Switch | Effect |
-|---|---|
-| `GPY_SHOW_STATUS` | `0` hides the standalone `✔`/`✖` exit-status indicator printed before the prompt symbol. Default `1`. The indicator is never shown while the prompt symbol itself is rendered by the agent (it is already coloured by the exit status), so this matters mainly when the agent is unavailable. |
-
-### Shell commands
+## Shell commands
 
 Functions the integration defines in Fish, Bash and Zsh (not executables).
 
 | Command | Effect |
 |---|---|
 | `gpy-prompt-reload` | Re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file, which a stopped agent leaves stale), so it works whether the agent is running, disabled or stopped. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. An invalid `config.toml` applies the built-in defaults, shows the agent's `Warning: [Config loading] …` line and returns 0. In Fish, `prompt-reload` is its deprecated former name. |
+| `gpy-prompt-debug [validate\|benchmark\|cache\|vars]` | Fish only: the Fish integration's debug helper. |
 
-Fish also has `gpy-prompt-debug` (`validate`, `benchmark`, `cache`, `vars`; `prompt-debug` is its deprecated former name). In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug commands.
+`prompt-reload` and `prompt-debug` (Fish) are deprecated; use `gpy-prompt-reload` and `gpy-prompt-debug` instead.
+
+In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug commands.
 
 ---
 
@@ -1602,6 +1449,7 @@ reported as an error.
 
 ## See Also
 
+- [Environment Variables](environment-variables.md) - Every `GPY_*` and XDG variable GPY reads
 - [Advanced Configuration](advanced-configuration.md) - Detailed customization options
 - [Installation + Troubleshooting](../INSTALL.md#troubleshooting) - Common issues and solutions
 - [Architecture](../dev/architecture.md) - System design and internals

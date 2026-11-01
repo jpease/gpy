@@ -10,83 +10,7 @@ This guide covers advanced configuration options for GPY beyond the basic setup.
 
 GPY uses TOML configuration files stored in `~/.config/gpy/`.
 
-### Main Configuration
-
-**File:** `~/.config/gpy/config.toml`
-
-```toml
-[git]
-# Skip git operations in these paths (improves performance for large repos)
-skip_paths = [
-    "/very/large/monorepo",
-    "/network/mounted/repos"
-]
-
-# Timeout for git operations in seconds
-timeout_seconds = 5
-
-[language]
-# Enable/disable language detection entirely. Default: true
-enabled = true
-
-# Enable/disable version detection for languages. Default: true
-show_versions = true
-
-# Cache TTL for language version, mise and virtualenv lookups in hours. Default: 24
-cache_ttl_hours = 24
-
-# List of languages to detect (empty means all). Example: ["rust", "python"]
-enabled_languages = []
-
-# Display mode for languages: "icon" or "text". Default: "icon"
-display = "icon"
-
-# Filter detected languages: "all", "primary", or top N (e.g., "3"). Default: "all"
-# - "all": Show all detected languages (after confidence threshold).
-# - "primary": Show only the single most confident language.
-# - "N" (e.g., "3"): Show the top N most confident languages.
-filter = "all"
-
-# Minimum confidence score (0.0-1.0) for a language to be displayed. Default: 0.1
-# Languages with a confidence below this threshold will be hidden. Applies to
-# detection_mode "content" and "hybrid" only (default "markers" gives every
-# language confidence 1.0).
-confidence_threshold = 0.1
-
-[ui]
-# Theme name (matches filename in themes/)
-theme = "default"
-
-[ui.directory]
-# Directory segment display mode: "basename", "abbreviated", "truncated", or "full"
-display = "basename"
-# Path components kept when display = "truncated". Default: 3
-truncation_length = 3
-# Prefix shown before a truncated path (e.g. "…/"). Applies only to "truncated". Default: ""
-truncation_symbol = ""
-# Maximum displayed length of the rendered directory string
-max_length = 80
-# Anchor the path at the enclosing git repo root (affects "truncated"/"full"). Default: false
-truncate_to_repo = false
-
-```
-
-`ui.directory.display` controls how much path context the directory segment shows:
-
-- `basename` shows only the current directory name
-- `abbreviated` shortens intermediate path components to their first character (a hidden directory keeps its leading dot plus one character, so `~/.config/fish` becomes `~/.c/fish`) while keeping the leaf directory
-- `truncated` keeps the last `ui.directory.truncation_length` path components, prefixed with `ui.directory.truncation_symbol` (neither applies to other display modes)
-- `full` shows the whole path with your home directory shown as `~` (for example `~/work/project`)
-
-`ui.directory.max_length` is applied after that rendering step. For example, a `full` path can still be shortened with an ellipsis if it exceeds the configured maximum. A shortened path starts with a one-character `…` followed by the tail; at `max_length = 1` the ellipsis is dropped and the last character is shown. Wide characters (CJK, emoji) take two terminal columns, so a CJK path can be wider on screen than `max_length`.
-
-`ui.directory.truncate_to_repo` (default `false`) anchors the displayed path at
-the enclosing git repository root: the repo folder becomes the leading
-component and everything above it is dropped. It affects `truncated` and `full`
-(not `basename`/`abbreviated`), and applies before `max_length`. Outside a git
-repo it has no effect. A repo rooted at your home directory (e.g. a dotfiles
-repo) is not used as an anchor, so paths under it still show as `~/…`. The Starship preset enables it via
-`gpy theme use starship --force`.
+Every key, its type, default and range: [Configuration Reference](configuration-reference.md). Copy-paste recipes: [Configuration Examples](configuration-examples.md).
 
 ### Theme Configuration
 
@@ -94,8 +18,8 @@ repo) is not used as an anchor, so paths under it still show as `~/…`. The Sta
 `config/themes/*.toml` shipped with GPY.
 
 A theme file has exactly these sections: `[ui]` (the root prompt symbol
-`root_prompt_icon`/`root_prompt_color`, `two_line` and a few other display
-defaults; the non-root prompt symbol is `[segments.character]`
+`root_prompt_icon`/`root_prompt_color`, `two_line` and other display keys, all
+listed in [Theme Customization](theme-customization.md#theme-ui-keys); the non-root prompt symbol is `[segments.character]`
 `success_symbol`/`success_color`, and `ui.prompt_icon`/`ui.prompt_color` are
 deprecated), the four glyph tables `[ui.prompt_open]`,
 `[ui.prompt_close]`, `[ui.segment_open]`, `[ui.segment_close]`, an optional
@@ -148,9 +72,10 @@ is unset). In Fish, set the variable before the GPY block in `config.fish`
 environment the shell starts with; the flag functions read it at call time. In
 Bash and Zsh, export it before the GPY block in `.bashrc` or `.zshrc`.
 
-```fish
+```bash
 # Disable file watcher (no live git status updates)
-set -gx GPY_DISABLE_WATCHER 1
+export GPY_DISABLE_WATCHER=1   # Bash, Zsh
+set -gx GPY_DISABLE_WATCHER 1  # Fish
 ```
 
 To hide the language segment, turn it off in `config.toml` rather than in
@@ -165,9 +90,10 @@ enabled = false
 
 ### Debug Logging
 
-```fish
+```bash
 # Enable debug logging to file
-set -gx GPY_DEBUG_LOG /tmp/gpy-debug.log
+export GPY_DEBUG_LOG=/tmp/gpy-debug.log   # Bash, Zsh
+set -gx GPY_DEBUG_LOG /tmp/gpy-debug.log  # Fish
 
 # Then start agent
 gpy start
@@ -175,6 +101,8 @@ gpy start
 # View logs
 tail -f /tmp/gpy-debug.log
 ```
+
+Every variable GPY reads: [Environment Variables](environment-variables.md).
 
 ---
 
@@ -201,7 +129,7 @@ Reduce timeout for faster failure on slow repositories:
 
 ```toml
 [git]
-timeout_seconds = 2  # Default: 5
+timeout_seconds = 2
 ```
 
 ### Git Branch Truncation
@@ -210,7 +138,7 @@ Limit the displayed length of git branch names to prevent long branch names from
 
 ```toml
 [git]
-max_branch_length = 30  # Default: 0 (unlimited; branch names are shown whole by default)
+max_branch_length = 30
 ```
 
 When a branch name exceeds the configured length, it will be truncated with an ellipsis (…):
@@ -219,27 +147,15 @@ When a branch name exceeds the configured length, it will be truncated with an e
 - Branch: `feature/implement-advanced-kubernetes-integration-with-monitoring`
 - Displayed (with `max_branch_length = 30`): `feature/implement-advanced-k…`
 
+**Use cases:**
+- Teams with long branch naming conventions
+- Narrow terminal widths
+
 ### Git Icon Set & Stash
 
-Two `[git]` keys control the new state/stash/detached-HEAD indicators
-(the four pre-existing status icons — staged/unstaged/untracked/conflicts —
-are unaffected by either):
+Which indicators `icon_set` changes, and the glyphs each set uses: [`[git]`](configuration-reference.md#git) and [`[git.icons]`](configuration-reference.md#giticons).
 
-```toml
-[git]
-icon_set = "unicode"    # or "nerd_font"
-stash_enabled = true     # default; set false to skip `git stash list` entirely
-```
-
-- `icon_set`: selects the default glyphs for the stash (Unicode `≡` / Nerd Font
-  `nf-fa-archive`), detached-HEAD (Unicode `➦` / Nerd Font `nf-fa-code_fork`),
-  and in-progress (Unicode `↻` / Nerd Font `nf-fa-refresh`) indicators. The
-  branch glyph and the powerline caps follow `ui.show_icons` and need a
-  patched font in either set. An explicit override under `[git.icons]`
-  (below) wins over the `icon_set` default.
-- `stash_enabled`: when `false`, the agent skips the `git stash list`
-  subprocess call entirely and `$stash` always renders empty — use this on
-  very large repos where the extra call is undesirable.
+`stash_enabled = false` skips the `git stash list` call, so `$stash` is always empty.
 
 To override an individual glyph directly (independent of `icon_set`). A theme's own `*_icon` wins over these; icon precedence is described in the [Configuration Reference](configuration-reference.md#giticons):
 
@@ -250,18 +166,13 @@ detached = "@"
 in_progress = "~"
 ```
 
-**Use cases:**
-- Teams with long branch naming conventions
-- Narrow terminal widths
-
-**Note:** Setting `max_branch_length = 0` (the default) disables truncation.
-
 ### Disable Live Updates
 
 If you don't need real-time git status updates on file changes:
 
-```fish
-set -gx GPY_DISABLE_WATCHER 1
+```bash
+export GPY_DISABLE_WATCHER=1   # Bash, Zsh
+set -gx GPY_DISABLE_WATCHER 1  # Fish
 ```
 
 This reduces system resource usage but requires manual prompt refresh to see git changes.
@@ -325,23 +236,14 @@ show_seconds = false  # Default
 
 ## Troubleshooting
 
-### Check Agent Status
-
-```bash
-gpy status
-```
-
-Shows:
-- Whether agent is running
-- Socket path
-- Number of connected clients
-- Configuration file locations
+Agent status: [`gpy status`](cli-reference.md#gpy-status).
 
 ### Debug Mode
 
-```fish
+```bash
 # Enable debug logging
-set -gx GPY_DEBUG_LOG /tmp/gpy-debug.log
+export GPY_DEBUG_LOG=/tmp/gpy-debug.log   # Bash, Zsh
+set -gx GPY_DEBUG_LOG /tmp/gpy-debug.log  # Fish
 
 # Restart agent
 gpy restart
@@ -352,31 +254,15 @@ tail -f /tmp/gpy-debug.log
 
 ### Test IPC Connection
 
-```fish
-# From Fish shell, test IPC manually against the resolved socket
-echo '{"op":"ping"}' | socat - UNIX-CONNECT:(__gpy_ipc_endpoint)
-# Should respond: {"ack":true}
-```
-
-### Performance Benchmarking
-
-```fish
-# Check agent status
-gpy status
-
-# Run diagnostics
-gpy doctor
-```
+`gpy status` connects to the agent and reports whether it answered; `gpy debug paths` prints the socket path every shell uses.
 
 ### Reset Configuration
 
 ```bash
-# Backup current config
-mv ~/.config/gpy ~/.config/gpy.backup
-
-# Restart agent (will create new default config)
-gpy restart
+mv ~/.config/gpy/config.toml ~/.config/gpy/config.toml.bak && gpy restart
 ```
+
+With no `config.toml`, every key uses its built-in default. If you have no Nerd Font, run `gpy setup --redetect-icons` to pick icons again (`gpy setup` wrote `ui.show_icons = false` into the file you moved).
 
 ---
 

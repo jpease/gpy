@@ -13,7 +13,7 @@ This document covers `config.toml` only — the file that controls agent behavio
 - **Theme files** (`~/.config/gpy/themes/*.toml`), which define colors, per-segment templates, and delimiter glyphs. See [Theme Customization](theme-customization.md) and [Advanced Configuration](advanced-configuration.md).
 - **CLI commands** for reading/writing config values. See [CLI Reference](cli-reference.md).
 
-`config.toml` has exactly four top-level sections: `[agent]`, `[git]`, `[language]`, and `[ui]`. There is no `[security]`, `[segments]`, or `[plugins]` section in `config.toml` — those either don't exist or live elsewhere (segment templates and colors live in theme files, under `[segments.<id>]`).
+`config.toml` has four fixed sections, `[agent]`, `[git]`, `[language]` and `[ui]`, plus an optional `[plugin.<segment>]` table per script plugin segment. Segment colours and templates are theme keys (`[segments.<id>]` in a theme file), not config keys.
 
 ## File Location
 
@@ -32,30 +32,30 @@ Every field below is optional — anything you omit falls back to its default, s
 
 ## Worked Example
 
-A full config with realistic (non-default) values, annotated with why you'd change them:
+A full config with illustrative values, annotated with why you'd change them:
 
 ```toml
 # ~/.config/gpy/config.toml
 
 [agent]
 enabled = true
-timeout_seconds = 3       # Lower than the default 5s: fail fast on a slow/stuck agent
+timeout_seconds = 3       # Drop a stuck request sooner (agent side)
 live_updates = true
 
 [agent.supervisor]
 enabled = true
-check_interval_seconds = 15  # Check more often than the default 30s on a flaky machine
-max_restart_attempts = 3     # Give up sooner than the default 5 to avoid restart-looping
+check_interval_seconds = 15  # Check more often on a flaky machine
+max_restart_attempts = 3     # Give up sooner to avoid restart-looping
 
 [git]
 enabled = true
 show_upstream = true
-timeout_seconds = 3          # Default is 10s; lower it in CI containers with fast local repos
+timeout_seconds = 3          # Lower it in CI containers with fast local repos
 skip_paths = ["/mnt/network-share", "/home/me/vendor"]  # Skip git status in slow/irrelevant trees
-max_branch_length = 30       # Truncate long branch names instead of the default unlimited (0)
-max_ahead_behind = 50        # Cap the ahead/behind counter lower than the default 100
+max_branch_length = 30       # Truncate long branch names instead of showing them whole
+max_ahead_behind = 50        # Cap the ahead/behind counter lower
 watch_worktree = true
-icon_set = "nerd_font"       # Requires a patched Nerd Font; default is "unicode"
+icon_set = "nerd_font"       # Requires a patched Nerd Font
 stash_enabled = false        # Skip the extra `git stash list` call on very large repos
 
 [git.icons]
@@ -65,12 +65,12 @@ detached = "@"
 [language]
 enabled = true
 show_versions = true
-cache_ttl_hours = 6          # Refresh version info more often than the default 24h
-enabled_languages = ["rust", "python", "node"]  # Only show these; default [] shows all
-display = "text"             # Print names instead of icons; default is "icon"
-filter = "primary"           # Show only the dominant language; default is "all"
-detection_mode = "markers"   # Show a language only when project markers exist; default "markers"
-confidence_threshold = 0.3   # Raise above the default 0.1 to hide low-confidence noise
+cache_ttl_hours = 6          # Refresh version info more often
+enabled_languages = ["rust", "python", "node"]  # Only show these; an empty list shows all
+display = "text"             # Print names instead of icons
+filter = "primary"           # Show only the dominant language
+detection_mode = "markers"   # Show a language only when project markers exist
+confidence_threshold = 0.3   # Raise it to hide low-confidence noise
 
 [ui]
 show_icons = true
@@ -79,11 +79,11 @@ palette = "nord"
 enabled_segments = ["clock", "language", "directory", "git"]  # Drop "duration"
 
 [ui.directory]
-display = "truncated"        # Default is "basename" (current dir name only)
-truncation_length = 4        # Keep more trailing path components than the default 3
+display = "truncated"        # Show a trailing slice of the path, not just the directory name
+truncation_length = 4        # Keep more trailing path components
 truncation_symbol = "…/"
-max_length = 60               # Lower than the default 80 for narrow terminals
-truncate_to_repo = true       # Anchor at the git repo root instead of the filesystem root
+max_length = 60              # Lower for narrow terminals
+truncate_to_repo = true      # Anchor at the git repo root instead of the filesystem root
 ```
 
 ---
@@ -95,7 +95,7 @@ Controls the background agent process that serves prompt data over IPC.
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
 | `enabled` | bool | `true` | — | Enables background agent mode. When `false`, every prompt render falls back to oneshot mode (slower, no persistent process). |
-| `timeout_seconds` | integer | `5` | `1`–`300` | IPC socket timeout in seconds before the shell gives up waiting on the agent and falls back to oneshot rendering. |
+| `timeout_seconds` | integer | `5` | `1`–`300` | How long the agent waits for one request on a connection before dropping it, and the deadline for a language request including version probes. A connection is closed after four times this value. This is the agent's limit, not the shell's: the shell waits [`GPY_IPC_TIMEOUT_MS`](environment-variables.md#shell-integration) and omits a segment whose reply is late. |
 | `live_updates` | bool | `true` | — | Enables live prompt updates pushed via signals (e.g., when a file watcher detects a git change) instead of only refreshing on the next command. |
 
 ### `[agent.supervisor]`
@@ -113,18 +113,6 @@ All three shells check the agent the same way. At startup they start the agent i
 | `enabled` | bool | `true` | — | Enables the supervisor. When `false`, a crashed agent stays down until manually restarted (`gpy restart`). |
 | `check_interval_seconds` | integer | `30` | `5`–`3600` | How often the supervisor checks agent health. |
 | `max_restart_attempts` | integer | `5` | `1`–`100` | Maximum consecutive restart attempts before the supervisor gives up and leaves the agent down. |
-
-```toml
-[agent]
-enabled = true
-timeout_seconds = 5
-live_updates = true
-
-[agent.supervisor]
-enabled = true
-check_interval_seconds = 30
-max_restart_attempts = 5
-```
 
 ---
 
@@ -164,30 +152,6 @@ Icon precedence, for git and language icons alike: `ui.show_icons` gates first; 
 | `detached` | `"➦"` | `""` | Detached HEAD state. Overrides the `icon_set` default when set. |
 | `in_progress` | `"↻"` | `""` | Rebase/merge/cherry-pick in progress. Overrides the `icon_set` default when set. |
 
-```toml
-[git]
-enabled = true
-show_upstream = true
-timeout_seconds = 10
-skip_paths = []
-max_branch_length = 0
-max_ahead_behind = 100
-watch_worktree = true
-icon_set = "unicode"
-stash_enabled = true
-
-[git.icons]
-ahead = "↑"
-behind = "↓"
-staged = "✚"
-unstaged = "✱"
-untracked = "?"
-conflicts = "✖"
-stash = "≡"
-detached = "➦"
-in_progress = "↻"
-```
-
 ---
 
 ## `[language]`
@@ -214,16 +178,6 @@ Version probes run the tool in the project directory with the agent's environmen
 A free-form map of language identifier to icon glyph (e.g. `rust = "🦀"`). Languages with no entry use a built-in Nerd Font icon (rust, python, node, go, java, ruby, swift, elixir, php, csharp, cpp, c, erlang, fish; they need a patched font and are drawn when `ui.show_icons = true`), and any other language shows its name. Icon precedence: `ui.show_icons` gates first, then a theme's `<lang>_symbol`, then an entry here, then the built-in icon; see [`[git.icons]`](#giticons). `gpy config get language.icons.<lang>` reads only what `config.toml` sets, so it reports an unset entry even when a built-in icon applies. Per-language color and style overrides (`rust_bg_color`, `java_style`, etc.) live in theme files under `[segments.language]`, not here — see [Advanced Configuration](advanced-configuration.md).
 
 ```toml
-[language]
-enabled = true
-show_versions = true
-cache_ttl_hours = 24
-enabled_languages = []
-display = "icon"
-filter = "all"
-detection_mode = "markers"
-confidence_threshold = 0.1
-
 [language.icons]
 rust = "🦀"
 python = "🐍"
@@ -237,10 +191,10 @@ Controls top-level layout: theme selection and which segments render.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `show_icons` | bool | `true` | — | Shows icons (language, git, etc.) instead of falling back to text-only rendering where supported. Setting it to `false` also drops the Nerd Font powerline caps (U+E0BA, U+E0BC, U+E0B4) and any private-use delimiter glyph the theme exports to the shell, leaving flat colored blocks that render in any font. Plain-text delimiters such as `[`/`]` are kept. A private-use status icon (`[segments.status]` `ok_icon`/`fail_icon`) is replaced by the plain `ok`/`err`, the directory's read-only marker is `ro` instead of 🔒 or a private-use `read_only_icon`, and a private-use hostname or username `icon` is dropped. |
+| `show_icons` | bool | `true` | — | Shows icons (language, git, etc.) instead of falling back to text-only rendering where supported. Setting it to `false` also drops the Nerd Font powerline caps (U+E0BA, U+E0BC, U+E0B4) and any private-use delimiter glyph the theme exports to the shell, leaving flat colored blocks that render in any font. Plain-text delimiters such as `[`/`]` are kept. A private-use status icon (`[segments.status]` `ok_icon`/`fail_icon`) is replaced by the plain `ok`/`err`, the directory's read-only marker is `ro` instead of 🔒 or a private-use `read_only_icon`, and a private-use hostname or username `icon` is dropped. `gpy setup` writes `false` when it detects no Nerd Font. If a config file already exists, `gpy setup` leaves it alone; `gpy setup --redetect-icons` overwrites `ui.show_icons` (see [Icons and Nerd Fonts](../INSTALL.md#icons-and-nerd-fonts)). |
 | `theme` | string | `"default"` | any theme file stem under `~/.config/gpy/themes/` (no path separators, no `..`, no control characters) | Selects which theme file controls colors and segment templates. |
 | `palette` | string | `"default"` | any palette file stem under `~/.config/gpy/palettes/` (same naming rules as `theme`) | Selects the named-color set (e.g. `nord`, `catppuccin-mocha`, `gruvbox-dark-medium`) used when a theme references colors by name. |
-| `enabled_segments` | array of strings | `["clock", "duration", "language", "directory", "git"]` | segment names, alphanumeric/underscore/hyphen only; names that differ only by `-` vs `_` (e.g. `a-b` and `a_b`) may not both appear | The only switch for whether a segment renders (and whether the agent does its work), in order. The six built-ins are `clock`, `duration`, `language`, `directory`, `git` and `status` (`status` is off by default); `hostname` and `username` are bundled plugins. The prompt character is always drawn and is not listed. Names are trimmed and lowercased on load (`"Directory"` and `" git "` mean `directory` and `git`), and `gpy config get`, `gpy doctor` and every shell see that canonical form. A name listed more than once, in any spelling, keeps only its first position. Segment names not on the built-in list must still pass the naming check (a plugin can register additional segment names). |
+| `enabled_segments` | array of strings | `["clock", "duration", "language", "directory", "git"]` | segment names, alphanumeric/underscore/hyphen only; names that differ only by `-` vs `_` (e.g. `a-b` and `a_b`) may not both appear | The only switch for whether a segment renders (and whether the agent does its work), in order. The six built-ins are `clock`, `duration`, `language`, `directory`, `git` and `status` (`status` is off by default); `hostname` and `username` are bundled plugins. The prompt character is always drawn and is not listed. Names are trimmed and lowercased on load (`"Directory"` and `" git "` mean `directory` and `git`), and `gpy config get`, `gpy doctor` and every shell see that canonical form. A name listed more than once, in any spelling, keeps only its first position. Segment names not on the built-in list must still pass the naming check (a plugin can register additional segment names). `gpy config set` cannot change it; use `gpy enable <name>` / `gpy disable <name>`, or edit the file. |
 | `transient_prompt` | bool | `true` | — | After Enter, collapses the prompt to the clock's time (when `clock` is enabled), the prompt symbol and the command, e.g. ` 12:46 AM ❯ nvim mix.exs`. Root shows `root_prompt_icon`. Fish 4.2+ and Zsh only; no effect in Bash or older Fish (Bash keeps the full prompt). With `false`, Fish 4.2+ and Zsh redraw the full prompt at Enter, so the clock still shows when Enter was pressed. |
 | `retire_unmodified_themes` | bool | `true` | — | Read by `gpy setup` only. A file under `~/.config/gpy/themes/` named after a builtin theme (`default`, `text`, `starship`) replaces that builtin entirely, so a copy an older GPY or installer left there stops receiving fixes. When the file is byte-identical to a version of that builtin released up to 0.7.1, setup moves it to `<name>.toml.bak` and reports it; the builtin then applies. A file with any edit, even whitespace, and a symlink are left alone. Set `false` to keep every copy. |
 
@@ -256,24 +210,7 @@ Controls how the directory segment renders the current path.
 | `truncation_length` | integer | `3` | `1`–`255` | Trailing path components kept when `display = "truncated"`. Applies only to `"truncated"`. |
 | `truncation_symbol` | string | `""` | no control characters | Prefix shown before a truncated path (e.g. `"…/"`). Applies only to `"truncated"`. |
 | `max_length` | integer | `80` | `1`–`1000` | Character cap applied to the rendered directory string after the display mode is resolved — even a `"full"` path can be shortened if it exceeds this. Truncation prefixes a one-character `…` before the kept tail; at `max_length = 1` the ellipsis is dropped and the last character is shown. Wide characters (CJK, emoji) take two columns. |
-| `truncate_to_repo` | bool | `false` | — | Anchors the displayed path at the enclosing git repo root (the repo folder becomes the leading component). Affects `"truncated"`/`"full"` only, applied before `max_length`. No effect outside a git repo, and a repo rooted at `$HOME` is ignored (paths show as `~/…`). |
-
-```toml
-[ui]
-show_icons = true
-theme = "default"
-palette = "default"
-enabled_segments = ["clock", "duration", "language", "directory", "git"]
-transient_prompt = true
-retire_unmodified_themes = true
-
-[ui.directory]
-display = "basename"
-truncation_length = 3
-truncation_symbol = ""
-max_length = 80
-truncate_to_repo = false
-```
+| `truncate_to_repo` | bool | `false` | — | Anchors the displayed path at the enclosing git repo root (the repo folder becomes the leading component). Affects `"truncated"`/`"full"` only, applied before `max_length`. No effect outside a git repo, and a repo rooted at `$HOME` is ignored (paths show as `~/…`). The Starship preset enables it via `gpy theme use starship --force`. |
 
 ---
 

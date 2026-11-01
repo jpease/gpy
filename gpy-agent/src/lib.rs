@@ -21,6 +21,9 @@ pub mod config;
 mod deadline;
 /// Two-level logging: opt-in `debug_log!` and always-visible `warn_log!`.
 pub mod debug;
+/// Markdown table reader for the doc-drift tests.
+#[cfg(test)]
+mod doc_tables;
 /// Environment-variable parsing shared by the tuning knobs.
 mod env_config;
 /// Centralized error and result types.
