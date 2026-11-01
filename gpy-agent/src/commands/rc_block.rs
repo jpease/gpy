@@ -1,13 +1,14 @@
 //! The `gpy-init` block `gpy setup` writes into shell rc files.
 //!
-//! The marker lines are the contract `scripts/uninstall.*` remove the block by:
+//! The marker lines are the contract `gpy uninstall` removes the block by:
 //! [`BLOCK_START`], a `# <header>` line, the body, then [`BLOCK_END`].
 
-use crate::Result;
+use crate::{Error, Result};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
-/// First line of the rc-file block; `scripts/uninstall.*` match on it.
+/// First line of the rc-file block; `gpy uninstall` matches on it.
 pub(super) const BLOCK_START: &str = "# >>> gpy-init >>>";
 /// Last line of the rc-file block.
 pub(super) const BLOCK_END: &str = "# <<< gpy-init <<<";
@@ -27,6 +28,23 @@ pub(super) enum BlockChange {
     Upgraded,
     /// The block's body is neither the current nor an older text; left alone.
     KeptEdited,
+}
+
+/// What [`remove_blocks`] found and did in one rc file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four independent facts the caller reports one by one; an enum per fact would add nothing"
+)]
+pub(super) struct RemoveOutcome {
+    /// At least one complete block was removed.
+    pub(super) removed: bool,
+    /// The file carried [`CREATED_NOTE`] and was deleted once empty.
+    pub(super) deleted_file: bool,
+    /// A [`BLOCK_START`] with no matching [`BLOCK_END`] was left in place.
+    pub(super) unmatched_start: bool,
+    /// A [`BLOCK_END`] with no [`BLOCK_START`] before it was left in place.
+    pub(super) unmatched_end: bool,
 }
 
 /// Byte range of a block's body lines, from the first body line through the
@@ -119,6 +137,134 @@ pub(super) fn ensure_block(
     Ok(BlockChange::Upgraded)
 }
 
+/// Remove every complete `gpy-init` block from `rc`, with the blank line (or,
+/// for a block that ends a file lacking a trailing newline, the newline) that
+/// [`append_block`] put before it, so the file returns to its pre-setup bytes.
+/// Works on bytes, so any encoding is edited correctly. Orphaned markers stay
+/// in place and are reported. A file tagged [`CREATED_NOTE`] that is left
+/// empty is deleted.
+///
+/// The file is replaced atomically. Where the rename is refused (a bind-mounted
+/// file, a writable file in a read-only directory) the same bytes are written
+/// in place instead.
+///
+/// # Errors
+/// Fails, naming `rc`, when it cannot be read, rewritten or deleted.
+pub(super) fn remove_blocks(rc: &Path) -> Result<RemoveOutcome> {
+    let bytes =
+        fs::read(rc).map_err(|err| Error::io_context(format!("reading {}", rc.display()), &err))?;
+    let stripped = strip_blocks(&bytes);
+    let mut outcome = stripped.outcome;
+    if !outcome.removed {
+        return Ok(outcome);
+    }
+    if stripped.created && stripped.bytes.iter().all(u8::is_ascii_whitespace) {
+        fs::remove_file(rc)
+            .map_err(|err| Error::io_context(format!("removing {}", rc.display()), &err))?;
+        outcome.deleted_file = true;
+        return Ok(outcome);
+    }
+    let rewrite_error =
+        |err: &std::io::Error| Error::io_context(format!("rewriting {}", rc.display()), err);
+    match crate::fs_util::write_atomically(rc, &stripped.bytes) {
+        Ok(()) => {}
+        Err(err)
+            if matches!(
+                err.kind(),
+                ErrorKind::PermissionDenied | ErrorKind::ResourceBusy | ErrorKind::CrossesDevices
+            ) =>
+        {
+            fs::write(rc, &stripped.bytes).map_err(|write_err| rewrite_error(&write_err))?;
+        }
+        Err(err) => return Err(rewrite_error(&err)),
+    }
+    Ok(outcome)
+}
+
+/// `text` without its complete blocks, and what was seen on the way.
+struct Stripped {
+    bytes: Vec<u8>,
+    /// `removed`, `unmatched_start` and `unmatched_end` are set; `deleted_file` is not.
+    outcome: RemoveOutcome,
+    created: bool,
+}
+
+/// Cut every complete block out of `text`; see [`remove_blocks`].
+fn strip_blocks(text: &[u8]) -> Stripped {
+    let lines: Vec<&[u8]> = text.split_inclusive(|byte| *byte == b'\n').collect();
+    let mut cut = vec![false; lines.len()];
+    let mut chomp = vec![false; lines.len()];
+    let mut found = Stripped {
+        bytes: Vec::with_capacity(text.len()),
+        outcome: RemoveOutcome::default(),
+        created: false,
+    };
+    let mut open: Option<usize> = None;
+    for (index, line) in lines.iter().enumerate() {
+        let marker = trim_eol(line);
+        if marker == BLOCK_START.as_bytes() {
+            // A second start before any end orphans the first.
+            found.outcome.unmatched_start |= open.is_some();
+            open = Some(index);
+        } else if marker == BLOCK_END.as_bytes() {
+            let Some(start) = open.take() else {
+                found.outcome.unmatched_end = true;
+                continue;
+            };
+            found.outcome.removed = true;
+            found.created |= lines
+                .get(start.saturating_add(1)..index)
+                .and_then(|inner| inner.first())
+                .is_some_and(|header| trim_eol(header).ends_with(CREATED_NOTE.as_bytes()));
+            let ends_file = index.saturating_add(1) == lines.len();
+            mark_block(&lines, start, index, ends_file, &mut cut, &mut chomp);
+        }
+    }
+    found.outcome.unmatched_start |= open.is_some();
+    for ((line, skipped), chomped) in lines.iter().zip(&cut).zip(&chomp) {
+        if *skipped {
+            continue;
+        }
+        let keep = if *chomped {
+            line.strip_suffix(b"\n").unwrap_or(*line)
+        } else {
+            *line
+        };
+        found.bytes.extend_from_slice(keep);
+    }
+    found
+}
+
+/// Flag the block `start..=end` for removal, plus the line before it that
+/// [`append_block`] added: a blank line, or the newline of a last line that
+/// had none when the block ends the file.
+fn mark_block(
+    lines: &[&[u8]],
+    start: usize,
+    end: usize,
+    ends_file: bool,
+    cut: &mut [bool],
+    chomp: &mut [bool],
+) {
+    let count = end.saturating_sub(start).saturating_add(1);
+    for flag in cut.iter_mut().skip(start).take(count) {
+        *flag = true;
+    }
+    let Some(previous) = start.checked_sub(1) else {
+        return;
+    };
+    if cut.get(previous) != Some(&false) {
+        return;
+    }
+    if lines.get(previous).is_some_and(|line| *line == b"\n") {
+        if let Some(flag) = cut.get_mut(previous) {
+            *flag = true;
+        }
+    } else if ends_file && let Some(flag) = chomp.get_mut(previous) {
+        *flag = true;
+    }
+}
+
 /// `line` without its trailing `\n` and `\r`.
 fn trim_eol(line: &[u8]) -> &[u8] {
     let without_lf = line.strip_suffix(b"\n").unwrap_or(line);
@@ -126,7 +272,7 @@ fn trim_eol(line: &[u8]) -> &[u8] {
 }
 
 /// Whether any line of `text` is the [`BLOCK_START`] marker.
-fn has_start(text: &[u8]) -> bool {
+pub(super) fn has_start(text: &[u8]) -> bool {
     text.split(|byte| *byte == b'\n')
         .any(|line| trim_eol(line) == BLOCK_START.as_bytes())
 }
@@ -314,5 +460,128 @@ mod tests {
 
         assert!(result.is_err(), "a read-only directory must fail the write");
         assert_eq!(after, text);
+    }
+
+    const BLOCK: &str = "# >>> gpy-init >>>\n# hdr\nbody\n# <<< gpy-init <<<\n";
+
+    #[test]
+    fn remove_blocks_round_trips_append_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::write(&rc, "export A=1\n").unwrap();
+        append_block(&rc, "hdr", "body").unwrap();
+
+        let outcome = remove_blocks(&rc).unwrap();
+
+        assert!(outcome.removed && !outcome.deleted_file);
+        assert_eq!(fs::read(&rc).unwrap(), b"export A=1\n");
+    }
+
+    #[test]
+    fn remove_blocks_round_trips_append_block_on_a_file_without_a_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::write(&rc, "export A=1").unwrap();
+        append_block(&rc, "hdr", "body").unwrap();
+
+        remove_blocks(&rc).unwrap();
+
+        assert_eq!(fs::read(&rc).unwrap(), b"export A=1");
+    }
+
+    #[test]
+    fn remove_blocks_reports_an_orphaned_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        let text = "a\n# >>> gpy-init >>>\n# hdr\nb\n";
+        fs::write(&rc, text).unwrap();
+
+        let outcome = remove_blocks(&rc).unwrap();
+
+        assert!(!outcome.removed && outcome.unmatched_start && !outcome.unmatched_end);
+        assert_eq!(fs::read_to_string(&rc).unwrap(), text);
+    }
+
+    #[test]
+    fn remove_blocks_reports_a_second_start_as_orphaning_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::write(&rc, format!("# >>> gpy-init >>>\nx\n\n{BLOCK}")).unwrap();
+
+        let outcome = remove_blocks(&rc).unwrap();
+
+        assert!(outcome.removed && outcome.unmatched_start);
+        assert_eq!(fs::read_to_string(&rc).unwrap(), "# >>> gpy-init >>>\nx\n");
+    }
+
+    #[test]
+    fn remove_blocks_deletes_a_created_file_left_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        append_block(&rc, "hdr", "body").unwrap();
+
+        let outcome = remove_blocks(&rc).unwrap();
+
+        assert!(outcome.removed && outcome.deleted_file);
+        assert!(!rc.exists());
+    }
+
+    #[test]
+    fn remove_blocks_keeps_a_missing_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::write(&rc, format!("p\n\n{BLOCK}last")).unwrap();
+
+        remove_blocks(&rc).unwrap();
+
+        assert_eq!(fs::read_to_string(&rc).unwrap(), "p\nlast");
+    }
+
+    #[test]
+    fn remove_blocks_edits_a_non_utf8_file_byte_for_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        let mut bytes = b"# caf\xe9\n\n".to_vec();
+        bytes.extend_from_slice(BLOCK.as_bytes());
+        bytes.extend_from_slice(b"tail \xff\n");
+        fs::write(&rc, &bytes).unwrap();
+
+        remove_blocks(&rc).unwrap();
+
+        assert_eq!(fs::read(&rc).unwrap(), b"# caf\xe9\ntail \xff\n");
+    }
+
+    #[test]
+    fn remove_blocks_names_the_path_when_the_file_cannot_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::create_dir_all(&rc).unwrap();
+
+        let err = remove_blocks(&rc).unwrap_err();
+
+        let message = crate::error::user_message(&err);
+        assert!(message.contains(&rc.display().to_string()), "{message}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn remove_blocks_falls_back_to_an_in_place_write_when_rename_is_refused() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if nix::unistd::Uid::effective().is_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::write(&rc, format!("keep\n\n{BLOCK}")).unwrap();
+        let inode = fs::metadata(&rc).unwrap().ino();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = remove_blocks(&rc);
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(result.unwrap().removed);
+        assert_eq!(fs::read_to_string(&rc).unwrap(), "keep\n");
+        assert_eq!(fs::metadata(&rc).unwrap().ino(), inode);
     }
 }

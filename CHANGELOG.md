@@ -35,8 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#1121).
 - The Zsh integration keeps a `TRAPURG` function or `trap ... URG` defined
   before it loads and runs it after its own handler (#1122).
-- `scripts/uninstall.sh` keeps `~/.config/gpy` by default; `--purge-config`
-  deletes it (#1118).
 - The theme-export cache directory every shell sources is created owner-only
   (`0700`) (#1123).
 - `install-dev.fish` warns about `gpy`/`gpy-agent` copies that shadow the
@@ -76,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy-agent restart` (#1173).
 - Bash and Zsh have `gpy-prompt-reload`, which re-reads `config.toml` into the
   running shell (#1180).
+- `gpy uninstall` removes GPY's shell integration, rc blocks, cache, runtime
+  files and (for the installers' `~/.local/bin`) its binaries; it keeps
+  `~/.config/gpy` unless you pass `--purge-config`, and tells Homebrew users to
+  run `brew uninstall gpy` (#1126, #1118).
 
 ### Changed
 
@@ -136,6 +138,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking (library):** `ipc::handlers::RequestHandler`,
   `ipc::handlers::MiscHandler` and `HandlerError::UnexpectedMessage` are
   removed; `HandlerRegistry::new` takes the concrete handlers (#1130).
+
+### Removed
+
+- **Breaking:** `scripts/uninstall.sh` and the `uninstall.sh` release asset;
+  use `gpy uninstall`. Unlike the script, `gpy uninstall` does not accept a
+  piped Enter as confirmation; use `--yes` in scripts. Fish prompt backups
+  named `.gpy-backup.<stamp>` or `.backup-<stamp>` (from releases before
+  `gpy setup`) are no longer restored automatically; rename the one you want
+  to `fish_prompt.fish` (#1126).
 
 ## [0.8.0] - 2026-10-29
 

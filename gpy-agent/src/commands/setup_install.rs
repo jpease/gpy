@@ -111,12 +111,12 @@ fn guard_replace(source_root: &Path, target: &Path) -> Result<PathBuf> {
 }
 
 /// Where Fish autoloads the merged `gpy.fish` completion file from.
-fn fish_completions_dir(config_home: &Path) -> PathBuf {
+pub(super) fn fish_completions_dir(config_home: &Path) -> PathBuf {
     config_home.join("fish").join("completions")
 }
 
 /// Where the bundled plugin root is installed.
-fn plugins_target(config_home: &Path) -> PathBuf {
+pub(super) fn plugins_target(config_home: &Path) -> PathBuf {
     config_home
         .join("gpy")
         .join(crate::plugin::BUNDLED_PLUGINS_DIR_NAME)

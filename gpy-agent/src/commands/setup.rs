@@ -3,7 +3,7 @@
 //! Lays files out exactly as `install-oneline.sh` does (Fish:
 //! `$XDG_CONFIG_HOME/fish/gpy`; Zsh/Bash: `$XDG_CONFIG_HOME/gpy/<shell>`) so
 //! both installers share one uninstall path. The `gpy-init` marker lines (see
-//! `rc_block`) are the contract `scripts/uninstall.*` remove by. Every step
+//! `rc_block`) are the contract `gpy uninstall` removes by. Every step
 //! is idempotent.
 
 use super::rc_block::{BlockChange, append_block, ensure_block, has_block};
@@ -23,7 +23,7 @@ const RC_BLOCK_HEADER: &str = "GPY shell integration";
 /// so `gpy doctor` can spot a tree an upgrade left behind.
 pub(super) const VERSION_STAMP: &str = ".gpy-version";
 /// Every shell `gpy setup` can install.
-const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
+pub(super) const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -75,7 +75,7 @@ impl Environment {
     }
 
     /// `$XDG_CONFIG_HOME`, or `$HOME/.config`; fails without an absolute home.
-    fn config_home(&self) -> Result<PathBuf> {
+    pub(super) fn config_home(&self) -> Result<PathBuf> {
         let home = self.home.as_deref();
         if home.is_none() {
             return Err(Error::invalid(
@@ -90,7 +90,7 @@ impl Environment {
     }
 
     /// The home directory.
-    fn home(&self) -> Result<&Path> {
+    pub(super) fn home(&self) -> Result<&Path> {
         self.home
             .as_deref()
             .ok_or_else(|| Error::invalid("cannot find your home directory"))
@@ -487,9 +487,9 @@ fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
 }
 
 /// A regular-file copy of GPY's own prompt: both segment-dispatch lines every
-/// GPY prompt shipped with (the `scripts/uninstall.*` rule).
+/// GPY prompt shipped with (the rule `gpy uninstall` removes a copy by).
 #[cfg(unix)]
-fn is_gpy_prompt_copy(path: &Path) -> bool {
+pub(super) fn is_gpy_prompt_copy(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|text| {
         text.lines()
             .any(|l| l.trim_ascii() == "for segment in $__enabled_segments")

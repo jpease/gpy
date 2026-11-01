@@ -8,7 +8,7 @@
 # Invariant, asserted per row:
 #   after install, every shell the installer targets, started the way a user
 #   starts it (interactive login AND non-login), sources gpy exactly once and
-#   prints nothing on stderr; after uninstall (scripts/uninstall.sh) every rc
+#   prints nothing on stderr; after `gpy uninstall` every rc
 #   file is byte-identical to before install.
 #   A row that expects `refuse` instead asserts the installer exits non-zero
 #   and no rc file (and no gpy file under XDG_CONFIG_HOME) was touched.
@@ -268,10 +268,9 @@ row() {
             ;;
         install.sh)
             PKG="$SB/pkg"
-            mkdir -p "$PKG/bin" "$PKG/scripts"
+            mkdir -p "$PKG/bin"
             cp -R "$ROOT/fish" "$ROOT/zsh" "$ROOT/bash" "$PKG/"
             cp "$ROOT/install.sh" "$PKG/install.sh"
-            cp "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
             cp "$GPY_AGENT" "$PKG/bin/$AGENT_ASSET"
             cp "$GPY_CLI" "$PKG/bin/$CLI_ASSET"
             for asset in "$AGENT_ASSET" "$CLI_ASSET"; do
@@ -310,7 +309,7 @@ row() {
             if [ -n "$moved" ]; then pass "$name: foreign symlink moved aside as a symlink"; else fail "$name: no symlink backup of the user's prompt"; fi
         fi
         agent_stop
-        printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SB/uninstall.log" 2>&1
+        "$HOME/.local/bin/gpy" uninstall --yes --purge-config >"$SB/uninstall.log" 2>&1
         urc=$?
         if [ "$urc" -eq 0 ]; then pass "$name: uninstaller exited 0"; else fail "$name: uninstaller exited $urc"; cat "$SB/uninstall.log"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then

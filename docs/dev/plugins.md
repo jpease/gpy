@@ -106,7 +106,7 @@ renderer, IPC request or `gpy-agent oneshot` mode for either.
   tree and clears the group and world write bits, because script segments
   refuse a script that others can write (see [Trust](#trust)). Given `--from`
   or `GPY_SHARE_DIR`, setup also keeps a copy in `share/gpy/plugins` beside
-  the binary. `scripts/uninstall.sh` removes the bundled root.
+  the binary. `gpy uninstall` removes the bundled root.
 - **Settings.** Both are configured under `config.toml`
   `[plugin.hostname]` (`show_always`, `trim_at`) and `[plugin.username]`
   (`show_always`), not in the theme.

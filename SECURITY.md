@@ -199,7 +199,6 @@ not controls and pass. A script run in `$PWD` may run repository-local tools
 |----------|---------|
 | `install-oneline.sh` | The one-line installer, with the release tag built in. Published as an asset of each release, never fetched from a branch |
 | `gpy-shell-files.tar.gz` | The Fish, Zsh and Bash scripts the installer puts in your config directory |
-| `uninstall.sh` | The uninstaller (every shell) |
 | `<asset>.sha256` | SHA-256 digest beside each binary, archive and script |
 | `SHA256SUMS` | Aggregate manifest covering every downloadable file |
 | `gpy-sbom.cdx.json` | CycloneDX SBOM of the Rust dependency graph the binaries were built from |
