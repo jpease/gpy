@@ -1,7 +1,5 @@
 //! Configuration structure, defaults, and validation.
 
-#![allow(clippy::panic)]
-
 use gpy_agent::config::{
     AgentSettings, Config, DirectorySettings, GitIconSet, GitIcons, GitSettings, LanguageIcons,
     LanguageSettings, SupervisorSettings, UiSettings, types,

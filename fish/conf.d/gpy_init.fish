@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Non-interactive shells (fish -c, scripts, supervisor children) must not load GPY.
+# Non-interactive shells (fish -c, scripts) must not load GPY.
 # core/init.fish itself is not gated: tests and ci-bench source it.
 status is-interactive; or return
 

@@ -552,20 +552,6 @@ end
 
 init_test_env
 set -gx GPY_AGENT_ENABLED 1
-# An interactive shell registers with the agent from its on-prompt
-# supervisor hook, which also spawns the detached supervisor loop; that loop
-# sources the *installed* layout under $XDG_CONFIG_HOME/fish/gpy, so give
-# the sandbox one that points at this checkout. The loop is stopped from
-# its pidfile at the end so it cannot restart the agent behind cleanup.
-mkdir -p $XDG_CONFIG_HOME/fish
-ln -s $__gpy_root/fish $XDG_CONFIG_HOME/fish/gpy
-function stop_supervisor_loop
-    set -l pidfile $XDG_CACHE_HOME/gpy/supervisor.pid
-    if test -f $pidfile
-        kill (cat $pidfile) 2>/dev/null
-        rm -f $pidfile
-    end
-end
 write_config 'show_icons = true' 'theme = "default"' 'enabled_segments = ["directory", "git"]'
 set -l repo (setup_repo)
 
@@ -583,7 +569,6 @@ scenario_exec_survives_notifications $repo
 scenario_cross_dir_idle_repaint $repo
 
 session_stop_all
-stop_supervisor_loop
 cleanup_test_files
 
 test_finish "E2E interactive session"

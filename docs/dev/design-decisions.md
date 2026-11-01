@@ -16,7 +16,7 @@ The shells GPY integrates with run on Linux and macOS, and on Windows under WSL,
 
 ### Unmeasured optimization
 
-IPC over a Unix socket is already well under a millisecond (`ipc_latency` budget: 1 ms target, 1.5 ms max in `tests/performance-baselines.json`). Running git is the real cost. Profile first; add caching or pooling only where a measurement shows the need.
+IPC over a Unix socket is already well under a millisecond (`ipc_latency` budget: 1 ms target, 1.5 ms max in `benchmarks/perf-budgets.json`). Running git is the real cost. Profile first; add caching or pooling only where a measurement shows the need.
 
 ### Enterprise features
 
@@ -81,5 +81,5 @@ Before adding complexity, ask:
 1. Write the user story first: "As a user of shell S, I want X so that Y".
 2. Show the problem exists.
 3. Start with the simplest solution.
-4. Measure the impact on the budgets in `tests/performance-baselines.json`.
+4. Measure the impact on the budgets in `benchmarks/perf-budgets.json`.
 5. Record the rationale here or in an [ADR](adr/README.md).

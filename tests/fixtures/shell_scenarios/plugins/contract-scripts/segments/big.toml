@@ -1,0 +1,5 @@
+description = "Contract fixture: big"
+command = "bin/big.sh"
+inputs = []
+ttl_secs = 3600
+timeout_ms = 500

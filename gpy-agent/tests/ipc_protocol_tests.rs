@@ -1,9 +1,5 @@
 //! Unit tests for IPC protocol serialization/deserialization
 
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 use gpy_agent::ipc::protocol::{deserialize_message, validate_message_size};
 use gpy_agent::ipc::{Format, Message};
 use gpy_agent::security::SafePath;
@@ -119,10 +115,10 @@ fn test_shell_ipc_format_ping() {
 #[test]
 fn test_message_size_validation_valid() {
     let small_data = b"hello world";
-    assert!(validate_message_size(small_data).is_ok());
+    validate_message_size(small_data).expect("small message should be valid size");
 
     let medium_data = vec![0u8; 32 * 1024]; // 32KB
-    assert!(validate_message_size(&medium_data).is_ok());
+    validate_message_size(&medium_data).expect("medium message should be valid size");
 }
 
 #[test]

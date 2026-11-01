@@ -295,9 +295,12 @@ fn test_combined_threshold_and_filter() {
 fn test_config_set_filter_mode_validation() {
     let mut config = Config::default();
 
-    assert!(set_config_value(&mut config, "language.filter", "all").is_ok());
-    assert!(set_config_value(&mut config, "language.filter", "primary").is_ok());
-    assert!(set_config_value(&mut config, "language.filter", "5").is_ok());
+    set_config_value(&mut config, "language.filter", "all").expect("set filter to all");
+    assert_eq!(config.language.filter, LanguageFilter::All);
+    set_config_value(&mut config, "language.filter", "primary").expect("set filter to primary");
+    assert_eq!(config.language.filter, LanguageFilter::Primary);
+    set_config_value(&mut config, "language.filter", "5").expect("set filter to 5");
+    assert_eq!(config.language.filter, LanguageFilter::Top(5));
 
     assert!(set_config_value(&mut config, "language.filter", "invalid").is_err());
 }
@@ -306,9 +309,15 @@ fn test_config_set_filter_mode_validation() {
 fn test_config_set_threshold_validation() {
     let mut config = Config::default();
 
-    assert!(set_config_value(&mut config, "language.confidence_threshold", "0.0").is_ok());
-    assert!(set_config_value(&mut config, "language.confidence_threshold", "0.5").is_ok());
-    assert!(set_config_value(&mut config, "language.confidence_threshold", "1.0").is_ok());
+    set_config_value(&mut config, "language.confidence_threshold", "0.0")
+        .expect("set threshold 0.0");
+    assert!((config.language.confidence_threshold.get() - 0.0).abs() < f32::EPSILON);
+    set_config_value(&mut config, "language.confidence_threshold", "0.5")
+        .expect("set threshold 0.5");
+    assert!((config.language.confidence_threshold.get() - 0.5).abs() < f32::EPSILON);
+    set_config_value(&mut config, "language.confidence_threshold", "1.0")
+        .expect("set threshold 1.0");
+    assert!((config.language.confidence_threshold.get() - 1.0).abs() < f32::EPSILON);
 
     assert!(set_config_value(&mut config, "language.confidence_threshold", "1.5").is_err());
     assert!(set_config_value(&mut config, "language.confidence_threshold", "-0.1").is_err());

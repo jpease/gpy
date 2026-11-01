@@ -59,6 +59,7 @@ function __gpy_lang_venv_json_into() {
 # where the agent uses passwd; `~user` consults passwd directly. Writes via
 # `printf -v` to avoid a per-render fork. The local is not named `home` because
 # dynamic scoping would shadow a caller's OUT_VAR of that name.
+# Rust counterpart: the `home` argument `paths::xdg_path`'s callers pass.
 function __gpy_home() {
     local out_var=$1 __gpy_home_value=${HOME:-} __gpy_home_user
     local __gpy_home_user_re='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
@@ -74,6 +75,7 @@ function __gpy_home() {
 }
 
 # XDG vars count only when non-empty and absolute, matching the agent.
+# Rust counterpart: `SocketPath::resolve`.
 function __gpy_ipc_endpoint() {
     local home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
@@ -147,6 +149,7 @@ function __gpy_untrack_shell_for_agent_recovery() {
 }
 
 # Instant-prompt cache dir into variable $1; non-zero status when unresolvable.
+# Rust counterpart: `paths::cache_root_for`.
 function __gpy_instant_cache_dir() {
     local __gpy_icd_home
     if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
@@ -159,6 +162,7 @@ function __gpy_instant_cache_dir() {
 }
 
 # Cached Zsh theme export, written atomically by the agent.
+# Rust counterpart: `paths::cache_root_for`.
 function __gpy_theme_export_cache_path() {
     local home
 

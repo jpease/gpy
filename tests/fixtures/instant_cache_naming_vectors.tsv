@@ -35,6 +35,16 @@
 # locale. Rust and Fish map per character (`xé1ß` -> `x_1_`); Bash and Zsh
 # map per byte under LC_ALL=C (`x__1__`). Theme colours are ASCII names and
 # hex, so no real prev_bg reaches it.
+#
+# Rust is the oracle: `instant_cache_naming_shared_vectors`
+# (gpy-agent/src/cache/instant_prompt/naming_vectors_tests.rs) asserts these
+# rows against `prev_bg_token` and `position_suffix`, so an edited expected
+# value fails there too. Rust checks every `token` row, and a `suffix` row
+# whose two flag cells are `true`, `false` or `\e` (`\e` is false). It skips
+# `suffix` rows with other spellings (`TRUE`, `1`), which test the shells'
+# "anything but `true` is false" rule, and the shell-only `status` kind (the
+# cache-read codes). `bgfile` rows are checked by
+# `git_bg_names_match_the_shared_vectors`.
 
 token	\e	none
 token	blue	blue

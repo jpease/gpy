@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
-# Sourced by scripts/bench.sh and scripts/ci-bench.sh: the performance budgets
-# and the release agent they measure. The caller sets PROJECT_ROOT first.
+# Sourced by scripts/bench.sh and scripts/ci-bench.sh: the performance budgets,
+# the release agent they measure and the log helpers. The caller sets
+# PROJECT_ROOT first.
 #
-# BASELINE_FILE overrides the budget file (default tests/performance-baselines.json).
+# PERF_BUDGETS_FILE overrides the budget file (default benchmarks/perf-budgets.json).
 # A budget that cannot be read ends the run with exit status 2 and a message
 # naming it: a gate must never fall back to numbers of its own.
 
-BASELINE_FILE="${BASELINE_FILE:-$PROJECT_ROOT/tests/performance-baselines.json}"
+PERF_BUDGETS_FILE="${PERF_BUDGETS_FILE:-$PROJECT_ROOT/benchmarks/perf-budgets.json}"
 
 bench_die() {
   echo "Error: $1" >&2
   exit 2
 }
 
-# bench_load_baselines VAR=PATH[*SCALE]...
+# Plain-text log lines in the house prefixes (stdout, no colour).
+bench_info() { echo "info: $1"; }
+bench_pass() { echo "PASS: $1"; }
+bench_warn() { echo "warn: $1"; }
+bench_fail() { echo "FAIL: $1"; }
+
+# bench_load_budgets VAR=PATH[*SCALE]...
 #
 # Reads every PATH (a jq path such as .budgets.ipc_latency.max_ms) from
-# BASELINE_FILE in one jq call and assigns it to the global VAR. With *SCALE
+# PERF_BUDGETS_FILE in one jq call and assigns it to the global VAR. With *SCALE
 # the value is multiplied by SCALE and rounded to an integer, which turns a
 # millisecond budget into the whole nanoseconds bash arithmetic needs
 # (.budgets.ipc_latency.max_ms*1000000). Exits 2 when jq or the file is
 # missing, the file is not valid JSON, or a PATH is absent or not a number.
-bench_load_baselines() {
-  command -v jq >/dev/null 2>&1 || bench_die "jq is required to read the budgets in $BASELINE_FILE"
-  [[ -f "$BASELINE_FILE" ]] || bench_die "baseline file not found: $BASELINE_FILE"
+bench_load_budgets() {
+  command -v jq >/dev/null 2>&1 || bench_die "jq is required to read the budgets in $PERF_BUDGETS_FILE"
+  [[ -f "$PERF_BUDGETS_FILE" ]] || bench_die "budget file not found: $PERF_BUDGETS_FILE"
 
   local spec path scale expr filter="" values jq_err jq_msg line i
   local -a vars=() vals=()
@@ -40,17 +47,17 @@ bench_load_baselines() {
   done
 
   jq_err="$(mktemp "${TMPDIR:-/tmp}/gpy-bench-jq.XXXXXX")"
-  if ! values="$(jq -r "$filter" "$BASELINE_FILE" 2>"$jq_err")"; then
+  if ! values="$(jq -r "$filter" "$PERF_BUDGETS_FILE" 2>"$jq_err")"; then
     jq_msg="$(<"$jq_err")"
     rm -f "$jq_err"
-    bench_die "cannot read the budgets in $BASELINE_FILE: $jq_msg"
+    bench_die "cannot read the budgets in $PERF_BUDGETS_FILE: $jq_msg"
   fi
   rm -f "$jq_err"
 
   while IFS= read -r line; do
     vals+=("$line")
   done <<<"$values"
-  [[ ${#vals[@]} -eq ${#vars[@]} ]] || bench_die "expected ${#vars[@]} budget values from $BASELINE_FILE, read ${#vals[@]}"
+  [[ ${#vals[@]} -eq ${#vars[@]} ]] || bench_die "expected ${#vars[@]} budget values from $PERF_BUDGETS_FILE, read ${#vals[@]}"
   for ((i = 0; i < ${#vars[@]}; i++)); do
     printf -v "${vars[i]}" '%s' "${vals[i]}"
   done

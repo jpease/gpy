@@ -3,8 +3,6 @@
 //! The home comes from `paths::home_path`, which falls back to passwd when `HOME`
 //! is unset (as Fish and Zsh do), so `/tmp/gpy` is reachable only with no home.
 
-#![allow(clippy::unwrap_used)]
-
 #[path = "common/env_guard.rs"]
 mod env_guard;
 

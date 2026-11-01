@@ -26,7 +26,6 @@ async fn test_git_status_integration() {
         .await
         .expect("Server failed to start");
 
-    // Create a test repository
     let repo = TestRepo::new().with_initial_commit();
 
     // Query git status
@@ -237,7 +236,6 @@ async fn test_language_detection_integration() {
         .await
         .expect("Server failed to start");
 
-    // Create a simple Rust project
     let repo = TestRepo::new();
     repo.create_file("Cargo.toml", "[package]\nname = \"test\"\n");
     repo.create_file("main.rs", "fn main() {}\n");
@@ -294,10 +292,10 @@ async fn test_harness_starts_and_stops() {
                 server.repo_path().exists(),
                 "Repository path should exist after server starts"
             );
-            assert!(
-                server.assert_agent_alive().await.is_ok(),
-                "Agent process should be alive after startup"
-            );
+            server
+                .assert_agent_alive()
+                .await
+                .expect("Agent process should be alive after startup");
         }
         Err(e) => {
             skip_test(&format!("agent failed to start: {e}"));
@@ -319,22 +317,12 @@ async fn test_harness_sends_ping() {
         }
     };
 
-    let response = server.ping().await;
-    assert!(
-        response.is_ok(),
-        "Ping request should succeed, got error: {:?}",
-        response.err()
+    let response = server.ping().await.expect("Ping request should succeed");
+    assert_eq!(
+        response,
+        Response::Ack,
+        "Expected Ack response to Ping message, got: {response:?}"
     );
-
-    match response {
-        Ok(Response::Ack) => {}
-        Ok(other) => {
-            panic!("Expected Ack response to Ping message, got: {:?}", other);
-        }
-        Err(error) => {
-            panic!("Ping request should succeed, got error: {error}");
-        }
-    }
 }
 
 fn expect_test_safe_path(path: &str) -> SafePath {
@@ -466,8 +454,8 @@ async fn test_harness_git_changes() {
         "After staging file, should have 0 untracked files"
     );
 
-    assert!(
-        server.assert_agent_alive().await.is_ok(),
-        "Agent should remain alive after git operations"
-    );
+    server
+        .assert_agent_alive()
+        .await
+        .expect("Agent should remain alive after git operations");
 }

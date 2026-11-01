@@ -71,20 +71,15 @@ function test_new_shell_after_offline_edit
 
     set -l result_file $__gpy_test_tmp_dir/new_shell_result
     # Paths travel as $argv, never interpolated into the code string. The
-    # start delay gives the autostarted agent time to accept the first
-    # prompt's registration; the supervisor is stubbed so no detached
-    # process outlives the test (the autostarted agent is stopped by
-    # cleanup_test_files through the test socket).
+    # first prompt starts the agent in the background and does not wait, so a
+    # second prompt, sent once the agent answers, registers (the autostarted
+    # agent is stopped by cleanup_test_files through the test socket).
     fish -c '
         set -l __gpy_root $argv[1]
         set -l result_file $argv[2]
         set -l plain_dir $argv[3]
-        set -gx GPY_AGENT_START_DELAY_MS 1500
 
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
-        function __gpy_agent_supervisor_start
-            return 0
-        end
         cd $plain_dir
 
         if test "$__gpy_theme_name" != default
@@ -92,6 +87,14 @@ function test_new_shell_after_offline_edit
             exit 0
         end
 
+        emit fish_prompt
+
+        # The start is detached: wait for the agent, then let the next prompt
+        # retry the registration.
+        for i in (seq 100)
+            __gpy_ipc_send \'{"op":"ping"}\' 500 >/dev/null 2>&1; and break
+            sleep 0.1
+        end
         emit fish_prompt
 
         if not set -q __gpy_registered
@@ -150,9 +153,6 @@ function __run_existing_shell_scenario --argument-names label agent_only
         set -l agent_only $argv[6]
 
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
-        function __gpy_agent_supervisor_start
-            return 0
-        end
         cd $plain_dir
         if test "$agent_only" = 1
             function __gpy_reload_if_theme_export_changed

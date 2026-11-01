@@ -9,12 +9,12 @@
 #   SIGKILL), then `require_command` inside the runner.
 # - Cache: shell variables only, keyed by the exported static key plus the
 #   declared inputs and `env` values, reused for `ttl` seconds (0 = never).
-# - Runner: zsh/core/g_runner.bash (a byte-identical copy of
-#   bash/core/g_runner.bash) in one Bash child per due prompt, with one shared
-#   deadline. The child is a Bash 4 or later when one is installed, else
-#   /bin/bash; with Bash 3.2 a Ctrl-C waits for the timeout (the run still
-#   reports it and the process groups are killed). Declared values reach the
-#   child through its environment, never argv.
+# - Runner: bash/core/g_runner.bash (`gpy setup` installs it as
+#   core/g_runner.bash; a checkout uses the repository copy) in one Bash child
+#   per due prompt, with one shared deadline. The child is a Bash 4 or later
+#   when one is installed, else /bin/bash; with Bash 3.2 a Ctrl-C waits for the
+#   timeout (the run still reports it and the process groups are killed).
+#   Declared values reach the child through its environment, never argv.
 # - Output: the runner caps, strips C0/DEL and rejects C1; this file escapes
 #   the text for the prompt once and stores only that render-ready value.
 # - No files: no cache, relay or marker file; the descriptors used here are
@@ -36,7 +36,12 @@ typeset -gA __gpy_g_text=() __gpy_g_variant=() __gpy_g_key=() __gpy_g_at=() \
 typeset -g __gpy_g_due=1 __gpy_g_pwd="" __gpy_g_cmd_seen=""
 typeset -g __gpy_g_sh=/bin/sh __gpy_g_bash="" __gpy_g_bash_resolved=""
 typeset -g __gpy_g_src=""
-typeset -g __gpy_g_runner_file=${${(%):-%x}:A:h}/g_runner.bash
+# Consecutive timeouts or over-cap outputs that disable a segment for this shell.
+typeset -gi __gpy_g_strikes_max=2
+typeset -g __gpy_g_core_dir=${${(%):-%x}:a:h}
+typeset -g __gpy_g_runner_file=$__gpy_g_core_dir/g_runner.bash
+[[ -r $__gpy_g_runner_file ]] || __gpy_g_runner_file=${__gpy_g_core_dir:h:h}/bash/core/g_runner.bash
+unset __gpy_g_core_dir
 if [[ -r $__gpy_g_runner_file ]]; then
     __gpy_g_src="$(<$__gpy_g_runner_file)"$'\n''__gpy_g_batch "$@"'
 elif [[ ${GPY_DEBUG-} == 1 || ${GPY_VERBOSE-} == 1 ]]; then
@@ -216,9 +221,9 @@ function __gpy_g_strike() {
         c=$(( ${__gpy_g_runfails[$tok]:-0} + 1 ))
         __gpy_g_runfails[$tok]=$c
     fi
-    if (( c >= 2 )) && [[ -z ${__gpy_g_off[$tok]-} ]]; then
+    if (( c >= __gpy_g_strikes_max )) && [[ -z ${__gpy_g_off[$tok]-} ]]; then
         __gpy_g_off[$tok]=1
-        print -ru2 -- "gpy: script segment ${__gpy_g_nm[$tok]} disabled in this shell after two consecutive timeouts or over-cap outputs"
+        print -ru2 -- "gpy: script segment ${__gpy_g_nm[$tok]} disabled for this shell after $__gpy_g_strikes_max failures (timeout or output over 4096 bytes)"
     fi
 }
 

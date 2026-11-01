@@ -36,7 +36,7 @@ err() { echo "FAIL: $1"; }
 CHECKS_PASSED=0
 CHECKS_FAILED=0
 # Checks that printed a `SKIP:` line. Locally a skip passes but is listed at
-# the end; under CI the test helpers exit 1 on a skip instead.
+# the end; under CI or GPY_GATE_STRICT the test helpers exit 1 on a skip instead.
 CHECKS_SKIPPED_NAMES=""
 
 run_check() {
@@ -58,10 +58,10 @@ run_check() {
     fi
 }
 
-# Missing optional tool: a skip locally, a failure under CI.
+# Missing optional tool: a skip locally, a failure under CI or GPY_GATE_STRICT.
 skip_tool() {
     echo "SKIP: $1 not available"
-    [[ -z "${CI:-}" ]]
+    [[ -z "${CI:-}" && -z "${GPY_GATE_STRICT:-}" ]]
 }
 
 # with_tool TOOL CMD...: run CMD, or skip_tool when the TOOL binary is missing.
@@ -110,7 +110,7 @@ check_fish_formatting() {
 check_shellcheck() {
     command -v shellcheck >/dev/null 2>&1 || { skip_tool shellcheck; return; }
     local failed=0 checked=0 target
-    for target in install.sh install-oneline.sh scripts/*.sh scripts/lib/*.sh tests/bash/*.test.bash \
+    for target in install.sh install-oneline.sh scripts/*.sh scripts/lib/*.sh tests/bash/*.test.bash tests/repo/*.test.bash \
         benchmarks/*/*.sh bash/*.bash bash/*/*.bash; do
         [[ -f "$target" ]] || continue
         checked=$((checked + 1))
@@ -164,10 +164,10 @@ SHELL_TEST_XDG_ROOT=""
 SHELL_TEST_AGENT_DIR=""
 
 # The parts --shell-only runs: `checks` (repo checks, Fish lint, shellcheck)
-# and one entry per suite; the Bash suite is two shards, bash1 and bash2
+# the repo invariant tests (`repo`), and one entry per suite; the Bash suite is two shards, bash1 and bash2
 # (`bash` on the command line means both). CI shards the shell gate by part;
-# the shard list in pr-gate.yml must cover every part (tests/bash/ci_gate_shape).
-SHELL_PARTS_ALL="checks,fish,bash1,bash2,zsh"
+# the shard list in gate-legs.yml must cover every part (tests/repo/ci_gate_shape).
+SHELL_PARTS_ALL="checks,repo,fish,bash1,bash2,zsh"
 SHELL_PARTS="$SHELL_PARTS_ALL"
 
 shell_part() { [[ ",$SHELL_PARTS," == *",$1,"* ]]; }
@@ -218,7 +218,7 @@ run_shell_suite() {
 # Fish, Bash and Zsh suites against this checkout's debug agent. They run
 # whenever the shells or the agent change, since they check rendered output.
 run_shell_tests() {
-    shell_part fish || shell_part bash1 || shell_part bash2 || shell_part zsh || return 0
+    shell_part repo || shell_part fish || shell_part bash1 || shell_part bash2 || shell_part zsh || return 0
     # The suites must never touch this repo; fail loudly if they did.
     local head_before worktrees_before head_after worktrees_after
     head_before="$(git rev-parse HEAD 2>/dev/null || echo none)"
@@ -236,6 +236,9 @@ run_shell_tests() {
     trap 'shell_test_root_end' EXIT
     trap 'shell_test_root_end; exit 130' INT
     trap 'shell_test_root_end; exit 143' TERM
+    if shell_part repo; then
+        run_shell_suite "Repo" "$GPY_BASH" "tests/repo/*.test.bash"
+    fi
     if shell_part bash1; then
         run_shell_suite "Bash" "$GPY_BASH" "tests/bash/*.test.bash" 1/2
     fi
@@ -382,9 +385,11 @@ Usage: $0 [OPTION]
     --fix         Apply fish_indent, cargo fmt and clippy fixes, then run the full gate
     -h, --help    Show this help
 
-Requires cargo (with clippy, rustfmt, nextest), fish, cargo-audit and cargo-deny.
-Optional: zsh. A missing fish_indent, shellcheck or cargo-machete (and, under
---rust-only, cargo-audit or cargo-deny) is skipped locally and fails under CI.
+Requires cargo (with clippy, rustfmt, nextest), fish, zsh (for the zsh part),
+cargo-audit and cargo-deny. The repo part also needs yq (mikefarah, >= 4.52.4).
+A missing fish_indent, shellcheck or cargo-machete (and, under --rust-only,
+cargo-audit or cargo-deny) is skipped locally and fails under CI or when
+GPY_GATE_STRICT=1 is set (\`just check\` sets it).
 EOF
 }
 

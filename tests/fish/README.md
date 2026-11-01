@@ -41,7 +41,7 @@ never an installed `gpy-agent`.
   `tests/lib/stub_listener.py` and registers it with the guard; never an
   inline Python listener. `test_stop_pids $test_stub_pid` stops it early.
 - A test that cannot run because a prerequisite is missing calls
-  `test_skip "reason"`: it passes locally and fails under `CI`.
+  `test_skip "reason"`: it passes locally and fails under `CI` or `GPY_GATE_STRICT`.
 - Find the repository root from the file (`status --filename`) so the test
   runs from any directory, and exit non-zero on any failed assertion.
 - For unit-style tests set `GPY_AGENT_SUPERVISOR_ENABLED=0` and keep

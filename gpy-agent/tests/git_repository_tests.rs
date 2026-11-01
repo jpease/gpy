@@ -25,7 +25,6 @@ fn create_normal_repo(path: &Path) {
     git_helpers::git_commit_all(path, "Initial commit");
 }
 
-// Create a malicious repository with path traversal attempts
 fn create_malicious_repo_paths(base: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut malicious_paths = Vec::new();
 
@@ -82,7 +81,6 @@ fn test_find_repo_root_subdirectory() {
 
     create_normal_repo(temp_path);
 
-    // Create a subdirectory
     let subdir = temp_path.join("src").join("nested");
     fs::create_dir_all(&subdir).expect("Failed to create subdirectory");
 
@@ -122,7 +120,6 @@ fn test_normalize_repo_path_removes_dots() {
 
     create_normal_repo(temp_path);
 
-    // Create a path with . and ..
     let dotted_path = temp_path.join("src").join("..").join(".");
     fs::create_dir_all(temp_path.join("src")).expect("Failed to create dir");
 
@@ -145,7 +142,6 @@ fn test_find_repo_root_follows_symlinks_correctly() {
 
     create_normal_repo(temp_path);
 
-    // Create a symlink to the repo
     let link_path = temp_dir.path().join("link-to-repo");
     if std::os::unix::fs::symlink(temp_path, &link_path).is_err() {
         // Skip if symlinks not supported
@@ -177,7 +173,6 @@ fn test_find_repo_root_windows_junction() {
 
     create_normal_repo(temp_path);
 
-    // Create a junction (Windows directory symlink)
     let junction_path = temp_dir.path().join("junction-to-repo");
 
     // Use cmd.exe to create junction
@@ -225,7 +220,6 @@ fn test_find_repo_root_path_traversal_attempt() {
 #[test]
 #[serial]
 fn test_find_repo_root_rejects_relative_traversal() {
-    // Test that relative path traversal doesn't escape the repo
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 

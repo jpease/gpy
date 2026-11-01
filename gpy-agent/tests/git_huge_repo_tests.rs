@@ -11,17 +11,10 @@ use gpy_agent::config::types::GitTimeout;
 use gpy_agent::git::native::NativeGitBackend;
 use std::fs;
 use std::time::Duration;
-use tempfile::TempDir;
-
-fn create_git_repo() -> TempDir {
-    let dir = TempDir::new().expect("create temp dir");
-    git::git_init(dir.path());
-    dir
-}
 
 #[test]
 fn test_sparse_checkout_doesnt_crash() {
-    let repo = create_git_repo();
+    let repo = git::TestRepo::new();
     let repo_path = repo.path();
 
     fs::create_dir_all(repo_path.join("src")).expect("create src dir");
@@ -56,7 +49,7 @@ fn test_sparse_checkout_doesnt_crash() {
 /// Back-to-back `get_complete_status` calls on an unchanged repo must agree.
 #[test]
 fn test_repeated_complete_status_is_deterministic() {
-    let repo = create_git_repo();
+    let repo = git::TestRepo::new();
     let repo_path = repo.path();
 
     let file_path = repo_path.join("test.txt");

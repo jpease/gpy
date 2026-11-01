@@ -35,15 +35,6 @@ set -g GPY_IPC_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
 # Never shorter than GPY_IPC_TIMEOUT_MS; see __gpy_ipc_cold_timeout_ms.
 set -g GPY_IPC_COLD_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_COLD_TIMEOUT_MS" 500)
 
-set -g GPY_AGENT_START_DELAY_MS 200
-
-# Exponential backoff, ~2s total.
-set -g GPY_SOCKET_WAIT_MAX_ATTEMPTS 20
-
-set -g GPY_CIRCUIT_BREAKER_THRESHOLD 3
-
-set -g GPY_CIRCUIT_BREAKER_BACKOFF_SECONDS 60
-
 # Self-heal bound when a SIGURG repaint push is missed.
 set -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS (__gpy_uint_or_default "$GPY_GIT_INSTANT_CACHE_TTL_SECONDS" 5)
 
@@ -52,12 +43,3 @@ set -g GPY_LANGUAGE_CACHE_TTL_SECONDS (__gpy_uint_or_default "$GPY_LANGUAGE_CACH
 set -g GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS (__gpy_uint_or_default "$GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS" 30)
 
 set -g GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS (__gpy_uint_or_default "$GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS" 5)
-
-set -g GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS (__gpy_uint_or_default "$GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS" 60)
-
-set -g GPY_SUPERVISOR_LONG_BACKOFF_SECONDS (__gpy_uint_or_default "$GPY_SUPERVISOR_LONG_BACKOFF_SECONDS" 300)
-
-# Caps re-forks of a crash-looping agent per shell session.
-set -g GPY_AGENT_AUTOSTART_MAX_ATTEMPTS (__gpy_uint_or_default "$GPY_AGENT_AUTOSTART_MAX_ATTEMPTS" 3)
-
-set -g GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS (__gpy_uint_or_default "$GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS" 10)

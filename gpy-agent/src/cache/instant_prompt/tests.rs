@@ -17,7 +17,7 @@ fn rust_languages() -> Vec<crate::ipc::LanguageInfo> {
 }
 
 /// A cache stored directly in a fresh temp dir; keep the guard alive for the test.
-fn temp_cache() -> (tempfile::TempDir, InstantPromptCache) {
+pub(super) fn temp_cache() -> (tempfile::TempDir, InstantPromptCache) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let cache = InstantPromptCache::new_in_dir(dir.path().to_path_buf()).expect("cache");
     (dir, cache)
@@ -80,7 +80,7 @@ fn aged_file(dir: &Path, name: &str, age: Duration) -> PathBuf {
     path
 }
 
-fn set_mtime(path: &Path, when: SystemTime) {
+pub(super) fn set_mtime(path: &Path, when: SystemTime) {
     std::fs::File::options()
         .write(true)
         .open(path)
@@ -214,28 +214,28 @@ fn test_write_cache_file_is_atomic_no_temp_leftovers() {
 
 #[test]
 fn last_written_evicts_least_recently_written() {
-    let (_temp_dir, cache) = temp_cache();
+    let (_temp_dir, base_cache) = temp_cache();
+    let cache = base_cache.with_last_written_capacity(24);
     let write = |key: &str, content: &str| {
         cache
             .write_entry(key, "git.none", PromptDialect::Ansi, content)
             .expect("write")
     };
     // Oldest first: one past capacity evicts exactly the oldest record.
-    for i in 0..=INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
+    for i in 0_u32..=24_u32 {
         assert!(write(&format!("k{i:04}"), "c"));
     }
-    let newest = format!("k{INSTANT_PROMPT_LAST_WRITTEN_CAPACITY:04}");
-
-    assert!(!write(&newest, "c"), "newest key is still recorded");
-    assert!(!write("k0512", "c"), "a middle key is still recorded");
+    let newest = "k0024";
+    assert!(!write(newest, "c"), "newest key is still recorded");
+    assert!(!write("k0012", "c"), "a middle key is still recorded");
     assert!(write("k0000", "c"), "the oldest key was evicted");
-    assert!(write(&newest, "d"), "changed content is written");
+    assert!(write(newest, "d"), "changed content is written");
 }
 
 #[test]
 fn known_contexts_evicts_least_recently_used_key() {
     let (_temp_dir, cache) = temp_cache();
-    for i in 0..INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
+    for i in 0..INSTANT_PROMPT_KEY_CAPACITY {
         cache.known_contexts(&format!("k{i:04}"), Some("red"));
     }
     // Using the oldest key makes k0001 the least recently used.
@@ -829,7 +829,7 @@ fn test_path_to_cache_key_is_reversible() {
     }
 }
 
-/// Pins the exact `Os::Unix` output; it must match the shells byte-for-byte.
+/// Pins the exact `Os::Unix` output, which the shells copy byte-for-byte.
 #[test]
 fn test_path_to_cache_key_unix_characterization() {
     let cases: [(&str, &str); 6] = [

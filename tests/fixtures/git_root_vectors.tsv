@@ -34,6 +34,13 @@
 #   - a lang key for a NONEXISTENT start (cwd deleted under the shell):
 #     Bash/Zsh find no key (realpath fails), Fish keys by the lexically
 #     resolved path. Either way no cache file exists for it.
+#
+# Rust is the oracle for every `root` row: `git_root_shared_vectors`
+# (gpy-agent/src/cache/instant_prompt/git_root_vectors_tests.rs) lays out the
+# same scratch tree and asserts `find_project_root` (\e = no root found). A
+# `key` row tests the shells' `__gpy_instant_cache_key_path` composition, which
+# has no single Rust function (git keys come from `find_project_root`, non-Git
+# language keys from the request path), so Rust skips the `key` kind.
 
 mkdir	plain/sub
 mkdir	repo/src/deep

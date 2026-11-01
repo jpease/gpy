@@ -102,7 +102,6 @@ function gpy-prompt-debug --description 'GPY debug helpers' --argument-names act
             echo "Cache status:"
             echo "  Instant cache dir: "(__gpy_instant_cache_dir)
             echo "  Registered: $__gpy_registered"
-            echo "  Agent backoff until: $__gpy_agent_backoff_until"
             echo "  Char cache key: $__gpy_char_cache_key"
             echo "  Dir cache key: $__gpy_dir_cache_key"
         case vars

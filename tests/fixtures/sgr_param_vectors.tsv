@@ -8,6 +8,11 @@
 #   - Bash:  __gpy_sgr_param  (tests/bash/sgr_param_vectors.test.bash)
 #   - Zsh:   __gpy_sgr_param  (tests/zsh/sgr_param_vectors.test.zsh)
 # Fish draws with its builtin `set_color`, so it has no copy of this map.
+# This file is shell-only: its fallback rows (`256`, `-1`, `normal`, `\e`,
+# `5277C3`, `#5277C`, `#5277C3F`, `#GG77C3` and the `39 49` defaults) describe
+# how the shell renderer treats values the agent parses as a palette colour or
+# rejects, and Rust has no colour-string-to-SGR function to compare against.
+# The Rust style encoder is covered by its own unit tests.
 #
 # Format: one vector per line, tab-separated: color<TAB>fg<TAB>bg, where fg/bg
 # are the SGR parameters for `__gpy_sgr_param fg|bg COLOR`. Blank lines and

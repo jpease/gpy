@@ -1,10 +1,6 @@
 //! Clock timer: SIGURG doorbell on minute boundaries (or every second with
 //! `show_seconds=true`). `test_clock_timer_ticks` takes ~2s of wall clock.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::panic)]
-
 #[path = "common/sigurg.rs"]
 mod sigurg;
 #[path = "common/wait.rs"]

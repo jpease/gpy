@@ -2,7 +2,7 @@
 # Build the GPY release archives from downloaded build artifacts.
 #
 # Lives outside .github/workflows/release.yml so the packaging logic is
-# testable locally (tests/bash/release_packaging.test.bash) instead of only
+# testable locally (tests/repo/release_packaging.test.bash) instead of only
 # being exercised by a tag push.
 #
 # Everything here is fail-closed: a missing source file, a missing build
@@ -106,7 +106,7 @@ write_sidecar() {
 }
 
 # One per release.yml matrix row; also the name install.sh resolves under bin/.
-# tests/bash/release_asset_contract.test.bash diffs this against the matrix and installers.
+# tests/repo/release_asset_contract.test.bash diffs this against the matrix and installers.
 EXPECTED_ASSETS=(
     gpy-agent-linux-x86_64
     gpy-agent-linux-aarch64

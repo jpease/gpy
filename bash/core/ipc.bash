@@ -52,6 +52,7 @@ __gpy_lang_venv_json_into() {
 # a bare `~` returns $HOME even when empty (which the agent treats as unset),
 # so `~user` is used. Returns non-zero when no absolute home exists. The local
 # is not named `home`: dynamic scoping would shadow a caller's OUT_VAR.
+# Rust counterpart: the `home` argument `paths::xdg_path`'s callers pass.
 __gpy_home() {
     local out_var="$1" __gpy_home_value="${HOME:-}" __gpy_home_user
     if [[ -z "$__gpy_home_value" ]]; then
@@ -68,6 +69,7 @@ __gpy_home() {
 }
 
 # An $XDG_* variable counts only when non-empty and absolute (XDG spec).
+# Rust counterpart: `SocketPath::resolve`.
 __gpy_ipc_endpoint() {
     local home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
@@ -95,6 +97,7 @@ __gpy_ipc_endpoint() {
 
 # Where the socket lives by default and where the agent finds shell PIDs.
 # Writes into variable $1 so hot paths need no `$(...)` fork.
+# Rust counterpart: `paths::runtime_root_for`.
 __gpy_runtime_root() {
     local __gpy_rr_home
     if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
@@ -139,6 +142,7 @@ __gpy_untrack_shell_for_agent_recovery() {
 
 # Instant-prompt cache dir into variable $1; non-zero status when there is
 # no cache directory.
+# Rust counterpart: `paths::cache_root_for`.
 __gpy_instant_cache_dir() {
     local __gpy_icd_home
     if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
@@ -151,6 +155,7 @@ __gpy_instant_cache_dir() {
 }
 
 # Cached Bash theme export, written atomically by the agent.
+# Rust counterpart: `paths::cache_root_for`.
 __gpy_theme_export_cache_path() {
     local home
 

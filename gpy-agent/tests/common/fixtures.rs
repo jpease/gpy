@@ -53,6 +53,12 @@ pub fn bind_silent_socket(path: &Path) -> std::os::unix::net::UnixListener {
 }
 
 /// Aborts the wrapped server task on drop, including during panic unwinding.
+///
+/// Bind the guard to a named variable (`let _guard = ...`), not `_`: `let _ = ...`
+/// drops the guard immediately.
+///
+/// `Drop` runs on normal return and unwind, but not on SIGKILL or a nextest timeout;
+/// `scripts/cleanup-test-agents.sh` reaps leftover agents and sockets in those cases.
 pub struct ServerGuard<T> {
     /// Always `Some` until `into_inner` takes it.
     handle: Option<tokio::task::JoinHandle<T>>,

@@ -69,5 +69,4 @@ echo "Cleanup complete"
 
 echo
 echo "=== System Status ==="
-echo "PTY usage: $(lsof /dev/tty* 2>/dev/null | wc -l) / 511"
 echo "Running gpy-agent processes: $(pgrep -c gpy-agent 2>/dev/null || echo 0)"

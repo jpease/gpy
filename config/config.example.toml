@@ -22,7 +22,7 @@
 # Collapse each submitted prompt to clock, prompt icon and command (Fish 4.2+, Zsh)
 #transient_prompt = true
 # Let `gpy setup` move a file under ~/.config/gpy/themes/ that is an unedited
-# copy of a released builtin theme to <name>.toml.bak, so the builtin applies
+# copy of a builtin theme as released up to 0.7.1 to <name>.toml.bak, so the builtin applies
 #retire_unmodified_themes = true
 
 [ui.directory]

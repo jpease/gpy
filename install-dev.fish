@@ -1,14 +1,14 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Contributor installer: build and install from this checkout. End users: install.sh.
-# Usage: ./install-dev.fish [--fish-only] [--no-build] [--clean] [--allow-shadow] [--help]
+# Contributor installer (Fish only): build and install from this checkout. End users: install.sh.
+# Usage: ./install-dev.fish [--files-only] [--no-build] [--clean] [--allow-shadow] [--help]
 
 # Keep GPY out of the way while installing; a live prompt can hang the run.
 set -gx GPY_AGENT_ENABLED 0
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
 
 # Global so functions can read them.
-set -g fish_only 0
+set -g files_only 0
 set -g no_build 0
 set -g clean_sync 0
 set -g show_help 0
@@ -17,7 +17,10 @@ set -g allow_shadow 0
 for arg in $argv
     switch $arg
         case --fish-only
-            set fish_only 1
+            echo "error: --fish-only was renamed --files-only"
+            exit 1
+        case --files-only
+            set files_only 1
         case --no-build
             set no_build 1
         case --clean
@@ -36,11 +39,15 @@ end
 if test $show_help -eq 1
     echo "GPY Development Installation Script"
     echo ""
+    echo "Fish only. Bash or Zsh from a checkout:"
+    echo "  (cd gpy-agent && cargo build --release) && gpy-agent/target/release/gpy setup --shell bash"
+    echo "  (use --shell zsh for Zsh)"
+    echo ""
     echo "Usage:"
     echo "  ./install-dev.fish [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --fish-only     Skip agent build, only update Fish files (fast)"
+    echo "  --files-only    Skip the agent build and binary install; only update Fish files"
     echo "  --no-build      Skip building, use existing agent binary"
     echo "  --clean         Remove the installed Fish tree before setup"
     echo "  --allow-shadow  Install even though a packaged gpy (e.g. Homebrew) is on PATH"
@@ -53,12 +60,12 @@ if test $show_help -eq 1
     echo ""
     echo "Examples:"
     echo "  ./install-dev.fish                    # Full install"
-    echo "  ./install-dev.fish --fish-only        # Quick Fish update"
+    echo "  ./install-dev.fish --files-only      # Quick Fish update"
     exit 0
 end
 
-if test $fish_only -eq 1; and test $no_build -eq 0
-    set no_build 1 # --fish-only implies --no-build
+if test $files_only -eq 1; and test $no_build -eq 0
+    set no_build 1 # --files-only implies --no-build
 end
 
 # This script installs into ~/.local/bin, which sits ahead of Homebrew, system
@@ -95,9 +102,9 @@ function _check_repo_root
     return 0
 end
 
-# Resolved as gpy-agent/src/paths.rs does.
+# Resolved as `paths::config_root_for` does: only an absolute XDG_CONFIG_HOME counts.
 function _config_home
-    if test -n "$XDG_CONFIG_HOME"
+    if string match -q '/*' -- "$XDG_CONFIG_HOME"
         echo "$XDG_CONFIG_HOME"
     else
         echo "$HOME/.config"
@@ -228,7 +235,7 @@ function _install_agent_binary
     for name in $names
         if not test -f (_release_dir)/$name
             echo "error: $name binary not found at "(_release_dir)/$name
-            echo "   Build first, or use --fish-only"
+            echo "   Build first, or use --files-only"
             return 1
         end
     end
@@ -367,7 +374,7 @@ if not _check_repo_root
     exit 1
 end
 
-if test $no_build -eq 0; and test $fish_only -eq 0
+if test $no_build -eq 0; and test $files_only -eq 0
     if not _build_agent
         exit 1
     end
@@ -378,10 +385,10 @@ if test $no_build -eq 0; and test $fish_only -eq 0
 else
     echo "Skipping agent build"
 
-    if test $fish_only -eq 0
+    if test $files_only -eq 0
         if not test -f (_release_dir)/gpy-agent
             echo "error: Agent binary not found"
-            echo "   Build the agent first or use --fish-only"
+            echo "   Build the agent first or use --files-only"
             exit 1
         end
 
@@ -392,7 +399,7 @@ else
 end
 
 if not test -x "$HOME/.local/bin/gpy"
-    echo "error: gpy is not installed; run ./install-dev.fish without --fish-only first"
+    echo "error: gpy is not installed; run ./install-dev.fish without --files-only first"
     exit 1
 end
 
@@ -415,13 +422,13 @@ echo "  1. Restart Fish: exec fish"
 echo "  2. Check prompt: type something and press Enter"
 echo ""
 
-if test $fish_only -eq 1
-    echo "Tip: Use --fish-only for fast Fish-only updates during development"
+if test $files_only -eq 1
+    echo "Tip: Use --files-only for fast Fish-only updates during development"
 else if test $clean_sync -eq 1
     echo "Tip: Used --clean for a pristine sync"
 end
 
-set -e fish_only
+set -e files_only
 set -e no_build
 set -e clean_sync
 set -e show_help

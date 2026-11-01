@@ -306,7 +306,8 @@ with an earlier one's in sorted order, so no variable is assigned twice.
 - **Circuit breaker.** Each segment has two counters: consecutive scan
   timeouts and consecutive run failures (timeout or over-cap output). When
   either reaches two, the segment is disabled for that shell, with one line
-  on stderr. A completed scan resets the scan counter, a successful run the
+  on stderr (`gpy: script segment <name> disabled for this shell after <N>
+  failures (timeout or output over 4096 bytes)`, the same in every shell). A completed scan resets the scan counter, a successful run the
   run counter; the reload doorbell or a new shell resets both. Ctrl-C, a
   non-zero exit and a failed `require_command` do not count.
 
@@ -398,9 +399,14 @@ model.
 
 ### Runner
 
-Bash runs `bash/core/g_runner.bash` inside `$( )` in the interactive shell.
-Zsh and Fish run a byte-identical copy in one Bash child per prompt: the first
-Bash 4 or later on `PATH`, else `/bin/bash`, resolved once per shell. With no
+There is one runner, `bash/core/g_runner.bash`. Bash runs it inside `$( )` in
+the interactive shell. Zsh and Fish run it in one Bash child per prompt: the
+first Bash 4 or later on `PATH`, else `/bin/bash`, resolved once per shell.
+`gpy setup` installs it into the Fish and Zsh trees as `core/g_runner.bash`;
+from a checkout, a release staging directory or Homebrew `share/gpy` they use
+the `bash/core/g_runner.bash` beside their tree. `gpy doctor`'s trial run
+applies the same rules, and `tests/bash/script_runner_conformance.test.bash`
+holds the two to the same verdicts and environment. With no
 Bash at all, script segments are disabled (one warning, shown only with
 `GPY_DEBUG`/`GPY_VERBOSE`).
 

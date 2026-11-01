@@ -51,7 +51,7 @@ test_finish() {
 
 # Skip contract: a test that cannot run because a prerequisite is missing
 # calls `test_skip "reason"`. Locally that prints `SKIP: reason` and exits 0,
-# so a developer without, say, python3 is not blocked; under `CI` the same
+# so a developer without, say, python3 is not blocked; under `CI` or `GPY_GATE_STRICT` the same
 # call exits 1, so the gate can never go green on a test that did not
 # actually execute. Never `exit 0` on a missing prerequisite directly.
 test_skip() {
@@ -61,11 +61,11 @@ test_skip() {
 
 # `test_skip_part "reason"` -- the same contract for one section of a test:
 # prints `SKIP: reason` and returns so the caller can carry on with the rest;
-# exits 1 under `CI`.
+# exits 1 under `CI` or `GPY_GATE_STRICT`.
 test_skip_part() {
     printf 'SKIP: %s\n' "$*"
-    if [ -n "${CI:-}" ]; then
-        printf 'FAIL: a skipped test is a failure under CI\n'
+    if [ -n "${CI:-}" ] || [ -n "${GPY_GATE_STRICT:-}" ]; then
+        printf 'FAIL: a skipped test is a failure under CI or GPY_GATE_STRICT\n'
         exit 1
     fi
 }
@@ -75,6 +75,39 @@ test_require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         test_skip "${2:-$1 not installed}"
     fi
+}
+
+# `require_yq` -- skip unless `yq` is mikefarah's v4 and at least 4.52.4 (older
+# releases cannot parse the comments inside deny.toml's `skip` array; the
+# Debian `yq` package is a different program). POSIX sh only: this file is
+# sourced by Zsh under `emulate sh`.
+require_yq() {
+    _ry_out="$(yq --version 2>/dev/null)" || _ry_out=""
+    _ry_ver=""
+    case "$_ry_out" in
+        *mikefarah*)
+            _ry_ver="$(printf '%s\n' "$_ry_out" |
+                sed -n 's/.*version v\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+            ;;
+    esac
+    _ry_ok=0
+    if [ -n "$_ry_ver" ]; then
+        _ry_major="${_ry_ver%%.*}"
+        _ry_rest="${_ry_ver#*.}"
+        _ry_minor="${_ry_rest%%.*}"
+        _ry_patch="${_ry_rest#*.}"
+        if [ "$_ry_major" -gt 4 ] ||
+            { [ "$_ry_major" -eq 4 ] && [ "$_ry_minor" -gt 52 ]; } ||
+            { [ "$_ry_major" -eq 4 ] && [ "$_ry_minor" -eq 52 ] && [ "$_ry_patch" -ge 4 ]; }; then
+            _ry_ok=1
+        fi
+    fi
+    unset _ry_out _ry_ver _ry_major _ry_rest _ry_minor _ry_patch
+    if [ "$_ry_ok" -ne 1 ]; then
+        unset _ry_ok
+        test_skip "mikefarah yq >= 4.52.4 not installed (see scripts/README.md)"
+    fi
+    unset _ry_ok
 }
 
 # ---------------------------------------------------------------------------

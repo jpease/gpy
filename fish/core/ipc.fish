@@ -2,6 +2,7 @@ source (path dirname (status filename))/flags.fish
 
 # Home directory with the agent's passwd fallback: an empty $HOME counts as
 # unset, else a blanked HOME resolves /.cache/gpy while the agent uses passwd.
+# Rust counterpart: the `home` argument `paths::xdg_path`'s callers pass.
 function __gpy_home --description 'Home directory with the passwd fallback'
     set -l home "$HOME"
     if test -z "$home"
@@ -15,6 +16,7 @@ end
 
 # Runtime root, agent precedence. Per the XDG spec, empty or relative values
 # count as unset.
+# Rust counterpart: `paths::runtime_root_for`.
 function __gpy_runtime_root --description 'XDG runtime root for GPY'
     if set -q XDG_RUNTIME_DIR; and test -n "$XDG_RUNTIME_DIR"; and string match -q '/*' -- "$XDG_RUNTIME_DIR"
         echo "$XDG_RUNTIME_DIR/gpy"
@@ -31,6 +33,7 @@ function __gpy_runtime_root --description 'XDG runtime root for GPY'
     end
 end
 
+# Rust counterpart: `paths::cache_root_for`.
 function __gpy_instant_cache_dir --description 'Instant-prompt cache directory'
     if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"
         echo "$XDG_CACHE_HOME/gpy/instant-prompts"
@@ -50,6 +53,7 @@ function __gpy_shell_registry_file --description 'Fish shell PID file for agent 
     echo (__gpy_shell_registry_dir)/$fish_pid
 end
 
+# Rust counterpart: `SocketPath::resolve`.
 function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
     # Empty counts as unset, matching Bash and Zsh.
     if set -q GPY_AGENT_SOCKET_PATH; and test -n "$GPY_AGENT_SOCKET_PATH"
@@ -79,32 +83,6 @@ function __gpy_ipc_client_available
     command -q nc; or return 1
     __gpy_nc_probe_capabilities
     test "$__gpy_nc_supports_unix" -eq 1
-end
-
-# Ping within one second over the real client: stock macOS lacks `timeout` and
-# its `nc -z` rejects -U. With no client, socket existence is the best answer.
-function __gpy_socket_ready --argument-names socket_path
-    test -S "$socket_path"; or return 1
-    __gpy_ipc_client_available; or return 0
-    __gpy_ipc_send '{"op":"ping"}' 1000 "$socket_path" >/dev/null
-end
-
-function __gpy_wait_for_socket --argument-names socket_path
-    set -l max_attempts $GPY_SOCKET_WAIT_MAX_ATTEMPTS
-    set -l attempt 1
-
-    while test $attempt -le $max_attempts
-        if __gpy_socket_ready "$socket_path"
-            return 0
-        end
-
-        set -l delay_ms (math "min(50 * (2 ^ min($attempt - 1, 3)), 200)")
-        sleep (math "$delay_ms / 1000")
-
-        set attempt (math "$attempt + 1")
-    end
-
-    return 1
 end
 
 # Print the line only if its trailing newline arrived; `head -n1` passed
@@ -741,10 +719,6 @@ function __gpy_check_protocol_version --description 'Check and warn on protocol 
 end
 
 function __gpy_track_shell_for_agent_recovery --description 'Track this Fish PID so agent restarts can wake existing shells'
-    if set -q GPY_SUPERVISOR_CHILD
-        return 0
-    end
-
     set -l registry_dir (__gpy_shell_registry_dir)
     mkdir -p "$registry_dir" 2>/dev/null
     echo $fish_pid >(__gpy_shell_registry_file) 2>/dev/null
@@ -756,10 +730,6 @@ function __gpy_untrack_shell_for_agent_recovery --description 'Remove this Fish 
 end
 
 function __gpy_refresh_registration_after_restart --description 'Forget this shell registration and register again (agent .reregister doorbell)'
-    if set -q GPY_SUPERVISOR_CHILD
-        return 1
-    end
-
     if not __gpy_agent_enabled
         return 1
     end
@@ -793,10 +763,6 @@ function __gpy_reload_if_theme_export_changed --description 'Re-apply the theme 
 end
 
 function __gpy_register_with_agent --description 'Register this Fish process with the GPY agent'
-    if set -q GPY_SUPERVISOR_CHILD
-        return 1
-    end
-
     if set -q __gpy_registered
         return 0
     end
@@ -833,10 +799,6 @@ function __gpy_register_with_agent --description 'Register this Fish process wit
 end
 
 function __gpy_unregister_from_agent --description 'Remove this Fish process from the GPY agent registry'
-    if set -q GPY_SUPERVISOR_CHILD
-        return 0
-    end
-
     if not set -q __gpy_registered
         return 0
     end
@@ -850,10 +812,6 @@ function __gpy_unregister_from_agent --description 'Remove this Fish process fro
 end
 
 function __gpy_sync_workspace --description 'Report current workspace to the agent'
-    if set -q GPY_SUPERVISOR_CHILD
-        return 0
-    end
-
     if not set -q __gpy_registered
         return 0
     end

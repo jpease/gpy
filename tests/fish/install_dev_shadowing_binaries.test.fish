@@ -16,7 +16,7 @@
 #   (g) _config_home honours XDG_CONFIG_HOME
 #
 # The function is sourced from the real install-dev.fish (run with
-# --fish-only against a throwaway HOME so sourcing has no side effects on
+# --files-only against a throwaway HOME so sourcing has no side effects on
 # this machine), the way install_dev_stop_running_agent.test.fish does.
 # Every stub lives under the sandbox, and each driver runs under `env -i`
 # with only system dirs on PATH, so an exported `fish_user_paths` or a real
@@ -72,7 +72,7 @@ function write_driver --argument-names driver repo_root home_dir safe_path insta
         "set -gx XDG_CONFIG_HOME '$home_dir/.config'" \
         "set -gx XDG_CACHE_HOME '$home_dir/.cache'" \
         "set -gx PATH '$safe_path'" \
-        "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
+        "source install-dev.fish --files-only --allow-shadow >/dev/null 2>&1" \
         "set -gx PATH "(string escape -- $argv[6..-1] | string join ' ') \
         "_warn_shadowing_binaries '$install'" >"$driver"
 end
@@ -187,7 +187,7 @@ printf '%s\n' \
     "set -gx XDG_CACHE_HOME '$home_dir/.cache'" \
     "set -gx PATH '$safe_path'" \
     "set -e XDG_CONFIG_HOME" \
-    "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
+    "source install-dev.fish --files-only --allow-shadow >/dev/null 2>&1" \
     "echo default=(_config_home)" \
     "set -gx XDG_CONFIG_HOME '$sandbox/xdg'" \
     "echo xdg=(_config_home)" >"$driver_cfg"

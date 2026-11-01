@@ -59,6 +59,9 @@ mod sync_ext;
 pub mod template;
 /// Theme management with hot-reload support.
 pub mod theme;
+/// Reader for the shared `tests/fixtures/*.tsv` vector files (tests only).
+#[cfg(test)]
+mod vector_cells;
 /// Filesystem watching for real-time updates.
 pub mod watcher;
 /// Windows Subsystem for Linux detection.

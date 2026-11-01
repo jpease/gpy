@@ -2,6 +2,12 @@ use super::super::backend::{SplitPollWatcher, routes_to_gitdir};
 use super::*;
 use notify::Watcher;
 
+/// Settle window: let an event burst or recursive scan land before reading state.
+const SETTLE_WINDOW: Duration = Duration::from_millis(400);
+
+/// Absence window: prove that no second rescan burst appears.
+const ABSENCE_WINDOW: Duration = Duration::from_millis(200);
+
 /// A real worktree write is delivered well before reconcile whatever the
 /// native backend's health (falling back to `PollWatcher` if `FSEvents` is silent).
 #[test]
@@ -9,14 +15,8 @@ fn real_worktree_write_is_delivered_even_when_native_backend_is_silent() {
     let poll = PollRepo::with_policy(FallbackPolicy::from_env());
     poll.watcher.watch(&poll.root).expect("watch repo");
 
-    // Let the recursive watch arm before racing it.
-    std::thread::sleep(Duration::from_millis(200));
-    std::fs::write(poll.root.join("untracked.txt"), b"content").expect("write worktree file");
-
-    let delivered = wait_for_any_event(&poll.events, Duration::from_secs(8));
-
     assert!(
-        delivered,
+        poll.create_until_delivered("untracked", Duration::from_secs(8)),
         "a real worktree write must be delivered without waiting for the \
          periodic reconcile, even when the native backend is silent"
     );
@@ -33,13 +33,9 @@ fn poll_fallback_backend_delivers_real_worktree_writes() {
     );
 
     poll.watcher.watch(&poll.root).expect("watch repo");
-    std::thread::sleep(Duration::from_millis(300));
-    std::fs::write(poll.root.join("untracked.txt"), b"content").expect("write worktree file");
-
-    let delivered = wait_for_any_event(&poll.events, Duration::from_secs(5));
 
     assert!(
-        delivered,
+        poll.create_until_delivered("untracked", Duration::from_secs(5)),
         "the poll fallback backend must deliver real worktree writes"
     );
 }
@@ -189,7 +185,7 @@ fn poll_backend_watches_directories_created_after_arming() {
 
     // Let the creation and its stragglers land so only the edits below count.
     let created = wait_for_any_event(&poll.events, Duration::from_secs(5));
-    std::thread::sleep(Duration::from_millis(400));
+    std::thread::sleep(SETTLE_WINDOW);
     poll.events.lock().unwrap().clear();
 
     // Re-append until one lands after the new directory's baseline, in a later second.
@@ -324,7 +320,7 @@ fn poll_backend_does_not_arm_gitignored_directory_created_after_arming() {
     let control_armed = wait_until(Duration::from_secs(5), || {
         armed_dirs(&poll.watcher).contains(&control)
     });
-    std::thread::sleep(Duration::from_millis(400));
+    std::thread::sleep(SETTLE_WINDOW);
     let armed = armed_dirs(&poll.watcher);
 
     assert!(control_armed, "a new non-ignored directory must be armed");
@@ -391,14 +387,14 @@ fn backend_swap_rearms_already_watched_paths() {
         "the swap must leave the polling backend armed"
     );
 
+    let rescan_arrived = wait_until(Duration::from_secs(5), || {
+        !poll.events.lock().unwrap().is_empty()
+    });
+    assert!(rescan_arrived, "the swap must emit a rescan");
     poll.events.lock().unwrap().clear();
-    std::thread::sleep(Duration::from_millis(300));
-    std::fs::write(poll.root.join("after_swap.txt"), b"content").expect("write worktree file");
-
-    let delivered = wait_for_any_event(&poll.events, Duration::from_secs(5));
 
     assert!(
-        delivered,
+        poll.create_until_delivered("after_swap", Duration::from_secs(5)),
         "a repo watched before the backend swap must still be watched after it"
     );
 }
@@ -441,10 +437,10 @@ fn repeated_swap_is_a_no_op() {
     poll.watcher.force_poll_fallback(Duration::from_secs(1));
     let after_first = wait_for_any_event(&poll.events, Duration::from_secs(2));
     // Let the first swap's rescan burst land, or slow runners miscount it.
-    std::thread::sleep(Duration::from_millis(400));
+    std::thread::sleep(SETTLE_WINDOW);
     poll.events.lock().unwrap().clear();
     poll.watcher.force_poll_fallback(Duration::from_secs(1));
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(ABSENCE_WINDOW);
     let rescans_after_second = poll.events.lock().unwrap().len();
 
     assert!(after_first, "the first swap should emit a rescan");

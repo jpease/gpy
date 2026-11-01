@@ -34,39 +34,6 @@ function __gpy_resolve_agent_binary --description 'Resolve the gpy-agent binary 
     return 1
 end
 
-# Mirrors `config::schema::get_config_paths`; relative GPY_CONFIG_PATH joins the physical cwd.
-function __gpy_user_config_candidates
-    set -l candidates
-    if set -q GPY_CONFIG_PATH; and test -n "$GPY_CONFIG_PATH"
-        if string match -q '/*' -- "$GPY_CONFIG_PATH"
-            set candidates $GPY_CONFIG_PATH
-        else
-            set candidates (string trim -r -c / -- (pwd -P))/$GPY_CONFIG_PATH
-        end
-    end
-    if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"; and string match -q '/*' -- "$XDG_CONFIG_HOME"
-        set -a candidates "$XDG_CONFIG_HOME/gpy/config.toml"
-    end
-    set -l home (__gpy_home)
-    if test -n "$home"
-        set -a candidates "$home/.config/gpy/config.toml"
-    end
-    printf '%s\n' $candidates
-end
-
-function __gpy_locate_config_path
-    set -l candidates (__gpy_user_config_candidates)
-    for path in $candidates
-        if test -e $path
-            echo $path
-            return
-        end
-    end
-    if test (count $candidates) -gt 0
-        echo $candidates[1]
-    end
-end
-
 function __gpy_file_mtime --argument-names file
     # `path mtime` is a builtin: no fork.
     path mtime "$file" 2>/dev/null
@@ -101,6 +68,7 @@ function __has_binary --argument-names bin
 end
 
 # The agent writes this before ringing the reload doorbell.
+# Rust counterpart: `paths::cache_root_for`.
 function __gpy_theme_export_cache_path --description 'Path to the theme export cache file'
     if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"
         echo "$XDG_CACHE_HOME/gpy/theme-export.fish"
@@ -136,35 +104,6 @@ end
 
 # Pure policy helpers: no fork, clock, filesystem, or globals (unit-tested).
 
-# Prints deny iff both are integers and backoff_until > now; otherwise allow.
-function __gpy_breaker_gate --argument-names backoff_until now --description 'Pure circuit-breaker gate: allow|deny'
-    set -q backoff_until[1]; or set backoff_until ""
-    set -q now[1]; or set now ""
-    if string match -qr '^[0-9]+$' -- "$backoff_until"
-        and string match -qr '^[0-9]+$' -- "$now"
-        and test "$backoff_until" -gt "$now"
-        echo deny
-        return 0
-    end
-    echo allow
-end
-
-# Prints "<new_count> <new_until>"; opening the breaker resets the count. Unknown now counts as 0.
-function __gpy_breaker_record_failure --argument-names failure_count now threshold backoff_secs --description 'Pure circuit-breaker failure accounting: prints "<new_count> <new_until>"'
-    set -q failure_count[1]; or set failure_count ""
-    if not string match -qr '^[0-9]+$' -- "$failure_count"
-        set failure_count 0
-    end
-    set -l new_count (math "$failure_count + 1")
-    if test "$new_count" -ge "$threshold"
-        set -l base 0
-        string match -qr '^[0-9]+$' -- "$now"; and set base "$now"
-        printf '%s %s\n' 0 (math "$base + $backoff_secs")
-    else
-        printf '%s %s\n' "$new_count" 0
-    end
-end
-
 # stale iff all operands are integers and now - mtime >= ttl.
 function __gpy_cache_freshness --argument-names now mtime ttl --description 'Pure cache freshness check: fresh|stale'
     if string match -qr '^[0-9]+$' -- "$now"
@@ -193,10 +132,17 @@ function __gpy_cache_status_variant --argument-names code --description 'Pure pr
     test "$code" = 4 -o "$code" = 6
 end
 
-set -g __gpy_agent_failure_count 0
-set -g __gpy_agent_backoff_until 0
+# Epoch seconds without a fork: mtime of / plus the seconds since it.
+function __gpy_now_seconds
+    set -l at (path mtime / 2>/dev/null)
+    set -l age (path mtime --relative / 2>/dev/null)
+    if string match -qr '\A[0-9]+\z' -- "$at"; and string match -qr '\A-?[0-9]+\z' -- "$age"
+        math "$at + $age"
+        return 0
+    end
+    date +%s 2>/dev/null
+end
 
-# Ping with a circuit breaker; forks `date` only while the breaker may be open.
 function __gpy_agent_available
     if not __gpy_agent_enabled
         return 1
@@ -206,36 +152,7 @@ function __gpy_agent_available
         return 1
     end
 
-    # Circuit breaker: skip date fork entirely when backoff is not active (common case)
-    if test "$__gpy_agent_backoff_until" -gt 0
-        # Fresh timestamp: __gpy_prompt_now is stale in idle shells and would keep backoff active.
-        set -l _now_check (date +%s 2>/dev/null)
-        if test (__gpy_breaker_gate "$__gpy_agent_backoff_until" "$_now_check") = deny
-            return 1
-        end
-        set -g __gpy_agent_backoff_until 0
-    end
-
     # Check output, not exit code: an empty reply still exits 0.
     set -l ping_result (__gpy_request ping 2>/dev/null)
-    if test -n "$ping_result"
-        set -g __gpy_agent_failure_count 0
-        return 0
-    end
-
-    # Fork `date` only when this failure would open the breaker.
-    set -l _now_backoff ""
-    if test (math "$__gpy_agent_failure_count + 1") -ge "$GPY_CIRCUIT_BREAKER_THRESHOLD"
-        set _now_backoff (date +%s 2>/dev/null)
-    end
-    set -l _breaker_result (__gpy_breaker_record_failure "$__gpy_agent_failure_count" "$_now_backoff" "$GPY_CIRCUIT_BREAKER_THRESHOLD" "$GPY_CIRCUIT_BREAKER_BACKOFF_SECONDS")
-    set -l _breaker_fields (string split ' ' -- $_breaker_result)
-    set -g __gpy_agent_failure_count $_breaker_fields[1]
-    set -g __gpy_agent_backoff_until $_breaker_fields[2]
-
-    if test "$__gpy_agent_backoff_until" -gt 0
-        __gpy_log_debug ipc "Circuit breaker opened: backing off for $GPY_CIRCUIT_BREAKER_BACKOFF_SECONDS seconds"
-    end
-
-    return 1
+    test -n "$ping_result"
 end

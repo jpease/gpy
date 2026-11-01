@@ -1,10 +1,6 @@
 //! `fg:prev_bg` resolves the previous segment's background as the span's
 //! foreground in the rendered ANSI.
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-
 use gpy_agent::config::Config;
 use gpy_agent::formatter::{Formatter, PromptFormatter, RenderContext, SegmentPosition};
 use gpy_agent::git::{RepositoryState, RepositoryStatus};

@@ -53,9 +53,10 @@ set -g GPY_PP_KEYS \
 #
 # Every shell talks to the agent, reads its pre-rendered cache, and records
 # its PID under the runtime root's shells/ directory for the agent's restart
-# nudge. Fish additionally sources the theme export by path and locates
-# config.toml for its own prompt resolution. theme_dir is the agent's alone --
-# no shell ever locates a theme file.
+# nudge. Fish additionally sources the theme export by path. config_path,
+# config_candidates and theme_dir are the agent's alone -- no shell reads
+# config.toml or locates a theme file; the supervisor takes its flags from the
+# theme export.
 set -g GPY_PP_OWNERS \
     "runtime_root:rust,fish,bash,zsh" \
     "socket:rust,fish,bash,zsh" \
@@ -63,8 +64,8 @@ set -g GPY_PP_OWNERS \
     "cache_root:rust,fish,bash,zsh" \
     "instant_prompts_dir:rust,fish,bash,zsh" \
     "theme_export_file:rust,fish" \
-    "config_path:rust,fish" \
-    "config_candidates:rust,fish" \
+    "config_path:rust" \
+    "config_candidates:rust" \
     "theme_dir:rust"
 
 # Declared divergences, `^`-separated (paths and the `|`-joined candidate list
@@ -124,30 +125,16 @@ set -g GPY_PP_ERR $GPY_PP_TMP/stderr.log
 # %PWHOME% and let values (and any divergence entry) compare portably.
 set -g GPY_PP_PWHOME (env -u HOME fish --no-config -c 'echo $HOME' 2>/dev/null)
 
-# `home` has both a `.config/gpy/config.toml` and a `~/.gpy.toml`; `home2` has
-# only the latter, which must never be picked up as a config candidate.
-# `emptyconf` is an XDG_CONFIG_HOME directory holding no config at all.
-# `home3` holds no config of any kind: with no candidate existing anywhere,
-# each side falls back to its own first candidate, so an empty
-# XDG_CONFIG_HOME's effect on `config_path` is not hidden by an existence
-# check.
+# `home` and `home2` are plain HOME directories; `home2` stands for a HOME
+# that holds only a `~/.gpy.toml`, which is never a config candidate.
 mkdir -p \
     $GPY_PP_TMP/run \
     $GPY_PP_TMP/cache \
-    $GPY_PP_TMP/conf/gpy \
-    $GPY_PP_TMP/home/.config/gpy \
+    $GPY_PP_TMP/conf \
+    $GPY_PP_TMP/home \
     $GPY_PP_TMP/home2 \
-    $GPY_PP_TMP/home3 \
-    $GPY_PP_TMP/emptyconf \
-    $GPY_PP_TMP/cfg \
     $GPY_PP_TMP/sock \
     $GPY_PP_TMP/cwd
-touch \
-    $GPY_PP_TMP/conf/gpy/config.toml \
-    $GPY_PP_TMP/home/.config/gpy/config.toml \
-    $GPY_PP_TMP/home/.gpy.toml \
-    $GPY_PP_TMP/home2/.gpy.toml \
-    $GPY_PP_TMP/cfg/custom.toml
 
 # --- MATRIX ---
 #
@@ -163,10 +150,6 @@ set -g GPY_PP_CASES \
     "runtime_and_cache_unset;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
     "runtime_unset_cache_empty;XDG_CACHE_HOME=;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
     "runtime_empty_cache_empty;XDG_RUNTIME_DIR=;XDG_CACHE_HOME=;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
-    "config_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;HOME=%T%/home" \
-    "config_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=;HOME=%T%/home" \
-    "config_empty_dir;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/emptyconf;HOME=%T%/home" \
-    "config_empty_no_config;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=;HOME=%T%/home3" \
     "home_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf" \
     "home_unset_cache_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CONFIG_HOME=%T%/conf" \
     "home_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=" \
@@ -179,11 +162,7 @@ set -g GPY_PP_CASES \
     "cache_only;XDG_CACHE_HOME=%T%/cache" \
     "socket_override;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_AGENT_SOCKET_PATH=%T%/sock/custom.sock" \
     "socket_override_no_xdg;HOME=%T%/home;GPY_AGENT_SOCKET_PATH=%T%/sock/custom.sock" \
-    "socket_override_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;HOME=%T%/home;GPY_AGENT_SOCKET_PATH=" \
-    "config_override;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=%T%/cfg/custom.toml" \
-    "config_override_missing;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=%T%/cfg/absent.toml" \
-    "config_override_relative;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=rel/custom.toml" \
-    "config_override_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH="
+    "socket_override_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;HOME=%T%/home;GPY_AGENT_SOCKET_PATH="
 
 # --- HARNESS ---
 

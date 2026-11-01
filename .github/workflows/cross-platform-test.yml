@@ -1,9 +1,9 @@
 name: Cross-Platform Test
 
-# Post-merge and weekly run of the PR gate's Rust and shell legs on Linux and
-# macOS, plus the Windows leg. The weekly run builds without the cache and
-# catches runner-image and toolchain drift that no PR exercised; a push to
-# main also seeds the build cache the PR gate restores.
+# Post-merge and weekly run of the PR gate's Rust and shell legs (the shared
+# gate-legs.yml) on Linux and macOS, plus the Windows leg. The weekly run
+# builds without the cache and catches runner-image and toolchain drift that no
+# PR exercised; a push to main also seeds the build cache the PR gate restores.
 on:
   push:
     branches: [main]
@@ -24,100 +24,14 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  rust:
-    name: Rust gate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-          components: clippy, rustfmt
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
-      # A push to main saves the cache every PR gate restores (a PR's own
-      # cache would be visible to that PR alone). The weekly run skips it, so
-      # it still builds cold.
-      - name: Cache cargo build
-        if: ${{ github.event_name != 'schedule' }}
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: gpy-agent
-          shared-key: rust
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Rust tooling (nextest, audit, deny, machete)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just
-
-      - name: Install shells and shell-suite prerequisites
-        uses: ./.github/actions/install-shells
-
-      - name: Rust toolchain gate
-        run: just check-rust
-
-  shell:
-    name: Shell gate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    # The PR gate shards this gate in two; here it runs whole.
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
-      # Restore only: the Rust leg owns saving the shared cache.
-      - name: Cache cargo build
-        if: ${{ github.event_name != 'schedule' }}
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: gpy-agent
-          shared-key: rust
-          save-if: "false"
-
-      - name: Install just, shellcheck and cargo-audit
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: just,shellcheck,cargo-audit
-
-      - name: Install shells and shell-suite prerequisites
-        uses: ./.github/actions/install-shells
-
-      - name: Shell integration gate
-        run: just check-shell
+  gate-legs:
+    # A push to main saves the cache every PR gate restores (a PR's own cache
+    # would be visible to that PR alone). The weekly run skips the cache, so
+    # it still builds cold.
+    uses: ./.github/workflows/gate-legs.yml
+    with:
+      cache: ${{ github.event_name != 'schedule' }}
+      save-cache: ${{ github.ref == 'refs/heads/main' }}
 
   windows-gate:
     uses: ./.github/workflows/windows-gate.yml

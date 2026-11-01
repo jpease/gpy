@@ -6,7 +6,7 @@
 # ~/.config/gpy/config.toml (a divergent config gets a config.toml.new
 # sibling instead). Fish wiring itself is gpy setup's (a stub gpy here).
 #
-# Runs the REAL install-dev.fish script with --fish-only (no agent build,
+# Runs the REAL install-dev.fish script with --files-only (no agent build,
 # no cargo install, no network) against a sandboxed $HOME/$XDG_CONFIG_HOME,
 # from the real repo root. PATH is scrubbed down to a minimal set of Unix
 # tools so `gpy-agent` (installed on this machine) is not found on PATH --
@@ -44,7 +44,7 @@ function __gpy_run_install_dev --argument-names home_dir safe_path extra_flag
     mkdir -p "$home_dir/.local/bin"
     printf '#!/bin/sh\nexit 0\n' >"$home_dir/.local/bin/gpy"
     chmod +x "$home_dir/.local/bin/gpy"
-    set -l flags --fish-only
+    set -l flags --files-only
     if test -n "$extra_flag"
         set -a flags $extra_flag
     end
@@ -77,7 +77,7 @@ set -l out1 (__gpy_run_install_dev "$home1" "$safe_path" "")
 set -l status1 $status
 
 if test $status1 -ne 0
-    fail "install-dev.fish --fish-only exited $status1: $out1"
+    fail "install-dev.fish --files-only exited $status1: $out1"
 else
     if diff -q "$home1/original_config.toml" "$custom_config" >/dev/null 2>&1
         pass "install-dev.fish: customized config.toml left untouched"
@@ -96,7 +96,7 @@ else
     end
 end
 
-# --- Test 2: idempotency -- running install-dev.fish --fish-only twice in a
+# --- Test 2: idempotency -- running install-dev.fish --files-only twice in a
 # row does not misbehave. ---
 __gpy_run_install_dev "$home1" "$safe_path" "" >/dev/null 2>&1
 if test -f "$home1/.config/gpy/config.toml.new"
@@ -124,7 +124,7 @@ set -l out3 (__gpy_run_install_dev "$home3" "$safe_path" "")
 set -l status3 $status
 
 if test $status3 -ne 0
-    fail "install-dev.fish --fish-only exited $status3: $out3"
+    fail "install-dev.fish --files-only exited $status3: $out3"
 else
     if diff -q "$repo_root/config/config.example.toml" "$home3/.config/gpy/config.toml" >/dev/null 2>&1
         pass "install-dev.fish: first install creates config.toml matching shipped default"
@@ -147,7 +147,7 @@ printf '#!/bin/sh\necho "gpy 0.0.0"\n' >"$pkg_bin/gpy"
 chmod +x "$pkg_bin/gpy"
 mkdir -p "$home4/.local/bin"
 set -l out4 (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
-    fish --no-config install-dev.fish --fish-only 2>&1 | string collect)
+    fish --no-config install-dev.fish --files-only 2>&1 | string collect)
 set -l status4 $pipestatus[1]
 if test $status4 -ne 0; and string match -q "*already installed at $pkg_bin/gpy*" -- "$out4"
     pass "install-dev.fish: refuses to shadow a packaged gpy"
@@ -155,12 +155,21 @@ else
     fail "install-dev.fish: did not refuse a packaged gpy (status $status4): $out4"
 end
 set -l out4b (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
-    fish --no-config install-dev.fish --fish-only --allow-shadow 2>&1 | string collect)
+    fish --no-config install-dev.fish --files-only --allow-shadow 2>&1 | string collect)
 if string match -q "*already installed at*" -- "$out4b"
     fail "install-dev.fish: --allow-shadow still refused: $out4b"
 else
     pass "install-dev.fish: --allow-shadow bypasses the guard"
 end
 rm -rf "$home4" "$pkg_bin"
+
+# --- Test 5: the old flag name is rejected, naming its replacement.
+set -l out5 (fish --no-config install-dev.fish --fish-only 2>&1 | string collect)
+set -l status5 $pipestatus[1]
+if test $status5 -eq 1; and string match -q "*--files-only*" -- "$out5"
+    pass "install-dev.fish: --fish-only exits 1 naming --files-only"
+else
+    fail "install-dev.fish: --fish-only was not rejected with --files-only (status $status5): $out5"
+end
 
 test_finish "install-dev.fish preserves customized config.toml"

@@ -2,3 +2,8 @@
 # GPY: release tag; Starship: version without the leading v.
 GPY_PINNED=v0.4.0
 STARSHIP_PINNED=1.26.0
+# `.github/actions/install-shells` reads this file; bump `STARSHIP_PINNED` and
+# both `STARSHIP_SHA256_*` keys together (digests from the release's `.sha256`
+# assets), or every Linux and macOS shell leg fails at the checksum step.
+STARSHIP_SHA256_X86_64_UNKNOWN_LINUX_MUSL=b7c232b0e8249d8e55a40beb79c5c43a7d370f3f9408bd215deb0170daeaadf3
+STARSHIP_SHA256_AARCH64_APPLE_DARWIN=c40b27b11f580411e068f2fa6c1be7830a387c0bc47a94d1d37f32b054c5361d

@@ -230,7 +230,8 @@ impl Os {
 }
 
 /// The runtime root: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`,
-/// `$HOME/.cache/gpy`, then `/tmp/gpy`. Matches Fish `__gpy_runtime_root`.
+/// `$HOME/.cache/gpy`, then `/tmp/gpy`. The shells' `__gpy_runtime_root` copies
+/// are pinned by `xdg_absoluteness_shared_vectors` and `path_parity`.
 #[must_use]
 pub fn runtime_root_for(
     xdg_runtime_dir: Option<&Path>,
@@ -250,7 +251,8 @@ pub fn runtime_root_for(
 }
 
 /// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
-/// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches the shells).
+/// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy`. The shells' copies are
+/// pinned by `xdg_absoluteness_shared_vectors`.
 /// Never creates it; `gpy-agent start` does (`lifecycle::ensure_runtime_dir`).
 #[must_use]
 pub fn runtime_dir() -> PathBuf {
@@ -795,5 +797,49 @@ mod tests {
         let resolved = socket_path_for(None, Some(OsStr::new("")), Path::new("/run/gpy"));
         assert_eq!(resolved, socket_at("/run/gpy/gpy.sock", false));
         assert!(!resolved.is_override());
+    }
+
+    /// Every row of `xdg_absoluteness_vectors.tsv`: an `XDG_*` value is honoured
+    /// on Unix iff absolute; otherwise each root falls through as if unset.
+    #[test]
+    fn xdg_absoluteness_shared_vectors() {
+        let home = Path::new("/home/u");
+        let mut checked = 0_u32;
+        for row in crate::vector_cells::rows("xdg_absoluteness_vectors.tsv") {
+            let [raw, absolute, ..] = row.as_slice() else {
+                panic!("short row {row:?}");
+            };
+            let value = crate::vector_cells::cell(raw);
+            let given = Some(Path::new(&value));
+            let honoured = match absolute.as_str() {
+                "yes" => true,
+                "no" => false,
+                other => panic!("absolute must be yes or no, got {other:?} in {row:?}"),
+            };
+            assert_eq!(xdg_path(given, Os::Unix).is_some(), honoured, "row {row:?}");
+            let runtime = runtime_root_for(given, None, Some(home));
+            let cache = cache_root_for(given, Some(home), None, Os::Unix);
+            let config = config_root_for(given, Some(home), Os::Unix);
+            if honoured {
+                let expected = Path::new(&value).join("gpy");
+                assert_eq!(runtime, expected, "runtime root for {row:?}");
+                assert_eq!(cache, Some(expected.clone()), "cache root for {row:?}");
+                assert_eq!(config, expected, "config root for {row:?}");
+            } else {
+                assert_eq!(runtime, runtime_root_for(None, None, Some(home)), "{row:?}");
+                assert_eq!(
+                    cache,
+                    cache_root_for(None, Some(home), None, Os::Unix),
+                    "{row:?}"
+                );
+                assert_eq!(
+                    config,
+                    config_root_for(None, Some(home), Os::Unix),
+                    "{row:?}"
+                );
+            }
+            checked = checked.saturating_add(1);
+        }
+        assert!(checked > 0, "no XDG absoluteness vectors were checked");
     }
 }

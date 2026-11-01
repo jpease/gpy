@@ -18,6 +18,8 @@ Keep `panic = "abort"` for release builds. Any panic ends the daemon at once.
 
 Recovery is the shells' job, as it already is for any agent exit: Fish autostarts the agent (bounded by `GPY_AGENT_AUTOSTART_MAX_ATTEMPTS` and `GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS`), and the Bash and Zsh supervisors (`bash/core/supervisor.bash`, `zsh/core/supervisor.zsh`) start it again. A restarted agent asks tracked shells to re-register ([ADR-0007](adr-0007-sigurg-doorbell-notifications.md)), so live updates resume.
 
+*Note, 2026-10-30:* the Fish autostart caps (`GPY_AGENT_AUTOSTART_MAX_ATTEMPTS`, `GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS`) and the detached Fish supervisor were removed. All three shells now restart the agent from a per-prompt check, bounded by `agent.supervisor.max_restart_attempts`.
+
 The unwinding-era handling stays. Cargo ignores the `panic` setting for tests and benchmarks, which always unwind, so `JobGuard`, the `JoinError` logging and the poison recovery still decide test behaviour. The `sync_ext.rs` helpers are also how a lock is taken without `unwrap()` or `expect()`, which the crate's lint policy denies. Two kinds of site keep their own spelling: the `Condvar` waits in `ipc/handlers/mod.rs` call `PoisonError::into_inner` directly, and the config lock in `config/manager.rs` logs before it recovers.
 
 ## Alternatives Considered

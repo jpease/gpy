@@ -200,7 +200,7 @@ __gpy_g_strike() {
     printf -v "__gpy_g_off_$tok" '%s' 1
     printf -v "__gpy_g_out_$tok" '%s' ""
     __gpy_g_get "$tok" name
-    printf 'gpy: script segment %s disabled after %s timeouts or oversized outputs in a row; it comes back after a reload or in a new shell\n' \
+    printf 'gpy: script segment %s disabled for this shell after %s failures (timeout or output over 4096 bytes)\n' \
         "$__gpy_g_s" "$__gpy_g_strikes_max" >&2
 }
 

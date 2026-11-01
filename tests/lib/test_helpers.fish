@@ -97,7 +97,7 @@ function test_track_socket
     set -a __gpy_guard_sockets $argv
 end
 
-# Register a PID file (the supervisor's, say): whatever PID it names when
+# Register a PID file: whatever PID it names when
 # teardown runs is killed. The PID is read at teardown, so a process started
 # after registration is still covered. Arms the guard.
 function test_track_pidfile
@@ -237,7 +237,7 @@ function init_test_env
     set -gx XDG_CONFIG_HOME $__gpy_test_tmp_dir/config
     set -gx XDG_CACHE_HOME $__gpy_test_tmp_dir/cache
     set -gx GPY_AGENT_SOCKET_PATH $__gpy_test_tmp_dir/gpy.sock
-    # The runtime root (shell PID files, supervisor.pid) then falls back to
+    # The runtime root (shell PID files) then falls back to
     # the isolated $XDG_CACHE_HOME/gpy instead of the caller's runtime dir.
     set -e XDG_RUNTIME_DIR
     mkdir -p $XDG_CONFIG_HOME $XDG_CACHE_HOME
@@ -603,13 +603,13 @@ end
 
 # Skip contract: a test that cannot run because a prerequisite is missing
 # calls `test_skip "reason"`. Locally that prints `SKIP: reason` and exits 0;
-# under `CI` it exits 1, so the gate can never go green on a test that did
+# under `CI` or `GPY_GATE_STRICT` it exits 1, so the gate can never go green on a test that did
 # not actually execute. Never `exit 0` on a missing prerequisite directly.
 # The Bash/Zsh twin lives in tests/lib/shell_e2e.sh.
 function test_skip
     echo "SKIP: $argv"
-    if set -q CI; and test -n "$CI"
-        echo "FAIL: a skipped test is a failure under CI"
+    if begin; set -q CI; and test -n "$CI"; end; or begin; set -q GPY_GATE_STRICT; and test -n "$GPY_GATE_STRICT"; end
+        echo "FAIL: a skipped test is a failure under CI or GPY_GATE_STRICT"
         exit 1
     end
     exit 0

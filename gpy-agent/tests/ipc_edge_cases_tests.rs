@@ -1,8 +1,5 @@
 //! IPC protocol edge cases.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
-
 use gpy_agent::ipc::Message;
 use gpy_agent::ipc::protocol::deserialize_message;
 use gpy_agent::security::SafePath;
@@ -84,13 +81,9 @@ fn test_json_with_unexpected_fields() {
     let json_with_extra =
         r#"{"op":"git","cwd":"/tmp","format":"json","is_last":false,"unexpected_field":"x"}"#;
 
-    let result = deserialize_message(json_with_extra.as_bytes());
-    // Extra fields are ignored for forward compatibility.
-    assert!(
-        result.is_ok(),
-        "Should handle extra fields gracefully (forward compatibility). Error: {:?}",
-        result.err()
-    );
+    let message = deserialize_message(json_with_extra.as_bytes())
+        .expect("Should handle extra fields gracefully (forward compatibility)");
+    assert!(matches!(message, Message::RepositoryStatus { .. }));
 }
 
 #[test]

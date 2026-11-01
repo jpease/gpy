@@ -9,7 +9,7 @@ Closes #ISSUE_NUMBER
 ## Testing
 
 ```bash
-./scripts/quality-check.sh
+just check            # or ./scripts/quality-check.sh with GPY_GATE_STRICT=1
 ```
 
 Which parts did you run, and did they pass? If you ran a narrower command

@@ -41,7 +41,7 @@ impl<'a> ClockResolver<'a> {
     }
 
     /// Build the `strftime(3)` spec for the configured clock format.
-    /// Must match Fish's `__gpy_clock_date_format` exactly; Fish substitutes this text.
+    /// The shells' local copies are pinned by `clock_time_spec_shared_vectors`.
     fn time_spec(&self) -> String {
         let clock = &self.theme.segments.clock;
         let is_24h = clock.time_format() == "24";
@@ -259,5 +259,58 @@ mod tests {
         let thr = theme();
         let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("nonsuch"), None);
+    }
+
+    /// Rows of `clock_time_spec_vectors.tsv` whose cells Rust can represent:
+    /// time format `12`/`24`/`\e` and flags `0`/`1`/`\e`. Other spellings test
+    /// the shells' "anything else is the default" rule and are skipped.
+    #[test]
+    fn clock_time_spec_shared_vectors() {
+        enum Flag {
+            Skip,
+            Unset,
+            Set(bool),
+        }
+        fn flag(raw: &str) -> Flag {
+            match raw {
+                "0" => Flag::Set(false),
+                "1" => Flag::Set(true),
+                _ if crate::vector_cells::is_empty_token(raw) => Flag::Unset,
+                _ => Flag::Skip,
+            }
+        }
+        let mut checked = 0_u32;
+        for row in crate::vector_cells::rows("clock_time_spec_vectors.tsv") {
+            let [time_format, leading_zero, seconds, expected, ..] = row.as_slice() else {
+                panic!("short row {row:?}");
+            };
+            let time_format_value = match time_format.as_str() {
+                "12" | "24" => Some(time_format.clone()),
+                _ if crate::vector_cells::is_empty_token(time_format) => None,
+                _ => continue,
+            };
+            let (Some(leading_zero_value), Some(seconds_value)) = (
+                match flag(leading_zero) {
+                    Flag::Skip => None,
+                    Flag::Unset => Some(None),
+                    Flag::Set(b) => Some(Some(b)),
+                },
+                match flag(seconds) {
+                    Flag::Skip => None,
+                    Flag::Unset => Some(None),
+                    Flag::Set(b) => Some(Some(b)),
+                },
+            ) else {
+                continue;
+            };
+            let mut thr = theme();
+            thr.segments.clock.time_format = time_format_value;
+            thr.segments.clock.show_leading_zero = leading_zero_value;
+            thr.segments.clock.show_seconds = seconds_value;
+            let res = ClockResolver::new(Shell::Fish, &Config::default(), &thr, mid());
+            assert_eq!(res.time_spec(), *expected, "row {row:?}");
+            checked = checked.saturating_add(1);
+        }
+        assert!(checked > 0, "no clock time-spec vectors were checked");
     }
 }

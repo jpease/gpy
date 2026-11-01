@@ -7,8 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** Fish no longer runs a background supervisor process; like Bash
+  and Zsh it checks the agent on the prompt every
+  `agent.supervisor.check_interval_seconds` and restarts it in the background.
+  `GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS`,
+  `GPY_SUPERVISOR_LONG_BACKOFF_SECONDS`, `GPY_AGENT_AUTOSTART_MAX_ATTEMPTS` and
+  `GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS` are deprecated and have no effect;
+  use `[agent.supervisor]` in `config.toml`. A supervisor left running by an
+  earlier version is stopped at the first Fish prompt. No shell waits for the
+  agent to start any more, and none kills a wedged agent: stop it with
+  `gpy-agent stop` or `kill`.
+- `just check` is the pre-push check and now fails on a missing optional tool,
+  as CI does (`GPY_GATE_STRICT=1`); `just check-fast` stays lenient. `just test`
+  runs the repo, Bash and Zsh suites too. **Breaking:** `just test-fish` is
+  replaced by `just test-shell`; `just install` is renamed `just install-dev`;
+  `install-dev.fish --fish-only` is renamed `--files-only`. `just audit` exits
+  non-zero when the scan cannot run, and `just clean` no longer removes a root
+  `target/`.
+- Script segment breaker messages are the same in Fish, Bash and Zsh, and
+  `gpy setup` installs the one script runner, `bash/core/g_runner.bash`, into the
+  Fish and Zsh trees instead of the repository keeping three copies (#1149).
+- The 800-line file-size check now covers test files; the existing over-cap
+  test files are listed in `scripts/file-size-allowlist.txt` and may not grow
+  (#1112).
+
 ### Fixed
 
+- Six or more busy repositories no longer cause rewrites and prompt repaints
+  of unchanged cache files (#1141).
 - The Bash integration passes the real exit status to an existing `EXIT` trap
   instead of 0 (#1105).
 - On macOS, script segments whose file, directories or ancestors carry an ACL
@@ -86,6 +114,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** performance budgets moved from `tests/performance-baselines.json`
+  to `benchmarks/perf-budgets.json`; set `PERF_BUDGETS_FILE` (was
+  `BASELINE_FILE`) to use another file. **Breaking:** the real-repository
+  benchmark moved from `gpy-agent/benchmarks/` to `benchmarks/real-repos/`
+  (`just bench-repos`) and keeps its timings in `$BENCH_DIR/baseline.json`
+  instead of the repository.
+- The PR gate now fails when a Rust micro-benchmark exceeds its budget in
+  `benchmarks/perf-budgets.json` (the canary and strict-deadline steps stay
+  advisory); `scripts/bench.sh --ci` fails when two bench targets register the
+  same benchmark ID. The canary benchmarks are named `canary_ipc_roundtrip`
+  and `canary_git_status_cold`.
+- `gpy setup` retires only theme copies byte-identical to a builtin as shipped
+  up to 0.8.0 (the 0.8.0 builtins are the same as 0.7.1's), moving each to
+  `<name>.toml.bak`. Builtins changed after that are not added, because GPY
+  writes overlays rather than copies (#1160).
+
+- A cached git request no longer re-renders every instant-prompt variant; it
+  refreshes the timestamp of the requested files (#1141).
+- Repository, CI and release invariant tests moved from `tests/bash/` to
+  `tests/repo/` and run as `quality-check.sh --shell-only repo`. They need
+  mikefarah `yq` ≥ 4.52.4.
 - SECURITY.md keeps the reporting policy and the user-facing trust statement;
   the design and hardening record moved to `docs/dev/security-model.md` (#1187).
 - GPY no longer writes `core.untrackedCache = true` into repositories'

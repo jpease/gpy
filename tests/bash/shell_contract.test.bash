@@ -11,6 +11,10 @@
 # A row's `expect` column also pins absolute values, so shells regressing together
 # still fail. Bash/Zsh raw prompt escapes must sit inside non-printing wrappers.
 # Agent states: up, down, slow (data replies after 1.8 s, past every budget).
+# Rows with a `renders<N>` flag render N prompts in one shell process (state
+# that spans prompts, such as the script segment breaker); only the last is compared.
+# Flag `check_now` runs the supervisor check on every prompt; `kill_after_first`
+# stops the agent (its proxy) between the first and second prompt.
 # SCN_FILTER=<regex> selects scenarios; SCN_VERBOSE=1 prints effects and prompts.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -153,7 +157,11 @@ run_driver() {
         "SCN_CALLS=$sandbox/calls.log" "SCN_REAL_AGENT=$REAL_AGENT"
         "TERM=xterm-256color" "GPY_ROOT=$ROOT" "SCN_CWD=$cwd" "SCN_STATUS=$row_status"
         "SCN_ROOT=$([[ ",$row_flags," == *,root,* ]] && echo 1 || echo 0)"
+        "SCN_RENDERS=$row_renders"
+        "SCN_CHECK_NOW=$([[ ",$row_flags," == *,check_now,* ]] && echo 1 || echo 0)"
     )
+    # An executable the driver runs between two prompts, when the row made one.
+    [[ -x "$sandbox/between.sh" ]] && scn_env+=("SCN_BETWEEN=$sandbox/between.sh")
     local -a extra=()
     [[ "$row_env" != "-" ]] && read -r -a extra <<<"$row_env" && scn_env+=("${extra[@]}")
     env -u SSH_CONNECTION -u SSH_CLIENT -u SSH_TTY -u SUDO_USER \
@@ -174,6 +182,10 @@ run_shell() {
     # writable, which a umask of 002 would leave them.
     cp -R "$ROOT/plugins" "$sandbox/config/gpy/bundled-plugins"
     chmod -R go-w "$sandbox/config/gpy/bundled-plugins"
+    # The fixture plugins of the rows (script segments), where users keep theirs.
+    mkdir -p "$sandbox/config/gpy/plugins"
+    cp -R "$SCN_FIXTURES"/plugins/* "$sandbox/config/gpy/plugins/"
+    chmod -R go-w "$sandbox/config/gpy/plugins"
     unset GPY_BUNDLED_PLUGIN_DIR
     if [[ "$row_theme" == variant-git ]]; then
         # The stock theme does not vary the git cap by prev_bg: read it from
@@ -214,6 +226,19 @@ run_shell() {
         down) ;;
         *) fail "$row_name: unknown agent state '$row_agent'"; return 1 ;;
     esac
+
+    if [[ ",$row_flags," == *,kill_after_first,* ]]; then
+        # The agent dies once, after the first prompt: kill the recording proxy
+        # (the only way the shells reach the agent) and remove its socket.
+        cat >"$sandbox/between.sh" <<BETWEEN
+#!/bin/sh
+[ -e "$sandbox/between.done" ] && exit 0
+: >"$sandbox/between.done"
+kill $proxy_pid 2>/dev/null
+rm -f "$sandbox/p.sock"
+BETWEEN
+        chmod +x "$sandbox/between.sh"
+    fi
 
     if [[ "$row_prime" != - ]]; then
         # Prime with a different segment mix (variant-fallback rows need the context-free
@@ -256,8 +281,9 @@ run_shell() {
 
     SCN_RAW_OUT="$dir/$sh.raw" run_driver "$sandbox" "$sh" "$dir/$sh.out" "$dir/$sh.err"
     # A backgrounded start announces itself nowhere, so wait a fixed window;
-    # shell_e2e_cleanup reaps anything bound under the sandbox.
-    [[ "$row_agent" == up ]] || sleep 0.4
+    # shell_e2e_cleanup reaps anything bound under the sandbox. A row that
+    # counts starts waits too: its start is detached.
+    [[ "$row_agent" == up && "$row_expect" != *starts=* ]] || sleep 0.4
     stop_proxy
     shell_e2e_stop_agent
     SHELL_E2E_ROOT="$BASE_ROOT"
@@ -269,7 +295,7 @@ run_shell() {
     python3 "$NORMALIZE" "${norm_args[@]}" <"$dir/$sh.out" >"$dir/$sh.norm"
     cp "$sandbox/calls.log" "$dir/$sh.calls"
     cp "$sandbox/ipc.log" "$dir/$sh.ipc"
-    python3 "$SCN_LIB/effects.py" "$sandbox/calls.log" "$sandbox/ipc.log" >"$dir/$sh.fx"
+    python3 "$SCN_LIB/effects.py" "$sandbox/calls.log" "$sandbox/ipc.log" "$dir/$sh.err" >"$dir/$sh.fx"
     return 0
 }
 
@@ -337,6 +363,8 @@ while IFS=$'\t' read -r row_name row_theme row_segments row_status row_env row_f
     row_prime="${row_prime:--}"
     row_expect="${row_expect:--}"
     scenario_count=$((scenario_count + 1))
+    row_renders=1
+    [[ ",$row_flags," =~ ,renders([0-9]+), ]] && row_renders="${BASH_REMATCH[1]}"
     has_clock=0
     [[ ",$row_segments," == *,clock,* ]] && has_clock=1
 
@@ -401,9 +429,11 @@ while IFS=$'\t' read -r row_name row_theme row_segments row_status row_env row_f
         done
     fi
     # Fish prints `set_color: Unknown color ...` to stderr when a color keyword
-    # reaches it unresolved; a clean prompt render says nothing.
-    if [[ -s "$out_dir/fish.err" ]]; then
-        fail "$row_name: fish wrote to stderr: $(tr '\n' ' ' <"$out_dir/fish.err")"
+    # reaches it unresolved; a clean prompt render says nothing. Lines starting
+    # with `gpy:` are the integration's own notices; effects.py counts them.
+    fish_noise="$(grep -v '^gpy:' "$out_dir/fish.err")"
+    if [[ -n "$fish_noise" ]]; then
+        fail "$row_name: fish wrote to stderr: $(tr '\n' ' ' <<<"$fish_noise")"
     fi
     check_nonprinting "$row_name [bash PS1]" "$out_dir/bash.raw" '\\\[' '\\\]'
     check_nonprinting "$row_name [zsh PROMPT]" "$out_dir/zsh.raw" '%\{' '%\}'

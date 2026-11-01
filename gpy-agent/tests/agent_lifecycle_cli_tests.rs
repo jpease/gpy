@@ -116,10 +116,9 @@ fn gpy_start_returns_only_when_agent_answers() {
         sandbox.gpy(&["start"]).assert_success("gpy start");
         // Connect at once: spawning `gpy status` first would give the daemon
         // time to bind and hide the race.
-        assert!(
-            std::os::unix::net::UnixStream::connect(&sandbox.socket_path).is_ok(),
-            "round {round}: the socket must accept connections when `gpy start` exits 0"
-        );
+        let msg =
+            format!("round {round}: the socket must accept connections when `gpy start` exits 0");
+        let _stream = std::os::unix::net::UnixStream::connect(&sandbox.socket_path).expect(&msg);
         sandbox.gpy(&["stop"]).assert_success("gpy stop");
         assert!(sandbox.wait_until_socket_gone(), "round {round}: stop");
     }
@@ -418,10 +417,8 @@ fn start_tightens_an_owned_world_writable_runtime_dir() {
 
     start_on_default_socket(&env).assert_success("gpy-agent start");
     assert_eq!(mode_of(&runtime), 0o700, "the runtime dir is repaired");
-    assert!(
-        std::os::unix::net::UnixStream::connect(runtime.join("gpy.sock")).is_ok(),
-        "the agent serves from the repaired dir"
-    );
+    let _stream = std::os::unix::net::UnixStream::connect(runtime.join("gpy.sock"))
+        .expect("the agent serves from the repaired dir");
 }
 
 #[test]

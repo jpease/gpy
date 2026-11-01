@@ -6,7 +6,7 @@ use crate::theme::ThemeManager;
 use std::collections::HashMap;
 
 /// A cache in a fresh temp dir with a repository root `repo` below it.
-fn cache_with_repo() -> (tempfile::TempDir, InstantPromptCache, PathBuf) {
+pub(super) fn cache_with_repo() -> (tempfile::TempDir, InstantPromptCache, PathBuf) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let cache = InstantPromptCache::new_in_dir(dir.path().join("cache")).expect("cache");
     let repo = dir.path().join("repo");
@@ -15,7 +15,7 @@ fn cache_with_repo() -> (tempfile::TempDir, InstantPromptCache, PathBuf) {
 }
 
 /// A status on `main` with nothing changed.
-fn clean_status() -> RepositoryStatus {
+pub(super) fn clean_status() -> RepositoryStatus {
     RepositoryStatus {
         branch: "main".to_owned(),
         ahead: 0,

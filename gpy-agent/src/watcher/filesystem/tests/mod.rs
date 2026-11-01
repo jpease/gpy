@@ -192,10 +192,22 @@ impl PollRepo {
             wait_for_any_event(&self.events, Duration::from_millis(500))
         })
     }
+
+    /// Create a new file `<stem>-<n>.txt` every 500 ms until the watcher delivers
+    /// an event or `budget` elapses.
+    fn create_until_delivered(&self, stem: &str, budget: Duration) -> bool {
+        let mut attempt = 0_usize;
+        wait_until(budget, || {
+            attempt = attempt.saturating_add(1);
+            let file = self.root.join(format!("{stem}-{attempt}.txt"));
+            std::fs::write(&file, b"content").expect("write new file");
+            wait_for_any_event(&self.events, Duration::from_millis(500))
+        })
+    }
 }
 
 /// Poll until `done` holds, or `budget` elapses.
-fn wait_until(budget: Duration, done: impl Fn() -> bool) -> bool {
+fn wait_until(budget: Duration, mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now()
         .checked_add(budget)
         .unwrap_or_else(Instant::now);

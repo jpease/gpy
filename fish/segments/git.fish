@@ -74,7 +74,7 @@ function segment_git_render --argument-names is_last is_first
     # Colour the pill was drawn in, unless the oneshot below drew it agent-free.
     set -l agent_free 0
 
-    # `test -S`, not __gpy_socket_ready: its connect probe can block up to 1s.
+    # `test -S`, not a ping: a connect probe can block the prompt.
     if not __gpy_cache_status_stale $cache_status
         printf '%s' "$rendered_output"
     else

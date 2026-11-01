@@ -1,0 +1,57 @@
+name: Set up the pinned Rust toolchain
+description: >-
+  Installs the toolchain pinned in gpy-agent/rust-toolchain.toml, optionally
+  verifies it is the active one, and optionally restores/saves the cargo build
+  cache. The checkout must already exist.
+
+inputs:
+  components:
+    description: Extra toolchain components, comma separated.
+    default: ""
+  target:
+    description: Extra compilation target.
+    default: ""
+  check-pin:
+    description: Fail unless the active rustc is the rust-toolchain.toml pin ("true" or "false").
+    default: "true"
+  cache:
+    description: Restore the cargo build cache ("true" or "false").
+    default: "true"
+  shared-key:
+    description: rust-cache shared key; empty keys the cache per job.
+    default: ""
+  save-if:
+    description: Whether the job saves the cache ("true" or "false").
+    default: "true"
+  cache-on-failure:
+    description: Save the cache even when the job fails ("true" or "false").
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
+    - name: Install Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      with:
+        rust-src-dir: gpy-agent
+        cache: false
+        components: ${{ inputs.components }}
+        target: ${{ inputs.target }}
+
+    - name: Verify the pinned toolchain is active
+      if: ${{ inputs.check-pin == 'true' }}
+      shell: bash
+      run: ./scripts/check-active-toolchain.sh
+
+    # A PR never saves the cache (a PR's cache is readable only by that PR,
+    # and 8 per PR overran the repository's 10 GB cache limit); a push to main
+    # saves the one every PR gate restores.
+    - name: Cache cargo build
+      if: ${{ inputs.cache == 'true' }}
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        workspaces: gpy-agent
+        shared-key: ${{ inputs.shared-key }}
+        save-if: ${{ inputs.save-if }}
+        cache-on-failure: ${{ inputs.cache-on-failure }}

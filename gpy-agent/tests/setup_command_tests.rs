@@ -277,7 +277,7 @@ fn current_builtin(name: &str) -> Vec<u8> {
     fs::read(repo_root().join(format!("config/themes/{name}.toml"))).unwrap()
 }
 
-/// Stale copies of builtin themes (from an older release or the current one)
+/// Stale copies of builtin themes (from a release up to 0.8.0)
 /// shadow every later fix, so setup moves them aside and says so; an edited
 /// copy is the user's and stays. A second run has nothing left to move.
 #[test]
@@ -289,13 +289,18 @@ fn setup_retires_unedited_builtin_theme_copies_and_keeps_edited_ones() {
             .join("tests/fixtures/released_themes/text-v0.6.0.toml"),
     )
     .unwrap();
+    let old_starship = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/released_themes/starship-v0.7.1.toml"),
+    )
+    .unwrap();
     assert_ne!(
         old_text,
         current_builtin("text"),
         "fixture must be an older release"
     );
     fs::write(themes.join("text.toml"), &old_text).unwrap();
-    fs::write(themes.join("starship.toml"), current_builtin("starship")).unwrap();
+    fs::write(themes.join("starship.toml"), &old_starship).unwrap();
     let mut edited = current_builtin("default");
     edited.extend_from_slice(b"# mine\n");
     fs::write(themes.join("default.toml"), &edited).unwrap();
@@ -319,7 +324,7 @@ fn setup_retires_unedited_builtin_theme_copies_and_keeps_edited_ones() {
     assert_eq!(fs::read(themes.join("text.toml.bak")).unwrap(), old_text);
     assert_eq!(
         fs::read(themes.join("starship.toml.bak")).unwrap(),
-        current_builtin("starship")
+        old_starship
     );
     assert_eq!(fs::read(themes.join("default.toml")).unwrap(), edited);
     assert!(

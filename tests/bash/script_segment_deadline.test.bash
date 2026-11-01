@@ -23,8 +23,9 @@
 # ADR-0011 Spike 2. Hang: every prompt within T + 500 ms, which only a missed
 # deadline breaks. GPY_STRICT_DEADLINE=1 enforces both; 0 enforces the hang
 # bound and only reports strict. The default is 1, or 0 under CI: shared
-# runners (macOS above all) are too noisy for strict. The non-gating
-# Performance job in pr-gate.yml runs this test with GPY_STRICT_DEADLINE=1.
+# runners (macOS above all) are too noisy for strict. The advisory
+# strict step of the Performance budgets job in pr-gate.yml runs this test with
+# GPY_STRICT_DEADLINE=1.
 #
 # Shells: this Bash, /bin/bash when it is another version (macOS 3.2: the
 # timer-group path), Zsh and Fish with their default runner child and, where
@@ -191,7 +192,9 @@ cat >"$T/child.fish" <<'EOF'
 source $argv[1]/fish/core/init.fish >/dev/null 2>&1; or exit 1
 if test -n "$argv[3]"
     set -g __gpy_g_bash $argv[3]
-    set -g __gpy_g_src (string collect <$__gpy_core_dir/g_runner.bash)
+    set -l runner $__gpy_core_dir/g_runner.bash
+    test -r $runner; or set runner (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
+    set -g __gpy_g_src (string collect <$runner)
     set -g __gpy_g_runner_state ready
 end
 function shown

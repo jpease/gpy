@@ -15,8 +15,9 @@
 # text, so a repaint runs nothing.
 #
 # Runner. Fish has no subshell, sub-second timer or read timeout, so the
-# runner is core/g_runner.bash (a byte-identical copy of bash/core/g_runner.bash),
-# run in one Bash child per prompt: the first Bash 4 or later on PATH, else
+# runner is bash/core/g_runner.bash (`gpy setup` installs it as
+# core/g_runner.bash; a checkout uses the repository copy), run in one Bash
+# child per prompt: the first Bash 4 or later on PATH, else
 # /bin/bash, resolved once. Command substitution returns when that direct
 # child exits, so a leftover holding the pipe cannot hold the prompt; Fish
 # starts no background job, so $last_pid and the job table never change. The
@@ -41,6 +42,8 @@ set -g __gpy_g_due 1
 set -g __gpy_g_pwd ""
 set -g __gpy_g_ran 0
 set -g __gpy_g_runner_state unresolved
+# Consecutive timeouts or over-cap outputs that disable a segment for this shell.
+set -g __gpy_g_strikes_max 2
 set -g __gpy_g_bash ""
 set -g __gpy_g_src ""
 
@@ -159,17 +162,6 @@ function __gpy_g_on_prompt --on-event fish_prompt
     __gpy_g_run_due
 end
 
-# Epoch seconds without a fork: mtime of / plus the seconds since it.
-function __gpy_g_now
-    set -l at (path mtime / 2>/dev/null)
-    set -l age (path mtime --relative / 2>/dev/null)
-    if string match -qr '\A[0-9]+\z' -- "$at"; and string match -qr '\A-?[0-9]+\z' -- "$age"
-        math "$at + $age"
-        return 0
-    end
-    date +%s 2>/dev/null
-end
-
 # Resolve the runner child and its source once per shell. The child is the
 # first Bash 4 or later found on PATH (Ctrl-C ends its runs at once), else
 # /bin/bash: Bash 3.2 ignores SIGINT inside `<( )` and runs traps only after
@@ -178,9 +170,16 @@ end
 function __gpy_g_resolve_runner
     test "$__gpy_g_runner_state" = unresolved; or return 0
     set -g __gpy_g_runner_state none
-    set -l src_file $__gpy_core_dir/g_runner.bash
-    if not test -r $src_file
-        __gpy_log_warn script "Runner $src_file missing - script segments disabled"
+    # The installed tree holds a copy; a checkout, a release staging dir and
+    # Homebrew share/gpy hold the Bash tree beside this one. `path normalize`
+    # resolves `..` lexically, so a symlinked tree still finds its sibling.
+    set -g __gpy_g_runner_file $__gpy_core_dir/g_runner.bash
+    if not test -r $__gpy_g_runner_file
+        set -l sibling (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
+        test -r $sibling; and set -g __gpy_g_runner_file $sibling
+    end
+    if not test -r $__gpy_g_runner_file
+        __gpy_log_warn script "Runner $__gpy_g_runner_file missing - script segments disabled"
         return 1
     end
     set -l bash ""
@@ -198,7 +197,7 @@ function __gpy_g_resolve_runner
         __gpy_log_warn script "No bash found - script segments disabled"
         return 1
     end
-    set -g __gpy_g_src (string collect < $src_file)
+    set -g __gpy_g_src (string collect < $__gpy_g_runner_file)
     set -g __gpy_g_bash $bash
     set -g __gpy_g_runner_state ready
 end
@@ -213,12 +212,12 @@ function __gpy_g_trip --argument-names tok kind
     string match -qr '\A[0-9]+\z' -- "$trips"; or set trips 0
     set trips (math $trips + 1)
     set -g $v $trips
-    test $trips -ge 2; or return 0
+    test $trips -ge $__gpy_g_strikes_max; or return 0
     set v __gpy_g_t_{$tok}_off
     test "$$v" = 1; and return 0
     set -g __gpy_g_t_{$tok}_off 1
     set v __gpy_script_{$tok}_name
-    printf 'gpy: script segment %s disabled for this shell after 2 consecutive timeouts or oversized outputs\n' "$$v" >&2
+    printf 'gpy: script segment %s disabled for this shell after %s failures (timeout or output over 4096 bytes)\n' "$$v" $__gpy_g_strikes_max >&2
 end
 
 # A failed trigger drops the segment's cache entry, so a later prompt whose
@@ -242,7 +241,7 @@ function __gpy_g_run_due
     test "$__gpy_g_runner_state" = ready; or return 0
     string match -q '/*' -- "$__gpy_script_sh"; or return 0
 
-    set -l now (__gpy_g_now)
+    set -l now (__gpy_now_seconds)
     string match -qr '\A[0-9]+\z' -- "$now"; or set now 0
     set -l scan_args
     set -l scan_toks

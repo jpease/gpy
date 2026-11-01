@@ -2,9 +2,6 @@
 //! repo discovery, file-state counts, ignore handling, repository state, and
 //! ahead/behind divergence.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
-
 use gpy_agent::config::types::GitTimeout;
 use gpy_agent::git::{
     RepositoryState, RepositoryStatus, native::NativeGitBackend, status::load_repository_state,

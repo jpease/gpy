@@ -6,11 +6,10 @@ Every `*.test.bash` in this directory is auto-discovered and run by
 print `PASS`/`FAIL` lines a reader can follow; the file name says what it
 covers.
 
-Two kinds of file live here: shell-integration tests of `bash/gpy.bash`, and
-repository-invariant checks that use bash as a scripting language (doc links,
-privacy patterns, version and MSRV consistency, the release asset contract,
-installer checksum verification, workflow structure, security policy).
-Repository invariants belong in tests; doc wording and source text do not.
+This directory holds tests of `bash/gpy.bash` and of the shipped `sh`/`bash`
+installers (`install*.test.bash`, `uninstall_*`, `installer_*`). Checks of the
+repository, CI, release and tooling live in `tests/repo/`. Repository
+invariants belong in tests; doc wording and source text do not.
 
 ## Running
 
@@ -36,7 +35,7 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
 ```
 
 - `test_skip "reason"` / `test_require_command NAME`: `SKIP:` and exit 0
-  locally, exit 1 under `CI`. `test_skip_part "reason"` does the same for one
+  locally, exit 1 under `CI` or `GPY_GATE_STRICT`. `test_skip_part "reason"` does the same for one
   section of a test: it returns locally so the rest still runs. Never print
   `SKIP:` or `exit 0` on a missing prerequisite directly; `quality-check.sh`
   and `test-fish.sh` list every test whose output has a `SKIP:` line.

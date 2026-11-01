@@ -14,12 +14,12 @@ fn test_msg_deserialize_repository_status_fish() {
         ),
     ];
     for (input, label) in cases {
-        let result = deserialize_message(input);
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize {label}: {:?}",
-            result.err()
-        );
+        let msg = format!("Failed to deserialize {label}");
+        let message = deserialize_message(input).expect(&msg);
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::RepositoryStatus { .. }
+        ));
     }
 }
 
@@ -35,12 +35,12 @@ fn test_msg_deserialize_language_detect_fish() {
         ),
     ];
     for (input, label) in cases {
-        let result = deserialize_message(input);
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize {label}: {:?}",
-            result.err()
-        );
+        let msg = format!("Failed to deserialize {label}");
+        let message = deserialize_message(input).expect(&msg);
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::LanguageDetect { .. }
+        ));
     }
 }
 
@@ -52,39 +52,39 @@ fn test_msg_deserialize_client_registration_fish() {
 
     {
         let json = format!(r#"{{"op":"register","pid":{pid},"cwd":"/home/user/project"}}"#);
-        let result = deserialize_message(json.as_bytes());
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize RegisterClient (with cwd): {:?}",
-            result.err()
-        );
+        let message = deserialize_message(json.as_bytes())
+            .expect("Failed to deserialize RegisterClient (with cwd)");
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::RegisterClient { .. }
+        ));
     }
     {
         let json = format!(r#"{{"op":"register","pid":{pid}}}"#);
-        let result = deserialize_message(json.as_bytes());
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize RegisterClient (without cwd): {:?}",
-            result.err()
-        );
+        let message = deserialize_message(json.as_bytes())
+            .expect("Failed to deserialize RegisterClient (without cwd)");
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::RegisterClient { .. }
+        ));
     }
     {
         let json = format!(r#"{{"op":"unregister","pid":{pid}}}"#);
-        let result = deserialize_message(json.as_bytes());
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize UnregisterClient: {:?}",
-            result.err()
-        );
+        let message =
+            deserialize_message(json.as_bytes()).expect("Failed to deserialize UnregisterClient");
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::UnregisterClient { .. }
+        ));
     }
     {
         let json = format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/home/user/new-project"}}"#);
-        let result = deserialize_message(json.as_bytes());
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize WorkspaceUpdate: {:?}",
-            result.err()
-        );
+        let message =
+            deserialize_message(json.as_bytes()).expect("Failed to deserialize WorkspaceUpdate");
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::WorkspaceUpdate { .. }
+        ));
     }
 }
 
@@ -99,12 +99,15 @@ fn test_msg_deserialize_simple_ops_fish() {
         (br#"{"op":"config_reload"}"#, "ConfigReload"),
     ];
     for (input, label) in cases {
-        let result = deserialize_message(input);
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize {label}: {:?}",
-            result.err()
-        );
+        let msg = format!("Failed to deserialize {label}");
+        let message = deserialize_message(input).expect(&msg);
+        assert!(matches!(
+            message,
+            gpy_agent::ipc::Message::Ping
+                | gpy_agent::ipc::Message::Status
+                | gpy_agent::ipc::Message::Shutdown
+                | gpy_agent::ipc::Message::ConfigReload
+        ));
     }
 }
 
@@ -226,10 +229,9 @@ mod schema_files {
             .map(|v| v.as_str().unwrap())
             .collect();
         for value in &listed {
-            assert!(
-                Format::from_str(value).is_ok(),
-                "message.json lists `{value}`, which Format::from_str rejects"
-            );
+            let msg = format!("message.json lists `{value}`, which Format::from_str rejects");
+            let format = Format::from_str(value).expect(&msg);
+            assert_eq!(&format.to_string(), value);
         }
         let listed_set: BTreeSet<&str> = listed.iter().copied().collect();
         assert_eq!(
@@ -425,10 +427,8 @@ mod schema_files {
                 validate(&schema, &schema, &json(text)),
                 "schema rejects {op}: {text}"
             );
-            assert!(
-                deserialize_message(text.as_bytes()).is_ok(),
-                "agent rejects {op}: {text}"
-            );
+            let msg = format!("agent rejects {op}: {text}");
+            let _ = deserialize_message(text.as_bytes()).expect(&msg);
         }
         for text in [
             r#""Ping""#,

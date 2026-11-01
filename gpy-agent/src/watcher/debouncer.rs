@@ -88,8 +88,11 @@ impl DebounceEngine {
     /// Process a file system event, keeping the first-seen time for the
     /// max-delay cap and merging via [`merge_pending`].
     pub fn handle_event(&mut self, pending: PendingEvent) {
+        self.handle_event_at(pending, Instant::now());
+    }
+
+    fn handle_event_at(&mut self, pending: PendingEvent, now: Instant) {
         let key = FileEventKey::from_pending(&pending);
-        let now = Instant::now();
         match self.pending_events.get_mut(&key) {
             Some(entry) => {
                 entry.last_seen = now;
@@ -113,8 +116,11 @@ impl DebounceEngine {
     /// merges keep the later floor. Used for directory-create follow-ups so
     /// the existing flush thread does the waiting.
     pub fn handle_event_due(&mut self, pending: PendingEvent, due: Instant) {
+        self.handle_event_due_at(pending, due, Instant::now());
+    }
+
+    fn handle_event_due_at(&mut self, pending: PendingEvent, due: Instant, now: Instant) {
         let key = FileEventKey::from_pending(&pending);
-        let now = Instant::now();
         match self.pending_events.get_mut(&key) {
             Some(entry) => {
                 entry.last_seen = now;
@@ -138,7 +144,10 @@ impl DebounceEngine {
     /// Remove and return events past the quiet gap or max-delay cap. Callers
     /// must deliver them without holding this engine's lock.
     pub fn drain_expired_events(&mut self) -> Vec<DebouncedEvent> {
-        let now = Instant::now();
+        self.drain_expired_events_at(Instant::now())
+    }
+
+    fn drain_expired_events_at(&mut self, now: Instant) -> Vec<DebouncedEvent> {
         let debounce_duration = self.debounce_duration;
         let max_delay = self.max_delay;
         self.pending_events
@@ -204,8 +213,6 @@ mod tests {
     use super::*;
     use crate::watcher::{FileEvent, GitPaths, PendingEvent};
     use std::path::{Path, PathBuf};
-    use std::thread;
-
     fn make_pending(repo: &str, file: &str) -> PendingEvent {
         PendingEvent {
             event: FileEvent::Git {
@@ -223,24 +230,15 @@ mod tests {
             .and_then(|entry| entry.not_before)
     }
 
-    /// Sleep until just past `deadline`.
-    fn sleep_past(deadline: Instant) {
-        let now = Instant::now();
-        if deadline > now {
-            thread::sleep(deadline.duration_since(now));
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-
     #[test]
     fn debouncer_keeps_events_per_repo() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
-        engine.handle_event(make_pending("/repo1", "/repo1/.git/HEAD"));
-        engine.handle_event(make_pending("/repo2", "/repo2/.git/HEAD"));
+        engine.handle_event_at(make_pending("/repo1", "/repo1/.git/HEAD"), t0);
+        engine.handle_event_at(make_pending("/repo2", "/repo2/.git/HEAD"), t0);
 
-        thread::sleep(Duration::from_millis(15));
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(15));
 
         let repos: Vec<_> = flushed.into_iter().map(|event| event.repo).collect();
         assert_eq!(repos.len(), 2);
@@ -250,69 +248,86 @@ mod tests {
 
     #[test]
     fn debouncer_collapses_events_same_repo() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(20));
 
-        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
-        thread::sleep(Duration::from_millis(5));
-        engine.handle_event(make_pending("/repo", "/repo/.git/index"));
+        engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
+        engine.handle_event_at(
+            make_pending("/repo", "/repo/.git/index"),
+            t0 + Duration::from_millis(5),
+        );
 
-        thread::sleep(Duration::from_millis(25));
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(30));
 
         assert_eq!(flushed.len(), 1);
     }
 
     #[test]
     fn drain_expired_events_never_invokes_a_callback() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(1));
-        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
-        thread::sleep(Duration::from_millis(5));
+        engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(5));
         assert_eq!(flushed.len(), 1);
-        assert!(engine.drain_expired_events().is_empty());
-    }
-
-    #[test]
-    fn sustained_churn_still_forces_a_flush_within_max_delay() {
-        let mut engine = DebounceEngine::new(Duration::from_millis(20))
-            .with_max_delay(Duration::from_millis(50));
-
-        let start = Instant::now();
-        let mut flushed_total = 0_usize;
-        while start.elapsed() < Duration::from_millis(120) {
-            engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
-            flushed_total += engine.drain_expired_events().len();
-            thread::sleep(Duration::from_millis(5));
-        }
-
         assert!(
-            flushed_total >= 1,
-            "max-delay cap should force a flush despite continued sub-debounce churn"
+            engine
+                .drain_expired_events_at(t0 + Duration::from_millis(5))
+                .is_empty()
         );
     }
 
     #[test]
+    fn sustained_churn_still_forces_a_flush_within_max_delay() {
+        let t0 = Instant::now();
+        let mut engine = DebounceEngine::new(Duration::from_millis(20))
+            .with_max_delay(Duration::from_millis(50));
+
+        for i in 0..=10_u64 {
+            let now = t0 + Duration::from_millis(i * 5);
+            engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), now);
+            let flushed = engine.drain_expired_events_at(now);
+            if i < 10 {
+                assert!(
+                    flushed.is_empty(),
+                    "nothing should flush before max-delay elapses (i = {i})"
+                );
+            } else {
+                assert_eq!(
+                    flushed.len(),
+                    1,
+                    "max-delay cap should force a flush at t0 + 50ms despite continuous churn"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn quiet_gap_alone_still_flushes_when_under_max_delay() {
+        let t0 = Instant::now();
         let mut engine =
             DebounceEngine::new(Duration::from_millis(10)).with_max_delay(Duration::from_secs(5));
 
-        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
-        thread::sleep(Duration::from_millis(15));
+        engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
-        assert_eq!(engine.drain_expired_events().len(), 1);
+        assert_eq!(
+            engine
+                .drain_expired_events_at(t0 + Duration::from_millis(15))
+                .len(),
+            1
+        );
     }
 
     #[test]
     /// Different files in one window must all survive coalescing.
     fn same_repo_events_accumulate_every_path() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
-        engine.handle_event(make_pending("/repo", "/repo/a.txt"));
-        engine.handle_event(make_pending("/repo", "/repo/b.txt"));
+        engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
+        engine.handle_event_at(make_pending("/repo", "/repo/b.txt"), t0);
 
-        thread::sleep(Duration::from_millis(15));
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(15));
 
         assert_eq!(flushed.len(), 1);
         let first = flushed.first().expect("one flushed event");
@@ -328,13 +343,13 @@ mod tests {
 
     #[test]
     fn repeated_events_for_one_path_are_deduplicated() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
-        engine.handle_event(make_pending("/repo", "/repo/a.txt"));
-        engine.handle_event(make_pending("/repo", "/repo/a.txt"));
+        engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
+        engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
 
-        thread::sleep(Duration::from_millis(15));
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(15));
 
         let first = flushed.first().expect("one flushed event");
         let FileEvent::Git { paths } = &first.event else {
@@ -349,14 +364,14 @@ mod tests {
     #[test]
     /// Past the bound, degrade explicitly to a whole-repo scan.
     fn accumulation_past_the_bound_degrades_to_a_whole_repo_scan() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
         for index in 0..=GitPaths::MAX_PATHS {
-            engine.handle_event(make_pending("/repo", &format!("/repo/file{index}.txt")));
+            engine.handle_event_at(make_pending("/repo", &format!("/repo/file{index}.txt")), t0);
         }
 
-        thread::sleep(Duration::from_millis(15));
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(15));
 
         let first = flushed.first().expect("one flushed event");
         let FileEvent::Git { paths } = &first.event else {
@@ -371,23 +386,29 @@ mod tests {
 
     #[test]
     fn non_git_events_keep_last_writer_wins() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
-        engine.handle_event(PendingEvent {
-            event: FileEvent::Language {
-                path: PathBuf::from("/repo/Cargo.toml"),
+        engine.handle_event_at(
+            PendingEvent {
+                event: FileEvent::Language {
+                    path: PathBuf::from("/repo/Cargo.toml"),
+                },
+                repo: PathBuf::from("/repo"),
             },
-            repo: PathBuf::from("/repo"),
-        });
-        engine.handle_event(PendingEvent {
-            event: FileEvent::Language {
-                path: PathBuf::from("/repo/package.json"),
+            t0,
+        );
+        engine.handle_event_at(
+            PendingEvent {
+                event: FileEvent::Language {
+                    path: PathBuf::from("/repo/package.json"),
+                },
+                repo: PathBuf::from("/repo"),
             },
-            repo: PathBuf::from("/repo"),
-        });
+            t0,
+        );
 
-        thread::sleep(Duration::from_millis(15));
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(t0 + Duration::from_millis(15));
 
         assert_eq!(flushed.len(), 1);
         let first = flushed.first().expect("one flushed event");
@@ -400,21 +421,22 @@ mod tests {
     #[test]
     /// The quiet gap alone must not release an entry under its due floor.
     fn a_due_floor_holds_an_entry_past_its_quiet_gap() {
+        let t0 = Instant::now();
         let mut engine =
             DebounceEngine::new(Duration::from_millis(10)).with_max_delay(Duration::from_secs(5));
-        let due = Instant::now() + Duration::from_millis(200);
+        let due = t0 + Duration::from_millis(200);
 
-        engine.handle_event_due(make_pending("/repo", "/repo/newdir"), due);
+        engine.handle_event_due_at(make_pending("/repo", "/repo/newdir"), due, t0);
 
-        thread::sleep(Duration::from_millis(25));
         assert!(
-            engine.drain_expired_events().is_empty(),
+            engine
+                .drain_expired_events_at(t0 + Duration::from_millis(25))
+                .is_empty(),
             "the quiet gap alone must not release an entry still under its due floor"
         );
 
-        sleep_past(due);
         assert_eq!(
-            engine.drain_expired_events().len(),
+            engine.drain_expired_events_at(due).len(),
             1,
             "the entry must drain once its due floor has passed"
         );
@@ -423,27 +445,28 @@ mod tests {
     #[test]
     /// A floor survives merging with an ordinary event, in either order.
     fn a_due_floor_survives_merging_with_an_ordinary_event() {
+        let t0 = Instant::now();
         for plain_first in [true, false] {
             let mut engine = DebounceEngine::new(Duration::from_millis(10))
                 .with_max_delay(Duration::from_secs(5));
-            let due = Instant::now() + Duration::from_millis(200);
+            let due = t0 + Duration::from_millis(200);
 
             if plain_first {
-                engine.handle_event(make_pending("/repo", "/repo/a.txt"));
-                engine.handle_event_due(make_pending("/repo", "/repo/newdir"), due);
+                engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
+                engine.handle_event_due_at(make_pending("/repo", "/repo/newdir"), due, t0);
             } else {
-                engine.handle_event_due(make_pending("/repo", "/repo/newdir"), due);
-                engine.handle_event(make_pending("/repo", "/repo/a.txt"));
+                engine.handle_event_due_at(make_pending("/repo", "/repo/newdir"), due, t0);
+                engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
             }
 
-            thread::sleep(Duration::from_millis(25));
             assert!(
-                engine.drain_expired_events().is_empty(),
+                engine
+                    .drain_expired_events_at(t0 + Duration::from_millis(25))
+                    .is_empty(),
                 "merged entry must stay held by the floor (plain event first: {plain_first})"
             );
 
-            sleep_past(due);
-            let flushed = engine.drain_expired_events();
+            let flushed = engine.drain_expired_events_at(due);
             assert_eq!(flushed.len(), 1, "the two events must coalesce into one");
             let first = flushed.first().expect("one flushed event");
             let FileEvent::Git { paths } = &first.event else {
@@ -461,35 +484,42 @@ mod tests {
     #[test]
     /// Two follow-ups for one repository keep the later floor, in either order.
     fn a_second_due_floor_keeps_whichever_is_later() {
-        let early = Instant::now() + Duration::from_millis(30);
-        let late = Instant::now() + Duration::from_millis(250);
+        let t0 = Instant::now();
+        let early = t0 + Duration::from_millis(30);
+        let late = t0 + Duration::from_millis(250);
 
         let mut later_last = DebounceEngine::new(Duration::from_millis(10));
-        later_last.handle_event_due(make_pending("/repo", "/repo/a"), early);
-        later_last.handle_event_due(make_pending("/repo", "/repo/b"), late);
+        later_last.handle_event_due_at(make_pending("/repo", "/repo/a"), early, t0);
+        later_last.handle_event_due_at(make_pending("/repo", "/repo/b"), late, t0);
         assert_eq!(git_floor(&later_last, "/repo"), Some(late));
 
         let mut later_first = DebounceEngine::new(Duration::from_millis(10));
-        later_first.handle_event_due(make_pending("/repo", "/repo/a"), late);
-        later_first.handle_event_due(make_pending("/repo", "/repo/b"), early);
+        later_first.handle_event_due_at(make_pending("/repo", "/repo/a"), late, t0);
+        later_first.handle_event_due_at(make_pending("/repo", "/repo/b"), early, t0);
         assert_eq!(git_floor(&later_first, "/repo"), Some(late));
     }
 
     #[test]
     fn an_ordinary_event_records_no_due_floor() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
-        engine.handle_event(make_pending("/repo", "/repo/a.txt"));
+        engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
         assert_eq!(git_floor(&engine, "/repo"), None);
     }
 
     #[test]
     /// A burst of 500 directory follow-ups collapses to one pending entry.
     fn five_hundred_directory_followups_collapse_to_one_entry() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
-        let due = Instant::now() + Duration::from_millis(50);
+        let due = t0 + Duration::from_millis(50);
 
         for index in 0..500_usize {
-            engine.handle_event_due(make_pending("/repo", &format!("/repo/dir{index}")), due);
+            engine.handle_event_due_at(
+                make_pending("/repo", &format!("/repo/dir{index}")),
+                due,
+                t0,
+            );
         }
 
         assert_eq!(
@@ -498,8 +528,7 @@ mod tests {
             "500 directory follow-ups for one repo must coalesce into one pending entry"
         );
 
-        sleep_past(due);
-        let flushed = engine.drain_expired_events();
+        let flushed = engine.drain_expired_events_at(due);
         assert_eq!(flushed.len(), 1, "and into one delivered event");
         let first = flushed.first().expect("one flushed event");
         let FileEvent::Git { paths } = &first.event else {
@@ -520,50 +549,39 @@ mod tests {
 
     #[test]
     fn next_deadline_is_last_seen_plus_debounce() {
+        let t0 = Instant::now();
         let debounce = Duration::from_millis(10);
         let mut engine = DebounceEngine::new(debounce);
-        let before = Instant::now();
-        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
-        let after = Instant::now();
+        engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
-        let deadline = engine.next_deadline().expect("one pending entry");
-        assert!(
-            deadline >= before + debounce,
-            "not before last_seen + debounce"
-        );
-        assert!(
-            deadline <= after + debounce,
-            "not after last_seen + debounce"
-        );
+        assert_eq!(engine.next_deadline(), Some(t0 + debounce));
     }
 
     #[test]
     fn next_deadline_is_capped_by_max_delay() {
+        let t0 = Instant::now();
         let mut engine =
             DebounceEngine::new(Duration::from_secs(60)).with_max_delay(Duration::from_millis(20));
-        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
-        let after = Instant::now();
+        engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
-        let deadline = engine.next_deadline().expect("one pending entry");
-        assert!(
-            deadline <= after + Duration::from_millis(20),
-            "the max-delay cap bounds the deadline"
-        );
+        assert_eq!(engine.next_deadline(), Some(t0 + Duration::from_millis(20)));
     }
 
     #[test]
     fn next_deadline_respects_not_before() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
-        let due = Instant::now() + Duration::from_millis(500);
-        engine.handle_event_due(make_pending("/repo", "/repo/.git/HEAD"), due);
+        let due = t0 + Duration::from_millis(500);
+        engine.handle_event_due_at(make_pending("/repo", "/repo/.git/HEAD"), due, t0);
 
         assert_eq!(engine.next_deadline(), Some(due));
     }
 
     #[test]
     fn next_deadline_skips_overflowing_entries() {
+        let t0 = Instant::now();
         let mut engine = DebounceEngine::new(Duration::MAX).with_max_delay(Duration::MAX);
-        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
+        engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
         assert_eq!(engine.next_deadline(), None);
     }

@@ -38,10 +38,11 @@ impl Daemon {
         env.run_gpy_agent(&["start"])
             .expect("run gpy-agent start")
             .assert_success("gpy-agent start");
+        let accepted = wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
+            UnixStream::connect(&socket).is_ok()
+        });
         assert!(
-            wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
-                UnixStream::connect(&socket).is_ok()
-            }),
+            accepted,
             "agent never accepted a connection on {}",
             socket.display()
         );

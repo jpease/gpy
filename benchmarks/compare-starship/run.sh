@@ -863,7 +863,7 @@ main() {
     log "results: $OUT_DIR"
 }
 
-# Sourcing (tests/bash/bench_compare_starship.test.bash) only defines functions.
+# Sourcing (tests/repo/bench_compare_starship.test.bash) only defines functions.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     main "$@"
 fi

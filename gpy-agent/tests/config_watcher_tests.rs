@@ -1,8 +1,5 @@
 //! `ConfigWatcher` notices on-disk config edits.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
-
 use gpy_agent::config::manager::ConfigManager;
 use serial_test::serial;
 use std::{fs, time::Duration};

@@ -9,21 +9,10 @@ function __gpy_start_agent() {
         return 0
     fi
 
-    # &! disowns immediately.
+    # &! disowns immediately. Never waits: the first prompt renders from the
+    # cache or oneshot, and the post-render retry registers once the agent is up.
     gpy-agent start &>/dev/null &!
-
-    # Bounded so a present-but-unhealthy binary can't stall every new shell.
-    local max_wait=15  # 150ms total
-    local i=0
-    while [[ $i -lt $max_wait ]]; do
-        if gpy-agent status &>/dev/null; then
-            return 0
-        fi
-        sleep 0.01
-        ((i++))
-    done
-
-    return 1
+    return 0
 }
 
 # Mid-session health check from precmd, rate limited by check interval and

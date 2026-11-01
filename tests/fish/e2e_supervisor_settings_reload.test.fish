@@ -2,12 +2,12 @@
 # tests/fish/e2e_supervisor_settings_reload.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# A running Fish supervisor loop follows `gpy config set agent.supervisor.*`
+# The Fish per-prompt check follows `gpy config set agent.supervisor.*`
 # without a restart: a real agent rewrites the theme-export cache on the
-# reload, and the loop's next pass uses the new check interval and restart
-# attempt limit, and exits once the supervisor is disabled. The loop is the
-# real one in a separate fish process; only the agent health probe, restart,
-# clock and sleep are stubbed so restart cycles are observable and fast.
+# reload, the shell reloads it, and the next checks use the new check interval
+# and restart attempt limit, and stop once the supervisor is disabled. Only the
+# health probe, the start and the clock are stubbed so the checks are
+# observable and fast.
 
 source (dirname (status -f))/../lib/test_helpers.fish
 
@@ -30,82 +30,56 @@ end
 poll_until 5 __export_has 'set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS "7"'
 or die "the agent never wrote the initial export"
 
-# Every restart attempt fails and each `date +%s` advances 10 s past the 5 s
-# rate limit, so the loop cycles: <attempt limit> restarts, then the 123 s
-# long backoff. The log records restarts and the sleep lengths the loop asks for.
-set -g loop_log $__gpy_test_tmp_dir/loop.log
-touch $loop_log
-env GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
-    GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS=5 GPY_SUPERVISOR_LONG_BACKOFF_SECONDS=123 \
-    fish --no-config -c '
-        source $argv[1]/fish/core/constants.fish
-        source $argv[1]/fish/core/util.fish
-        source $argv[1]/fish/core/ipc.fish
-        source $argv[1]/fish/core/supervisor.fish
-        set -g loop_log $argv[2]
-        set -g fake_now 100
-        function __gpy_resolve_agent_binary; echo stub; end
-        function __gpy_agent_is_healthy; return 1; end
-        function __gpy_agent_restart; echo restart >>$loop_log; return 1; end
-        function date
-            if test "$argv" = "+%s"
-                set -g fake_now (math $fake_now + 10)
-                echo $fake_now
-                return 0
-            end
-            command date $argv
-        end
-        function sleep; echo "sleep $argv[1]" >>$loop_log; command sleep 0.05; end
-        __gpy_agent_supervisor_loop' -- $repo_root $loop_log >/dev/null 2>&1 &
-set -g loop_pid $last_pid
-set -a __gpy_test_client_pids $loop_pid
+source $repo_root/fish/core/init.fish
+set -gx GPY_AGENT_ENABLED 1
+set -g starts 0
+set -g probes 0
+function __gpy_agent_is_healthy; set -g probes (math $probes + 1); return 1; end
+function __gpy_start_agent_detached; set -g starts (math $starts + 1); return 0; end
+set -g fake_now 1000
+function __gpy_now_seconds; echo $fake_now; end
 
-# Restarts in the first full cycle (between two long backoffs) logged after
-# line $offset, provided the loop has slept $interval since then.
-function __cycle_matches --argument-names offset interval restarts
-    set -l lines (tail -n +(math $offset + 1) $loop_log)
-    contains -- "sleep $interval" $lines; or return 1
-    set -l in_cycle 0
-    set -l count 0
-    for line in $lines
-        if test "$line" = "sleep 123"
-            test $in_cycle = 1; and test $count = $restarts; and return 0
-            test $in_cycle = 1; and return 1
-            set in_cycle 1
-            set count 0
-        else if test "$line" = restart
-            set count (math $count + 1)
-        end
+# Read the exported settings the way a running shell does after the agent rings .reload.
+function __reload_settings
+    source $export_cache
+end
+
+# Run `prompts` checks, the clock advancing `step` seconds per prompt, from
+# fresh counters; prints "<probes> <starts>".
+function __run_checks --argument-names step prompts
+    set -g starts 0
+    set -g probes 0
+    set -g __gpy_supervisor_check_attempts 0
+    set -g __gpy_supervisor_last_check_time 0
+    set -g fake_now 1000
+    for i in (seq $prompts)
+        __gpy_supervisor_check
+        set fake_now (math $fake_now + $step)
     end
-    return 1
+    echo $probes $starts
 end
 
-function __log_offset
-    count <$loop_log
-end
+__reload_settings
+check "exported interval is 7 s" 7 $GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
+check "exported attempt limit is 1" 1 $GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS
+check "6 s prompts on a 7 s interval, one attempt: two probes, one start" "2 1" (__run_checks 6 4)
 
-poll_until 5 __cycle_matches 0 7 1
-or die "the loop never ran 7 s checks with 1 restart attempt (log: "(string join ', ' (tail -n 12 $loop_log))")"
-pass "the loop starts on the exported interval (7 s) and attempt limit (1)"
-
-# $1 key, $2 value, $3/$4 the interval and restart attempts the loop must then use.
-function __apply --argument-names key value interval restarts
+# $1 key, $2 value, $3 variable the export must then hold, $4 its value.
+function __apply --argument-names key value var want
     gpy config set $key $value >/dev/null 2>&1; or die "gpy config set $key $value failed"
-    set -l offset (__log_offset)
-    poll_until 5 __cycle_matches $offset $interval $restarts
-    or die "after setting $key=$value the loop never used $interval s / $restarts attempts (log: "(string join ', ' (tail -n 12 $loop_log))")"
-    pass "$key=$value reached the running loop"
+    poll_until 5 __export_has "set -gx $var \"$want\""; or die "the export never set $var=$want"
+    __reload_settings
+    pass "$key=$value reached the exported settings"
 end
 
-__apply agent.supervisor.check_interval_seconds 9 9 1
-__apply agent.supervisor.max_restart_attempts 3 9 3
+__apply agent.supervisor.check_interval_seconds 9 GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS 9
+check "8 s prompts on a 9 s interval: the second prompt is rate limited" "1 1" (__run_checks 8 2)
 
-function __loop_exited
-    not kill -0 $loop_pid 2>/dev/null
-end
-gpy config set agent.supervisor.enabled false >/dev/null 2>&1; or die "gpy config set agent.supervisor.enabled false failed"
-poll_until 5 __loop_exited; or die "the loop kept running after agent.supervisor.enabled=false"
-pass "agent.supervisor.enabled=false stopped the running loop"
+__apply agent.supervisor.max_restart_attempts 3 GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS 3
+check "three attempts allowed: six checked prompts start the agent three times" "6 3" (__run_checks 10 6)
+
+__apply agent.supervisor.enabled false GPY_AGENT_SUPERVISOR_ENABLED 0
+check "a disabled supervisor neither probes nor starts" "0 0" (__run_checks 10 6)
 
 cleanup_test_files
-test_finish "Supervisor settings reach a running Fish supervisor without a restart"
+test_finish "Supervisor settings reach the per-prompt check without a restart"

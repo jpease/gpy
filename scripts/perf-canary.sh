@@ -25,8 +25,8 @@ FAIL_THRESHOLD_PCT="${GPY_PERF_CANARY_FAIL_THRESHOLD_PCT:-20}"
 # language_detect_* canaries are omitted: their tiny corpus measured ±20% noise
 # between identical commits. bench.sh --ci gates language detection on a 5k-file corpus.
 BENCHMARKS=(
-  "ipc_roundtrip"
-  "git_status_cold"
+  "canary_ipc_roundtrip"
+  "canary_git_status_cold"
 )
 
 usage() {

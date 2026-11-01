@@ -605,10 +605,13 @@ pub(super) fn shell_available(shell: Shell) -> bool {
     }
 }
 
-/// Skip a missing shell locally; fail under `CI` unless `GPY_CI_NO_SHELLS=1`.
+/// Skip a missing shell locally; fail under `CI` or `GPY_GATE_STRICT` unless
+/// `GPY_CI_NO_SHELLS=1`.
 pub(super) fn skip_shell_or_fail_under_ci(shell: Shell) {
     eprintln!("SKIP: {shell:?} is not available");
-    let ci = std::env::var_os("CI").is_some_and(|value| !value.is_empty());
+    let ci = ["CI", "GPY_GATE_STRICT"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()));
     let no_shells_declared = std::env::var_os("GPY_CI_NO_SHELLS").is_some();
     assert!(
         !ci || no_shells_declared,

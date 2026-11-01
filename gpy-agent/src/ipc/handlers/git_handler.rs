@@ -95,7 +95,11 @@ impl GitHandler {
 
         // `git_root` is already canonical.
         if let Some(cached_status) = self.git_cache.get_canonical(&git_root) {
-            publish_and_repaint(&self.render, &git_root, &cached_status, prev_bg);
+            // Whatever changed the cached status already published its files, so a hit
+            // only refreshes their mtime; a missing file takes the write path.
+            if !self.render.instant_cache.touch_git(&git_root, prev_bg) {
+                publish_and_repaint(&self.render, &git_root, &cached_status, prev_bg);
+            }
 
             // The watcher may have missed an event (submodules, dropped FSEvents),
             // so revalidate in the background past the cooldown; never awaited.
@@ -537,6 +541,58 @@ mod tests {
         assert!(
             refreshed.untracked >= 1,
             "recomputed status should reflect the untracked file"
+        );
+    }
+
+    /// A hit whose files exist only refreshes them (no repaint); a `prev_bg`
+    /// the agent has not rendered takes the write path and repaints once.
+    #[cfg(unix)]
+    #[test]
+    fn cache_hit_touches_existing_files_and_writes_missing_ones() {
+        use std::sync::atomic::Ordering;
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let git_root = init_dirty_repo(&temp_dir);
+        let cache = Arc::new(GitStatusCache::new());
+        let (base_handler, _registry) = make_handler_with_cache(Arc::clone(&cache));
+        let (registry, rings) = ClientDirectory::counting_rings();
+        let handler = GitHandler::new(
+            RenderDeps {
+                client_registry: registry.shared(),
+                ..base_handler.render.clone()
+            },
+            Arc::clone(&cache),
+        );
+        cache.set_canonical(&git_root, status(0), HashMap::new());
+        let safe_path = crate::security::SafePath::new(git_root.to_str().expect("utf8 path"))
+            .expect("safe path");
+
+        handler.status(&safe_path, None).expect("first hit");
+        assert_eq!(rings.load(Ordering::SeqCst), 1, "missing files are written");
+
+        handler.status(&safe_path, None).expect("second hit");
+        assert_eq!(
+            rings.load(Ordering::SeqCst),
+            1,
+            "a hit on existing files must not repaint"
+        );
+
+        handler
+            .status(&safe_path, Some("blue"))
+            .expect("new prev_bg");
+        assert_eq!(
+            rings.load(Ordering::SeqCst),
+            2,
+            "an unrendered prev_bg takes the write path"
+        );
+
+        handler
+            .status(&safe_path, Some("blue"))
+            .expect("repeated prev_bg");
+        assert_eq!(
+            rings.load(Ordering::SeqCst),
+            2,
+            "a rendered prev_bg is only touched"
         );
     }
 

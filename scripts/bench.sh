@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Rust micro-benchmark budgets.
-# Usage: ./scripts/bench.sh --ci  (cargo bench, enforcing tests/performance-baselines.json)
+# Usage: ./scripts/bench.sh --ci  (cargo bench, enforcing benchmarks/perf-budgets.json)
 #
-# BASELINE_FILE overrides the budget file. A missing jq, file or budget key
+# PERF_BUDGETS_FILE overrides the budget file. A missing jq, file or budget key
 # exits 2 before anything is benchmarked.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,7 +69,7 @@ check_budget() {
 if [[ " $* " == *" --ci "* ]]; then
   echo "--- Running benchmarks in CI mode ---"
 
-  bench_load_baselines \
+  bench_load_budgets \
     BUDGET_IPC_RTT=.budgets.ipc_latency.max_ms*1000000 \
     BUDGET_GIT_COLD=.budgets.git_status_cold.max_ms*1000000 \
     BUDGET_CACHE_WRITE=.budgets.cache_write.max_ms*1000000 \
@@ -80,11 +80,31 @@ if [[ " $* " == *" --ci "* ]]; then
     BUDGET_VERSION_SPAWN=.budgets.version_command_spawn.max_ms*1000000 \
     BUDGET_LANG_DETECT=.budgets.language_detection.max_ms*1000000 \
     TOLERANCE_PCT=.regression_thresholds.measurement_variance_percent*1
-  echo "Loaded performance budgets from $BASELINE_FILE"
+  echo "Loaded performance budgets from $PERF_BUDGETS_FILE"
 
   bench_build_release_agent "$AGENT_DIR"
 
+  # FAILURES=$((…)), not ((FAILURES++)): the latter returns 1 when FAILURES is
+  # 0, and set -e would end the run before the other budgets and the summary.
+  FAILURES=0
+
   cd "$AGENT_DIR"
+  # Budgets are read by benchmark ID, so an ID registered by two bench targets
+  # would make the result depend on target order. Ask criterion what it
+  # registers before measuring anything.
+  LIST_STATUS=0
+  LIST_OUTPUT=$(cargo bench --quiet -- --list 2>/dev/null) || LIST_STATUS=$?
+  if [[ $LIST_STATUS -ne 0 ]]; then
+    echo "Error: cargo bench -- --list exited with status $LIST_STATUS"
+    FAILURES=$((FAILURES + 1))
+  else
+    DUPLICATE_IDS=$(echo "$LIST_OUTPUT" | sed -n 's/: benchmark$//p' | sort | uniq -d | tr '\n' ' ')
+    if [[ -n "$DUPLICATE_IDS" ]]; then
+      echo "Error: benchmark id(s) registered by more than one bench target: ${DUPLICATE_IDS% }"
+      FAILURES=$((FAILURES + 1))
+    fi
+  fi
+
   # A bench that fails to build or panics must fail --ci, even when the
   # benches that did run printed results within budget.
   BENCH_STATUS=0
@@ -94,10 +114,6 @@ if [[ " $* " == *" --ci "* ]]; then
   echo -e "\n--- Benchmark Results ---"
   echo "$BENCH_OUTPUT"
   echo "-------------------------"
-
-  # FAILURES=$((…)), not ((FAILURES++)): the latter returns 1 when FAILURES is
-  # 0, and set -e would end the run before the other budgets and the summary.
-  FAILURES=0
 
   if [[ $BENCH_STATUS -ne 0 ]]; then
     echo "Error: cargo bench exited with status $BENCH_STATUS"

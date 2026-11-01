@@ -35,8 +35,11 @@ to `main`, weekly, and on manual dispatch. The PR gate runs the Rust gate
 (format, strict clippy, nextest, doc tests, `cargo audit`, `cargo deny`, a
 release build), the strict `just lint` layer, and the Fish, Bash and Zsh
 integration suites on `ubuntu-latest` and `macos-latest`, each as its own job
-so one failure never hides another's verdict; a clean-container fresh install
-on `ubuntu:24.04`; and the Windows leg. The one check to require in the branch
+so one failure never hides another's verdict (the Rust and shell legs run
+through the reusable `gate-legs.yml`, so their checks are named `gate-legs / …`,
+and `cross-platform-test.yml` calls the same workflow after a merge); the
+absolute performance budgets (`just bench-ci`'s Rust micro-benchmarks); a
+clean-container fresh install on `ubuntu:24.04`; and the Windows leg. The one check to require in the branch
 ruleset is `gate-result`, which fails unless every one of those jobs
 succeeded. The PR gate runs on pull requests from forks with a read-only
 token and no secrets.
@@ -100,7 +103,6 @@ Other tools GPY uses opportunistically, and what happens without them:
 | Tool | Used for | Without it |
 |------|----------|------------|
 | `timeout` (GNU coreutils) | Wraps the `nc` client in Bash, Zsh and Fish so a silent agent is abandoned after `GPY_IPC_TIMEOUT_MS` (150 ms by default). Never needed with `socat` or `zsocket`, which take the budget directly. | Not required, and stock macOS does not ship it. `nc`'s own `-w` takes whole seconds, so a connected-but-silent agent can hold the prompt for up to one second instead of 150 ms. |
-| `lsof` (or `fuser`) | Fish only. When `gpy-agent stop` leaves a lingering agent on the socket, an agent restart finds its process with `lsof -t` (`fuser` is the fallback) and kills it. | Neither is installed on many minimal Debian, Ubuntu and WSL images. The lingering agent is then left running and its socket file is kept; `gpy-agent start` reclaims a stale socket and evicts a wedged agent itself. With `GPY_DEBUG=1` the restart logs a warning naming the missing tools. |
 | `awk` | Only a fallback: Bash 5 computes a command's duration from `EPOCHREALTIME` in shell arithmetic and calls `awk` just when that value is malformed. The IPC paths use no `awk`; millisecond budgets are converted in shell arithmetic. | Duration falls back to unavailable for that one command. |
 | GNU `date` | Bash 4.x only: durations use `date +%s%N`. | BSD/macOS `date` has no `%N`; GPY probes for it once at startup and falls back to whole-second timing (a ~2 s command reads 1–3 s). Bash 5 uses `EPOCHREALTIME` and needs no `date`. |
 
@@ -350,10 +352,10 @@ It:
    setup rewrites an unedited Bash block or loader from an earlier release to
    that form; a block whose text differs is left as it is.
 4. Moves a theme file in `~/.config/gpy/themes/` that is an unedited copy of a
-   released builtin theme (`default.toml`, `text.toml`, `starship.toml`, byte
-   for byte) to `<name>.toml.bak`, so the builtin and its later fixes apply
-   again, and says so. Edited copies and symlinks are kept and listed on one
-   line. `ui.retire_unmodified_themes = false` turns this off.
+   builtin theme as released up to 0.7.1 (`default.toml`, `text.toml`,
+   `starship.toml`, byte for byte) to `<name>.toml.bak`, so the builtin and its
+   later fixes apply again, and says so. Edited copies and symlinks are kept and
+   listed on one line. `ui.retire_unmodified_themes = false` turns this off.
 5. Picks an icon style for a fresh install (see [Icons and Nerd Fonts](#icons-and-nerd-fonts)).
 
 It is safe to re-run, and after an upgrade it refreshes the copied files: those
@@ -448,6 +450,8 @@ or change each one.
 ```bash
 mkdir -p ~/.config/fish/gpy
 cp -r /tmp/gpy/fish/* ~/.config/fish/gpy/
+# The one script segment runner, which Fish runs in a Bash child
+cp /tmp/gpy/bash/core/g_runner.bash ~/.config/fish/gpy/core/g_runner.bash
 
 # Add to config.fish. Source conf.d/gpy_init.fish, the same fail-safe
 # entry point the installers use (it checks the layout before loading and
@@ -470,6 +474,8 @@ ln -sf ~/.config/fish/gpy/functions/fish_prompt.fish ~/.config/fish/functions/fi
 ```bash
 mkdir -p ~/.config/gpy/zsh
 cp -r /tmp/gpy/zsh/* ~/.config/gpy/zsh/
+# The one script segment runner, which Zsh runs in a Bash child
+cp /tmp/gpy/bash/core/g_runner.bash ~/.config/gpy/zsh/core/g_runner.bash
 
 # Add to .zshrc (the marker lines are what `gpy uninstall` removes)
 printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
@@ -645,8 +651,8 @@ bash --version
 ## Uninstallation
 
 Run `gpy uninstall`; it removes the Fish, Zsh and Bash integration alike.
-Uninstallation is **global for the current user's install**: it stops the agent and
-supervisor processes, removes all shell integration files and completions (Fish,
+Uninstallation is **global for the current user's install**: it stops the agent,
+removes all shell integration files and completions (Fish,
 Zsh, Bash), cleans the `gpy-init` block from all supported startup files
 (`~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile`, `${ZDOTDIR:-~}/.zshrc`, `~/.zshrc`, and `~/.config/fish/config.fish`), and
 removes the cache and runtime directories. Startup files are restored

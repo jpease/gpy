@@ -32,7 +32,7 @@ pub const KEYS: [&str; 9] = [
 
 /// Render an optional path, falling back to [`UNRESOLVED`].
 ///
-/// Empty counts as unresolved (`GPY_AGENT_SOCKET_PATH=`), matching the shells.
+/// Empty counts as unresolved (`GPY_AGENT_SOCKET_PATH=`), as in the shells.
 fn show(path: Option<&Path>) -> String {
     let rendered = path.map(|p| p.to_string_lossy().into_owned());
     match rendered {

@@ -36,7 +36,7 @@ failed=0
 # call log, then evaluates $2 (calls to __gpy_supervisor_check). Paths and the
 # body reach the child as data (env and $1), never interpolated into -c code.
 # $1: STUB_SUPERVISOR_ENABLED; $3..: extra VAR=value environment.
-# The child's trailing `sleep 0.5` lets any `gpy-agent` call the checks start
+# The child waits for the source-time start, then its trailing `sleep 0.5` lets any `gpy-agent` call the checks start
 # reach the log before it exits; case 1 expects none, so there is no count to
 # poll for.
 run_case() {
@@ -49,6 +49,12 @@ run_case() {
         STUB_SUPERVISOR_ENABLED="$sup" ROOT="$ROOT" "$@" \
         zsh -f -c '__case_body=$1; shift
             source "$ROOT/zsh/gpy.zsh" >/dev/null 2>&1
+            # The start at source time is detached: let it reach the log
+            # before the log is cleared, so only the checks are counted.
+            for __i in {1..50}; do
+                grep -q "^start" "$CALLS_LOG" 2>/dev/null && break
+                sleep 0.1
+            done
             : >"$CALLS_LOG"
             eval "$__case_body"
             sleep 0.5' zsh "$body" >/dev/null 2>&1

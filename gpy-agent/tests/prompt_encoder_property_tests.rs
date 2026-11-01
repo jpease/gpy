@@ -366,7 +366,7 @@ fn run_dialect(dialect: PromptDialect, cases: u32) {
     let outcome = runner.run(&batch_strategy(), |batch| {
         check_batch(dialect, &batch).map_err(TestCaseError::fail)
     });
-    assert!(outcome.is_ok(), "{}", outcome.unwrap_err());
+    outcome.expect("proptest batch should succeed");
 }
 
 #[test]
@@ -429,6 +429,6 @@ fn oracle_distinguishes_a_leak_from_a_clean_encoding() {
         ),
     ];
     assert!(check_drawing("\x1b[1;32ma\x1b[34mb\x1b[0m", &spans).is_err());
-    assert!(check_drawing("\x1b[1;32ma\x1b[0;34mb\x1b[0m", &spans).is_ok());
+    check_drawing("\x1b[1;32ma\x1b[0;34mb\x1b[0m", &spans).expect("clean drawing should succeed");
     assert!(check_drawing("\x1b[1;32ma\x1b[0;34mb", &spans).is_err());
 }

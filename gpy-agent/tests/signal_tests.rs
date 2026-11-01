@@ -1,8 +1,5 @@
 //! SIGURG doorbell delivery from `ClientDirectory::notify_repaint`.
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 #[path = "common/sigurg.rs"]
 mod sigurg;
 #[path = "common/wait.rs"]

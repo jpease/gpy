@@ -4,6 +4,17 @@ Every `*.rs` file directly under `gpy-agent/tests/` is its own test binary;
 each starts with a `//!` header saying what it covers. Unit tests live next
 to the code in `src/`.
 
+A test target may instead be a directory, `tests/<name>/main.rs` plus modules,
+when one file would exceed the 800-line cap (`gpy_cli_tests/` is one). The
+binary keeps the name `<name>`; `main.rs` declares the shared helpers with
+`#[path = "../common/<file>.rs"]`, and its modules reach them through
+`crate::` paths (`crate::cli_harness`).
+Test files over the cap are listed in `scripts/file-size-allowlist.txt`; a
+listed file may not grow, so new tests go in a new file. When a listed file
+shrinks (a test deleted or moved out), the size check fails until its entry is
+lowered with `python3 scripts/check-file-size.py --update` in the same commit
+(`--update` also drops a file that falls under the cap).
+
 ## Layout
 
 - `common/` — the shared helpers. A binary either declares `mod common;`
@@ -33,8 +44,8 @@ to the code in `src/`.
     `TempSocket`, `gpy_test_root()`.
   - `git.rs` — every git command the test code runs: `git`, `git_output`,
     `git_stdout`, `git_command`, `git_init`, `git_bare`, `git_commit_all`,
-    and the `TestRepo` fixture. Each command ignores the global and system
-    git config (`GIT_CONFIG_GLOBAL` at the null device,
+    `init_with_commit`, and the `TestRepo` fixture. Each command ignores the
+    global and system git config (`GIT_CONFIG_GLOBAL` at the null device,
     `GIT_CONFIG_NOSYSTEM=1`) and commits as a fixed identity; a failing
     command panics with git's stderr unless the caller asked for its
     `Output`.
@@ -50,7 +61,8 @@ to the code in `src/`.
   - `wait.rs` — `wait_until` / `wait_until_async`: poll a condition with a
     deadline.
 - `fixtures/` — the base16/Starship input files the import golden tests read,
-  and `released_themes/`, builtin themes as an older release shipped them
+  and `released_themes/` (`text-v0.6.0.toml`, `default-v0.7.1.toml`,
+  `starship-v0.7.1.toml`), builtin themes as an older release shipped them
   (theme retirement tests).
 - `snapshots/` — insta snapshots for the help and formatter tests.
 
@@ -80,7 +92,7 @@ to the code in `src/`.
   `gpy-agent/.config/nextest.toml` has no retry budget; a per-test override
   must name its tests and cite an issue.
 - **Skips**: a test that cannot run calls `skip::skip_test("reason")`: it
-  prints `SKIP: reason` and passes locally, and fails when `CI` is set.
+  prints `SKIP: reason` and passes locally, and fails when `CI` or `GPY_GATE_STRICT` is set.
   Never return silently.
 - **Sandboxing**: every spawned agent binds its socket under
   `gpy_test_root()`; `scripts/cleanup-test-agents.sh` reaps leftovers there
@@ -107,6 +119,7 @@ to the code in `src/`.
 - Unwrap setup with `.expect("...")`. A `let Ok(..) = .. else { return }`
   turns a broken fixture into a passing test.
 - Assert the value, not just `is_ok()`, and make sure the assertion can fail.
+- `.clippy.toml`'s `allow-*-in-tests` covers only `#[test]` bodies, so a test file whose helper functions unwrap, or that includes `common/` modules (`mod common;` or `#[path = "common/…"]`), keeps the crate-level `#![allow(clippy::expect_used)]` (and `unwrap_used`/`panic` as needed).
 
 ## Running tests
 

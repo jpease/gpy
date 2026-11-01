@@ -133,16 +133,18 @@ async fn test_mixed_cold_and_warm_requests_all_succeed() {
             !response.is_empty(),
             "{kind} request returned empty response"
         );
-        match kind {
-            "ping" => assert!(
+        if kind == "ping" {
+            assert!(
                 response.contains(r#""status":"ok""#),
                 "ping should report ok, got: {response}"
-            ),
+            );
+        } else {
             // A cold miss must not fail the connection.
-            _ => assert!(
-                serde_json::from_str::<serde_json::Value>(response.trim()).is_ok(),
-                "{kind} response should be valid JSON, got: {response}"
-            ),
+            let parsed: serde_json::Value =
+                serde_json::from_str(response.trim()).unwrap_or_else(|e| {
+                    panic!("{kind} response should be valid JSON, got: {response}: {e}")
+                });
+            assert!(parsed.is_object(), "response should be a JSON object");
         }
     }
 

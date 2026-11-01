@@ -23,7 +23,7 @@ zsh tests/zsh/e2e_agent_autostart.test.zsh  # one file
 
 `tests/lib/shell_e2e.sh` is shared with the Bash suite (assertion helpers
 `fail`/`pass`/`test_finish`, the skip contract (`test_skip`,
-`test_require_command`, `test_skip_part`: exit 1 under `CI`), `shell_e2e_poll`, the
+`test_require_command`, `test_skip_part`: exit 1 under `CI` or `GPY_GATE_STRICT`), `shell_e2e_poll`, the
 `shell_e2e_stub_listener` stand-in agent and the live-daemon harness). Source
 it with sh semantics so its functions keep sh word-splitting:
 

@@ -329,10 +329,8 @@ fn eviction_does_not_unlink_a_replacement_agents_socket() {
         (ino, ctime, ctime_nsec),
         "the path must still hold the replacement's socket"
     );
-    assert!(
-        std::os::unix::net::UnixStream::connect(&socket_path).is_ok(),
-        "the replacement must still accept connections"
-    );
+    let _stream = std::os::unix::net::UnixStream::connect(&socket_path)
+        .expect("the replacement must still accept connections");
 }
 
 #[test]

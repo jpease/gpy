@@ -38,25 +38,12 @@ __gpy_supervisor_start() {
         return 0
     fi
 
+    # Never waits: the first prompt renders from the cache or oneshot, and a
+    # later prompt registers once the agent is up.
     if command -v gpy-agent &>/dev/null; then
         nohup gpy-agent start &>/dev/null &
         disown
-
-        # ~150ms bound: an unhealthy binary must not block every new shell.
-        local max_attempts=3
-        local attempt=0
-
-        while [[ $attempt -lt $max_attempts ]]; do
-            sleep 0.05
-
-            if __gpy_supervisor_is_running; then
-                return 0
-            fi
-
-            attempt=$((attempt + 1))
-        done
-
-        return 1
+        return 0
     fi
 
     return 1
