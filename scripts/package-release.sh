@@ -31,7 +31,6 @@
 #                                          the files install-oneline.sh installs)
 #   install-oneline.sh                    (the source installer with this
 #                                          release's tag stamped in)
-#   uninstall.sh                          (the uninstaller, as a release asset)
 #   gpy-sbom.cdx.json                     (unless --no-sbom)
 #   <asset>.sha256                        (one per published file)
 #   SHA256SUMS                            (aggregate manifest)
@@ -85,7 +84,7 @@ ARTIFACTS_DIR="$(cd "$ARTIFACTS_DIR" && pwd)"
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 [[ "$OUT_DIR" != "$REPO_ROOT" ]] ||
-    die "--out must not be the repository root: it would overwrite the source install-oneline.sh and uninstall scripts"
+    die "--out must not be the repository root: it would overwrite the source install-oneline.sh"
 
 for tool in tar zip; do
     command -v "$tool" >/dev/null 2>&1 || die "required tool not found: $tool"
@@ -173,13 +172,9 @@ fi
 cp "$REPO_ROOT/install.sh" "$STAGE/install.sh"
 chmod +x "$STAGE/install.sh"
 
-mkdir -p "$STAGE/scripts"
-cp "$REPO_ROOT/scripts/uninstall.sh" "$STAGE/scripts/"
-chmod +x "$STAGE/scripts/uninstall.sh"
-
 cd "$OUT_DIR"
 rm -f gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz gpy-sbom.cdx.json SHA256SUMS
-rm -f install-oneline.sh uninstall.sh
+rm -f install-oneline.sh
 rm -f ./*.sha256
 tar -czf gpy-release.tar.gz gpy-release/
 zip -qr gpy-release.zip gpy-release/
@@ -193,11 +188,8 @@ chmod +x install-oneline.sh
 # Shell files the installer fetches as one checksummed archive.
 tar -czf gpy-shell-files.tar.gz -C gpy-release fish zsh bash plugins
 
-cp "$REPO_ROOT/scripts/uninstall.sh" .
-chmod +x uninstall.sh
-
 # Binaries were already checksummed in gpy-release/bin/ (sidecars ship in the archive).
-PUBLISHED=(gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz install-oneline.sh uninstall.sh)
+PUBLISHED=(gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz install-oneline.sh)
 
 if [[ -n "$SBOM_SRC" ]]; then
     cp "$SBOM_SRC" gpy-sbom.cdx.json
@@ -220,7 +212,6 @@ done
 # Assert against the archives, not the staging directory.
 RELEASE_REQUIRED=(
     install.sh
-    scripts/uninstall.sh
     fish/core/init.fish
     fish/conf.d/gpy_init.fish
     fish/functions/fish_prompt.fish
@@ -321,7 +312,7 @@ echo "Packaged $VERSION in $OUT_DIR:"
 echo "  gpy-release.tar.gz  ($(tar -tzf gpy-release.tar.gz | wc -l | tr -d ' ') entries)"
 echo "  gpy-release.zip     ($(wc -l <<<"$zip_listing" | tr -d ' ') entries)"
 echo "  gpy-shell-files.tar.gz ($(wc -l <<<"$shell_files_listing" | tr -d ' ') entries)"
-echo "  install-oneline.sh, uninstall.sh"
+echo "  install-oneline.sh"
 if [[ -n "$SBOM_SRC" ]]; then
     echo "  gpy-sbom.cdx.json   (CycloneDX)"
 else

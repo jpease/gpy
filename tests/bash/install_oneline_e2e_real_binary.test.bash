@@ -120,10 +120,11 @@ run_shell() {
         fail "$shell: install-oneline.sh exited $rc"
         sed -n '1,60p' "$SHELL_E2E_ROOT/install.log"
     fi
-    if grep -Eq 'Uninstall:.*/releases/download/v9\.9\.9-test/uninstall\.(sh|fish)' "$SHELL_E2E_ROOT/install.log"; then
-        pass "$shell: the uninstall hint names the release's uninstall script"
+    if grep -Eq 'Uninstall:.*/gpy uninstall$' "$SHELL_E2E_ROOT/install.log" &&
+        ! grep -q 'uninstall\.sh' "$SHELL_E2E_ROOT/install.log"; then
+        pass "$shell: the uninstall hint is 'gpy uninstall'"
     else
-        fail "$shell: the uninstall hint does not name the release's uninstall script: $(grep -i uninstall "$SHELL_E2E_ROOT/install.log")"
+        fail "$shell: the uninstall hint is not 'gpy uninstall': $(grep -i uninstall "$SHELL_E2E_ROOT/install.log")"
     fi
     grep -qF '# >>> gpy-init >>>' "$rc_file" || fail "$shell: no gpy-init block in $rc_file"
 
@@ -190,7 +191,7 @@ run_shell() {
     cd "$SHELL_E2E_ROOT" || exit 1
 
     supervisor_pid="$(cat "$XDG_RUNTIME_DIR/gpy/supervisor.pid" 2>/dev/null || true)"
-    printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" --purge-config >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
+    "$HOME/.local/bin/gpy" uninstall --yes --purge-config >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
     rc=$?
     if [ "$rc" -eq 0 ]; then
         pass "$shell: the uninstaller exited 0"

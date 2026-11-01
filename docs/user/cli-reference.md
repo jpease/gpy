@@ -66,6 +66,7 @@ gpy completions <shell>      # Generate shell completions
 # Install
 gpy setup [--shell <shell>]  # Wire GPY into Fish, Zsh or Bash
 gpy setup --redetect-icons   # Re-run Nerd Font detection for ui.show_icons
+gpy uninstall [--yes] [--purge-config]  # Remove GPY's integration, rc blocks, cache and binaries
 ```
 
 ---
@@ -1335,6 +1336,22 @@ installing or removing a Nerd Font. `GPY_NERD_FONT` answers the question
 without a prompt (see the environment table), as does `--non-interactive`,
 which takes the detected default.
 
+### Uninstall
+
+```bash
+gpy uninstall [--yes] [--purge-config]
+```
+
+Removes what `gpy setup` and the installers create: the shell scripts and
+completions, the GPY block in your rc files (restored byte for byte), the fish
+prompt link (restoring your previous prompt), the cache and runtime files, and
+the running agent. `~/.config/gpy` is kept unless you pass `--purge-config`.
+The binaries are deleted only when this `gpy` lives in `~/.local/bin`, where the
+installers put it; otherwise remove them with the tool that installed them
+(`brew uninstall gpy` for Homebrew). It asks `Uninstall GPY? [y/N]`; with no
+terminal to answer, it removes nothing and exits `1` unless you pass `--yes`.
+See [Uninstallation](../INSTALL.md#uninstallation).
+
 ### Shell Completion
 
 Tab-completion for the `gpy` CLI is installed automatically by the standard installers: the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up fish. Completions are regenerated with every install or upgrade, so they stay in sync with your binary.
@@ -1512,6 +1529,7 @@ These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY
 | `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | as `start` |
 | `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – |
 | `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – |
+| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), or a path or rc file could not be handled | usage error | – | – | – |
 | `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – |
 
 `stop` never exits `6`: a disabled agent that is not running is already in the

@@ -63,6 +63,8 @@ pub mod theme_rebase;
 pub mod theme_write;
 /// Unified line diff for `gpy theme diff`.
 mod unified_diff;
+/// `gpy uninstall` — remove what `gpy setup` and the installers create.
+pub mod uninstall;
 /// Shared utility functions for commands.
 pub mod utils;
 /// Shared resolve/validate/report plumbing for theme and palette validation.

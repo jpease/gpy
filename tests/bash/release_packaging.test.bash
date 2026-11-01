@@ -76,7 +76,6 @@ expect_entry() {
 
 for entry in \
     install.sh \
-    scripts/uninstall.sh \
     fish/core/init.fish \
     fish/conf.d/gpy_init.fish \
     fish/functions/fish_prompt.fish \
@@ -132,7 +131,7 @@ expect_sidecar() {
 }
 
 for published in gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz \
-    install-oneline.sh uninstall.sh gpy-sbom.cdx.json; do
+    install-oneline.sh gpy-sbom.cdx.json; do
     if [[ -f "$OUT/$published" ]]; then
         expect_sidecar "$OUT/$published"
     else
@@ -151,14 +150,14 @@ expect_entry "$tar_listing" "gpy-release.tar.gz" "gpy-release/sbom.cdx.json"
 
 if [[ -f "$OUT/SHA256SUMS" ]]; then
     for name in gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz \
-        install-oneline.sh uninstall.sh gpy-sbom.cdx.json "${ASSETS[@]}"; do
+        install-oneline.sh gpy-sbom.cdx.json "${ASSETS[@]}"; do
         grep -qE "^[0-9a-f]{64}  $name\$" "$OUT/SHA256SUMS" ||
             fail "SHA256SUMS has no entry for $name"
     done
-    # Nothing downloadable may be left out: 6 published files + 10 binaries.
+    # Nothing downloadable may be left out: 5 published files + 10 binaries.
     manifest_lines="$(wc -l <"$OUT/SHA256SUMS" | tr -d ' ')"
-    [[ "$manifest_lines" -eq $((6 + ${#ASSETS[@]})) ]] ||
-        fail "SHA256SUMS has $manifest_lines entries, expected $((6 + ${#ASSETS[@]}))"
+    [[ "$manifest_lines" -eq $((5 + ${#ASSETS[@]})) ]] ||
+        fail "SHA256SUMS has $manifest_lines entries, expected $((5 + ${#ASSETS[@]}))"
 else
     fail "package-release.sh did not produce a SHA256SUMS manifest"
 fi
@@ -179,7 +178,6 @@ if ! diff <(sed 's/^RELEASE_VERSION="v9.9.9"$/RELEASE_VERSION=""/' "$OUT/install
     fail "install-oneline.sh asset differs from the source beyond the stamped version"
 fi
 sh -n "$OUT/install-oneline.sh" || fail "the stamped install-oneline.sh does not parse"
-cmp -s "$ROOT/scripts/uninstall.sh" "$OUT/uninstall.sh" || fail "uninstall.sh asset differs from scripts/uninstall.sh"
 
 # gpy-shell-files.tar.gz is what install-oneline.sh unpacks and hands to
 # `gpy setup --from`: the three shell trees and the bundled plugins at the

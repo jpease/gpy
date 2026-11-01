@@ -37,6 +37,7 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["debug"],
     &["debug", "paths"],
     &["completions"],
+    &["uninstall"],
 ];
 
 /// Subcommands that only exist for tests or shell glue and are marked

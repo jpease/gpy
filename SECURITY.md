@@ -362,7 +362,6 @@ For the per-advisory assessment and audit history, see [Security Audit Notes](do
 |----------|---------|
 | `install-oneline.sh` | The one-line installer, with the release tag built in. Published as an asset of each release, never fetched from a branch |
 | `gpy-shell-files.tar.gz` | The Fish, Zsh and Bash scripts the installer puts in your config directory |
-| `uninstall.sh` | The uninstaller (every shell) |
 | `<asset>.sha256` | SHA-256 digest beside each binary, archive and script |
 | `SHA256SUMS` | Aggregate manifest covering every downloadable file |
 | `gpy-sbom.cdx.json` | CycloneDX SBOM of the Rust dependency graph the binaries were built from |

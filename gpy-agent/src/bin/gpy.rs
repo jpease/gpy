@@ -113,6 +113,24 @@ enum Commands {
         redetect_icons: bool,
     },
 
+    /// Remove GPY's shell integration, rc blocks, cache and binaries
+    ///
+    /// Removes the shell scripts and completions `gpy setup` installed, the
+    /// GPY block from your rc files, the cache and runtime files, and the
+    /// running agent. The binaries are deleted only when this `gpy` lives in
+    /// `~/.local/bin`, where the installers put it; otherwise remove them with
+    /// the tool that installed them (for Homebrew, `brew uninstall gpy`). Your
+    /// configuration is kept unless you pass `--purge-config`.
+    #[command(after_help = "Exit status: 0 uninstalled; 1 not confirmed or failed; 2 usage error.")]
+    Uninstall {
+        /// Remove without asking. Required when stdin is not a terminal.
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Also delete the configuration directory (`~/.config/gpy`).
+        #[arg(long)]
+        purge_config: bool,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -566,6 +584,12 @@ fn run(command: Commands) -> Result<ExitCode> {
             non_interactive,
             redetect_icons,
         } => run_setup(shell, from, non_interactive, redetect_icons)?,
+        Commands::Uninstall { yes, purge_config } => {
+            return commands::uninstall::run(&commands::uninstall::UninstallOptions {
+                yes,
+                purge_config,
+            });
+        }
         Commands::Completions { shell } => {
             // The generator unwraps its own writes; buffer so a closed pipe
             // surfaces here as a quiet exit 0.
