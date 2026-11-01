@@ -344,7 +344,7 @@ gpy config open          # Open config.toml in $EDITOR
 gpy config wizard        # Interactive TUI for common settings
 ```
 
-Commands that change the config (`config set`, `theme use`, `palette use`, `enable`/`disable`, `lang versions`, `theme import --apply-layout`, the wizard) edit `config.toml` in place: they change only the keys they set, and keep your comments, key order, unknown keys, and unset defaults. A symlinked `config.toml` stays a symlink and its target is updated.
+Commands that change the config (`config set`, `theme use`, `palette use`, `enable`/`disable`, `theme import --apply-layout`, the wizard) edit `config.toml` in place: they change only the keys they set, and keep your comments, key order, unknown keys, and unset defaults. A symlinked `config.toml` stays a symlink and its target is updated.
 
 See [CLI Reference](cli-reference.md) for full command details.
 

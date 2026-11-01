@@ -78,6 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files and (for the installers' `~/.local/bin`) its binaries; it keeps
   `~/.config/gpy` unless you pass `--purge-config`, and tells Homebrew users to
   run `brew uninstall gpy` (#1126, #1118).
+- `gpy plugin install <dir>` and `gpy plugin remove <id>` (removal disables the
+  plugin's segments and keeps a backup under `~/.config/gpy/plugins.bak/`)
+  (#1178).
 
 ### Changed
 
@@ -147,6 +150,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named `.gpy-backup.<stamp>` or `.backup-<stamp>` (from releases before
   `gpy setup`) are no longer restored automatically; rename the one you want
   to `fish_prompt.fish` (#1126).
+- **Breaking:** `gpy lang versions on|off` is deprecated and prints a warning;
+  use `gpy config set language.show_versions true|false` instead (#1176).
+- **Breaking:** `gpy config show <section>` with an unknown section is now a
+  usage error (exit 2, listing the valid sections) instead of exit 1 (#1176).
+- `gpy theme import` takes `<FILE>`; `gpy --help` gains a getting-started
+  paragraph (#1176).
+- **Breaking:** `gpy debug paths --format json` emits `config_candidates` as a
+  JSON array (was one `|`-joined string); scripts that split the string on `|`
+  should read the array (`--format kv` is unchanged) (#1179).
+- `gpy segments` shows each segment's plugin and whether it is on by default;
+  `gpy config list` lists `language.icons.<lang>`; `gpy plugin new` names the
+  ownership/permission rule (#1179).
 
 ## [0.8.0] - 2026-10-29
 

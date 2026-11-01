@@ -33,10 +33,6 @@ const MISTAKES: &[MistakeCase] = &[
         args: &["config", "set", "git.enabled", "maybe"],
         names: "maybe",
     },
-    MistakeCase {
-        args: &["config", "show", "nosuch"],
-        names: "nosuch",
-    },
 ];
 
 #[test]
@@ -81,15 +77,16 @@ fn clap_usage_error_exits_2_with_possible_values() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
 
     let result = env
-        .run_gpy(&["lang", "versions", "maybe"])
+        .run_gpy(&["config", "show", "nosuch"])
         .expect("spawn gpy");
     assert_eq!(result.exit_code, 2_i32, "{result:?}");
     assert!(
         result.stderr.contains("possible values"),
         "clap lists the accepted values: {result:?}"
     );
-    assert!(result.stderr.contains("on"), "{result:?}");
-    assert!(result.stderr.contains("off"), "{result:?}");
+    for section in ["agent", "git", "language", "ui", "plugin"] {
+        assert!(result.stderr.contains(section), "{section}: {result:?}");
+    }
 }
 
 #[test]

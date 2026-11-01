@@ -6,6 +6,7 @@
 //! production calls; re-deriving a precedence rule here would make the
 //! harness compare an implementation with itself.
 
+use super::output;
 use std::path::Path;
 
 /// Emitted when a resolver ran but produced no path (unset environment, or an
@@ -71,11 +72,7 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
 
     let theme_export_file = crate::cache::theme_export::get_theme_export_cache_path().ok();
     let config_path = super::utils::active_config_path().ok();
-    let config_candidates = crate::config::schema::get_config_paths()
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(LIST_SEPARATOR);
+    let config_candidates = config_candidates().join(LIST_SEPARATOR);
     let theme_dir = crate::theme::ThemeManager::user_themes_dir();
 
     vec![
@@ -98,29 +95,48 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// The config-file candidates, in resolution order.
+fn config_candidates() -> Vec<String> {
+    crate::config::schema::get_config_paths()
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect()
+}
+
 /// Print the resolved path map as JSON or as the `key=value` lines the
-/// shells emit.
+/// shells emit. JSON writes the list-valued `config_candidates` as an array;
+/// `kv` joins it with [`LIST_SEPARATOR`].
 pub fn run(as_json: bool) {
     let pairs = resolved_paths();
 
     if as_json {
+        let candidates = serde_json::Value::Array(
+            config_candidates()
+                .into_iter()
+                .map(serde_json::Value::String)
+                .collect(),
+        );
         // serde_json's Map is a BTreeMap without `preserve_order`; build the
         // text from the ordered pairs to keep KEYS order.
         let body = pairs
             .iter()
             .map(|(key, value)| {
+                let rendered = if *key == "config_candidates" {
+                    candidates.to_string()
+                } else {
+                    serde_json::Value::String(value.clone()).to_string()
+                };
                 format!(
-                    "  {}: {}",
-                    serde_json::Value::String((*key).to_owned()),
-                    serde_json::Value::String(value.clone())
+                    "  {}: {rendered}",
+                    serde_json::Value::String((*key).to_owned())
                 )
             })
             .collect::<Vec<_>>()
             .join(",\n");
-        println!("{{\n{body}\n}}");
+        output::plain(format_args!("{{\n{body}\n}}"));
     } else {
         for (key, value) in pairs {
-            println!("{key}={value}");
+            output::plain(format_args!("{key}={value}"));
         }
     }
 }

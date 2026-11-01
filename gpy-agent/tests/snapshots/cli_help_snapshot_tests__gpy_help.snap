@@ -3,7 +3,7 @@ source: tests/cli_help_snapshot_tests.rs
 description: gpy --help
 expression: help
 ---
-Fast, cross-platform agent for Git status and language detection used by the GPY prompt for Bash, Fish, and Zsh
+Manage the GPY prompt for Bash, Fish and Zsh
 
 Usage: gpy <COMMAND>
 
@@ -18,11 +18,10 @@ Commands:
   enable       Enable a prompt segment
   disable      Disable a prompt segment
   segments     List all available segments
-  lang         Language detection configuration
   config       Configuration management
   doctor       Run health checks and diagnostics
   debug        Debugging tools
-  setup        Wire GPY into your shell (Fish, Zsh or Bash): install its scripts, add the rc-file block, and pick an icon style. Safe to re-run
+  setup        Install GPY into your shell (Fish, Zsh or Bash)
   uninstall    Remove GPY's shell integration, rc blocks, cache and binaries
   completions  Generate shell completions
   help         Print this message or the help of the given subcommand(s)
@@ -30,6 +29,8 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
+Getting started: `gpy setup`, then `gpy doctor`. Customize: `gpy config wizard`.
 
 Exit status: 0 success; 1 failure (one `Error:` line on stderr); 2 usage error.
 status: 0 running (or busy); 3 not running; 4 not answering or unknown.

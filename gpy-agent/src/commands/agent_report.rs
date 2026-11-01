@@ -154,7 +154,7 @@ pub fn status(socket: Option<PathBuf>) -> ExitCode {
     match status_report(socket) {
         Ok(report) => {
             for (key, value) in &report.lines {
-                println!("{key}: {value}");
+                super::output::plain(format_args!("{key}: {value}"));
             }
             if let Some(mismatch) = report.mismatch {
                 warn_stderr(format!(
@@ -174,7 +174,7 @@ pub fn status(socket: Option<PathBuf>) -> ExitCode {
 /// Print `line` on stdout unless `quiet`.
 fn say(quiet: bool, line: impl std::fmt::Display) {
     if !quiet {
-        println!("{line}");
+        super::output::plain(line);
     }
 }
 

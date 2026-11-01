@@ -10,39 +10,65 @@ use std::process::Command;
 /// Contents of a config file freshly created by `gpy config open`.
 const NEW_CONFIG_HEADER: &str = "# GPY configuration\n# Every key is optional; omitted keys use built-in defaults.\n# See docs/user/configuration-reference.md for all available settings.\n";
 
+/// A `[section]` of the config file that `gpy config show` can print.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ConfigSection {
+    /// Agent settings.
+    Agent,
+    /// Git settings.
+    Git,
+    /// Language settings.
+    Language,
+    /// Prompt UI settings.
+    Ui,
+    /// Plugin segment overrides.
+    Plugin,
+}
+
+impl ConfigSection {
+    /// The top-level TOML key of this section.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Git => "git",
+            Self::Language => "language",
+            Self::Ui => "ui",
+            Self::Plugin => "plugin",
+        }
+    }
+
+    /// The heading shown above this section.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Agent => "Agent",
+            Self::Git => "Git",
+            Self::Language => "Language",
+            Self::Ui => "UI",
+            Self::Plugin => "Plugin segment overrides",
+        }
+    }
+}
+
 /// Show one config section, or all sections.
 ///
 /// # Errors
-/// Returns an error if the section is invalid or the config cannot be loaded.
-pub fn show(section: Option<&str>) -> Result<()> {
-    const SECTIONS: [(&str, &str); 5] = [
-        ("agent", "Agent"),
-        ("git", "Git"),
-        ("language", "Language"),
-        ("ui", "UI"),
-        ("plugin", "Plugin segment overrides"),
-    ];
+/// Returns an error if the config cannot be loaded or rendered.
+pub fn show(section: Option<ConfigSection>) -> Result<()> {
+    use clap::ValueEnum;
+
     let config = read_config()?;
 
     match section {
-        Some(name) => {
-            let (key, title) = SECTIONS
-                .iter()
-                .find(|(key, _)| *key == name)
-                .ok_or_else(|| {
-                    Error::config(format!(
-                        "invalid section '{name}'; valid sections: agent, git, language, ui, plugin"
-                    ))
-                })?;
-            show_section(&config, key, title)?;
-        }
+        Some(only) => show_section(&config, only.key(), only.title())?,
         None => {
             // Reuse the parsed config rather than re-reading per section.
-            for (index, (key, title)) in SECTIONS.iter().enumerate() {
+            for (index, each) in ConfigSection::value_variants().iter().enumerate() {
                 if index > 0 {
-                    println!();
+                    output::blank();
                 }
-                show_section(&config, key, title)?;
+                show_section(&config, each.key(), each.title())?;
             }
         }
     }
@@ -68,9 +94,9 @@ fn show_section(config: &config::Config, section: &str, title: &str) -> Result<(
         .map_err(|e| Error::config(format!("failed to render config as TOML: {e}")))?;
 
     let heading = format!("{title} Configuration:");
-    println!("# {heading}");
-    println!("# {}\n", output::underline(&heading));
-    println!("{}", body.trim_end());
+    output::plain(format_args!("# {heading}"));
+    output::plain(format_args!("# {}\n", output::underline(&heading)));
+    output::plain(body.trim_end());
     Ok(())
 }
 
@@ -85,7 +111,7 @@ pub fn get(key: &str) -> Result<()> {
     } else {
         config::metadata::get_config_value(&config, key)?
     };
-    println!("{value}");
+    output::plain(value);
     Ok(())
 }
 
@@ -112,7 +138,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
     };
 
     save_config(&path, &original, &config, &[explicit_key.as_str()])?;
-    println!("Set {key} = {value}");
+    output::plain(format_args!("Set {key} = {value}"));
 
     reload_agent_and_notify();
     Ok(())
@@ -174,22 +200,23 @@ pub fn open() -> Result<()> {
         }
     };
     if created {
-        println!("Created config: {}", config_path.display());
+        output::plain(format_args!("Created config: {}", config_path.display()));
     }
 
     if let Some(program) = launch_editor(&config_path)? {
-        println!(
+        output::plain(format_args!(
             "Opened {} in the default editor ({program})",
             config_path.display()
-        );
+        ));
     }
     Ok(())
 }
 
-/// List all available configuration keys, then the `plugin.<segment>.<key>`
-/// overrides the installed script segments accept.
+/// List all available configuration keys, then the `language.icons.<lang>`
+/// family and the `plugin.<segment>.<key>` overrides the installed script
+/// segments accept.
 pub fn list(filter: Option<&str>) {
-    use crate::config::metadata::CONFIG_KEYS;
+    use crate::config::metadata::{CONFIG_KEYS, LANGUAGE_ICONS_DESCRIPTION, LANGUAGE_ICONS_PREFIX};
 
     output::heading("Available configuration keys:");
 
@@ -201,26 +228,40 @@ pub fn list(filter: Option<&str>) {
         };
         (meta.key.to_owned(), access, meta.description.to_owned())
     });
+    // Dynamic families are not in `CONFIG_KEYS`: the name part is user-chosen.
+    let icons_family = std::iter::once((
+        format!("{LANGUAGE_ICONS_PREFIX}<lang>"),
+        "read-write",
+        LANGUAGE_ICONS_DESCRIPTION.to_owned(),
+    ))
+    .filter(|(key, _, _)| {
+        filter.is_none_or(|prefix| {
+            key.starts_with(prefix) || prefix.starts_with(LANGUAGE_ICONS_PREFIX)
+        })
+    });
     let plugin = plugin_segments::list_keys(&crate::plugin::discover_plugins())
         .into_iter()
         .map(|(key, description)| (key, "read-write", description));
 
     let entries: Vec<_> = core
-        .chain(plugin)
         .filter(|(key, _, _)| filter.is_none_or(|prefix| key.starts_with(prefix)))
+        .chain(icons_family)
+        .chain(plugin.filter(|(key, _, _)| filter.is_none_or(|prefix| key.starts_with(prefix))))
         .collect();
 
     for (key, access, description) in &entries {
         output::detail(format_args!("{key} [{access:<ACCESS_WIDTH$}]"));
         output::detail_at(2, description);
-        println!();
+        output::blank();
     }
 
     match (entries.len(), filter) {
-        (0, Some(prefix)) => println!("No config keys found matching filter: {prefix}"),
-        (0, None) => println!("No config keys available."),
-        (1, _) => println!("Total: 1 key"),
-        (count, _) => println!("Total: {count} keys"),
+        (0, Some(prefix)) => output::plain(format_args!(
+            "No config keys found matching filter: {prefix}"
+        )),
+        (0, None) => output::plain("No config keys available."),
+        (1, _) => output::plain("Total: 1 key"),
+        (count, _) => output::plain(format_args!("Total: {count} keys")),
     }
 }
 

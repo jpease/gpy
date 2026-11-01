@@ -7,18 +7,26 @@ use clap::{CommandFactory, Parser, Subcommand};
 use gpy_agent::{Result, VERSION, commands};
 use std::process::ExitCode;
 
-/// GPY - Modern prompt CLI for Bash, Fish, and Zsh
+/// Manage the GPY prompt for Bash, Fish and Zsh
 #[derive(Parser, Debug)]
 #[command(
     name = "gpy",
     version = VERSION,
-    about,
+    about = "Manage the GPY prompt for Bash, Fish and Zsh",
     long_about = None,
-    after_help = commands::exit_codes::GPY_SUMMARY_HELP
+    after_help = gpy_after_help()
 )]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+/// The top-level `after_help`: a getting-started pointer above the exit-status summary.
+fn gpy_after_help() -> String {
+    format!(
+        "Getting started: `gpy setup`, then `gpy doctor`. Customize: `gpy config wizard`.\n\n{}",
+        commands::exit_codes::GPY_SUMMARY_HELP
+    )
 }
 
 /// Available commands
@@ -72,7 +80,8 @@ enum Commands {
     /// List all available segments
     Segments,
 
-    /// Language detection configuration
+    /// Language detection configuration (deprecated)
+    #[command(hide = true)]
     Lang {
         #[command(subcommand)]
         action: LangAction,
@@ -94,8 +103,10 @@ enum Commands {
         action: DebugAction,
     },
 
-    /// Wire GPY into your shell (Fish, Zsh or Bash): install its scripts,
-    /// add the rc-file block, and pick an icon style. Safe to re-run.
+    /// Install GPY into your shell (Fish, Zsh or Bash)
+    ///
+    /// Installs the shell scripts, adds the rc-file block, and picks an icon
+    /// style. Safe to re-run.
     Setup {
         /// Shell to set up. Defaults to `GPY_SHELL`, then your login shell (`$SHELL`).
         #[arg(long, value_enum)]
@@ -197,8 +208,9 @@ enum ThemeAction {
         #[arg(long)]
         full: bool,
     },
-    /// Save the active theme as a theme file that extends it (writes nothing
-    /// when the active theme already is your theme file)
+    /// Save the active theme as a theme file that extends it
+    ///
+    /// Writes nothing when the active theme already is your theme file.
     Save {
         /// Theme name to save as (default: the active theme's own name; asks
         /// before writing unless --yes)
@@ -214,16 +226,21 @@ enum ThemeAction {
     /// Validate a theme by name or file path (defaults to active theme)
     Validate {
         /// Optional theme name or direct path to a theme TOML file
+        #[arg(value_name = "NAME_OR_PATH")]
         target: Option<String>,
     },
     /// Show how your copy of a builtin theme differs from the current builtin
     Diff {
-        /// Builtin theme name (`default`, `text` or `starship`)
+        /// Theme with a user file: your copy of a builtin, or one of your
+        /// overlay themes (see `gpy theme list`)
+        #[arg(value_name = "NAME")]
         name: String,
     },
     /// Move your copy of a builtin theme to `.bak` so the builtin takes over
     Reset {
-        /// Builtin theme name (`default`, `text` or `starship`)
+        /// Theme with a user file: your copy of a builtin, or one of your
+        /// overlay themes (see `gpy theme list`)
+        #[arg(value_name = "NAME")]
         name: String,
     },
     /// Rewrite a user theme file for keys removed by breaking changes (backs up first)
@@ -231,8 +248,10 @@ enum ThemeAction {
         /// Name of a theme file in the themes directory
         name: String,
     },
-    /// Rewrite a modified full copy of a theme as an overlay that holds only
-    /// your changes (prints the result; writes only with --write)
+    /// Rewrite a modified full copy of a theme as an overlay
+    ///
+    /// The overlay holds only your changes. Prints the result; writes only
+    /// with --write.
     Rebase {
         /// Name of a full theme file in the themes directory
         name: String,
@@ -251,7 +270,7 @@ enum ThemeAction {
     /// Import a `starship.toml` into a GPY palette + prompt theme
     Import {
         /// Path to the source `starship.toml`
-        path: String,
+        file: std::path::PathBuf,
         /// Base name for the emitted artifacts (default: file stem)
         #[arg(long)]
         name: Option<String>,
@@ -282,6 +301,7 @@ enum PaletteAction {
     /// Validate a palette file or the currently active palette
     Validate {
         /// Optional palette name or path. If omitted, validates the active palette.
+        #[arg(value_name = "NAME_OR_PATH")]
         target: Option<String>,
     },
     /// Import a base16/base24 scheme file as a palette
@@ -313,7 +333,31 @@ enum PluginAction {
     /// Validate a plugin by path or ID
     Validate {
         /// Plugin directory path (or plugin.toml path), or discovered plugin ID
+        #[arg(value_name = "ID_OR_PATH")]
         target: String,
+    },
+    /// Copy a plugin directory into your plugins directory
+    ///
+    /// The copy gets the ownership and modes the script trust check accepts,
+    /// and is loaded to confirm it works. An installed plugin with the same
+    /// id, or one that shadows a bundled plugin, needs --force; the old copy
+    /// moves to `plugins.bak`.
+    Install {
+        /// Directory holding the plugin's `plugin.toml`
+        #[arg(value_name = "DIR")]
+        source: std::path::PathBuf,
+        /// Replace an installed plugin with the same id, or shadow a bundled plugin
+        #[arg(long)]
+        force: bool,
+    },
+    /// Move a user plugin to a backup and disable its segments
+    ///
+    /// The directory moves to `plugins.bak/<id>.<timestamp>` in the config
+    /// directory. Plugins that ship with GPY are refused.
+    Remove {
+        /// ID of an installed user plugin (see `gpy plugin list`)
+        #[arg(value_name = "ID")]
+        id: String,
     },
 }
 
@@ -333,8 +377,8 @@ enum LangAction {
 enum ConfigAction {
     /// Show configuration
     Show {
-        /// Section to show: agent, git, language, ui (shows all if omitted)
-        section: Option<String>,
+        /// Section to show (shows all if omitted)
+        section: Option<commands::config::ConfigSection>,
     },
     /// List every config key with its access mode and description
     List {
@@ -370,13 +414,14 @@ enum PathsFormat {
 }
 
 /// Debug actions
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone, Copy)]
 enum DebugAction {
     /// Time the agent's ping, git and language round trips
     Prompt,
 
-    /// Dump every path GPY resolves from the environment (the same map as
-    /// each shell's `__gpy_debug_paths`)
+    /// Dump every path GPY resolves from the environment
+    ///
+    /// The same map as each shell's `__gpy_debug_paths`.
     Paths {
         /// Output format
         #[arg(long, value_enum, default_value_t = PathsFormat::Json)]
@@ -415,13 +460,13 @@ fn run_theme(action: ThemeAction) -> Result<()> {
             unset_missing,
         }),
         ThemeAction::Import {
-            path,
+            file,
             name,
             force,
             stdout,
             apply_layout,
         } => commands::theme_import::run(&commands::theme_import::ImportOptions {
-            path: &path,
+            path: &file,
             name: name.as_deref(),
             force,
             output: if stdout {
@@ -446,6 +491,73 @@ fn run_palette(action: PaletteAction) -> Result<()> {
         PaletteAction::Validate { target } => commands::palette::validate(target.as_deref()),
         PaletteAction::Import { file, name, force } => {
             commands::palette::import(&file, name.as_deref(), force)
+        }
+    }
+}
+
+/// Dispatch a plugin subcommand.
+///
+/// # Errors
+/// Returns the subcommand's error.
+fn run_plugin(action: PluginAction) -> Result<()> {
+    match action {
+        PluginAction::List => commands::plugin::list(),
+        PluginAction::New { id, segment } => commands::plugin::new(&id, segment.as_deref())?,
+        PluginAction::Validate { target } => commands::plugin::validate(&target)?,
+        PluginAction::Install { source, force } => {
+            commands::plugin_install::install(&source, force)?;
+        }
+        PluginAction::Remove { id } => commands::plugin_install::remove(&id)?,
+    }
+    Ok(())
+}
+
+/// Dispatch a (deprecated) `gpy lang` subcommand.
+///
+/// # Errors
+/// Returns the error from setting the config key.
+fn run_lang(action: LangAction) -> Result<()> {
+    match action {
+        LangAction::Versions { toggle } => {
+            commands::output::warn_stderr(
+                "'gpy lang versions' is deprecated; use 'gpy config set language.show_versions true|false' instead",
+            );
+            commands::config::set(
+                "language.show_versions",
+                if toggle == "on" { "true" } else { "false" },
+            )
+        }
+    }
+}
+
+/// Dispatch a config subcommand.
+///
+/// # Errors
+/// Returns the subcommand's error.
+fn run_config(action: ConfigAction) -> Result<()> {
+    match action {
+        ConfigAction::Show { section } => commands::config::show(section),
+        ConfigAction::List { filter } => {
+            commands::config::list(filter.as_deref());
+            Ok(())
+        }
+        ConfigAction::Get { key } => commands::config::get(&key),
+        ConfigAction::Set { key, value } => commands::config::set(&key, &value),
+        ConfigAction::Open => commands::config::open(),
+        ConfigAction::Wizard => commands::wizard::run(),
+    }
+}
+
+/// Dispatch a debug subcommand.
+///
+/// # Errors
+/// Returns the subcommand's error.
+fn run_debug(action: DebugAction) -> Result<()> {
+    match action {
+        DebugAction::Prompt => commands::debug::prompt(),
+        DebugAction::Paths { format } => {
+            commands::debug_paths::run(matches!(format, PathsFormat::Json));
+            Ok(())
         }
     }
 }
@@ -552,32 +664,14 @@ fn run(command: Commands) -> Result<ExitCode> {
         Commands::Status => return Ok(commands::lifecycle::status()),
         Commands::Theme { action } => run_theme(action)?,
         Commands::Palette { action } => run_palette(action)?,
-        Commands::Plugin { action } => match action {
-            PluginAction::List => commands::plugin::list(),
-            PluginAction::New { id, segment } => commands::plugin::new(&id, segment.as_deref())?,
-            PluginAction::Validate { target } => commands::plugin::validate(&target)?,
-        },
+        Commands::Plugin { action } => run_plugin(action)?,
         Commands::Enable { segment } => commands::segments::enable(&segment)?,
         Commands::Disable { segment } => commands::segments::disable(&segment)?,
         Commands::Segments => commands::segments::list()?,
-        Commands::Lang { action } => match action {
-            LangAction::Versions { toggle } => commands::lang::set_versions(toggle == "on")?,
-        },
-        Commands::Config { action } => match action {
-            ConfigAction::Show { section } => commands::config::show(section.as_deref())?,
-            ConfigAction::List { filter } => commands::config::list(filter.as_deref()),
-            ConfigAction::Get { key } => commands::config::get(&key)?,
-            ConfigAction::Set { key, value } => commands::config::set(&key, &value)?,
-            ConfigAction::Open => commands::config::open()?,
-            ConfigAction::Wizard => commands::wizard::run()?,
-        },
+        Commands::Lang { action } => run_lang(action)?,
+        Commands::Config { action } => run_config(action)?,
         Commands::Doctor => commands::doctor::run()?,
-        Commands::Debug { action } => match action {
-            DebugAction::Prompt => commands::debug::prompt()?,
-            DebugAction::Paths { format } => {
-                commands::debug_paths::run(matches!(format, PathsFormat::Json));
-            }
-        },
+        Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {
             shell,
             from,

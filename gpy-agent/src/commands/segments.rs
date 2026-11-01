@@ -7,7 +7,7 @@ use crate::config::loader::save_config;
 use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
 use crate::shell::Shell;
 use crate::{Error, Result};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A builtin segment that also has a dedicated `*.enabled` config field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +45,7 @@ pub fn enable(segment: &str) -> Result<()> {
     apply_enable(&mut config, &canonical);
     save_config(&path, &original, &config, &[])?;
 
-    println!("Enabled {canonical} segment");
+    output::plain(format_args!("Enabled {canonical} segment"));
     if is_file_plugin_segment(&canonical)
         && let Some(note) = skipped_by_note(
             &canonical,
@@ -55,7 +55,7 @@ pub fn enable(segment: &str) -> Result<()> {
                 .collect::<Vec<_>>(),
         )
     {
-        println!("{note}");
+        output::plain(note);
     }
     reload_agent_and_notify();
     Ok(())
@@ -115,29 +115,80 @@ pub fn disable(segment: &str) -> Result<()> {
         _ => remove_from_enabled_segments(&canonical)?,
     }
 
-    println!("Disabled {canonical} segment");
+    output::plain(format_args!("Disabled {canonical} segment"));
     reload_agent_and_notify();
     Ok(())
 }
 
-/// List all available prompt segments.
+/// List all available prompt segments with their owner and whether they are
+/// on by default.
 ///
 /// # Errors
 /// Returns an error if the active config file cannot be loaded.
 pub fn list() -> Result<()> {
     let config = read_config()?;
     let available = available_segments();
+    let plugin_owners = plugin_segment_owners();
+    let defaults = Config::default().ui.enabled_segments;
 
     output::heading("Prompt Segments:");
 
-    for segment in &available {
-        let enabled = is_effectively_enabled(&config, segment);
+    let rows: Vec<(&String, String)> = available
+        .iter()
+        .map(|segment| {
+            let owner = if BuiltinSegment::try_from(segment.as_str()).is_ok() {
+                crate::plugin::registry::FIRST_PARTY_ID.to_owned()
+            } else {
+                plugin_owners.get(segment).cloned().unwrap_or_default()
+            };
+            (segment, owner)
+        })
+        .collect();
+    let name_width = rows
+        .iter()
+        .map(|(segment, _)| segment.chars().count())
+        .max()
+        .unwrap_or_default();
+    let owner_width = rows
+        .iter()
+        .map(|(_, owner)| owner.chars().count())
+        .max()
+        .unwrap_or_default();
 
-        let status = if enabled { "x" } else { " " };
-        println!("[{status}] {segment}");
+    for (segment, owner) in &rows {
+        let status = if is_effectively_enabled(&config, segment) {
+            "x"
+        } else {
+            " "
+        };
+        if defaults.contains(segment) {
+            output::plain(format_args!(
+                "[{status}] {segment:<name_width$}  {owner:<owner_width$}  default"
+            ));
+        } else {
+            output::plain(format_args!("[{status}] {segment:<name_width$}  {owner}"));
+        }
     }
 
     Ok(())
+}
+
+/// Plugin-provided segment name → `<plugin id> (<source>)`; a later source
+/// (user over bundled) wins.
+fn plugin_segment_owners() -> BTreeMap<String, String> {
+    let mut owners = BTreeMap::new();
+    for plugin in discover_plugins().plugins {
+        if matches!(plugin.source, crate::plugin::PluginSource::FirstParty) {
+            continue;
+        }
+        for segment in &plugin.manifest.provided_segments {
+            let _ = owners.insert(
+                segment.to_string(),
+                format!("{} ({})", plugin.manifest.id, plugin.source),
+            );
+        }
+    }
+    owners
 }
 
 /// Canonicalize a segment name.

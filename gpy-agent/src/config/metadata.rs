@@ -426,7 +426,11 @@ pub const DYNAMIC_KEY_PREFIXES: &[&str] = &[
 ];
 
 /// Prefix of the `[language.icons]` map keys (`language.icons.<lang>`).
-const LANGUAGE_ICONS_PREFIX: &str = "language.icons.";
+pub(crate) const LANGUAGE_ICONS_PREFIX: &str = "language.icons.";
+
+/// What `gpy config list` says about the `language.icons.<lang>` family.
+pub(crate) const LANGUAGE_ICONS_DESCRIPTION: &str =
+    "Icon for one language, e.g. language.icons.rust";
 
 /// Canonical `[language.icons]` name for a `language.icons.<lang>` key.
 ///

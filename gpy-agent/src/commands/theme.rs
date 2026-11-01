@@ -103,7 +103,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
         validate_prospective_activation(&loaded, config.ui.palette.as_str())?;
         save_config(&path, &original, &config, &[])?;
 
-        println!("Switched to '{name}' theme");
+        output::plain(format_args!("Switched to '{name}' theme"));
         let detection_hint = recommended_detection.map(|_| "language detection".to_owned());
         let parts: Vec<String> = pending
             .field_names()
@@ -111,10 +111,10 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
             .chain(detection_hint)
             .collect();
         if !parts.is_empty() {
-            println!(
+            output::plain(format_args!(
                 "Re-run with --force to apply recommended {}",
                 parts.join(", ")
-            );
+            ));
         }
     }
 
@@ -158,7 +158,7 @@ fn apply_forced_switch(
     validate_prospective_activation(loaded, config.ui.palette.as_str())?;
     save_config(path, original, config, &[])?;
 
-    println!("Switched to '{name}' theme");
+    output::plain(format_args!("Switched to '{name}' theme"));
     print_summary(
         "Applied recommended settings",
         join_summary(applied.summary(), detection_applied),
@@ -192,7 +192,7 @@ fn join_summary(base: Option<String>, extra: Option<String>) -> Option<String> {
 
 fn print_summary(prefix: &str, base: Option<String>, extra: Option<String>) {
     if let Some(message) = join_summary(base, extra) {
-        println!("{prefix}: {message}");
+        output::plain(format_args!("{prefix}: {message}"));
     }
 }
 
@@ -202,7 +202,7 @@ fn print_summary(prefix: &str, base: Option<String>, extra: Option<String>) {
 /// Returns an error if the active config cannot be read, parsed, or validated.
 pub fn show() -> Result<()> {
     let config = read_config()?;
-    println!("{}", config.ui.theme);
+    output::plain(&config.ui.theme);
     Ok(())
 }
 
