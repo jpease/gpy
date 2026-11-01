@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Library API: `language::version::ReleaseSource` is renamed `VersionSource`; `detect_language_release[_at]` → `detect_version[_at]`; `lookup_language_release_at` → `lookup_version_at`.
+- Library API: `cache::get_theme_export_cache_path` → `fish_theme_export_path`; `cache::theme_export::theme_export_dir` is removed (use `paths::gpy_cache_dir`); the four `*Source`/`Discovered*` palette and theme aliases are removed (use `config::discovery::{Source, Discovered}`).
 
+- INSTALL.md puts the install methods first, and manual installation uses the release's shell-files archive and `gpy setup`.
+- README: states the `socat`/`nc -U` requirement for Bash and Fish and what `gpy setup` does without a Nerd Font, and links the dated benchmark instead of repeating it.
+- Docs: every environment variable is listed on one page, `docs/user/environment-variables.md`, with deprecated ones and what to use instead. `GPY_SHOW_STATUS` is documented for all three shells.
 - **Breaking:** The theme export no longer exports `GPY_AGENT_*`, `GPY_GIT_*`, `GPY_LANGUAGE_*` and `GPY_UI_*` config values into the environment; scripts that read them should run `gpy config get <key>`. Run `gpy setup` after upgrading so your shell scripts match the agent. An exported `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` or `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` now overrides `config.toml`. Boolean `GPY_*` switches accept `1/true/yes/on` and `0/false/no/off`: `GPY_AGENT_ENABLED=off` now disables, and in all three shells `GPY_SHOW_STATUS=true` now shows the indicator (a one-time warning names each case). `GPY_AGENT_BINARY_PATH` and `GPY_VERBOSE` (both undocumented) are no longer read; use PATH and `GPY_DEBUG`.
 - **Breaking:** Shell integration files and bundled plugins move from `~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh}` and `~/.config/gpy/bundled-plugins` to `$XDG_DATA_HOME/gpy` (default `~/.local/share/gpy`). Run `gpy setup` once after upgrading; it updates your rc file and tells you which old directories to remove after restarting your shells. (#1155)
 - Zsh no longer turns off `prompt_bang` for the whole session, renders the prompt without a subshell, and no longer creates `gpy_relay_*` files in `$TMPDIR`.
@@ -48,9 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The 800-line file-size check now covers test files; the existing over-cap
   test files are listed in `scripts/file-size-allowlist.txt` and may not grow
   (#1112).
+- Library API: `git::find_git_dir_only` is renamed `git::find_worktree_root`; `git::native::parser::{V2ParseResult, V2ParseRecords}` and `V2ParseState::into_records` are removed (`parse_v2_records` returns `V2ParseState`).
 
 ### Fixed
 
+- Docs: Advanced Configuration examples work in Bash and Zsh as well as Fish, the config reset recipe no longer moves themes and plugins, and the theme `[ui]` keys the Starship importer writes are documented.
+- Docs: the git timeout default is 10 s everywhere, and `agent.timeout_seconds` is described as the agent's request timeout, not the shell's wait. The configuration reference is the one place defaults are listed, and a test keeps it in step with the code.
+- Bundled `hostname` and `username` plugins declare version and `min_gpy_version` 0.7.1, the release that introduced them.
 - `gpy config set` on a list key names the command or file to use. (#1164)
 - Six or more busy repositories no longer cause rewrites and prompt repaints
   of unchanged cache files (#1141).
