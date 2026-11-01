@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fish, Bash and Zsh show the same default segments when the theme export
   cannot load, and Fish draws them instead of an empty prompt. Zsh no longer
   replaces an empty `ui.enabled_segments` with `directory git` (#1152).
+- Fish shows why GPY failed to load (for example Fish older than 3.6, or a
+  broken core file) instead of a generic message; `prompt-debug benchmark`
+  prints durations without braces; `prompt-debug validate` checks every core
+  file (#1153).
 - `gpy-agent start` errors no longer present internal steps as a failed
   command (#1128).
 
@@ -110,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `GPY_SHOW_LANGUAGES`, `GPY_MINIMAL_SEGMENTS` and
   `GPY_TEST_SEGMENTS` (Fish only) are deprecated and print a warning; use
   `gpy enable`/`gpy disable` instead (#1152).
+- **Breaking:** `prompt-reload` and `prompt-debug` (Fish) are renamed
+  `gpy-prompt-reload` and `gpy-prompt-debug`; the old names are deprecated
+  and print a notice. `gpy-prompt-reload` always asks `gpy-agent` for a fresh
+  theme export (#1153).
 - **Breaking:** `install.sh` and `install-oneline.sh` reject unknown
   arguments with exit 2; use `GPY_SHELL`, `GPY_VERSION` (one-line installer)
   and `GPY_NERD_FONT`. For an unsupported shell they install the binaries

@@ -62,11 +62,6 @@ __gpy_handle_exit() {
 }
 
 __gpy_setup_signals() {
-    # Drop a URG trap left by an older gpy in this shell.
-    if [[ "$(trap -p URG)" == *"__gpy_handle_doorbell"* ]]; then
-        trap - URG
-    fi
-
     local existing_exit
     existing_exit="$(trap -p EXIT)"
     if [[ -n "$existing_exit" && "$existing_exit" != *"__gpy_handle_exit"* ]]; then

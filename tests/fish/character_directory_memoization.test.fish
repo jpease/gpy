@@ -6,7 +6,7 @@
 # output: a repeat render with the same input tuple must make zero
 # additional IPC calls (cache hit), an exit-status flip must re-render the
 # character, a `cd` must re-render the directory, a theme change (agent reload)
-# must re-render both, a manual reload (__gpy_reload_theme / prompt-reload)
+# must re-render both, a manual reload (__gpy_reload_theme / gpy-prompt-reload)
 # must re-render both even without a theme name change, and an
 # empty/failed render must never be cached.
 
@@ -115,7 +115,7 @@ fish_prompt >/dev/null 2>&1 # theme changed
 check "theme change re-renders character" 2 $__gpy_char_call_count
 check "theme change re-renders directory" 2 $__gpy_dir_call_count
 
-# --- 5. Manual reload (prompt-reload / __gpy_reload_theme) re-renders both
+# --- 5. Manual reload (gpy-prompt-reload / __gpy_reload_theme) re-renders both
 #        segments even when the theme NAME does not change ---
 #
 # The character/directory cache key includes the theme name but not its

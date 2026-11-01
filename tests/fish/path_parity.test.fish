@@ -251,7 +251,7 @@ function __pp_dump --description 'Run one implementation and echo its key=value 
 end
 source $argv[1]/fish/core/ipc.fish
 source $argv[1]/fish/core/util.fish
-source $argv[1]/fish/core/debug.fish
+source $argv[1]/fish/functions/__gpy_debug_paths.fish
 __gpy_debug_paths' -- $GPY_PP_ROOT $home_mode 2>$GPY_PP_ERR
         case bash
             env $env_args bash --noprofile --norc -c 'source "$1/bash/core/ipc.bash"; __gpy_debug_paths' bash $GPY_PP_ROOT 2>$GPY_PP_ERR

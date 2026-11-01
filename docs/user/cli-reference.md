@@ -1495,7 +1495,7 @@ These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY
 | Switch | Effect |
 |---|---|
 | `GPY_SHOW_STATUS` | `0` hides the standalone `✔`/`✖` exit-status indicator printed before the prompt symbol. Default `1`. The indicator is never shown while the prompt symbol itself is rendered by the agent (it is already coloured by the exit status), so this matters mainly when the agent is unavailable. |
-| `prompt-reload` | A function, not a variable: reloads the theme and config into the running shell, mainly for debugging or when the agent is disabled. |
+| `gpy-prompt-reload` | A function, not a variable: re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file), mainly for debugging or when the agent is disabled. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. `prompt-reload` is its deprecated former name. |
 
 ---
 
