@@ -5,7 +5,7 @@ use crate::Result;
 #[cfg(unix)]
 use crate::ipc::wire::Op;
 #[cfg(unix)]
-use crate::paths::get_socket_path;
+use crate::paths::SocketPath;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 #[cfg(unix)]
@@ -97,7 +97,8 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
     reason = "the connect-timeout Elapsed carries no detail and attaching it would append to the CLI error text"
 )]
 pub fn prompt() -> Result<()> {
-    let socket_path = get_socket_path()?;
+    let socket = SocketPath::resolve(None)?;
+    let socket_path = socket.path();
     if !socket_path.exists() {
         return Err(crate::Error::agent(
             "Agent is not running. Start it with 'gpy start'.",
@@ -111,7 +112,7 @@ pub fn prompt() -> Result<()> {
     tokio::runtime::Runtime::new()?.block_on(async {
         let mut stream = timeout(
             Duration::from_millis(CONNECT_TIMEOUT_MS),
-            UnixStream::connect(&socket_path),
+            UnixStream::connect(socket_path),
         )
         .await
         .map_err(|_| {

@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy plugin install <dir>` and `gpy plugin remove <id>` (removal disables the
   plugin's segments and keeps a backup under `~/.config/gpy/plugins.bak/`)
   (#1178).
+- `gpy-agent config reload --socket <path>`, matching `start`, `stop` and
+  `status` (#1131).
 
 ### Changed
 
@@ -162,6 +164,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy segments` shows each segment's plugin and whether it is on by default;
   `gpy config list` lists `language.icons.<lang>`; `gpy plugin new` names the
   ownership/permission rule (#1179).
+- **Breaking (library):** `agent::lifecycle::start` is no longer public; use
+  the `agent::lifecycle` re-exports (`start_background_agent`) (#1136).
+- **Breaking (library):** `paths::{SOCKET_OVERRIDE, set_socket_override,
+  get_socket_path, resolve_socket_path, socket_override,
+  socket_is_overridden}` are replaced by `paths::SocketPath`; `Agent::new` and
+  the `agent::lifecycle` functions take a `&SocketPath` (#1131).
+- **Breaking (library):** `agent::lifecycle::{ping_agent_blocking,
+  send_shutdown_command, send_config_reload_command, query_agent_status,
+  socket_is_stale, probe_status, wait_for_agent_shutdown}` are replaced by the
+  synchronous `agent::lifecycle::AgentClient`, which owns one runtime per
+  operation; `inspect_socket` takes a `&AgentClient` (#1132).
 
 ## [0.8.0] - 2026-10-29
 

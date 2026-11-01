@@ -1,4 +1,4 @@
-//! Cold-start benches. `Agent::new()` binds a socket and registers watchers, so
+//! Cold-start benches. `Agent::new(socket)` binds a socket and registers watchers, so
 //! its dominant sub-steps (config load, theme load, theme export) and the
 //! version-command spawn path are benched individually.
 //!

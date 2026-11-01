@@ -379,7 +379,7 @@ error.rs (foundation)
   │   ├── wire.rs (op names, JSON reply encoding)
   │   ├── server/ (connections; HandlerRegistry::route in handlers/ maps each op to a typed handler method)
   │   ├── single_flight.rs (coalesces duplicate concurrent jobs)
-  │   └── registry.rs (Fish PID tracking)
+  │   └── registry/ (client directory; shell_tracking.rs: tracking files, flag files, SIGURG doorbell)
   │
   └── watcher/
       ├── filesystem.rs (notify integration)
@@ -647,8 +647,8 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 
 ### Transport Layer
 
-**Socket Location** (`paths::resolve_socket_path`, `paths::runtime_root_for`):
-- Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
+**Socket Location** (`paths::SocketPath`, `paths::runtime_root_for`):
+- Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`/`config reload`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
 - Default: `<runtime root>/gpy.sock`, where the runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy` and `/tmp/gpy`; relative `XDG_*` values are ignored
 - There is no `config.toml` key. Fish, Bash and Zsh resolve the same path in `__gpy_ipc_endpoint`; `gpy debug paths` prints it
 - Only `gpy-agent start` creates the default runtime directory (`agent::lifecycle::ensure_runtime_dir`); other commands only resolve the path

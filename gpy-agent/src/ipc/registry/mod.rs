@@ -1,7 +1,9 @@
-//! Registry of shells that want live updates.
+//! Registry of shells that want live updates: the clients registered over IPC,
+//! the per-repo repaint throttle, and the broadcast that reaches them.
 //!
-//! Shells are notified only by [`DOORBELL`] (SIGURG, ignored by default, so a
-//! handler-less shell survives it); any payload is a [`ShellFlag`] file written first.
+//! Shells are notified only by the doorbell (`SIGURG`, ignored by default, so a
+//! handler-less shell survives it); any payload is a flag file written first.
+//! The tracking files, flag files and doorbell are the `shell_tracking` module.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,88 +16,23 @@ use crate::sync_ext::MutexExt;
 use crate::watcher::DEFAULT_THROTTLE_MS;
 
 #[cfg(unix)]
-use nix::sys::signal::{Signal, kill};
+use nix::sys::signal::kill;
 #[cfg(unix)]
 use nix::unistd::Pid;
 
-/// The only signal sent to shells; default disposition is ignore.
+mod shell_tracking;
+
+pub(crate) use shell_tracking::ShellFlag;
 #[cfg(unix)]
-pub(crate) const DOORBELL: Signal = Signal::SIGURG;
-
-#[cfg_attr(
-    not(unix),
-    expect(
-        dead_code,
-        reason = "flag files accompany the Unix-only doorbell signal"
-    )
-)]
-/// Per-shell message: the file `<shell_dir>/<pid>.<suffix>`, followed by a [`DOORBELL`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ShellFlag {
-    /// Reload theme/config.
-    Reload,
-    /// Forget the current registration and register again.
-    Reregister,
-}
-
-#[cfg_attr(
-    not(unix),
-    expect(
-        dead_code,
-        reason = "flag files accompany the Unix-only doorbell signal"
-    )
-)]
-impl ShellFlag {
-    pub(crate) const fn suffix(self) -> &'static str {
-        match self {
-            Self::Reload => "reload",
-            Self::Reregister => "reregister",
-        }
-    }
-
-    pub(crate) fn path(self, shell_dir: &Path, pid: u32) -> PathBuf {
-        shell_dir.join(format!("{pid}.{}", self.suffix()))
-    }
-}
-
+pub(crate) use shell_tracking::{
+    ShellRenudger, announce_start_in, default_shell_dir, renudge_unregistered_shells,
+};
 #[cfg(unix)]
-/// `<runtime_root>/shells`; must match the shells' `__gpy_shell_registry_dir`.
-#[must_use]
-pub(crate) fn default_shell_dir() -> PathBuf {
-    crate::paths::runtime_dir().join("shells")
-}
+use shell_tracking::{process_start_time_secs, ring_doorbell, write_shell_flag};
 
-#[cfg(unix)]
-/// Create `flag` for `pid` in `shell_dir`, creating the directory if needed.
-///
-/// # Errors
-/// Returns an error if the directory or file cannot be created.
-pub(crate) fn write_shell_flag(shell_dir: &Path, pid: u32, flag: ShellFlag) -> std::io::Result<()> {
-    std::fs::create_dir_all(shell_dir)?;
-    std::fs::File::create(flag.path(shell_dir, pid)).map(drop)
-}
-
-/// Ring the doorbell for `pid`.
-///
-/// # Errors
-/// Returns the `kill` error (`ESRCH` for a PID that does not fit `i32`).
-#[cfg(unix)]
-#[allow(
-    clippy::map_err_ignore,
-    reason = "the documented contract maps a PID that does not fit i32 to ESRCH; Errno has no source slot"
-)]
-pub(crate) fn ring_doorbell(pid: u32) -> nix::Result<()> {
-    let pid_i32 = i32::try_from(pid).map_err(|_| nix::errno::Errno::ESRCH)?;
-    kill(Pid::from_raw(pid_i32), DOORBELL)
-}
-
-/// Start time (epoch seconds) of the process occupying `pid`, if determinable.
-#[cfg(unix)]
-pub(crate) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Option<u64> {
-    let sys_pid = sysinfo::Pid::from_u32(pid);
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]), true);
-    sys.process(sys_pid).map(sysinfo::Process::start_time)
-}
+/// How long a throttle entry is kept: entries older than this cannot affect a
+/// throttle decision, and dropping them keeps the map bounded.
+const THROTTLE_ENTRY_TTL: Duration = Duration::from_secs(3600);
 
 /// Whether a registered PID still belongs to the process that registered it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +95,7 @@ pub struct ClientDirectory {
     doorbell: Doorbell,
 }
 
-/// Delivers [`DOORBELL`] to one PID.
+/// Delivers the doorbell to one PID.
 #[cfg(unix)]
 type Doorbell = Box<dyn Fn(u32) -> nix::Result<()> + Send + Sync>;
 
@@ -305,10 +242,9 @@ impl ClientDirectory {
 
     /// Drop throttle entries older than an hour so the map stays bounded.
     fn prune_throttle_map(&self) {
-        let expiry = Duration::from_secs(3600);
         self.last_notify
             .lock_or_recover()
-            .retain(|_, record| record.at.elapsed() < expiry);
+            .retain(|_, record| record.at.elapsed() < THROTTLE_ENTRY_TTL);
     }
 
     /// Prune dead clients from the registry.

@@ -9,7 +9,7 @@
 mod env_guard;
 
 use env_guard::EnvGuard;
-use gpy_agent::paths::{SOCKET_OVERRIDE, get_socket_path, runtime_dir};
+use gpy_agent::paths::{SocketPath, runtime_dir};
 use serial_test::serial;
 
 const ROOT_VARS: [&str; 3] = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "HOME"];
@@ -62,11 +62,11 @@ fn socket_path_without_home_uses_the_passwd_home() {
         "HOME",
         "GPY_AGENT_SOCKET_PATH",
     ]);
-    if SOCKET_OVERRIDE.get().is_some() {
-        return; // SOCKET_OVERRIDE takes precedence; skip
-    }
-    let path = get_socket_path().unwrap();
-    assert_eq!(path, expected_homeless_runtime_root().join("gpy.sock"));
+    let socket = SocketPath::resolve(None).unwrap();
+    assert_eq!(
+        socket.path(),
+        expected_homeless_runtime_root().join("gpy.sock")
+    );
 }
 
 /// Runtime root without `HOME`: passwd home's `.cache/gpy`, else `/tmp/gpy`.

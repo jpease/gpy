@@ -48,8 +48,8 @@ fn show(path: Option<&Path>) -> String {
 #[must_use]
 pub fn resolved_paths() -> Vec<(&'static str, String)> {
     let runtime_root = Some(crate::paths::runtime_dir());
-    // Unvalidated: this is the diagnostic for when `get_socket_path` rejects the length.
-    let socket = Some(crate::paths::resolve_socket_path());
+    // Unvalidated: this is the diagnostic for when `SocketPath::resolve` rejects the length.
+    let socket = crate::paths::SocketPath::resolve_unchecked(None);
     let shell_registry_dir = runtime_root.as_ref().map(|root| root.join("shells"));
 
     // `get_instant_cache_dir` is private; derive it from a real cache file's
@@ -77,7 +77,7 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
 
     vec![
         ("runtime_root", show(runtime_root.as_deref())),
-        ("socket", show(socket.as_deref())),
+        ("socket", show(Some(socket.path()))),
         ("shell_registry_dir", show(shell_registry_dir.as_deref())),
         ("cache_root", show(cache_root.as_deref())),
         ("instant_prompts_dir", show(instant_prompts_dir.as_deref())),

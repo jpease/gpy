@@ -2,7 +2,7 @@
 //!
 //! The `*_for` resolvers take environment values as parameters (no ambient
 //! reads) so the precedence can be table-tested without `unsafe` `set_var`;
-//! `runtime_dir`, `config_root`, `cache_root`, `resolve_socket_path`,
+//! `runtime_dir`, `config_root`, `cache_root`, `SocketPath::resolve`,
 //! `home_path`, `xdg_config_home`, `xdg_data_home`, `user_name` and
 //! `local_app_data` are the entry points that
 //! read the environment, and the only place the crate reads `HOME`, `USER`,
@@ -12,6 +12,7 @@
 //! at logout. Native Windows gets a cache branch only: IPC is Unix-socket
 //! based, so Windows is CLI-only and shell integration runs under WSL.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -248,38 +249,6 @@ pub fn runtime_root_for(
     PathBuf::from("/tmp/gpy")
 }
 
-/// Overrides the default agent socket path (`--socket`, tests, fixed deployments).
-pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
-
-/// Sets the socket override path.
-///
-/// # Errors
-/// Returns an error if a conflicting socket override was already set.
-pub fn set_socket_override(path: &Path) -> crate::Result<()> {
-    let absolute = absolutize(path);
-    if let Some(existing) = SOCKET_OVERRIDE.get() {
-        if existing.as_path() != absolute.as_path() {
-            return Err(crate::Error::invalid(format!(
-                "conflicting socket override: existing={}, requested={}",
-                existing.display(),
-                absolute.display()
-            )));
-        }
-        return Ok(());
-    }
-    if SOCKET_OVERRIDE.set(absolute.clone()).is_err()
-        && let Some(existing) = SOCKET_OVERRIDE.get()
-        && existing.as_path() != absolute.as_path()
-    {
-        return Err(crate::Error::invalid(format!(
-            "conflicting socket override: existing={}, requested={}",
-            existing.display(),
-            absolute.display()
-        )));
-    }
-    Ok(())
-}
-
 /// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
 /// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches the shells).
 /// Never creates it; `gpy-agent start` does (`lifecycle::ensure_runtime_dir`).
@@ -292,41 +261,93 @@ pub fn runtime_dir() -> PathBuf {
     )
 }
 
-/// Socket path for the agent.
+/// Environment variable that points the agent socket somewhere else.
+const SOCKET_PATH_ENV: &str = "GPY_AGENT_SOCKET_PATH";
+
+/// The agent socket a process acts on, resolved once from the `--socket`
+/// flag, then `GPY_AGENT_SOCKET_PATH`, then `<runtime_dir>/gpy.sock`.
 ///
-/// # Errors
-/// Returns an error if the path exceeds the platform's Unix socket path limit.
-pub fn get_socket_path() -> crate::Result<PathBuf> {
-    let path = resolve_socket_path();
-    check_socket_path_len(&absolutize(&path))?;
-    Ok(path)
+/// Carried as a value (never read from process-global state) so the forked
+/// daemon binds the path `start` resolved. Read the file path with
+/// [`Self::path`]; `&SocketPath` also satisfies `AsRef<Path>` for `connect`
+/// and friends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SocketPath {
+    path: PathBuf,
+    overridden: bool,
 }
 
-/// The configured socket path before the length check, for diagnostics.
-#[must_use]
-pub fn resolve_socket_path() -> PathBuf {
-    socket_override().unwrap_or_else(|| runtime_dir().join("gpy.sock"))
+impl AsRef<Path> for SocketPath {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
 }
 
-/// The socket path set by `--socket` or `GPY_AGENT_SOCKET_PATH`, if any.
+/// The socket for these inputs: `flag`, else a non-empty `env` value, else
+/// `<runtime_dir>/gpy.sock`. Pure, so the precedence is table-tested without
+/// touching the process environment; [`SocketPath::resolve`] feeds it the
+/// real ones.
 #[must_use]
-pub fn socket_override() -> Option<PathBuf> {
-    SOCKET_OVERRIDE.get().cloned().or_else(socket_path_override)
+pub fn socket_path_for(flag: Option<&Path>, env: Option<&OsStr>, runtime_dir: &Path) -> SocketPath {
+    if let Some(given) = flag {
+        return SocketPath {
+            path: given.to_path_buf(),
+            overridden: true,
+        };
+    }
+    if let Some(value) = env.filter(|value| !value.is_empty()) {
+        return SocketPath {
+            path: PathBuf::from(value),
+            overridden: true,
+        };
+    }
+    SocketPath {
+        path: runtime_dir.join("gpy.sock"),
+        overridden: false,
+    }
 }
 
-/// Whether the socket path comes from `--socket` or `GPY_AGENT_SOCKET_PATH`
-/// rather than the default runtime directory.
-#[must_use]
-pub fn socket_is_overridden() -> bool {
-    SOCKET_OVERRIDE.get().is_some() || socket_path_override().is_some()
-}
+impl SocketPath {
+    /// Resolve the socket from `flag`, `GPY_AGENT_SOCKET_PATH` and the runtime
+    /// directory, made absolute against the launch directory so a daemon that
+    /// runs in `/` binds the path the user meant.
+    ///
+    /// # Errors
+    /// Returns an error if the path exceeds the platform's Unix socket path limit.
+    pub fn resolve(flag: Option<&Path>) -> crate::Result<Self> {
+        let socket = Self::resolve_unchecked(flag);
+        check_socket_path_len(&socket.path)?;
+        Ok(socket)
+    }
 
-/// The `GPY_AGENT_SOCKET_PATH` override; empty counts as unset everywhere.
-#[must_use]
-pub fn socket_path_override() -> Option<PathBuf> {
-    std::env::var_os("GPY_AGENT_SOCKET_PATH")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    /// [`Self::resolve`] without the length check, for diagnostics that must
+    /// print a path `resolve` rejects.
+    #[must_use]
+    pub fn resolve_unchecked(flag: Option<&Path>) -> Self {
+        let env = std::env::var_os(SOCKET_PATH_ENV);
+        let mut socket = socket_path_for(flag, env.as_deref(), &runtime_dir());
+        socket.path = absolutize(&socket.path);
+        socket
+    }
+
+    /// The socket's file path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The socket's file path, by value.
+    #[must_use]
+    pub fn into_path(self) -> PathBuf {
+        self.path
+    }
+
+    /// Whether the path came from `--socket` or `GPY_AGENT_SOCKET_PATH` rather
+    /// than the default runtime directory.
+    #[must_use]
+    pub const fn is_override(&self) -> bool {
+        self.overridden
+    }
 }
 
 /// The cache root: `$XDG_CACHE_HOME/gpy`, then `$HOME/.cache/gpy` (Unix) or
@@ -734,5 +755,45 @@ mod tests {
             error.contains(&format!("is {} bytes", too_long.len())),
             "{error}"
         );
+    }
+
+    fn socket_at(path: &str, overridden: bool) -> SocketPath {
+        SocketPath {
+            path: PathBuf::from(path),
+            overridden,
+        }
+    }
+
+    /// `--socket` beats `GPY_AGENT_SOCKET_PATH`, which beats the runtime directory.
+    #[test]
+    fn socket_path_precedence_is_flag_then_env_then_default() {
+        let runtime = Path::new("/run/gpy");
+        let flag_path = Path::new("/flag.sock");
+        let env_value = OsStr::new("/env.sock");
+        let cases: [(Option<&Path>, Option<&OsStr>, SocketPath); 4] = [
+            (
+                Some(flag_path),
+                Some(env_value),
+                socket_at("/flag.sock", true),
+            ),
+            (Some(flag_path), None, socket_at("/flag.sock", true)),
+            (None, Some(env_value), socket_at("/env.sock", true)),
+            (None, None, socket_at("/run/gpy/gpy.sock", false)),
+        ];
+        for (flag, env, expected) in cases {
+            assert_eq!(
+                socket_path_for(flag, env, runtime),
+                expected,
+                "flag {flag:?}, env {env:?}"
+            );
+        }
+    }
+
+    /// An empty `GPY_AGENT_SOCKET_PATH` falls through to the default, as in the shells.
+    #[test]
+    fn empty_socket_env_counts_as_unset() {
+        let resolved = socket_path_for(None, Some(OsStr::new("")), Path::new("/run/gpy"));
+        assert_eq!(resolved, socket_at("/run/gpy/gpy.sock", false));
+        assert!(!resolved.is_override());
     }
 }

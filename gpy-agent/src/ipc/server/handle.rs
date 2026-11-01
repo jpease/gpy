@@ -149,7 +149,7 @@ pub struct EndpointHandle {
     /// evicting or forking between our fork and bind, and a bind failure is
     /// reported through it.
     #[cfg(unix)]
-    startup: Option<crate::agent::lifecycle::start::StartupHandoff>,
+    startup: Option<crate::agent::lifecycle::StartupHandoff>,
     /// Ownership check period ([`SOCKET_OWNERSHIP_CHECK`]; tests shorten it).
     #[cfg(unix)]
     socket_ownership_check: Duration,
@@ -307,7 +307,7 @@ impl EndpointHandle {
     #[cfg(unix)]
     pub(crate) fn hold_startup_until_bound(
         &mut self,
-        startup: crate::agent::lifecycle::start::StartupHandoff,
+        startup: crate::agent::lifecycle::StartupHandoff,
     ) {
         self.startup = Some(startup);
     }

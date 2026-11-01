@@ -23,6 +23,7 @@ use gpy_agent::agent::Agent;
 use gpy_agent::config::{Config, loader};
 use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
 use gpy_agent::ipc::Response;
+use gpy_agent::paths::SocketPath;
 use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
 use std::path::Path;
@@ -249,7 +250,7 @@ async fn test_unbindable_socket_fails_startup() -> Result<()> {
     // Restored on drop so a leaked bad path cannot break later tests.
     let _socket_env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &unbindable);
 
-    let agent = Agent::new()?;
+    let agent = Agent::new(SocketPath::resolve(None)?)?;
 
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), agent.start_background())
         .await
@@ -270,7 +271,7 @@ async fn test_unbindable_socket_fails_startup() -> Result<()> {
 #[serial]
 async fn test_agent_creation() -> Result<()> {
     let _env = set_test_env();
-    let _agent = Agent::new()?;
+    let _agent = Agent::new(SocketPath::resolve(None)?)?;
     Ok(())
 }
 
