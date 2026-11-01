@@ -108,9 +108,9 @@ Tab completion for `gpy` is installed for all three shells.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). `./scripts/quality-check.sh` runs the full gate.
-To run an unreleased build in an isolated shell without touching an installed release,
-see [`scripts/README.md`](scripts/README.md) (`just dev` / `scripts/gpy-dev.sh`).
+See [CONTRIBUTING.md](CONTRIBUTING.md). `just check` runs the full gate. To run an
+unreleased build in an isolated shell without touching an installed release, see
+[`scripts/README.md`](scripts/README.md) (`just dev` / `scripts/gpy-dev.sh`).
 
 ## License
 

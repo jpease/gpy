@@ -34,10 +34,13 @@ That avoids spending time on a change that would not get merged.
   below use
 - [`cargo nextest`](https://nexte.st/) — `cargo install cargo-nextest` (or
   `brew install cargo-nextest`); the Rust test suite runs through it
-- Fish, to run `./install-dev.fish` and the Fish test suite; see
-  [Supported Platforms and Shells](docs/INSTALL.md#supported-platforms-and-shells)
-  for the full OS/shell support matrix — that page is canonical, this file
-  does not restate version numbers
+- Fish, Zsh, and Bash 4 or newer (macOS's `/bin/bash` is 3.2; `brew install
+  bash`), to run every shell suite. `just check` fails when one is missing
+  (`just check-rust` needs none). The Bash 4 minimum is for the dev scripts
+  only; the supported shell versions for users are on
+  [Supported Platforms and Shells](docs/INSTALL.md#supported-platforms-and-shells),
+  which is canonical, and this file does not restate them.
+
 ## Workflow
 
 1. Fork the repository and clone your fork.
@@ -49,77 +52,47 @@ That avoids spending time on a change that would not get merged.
 
 ## Development Setup
 
+The same steps work for Fish, Zsh and Bash: clone, build, install both
+binaries and run `gpy setup --from .`, as in
+[Building from Source](docs/INSTALL.md#building-from-source).
+
 ```bash
 git clone https://github.com/<you>/gpy.git
 cd gpy
-./install-dev.fish
+(cd gpy-agent && cargo build --profile release-dist)
+mkdir -p ~/.local/bin
+install -m 755 gpy-agent/target/release-dist/gpy-agent gpy-agent/target/release-dist/gpy ~/.local/bin/
+~/.local/bin/gpy setup --from .
 ```
+
+Optional, Fish only:
+
+- `just install-dev`: rebuild, install and check hot reload; needs Fish.
+- `just dev`: an isolated Fish shell running your build; `exit` returns to your
+  install. See [`scripts/README.md`](scripts/README.md) for the flags.
 
 `./install-dev.fish` installs into `~/.local/bin` and `~/.config`, so it refuses
 to run when a packaged gpy (for example Homebrew's) is already on `PATH`; pass
 `--allow-shadow` to override. It also warns about other `gpy` copies earlier on `PATH`; it never deletes them.
 
-To try a build without touching an installed release, run it in an isolated shell
-instead with `just dev` (or `./scripts/gpy-dev.sh`); `exit` returns to the
-installed release. See [`scripts/README.md`](scripts/README.md) for the flags.
-
 ## Quality Gates
 
-Run before pushing — this is what CI also runs:
+Before pushing, run `just check`; CI runs the same checks. `just check-fast` is
+the quick loop. Run `just check-platforms` before a change to `cfg`-gated code
+(needs Docker).
 
-```bash
-./scripts/quality-check.sh
-```
+Lint policy: the `[lints]` tables in `gpy-agent/Cargo.toml`; run it with
+`just lint`. File-size and new-`allow` rules:
+[`scripts/README.md`](scripts/README.md).
 
-See [`scripts/README.md`](scripts/README.md) for the check list, required tools,
-and faster flags (`--fast`, `--rust-only`, `--clippy`, `--shell-only`,
-`--fish-only`).
-`just check` (or `just check-fast`, `just check-rust`, `just check-shell`,
-`just check-fish`) wraps these.
 Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable
 will be asked about in review.
 
-macOS never compiles the Linux- or Windows-only `cfg` branches. Before pushing
-a change that touches `cfg`-gated code, run `just check-platforms` (needs
-Docker): it runs Linux `cargo clippy` (the same two passes as `just lint`) and Windows
-(mingw) `cargo check` for `--lib`, `--locked` and `--profile test --tests` on
-`HEAD` in a container. Pass `--worktree` to include uncommitted changes.
-
-Lint policy lives in the `[lints]` tables of `gpy-agent/Cargo.toml`. Every
-entry is `warn` and `warnings = "deny"` turns each into an error. They cover
-the `clippy::pedantic` group plus restriction and nursery lints in five
-groups: panics and stray output (`unwrap_used`, `expect_used`, `panic`,
-`print_stdout`, `exit`, ...), documented and isolated `unsafe` (`unsafe_code`,
-`undocumented_unsafe_blocks`), lost information (`map_err_ignore`,
-`use_debug`, ...), numeric conversions, arithmetic and indexing
-(`as_conversions`, `arithmetic_side_effects`, `indexing_slicing`), and
-readability (`shadow_*`, `str_to_string`, `missing_const_for_fn`, ...).
-`gpy-agent/.clippy.toml` relaxes the panic and print lints in test code and
-forbids `std::panic::catch_unwind`. Run it with `just lint`, which is what the
-gate and CI run: `cargo clippy --all-targets` (tests and benches, with the
-`test-support` surface their self dev-dependency enables), then
-`cargo clippy --lib --bins` (the code as it ships, without it). While fixing many
-hits at once, add `-- --cap-lints warn` to either to report every target instead
-of stopping at the first failing one.
-
-A new `#[allow(...)]` must say why, with `reason = "..."` naming the specific
-cause at that site (`#[allow(clippy::cast_possible_truncation, reason = "value
-is clamped to u16::MAX above")]`). `scripts/check-new-allows.py` checks only
-the lines a change adds: the `new-allows` pre-commit hook runs it on staged
-changes and the `new-allows` CI job on the pull request's diff. Allows that
-already exist are not back-filled.
-
-A Rust source file stays under 800 lines, not counting its inline test
-modules (`scripts/check-file-size.py`, run by the `file-size` hook and
-`quality-check.sh`). The files already over the cap are listed with their
-size in `scripts/file-size-allowlist.txt` and may not grow. When you work in a
-listed file, split it, and lower or remove its entry with
-`python3 scripts/check-file-size.py --update` in the same commit; the check
-fails until a shrunk file's entry is lowered.
-
 For faster iterations and individual test suites, see [`scripts/README.md`](scripts/README.md)
 and [Testing Tiers](docs/dev/testing.md).
+
+
 ### Git hooks (optional, recommended)
 
 ```bash

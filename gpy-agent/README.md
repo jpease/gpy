@@ -32,7 +32,7 @@ building from source, and the supported platforms and shells.
 Run from `gpy-agent/`:
 
 ```bash
-cargo build --release                          # target/release/{gpy-agent,gpy}
+cargo build --release   # target/release/{gpy-agent,gpy}; shipped binaries use --profile release-dist
 cargo nextest run --features test-support      # unit and integration tests
 cargo test --doc                               # doc tests (nextest skips them)
 just lint                                      # clippy, as the gate runs it; policy: [lints] in Cargo.toml
