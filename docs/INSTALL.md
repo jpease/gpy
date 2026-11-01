@@ -672,8 +672,7 @@ belong to whatever installed them, and `gpy uninstall` leaves them alone and say
 
 **Homebrew:** run `gpy uninstall` first, then `brew uninstall gpy`. `gpy uninstall`
 cleans your home directory (shell integration, rc blocks, cache); Homebrew removes
-`/opt/homebrew/bin/gpy` (or `/usr/local/bin`, `/home/linuxbrew/.linuxbrew/bin`) and
-its `share/gpy`.
+`$(brew --prefix)/bin/gpy` and its `share/gpy`.
 
 Releases up to 0.8.0 have no `gpy uninstall`: upgrade first, or run the `uninstall.sh` attached to the release you installed (`https://github.com/jpease/gpy/releases/download/<tag>/uninstall.sh`); `releases/latest` no longer publishes it.
 
