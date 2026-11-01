@@ -115,6 +115,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `agent::lifecycle::AgentStatusInfo` are removed; `Response` no longer
   implements `Serialize`/`Deserialize`, and `Response::AgentStatus` holds an
   `ipc::AgentStatus`. Use `ipc::wire` (#1129).
+- **Breaking (library):** `ipc::handlers::RequestHandler`,
+  `ipc::handlers::MiscHandler` and `HandlerError::UnexpectedMessage` are
+  removed; `HandlerRegistry::new` takes the concrete handlers (#1130).
 
 ## [0.8.0] - 2026-10-29
 

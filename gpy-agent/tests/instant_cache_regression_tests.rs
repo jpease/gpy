@@ -10,9 +10,9 @@ use gpy_agent::config::manager::ConfigManager;
 use gpy_agent::formatter::PromptDialect;
 use gpy_agent::git::cache::GitStatusCache;
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
-use gpy_agent::ipc::handlers::{GitHandler, RenderDeps, RequestHandler};
+use gpy_agent::ipc::Response;
+use gpy_agent::ipc::handlers::{GitHandler, RenderDeps};
 use gpy_agent::ipc::registry::ClientDirectory;
-use gpy_agent::ipc::{Message, Segment};
 use gpy_agent::security::SafePath;
 use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
@@ -133,12 +133,9 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
         "Cache file should not exist before IPC request"
     );
 
-    let message = Message::RepositoryStatus {
-        path: SafePath::new(repo_path).unwrap(),
-        segment: Segment::default(),
-    };
+    let path = SafePath::new(repo_path).unwrap();
 
-    let response = handler.handle(&message);
+    let response = handler.status(&path, None);
     assert!(response.is_ok(), "Git status request should succeed");
 
     assert!(
@@ -199,12 +196,9 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
     let _ = std::fs::remove_file(&cache_file);
     assert!(!cache_file.exists(), "Cache should be deleted");
 
-    let message = Message::RepositoryStatus {
-        path: SafePath::new(repo_path).unwrap(),
-        segment: Segment::default(),
-    };
+    let path = SafePath::new(repo_path).unwrap();
 
-    let response = handler.handle(&message);
+    let response = handler.status(&path, None);
     assert!(response.is_ok(), "Git status request should succeed");
 
     assert!(
@@ -253,15 +247,21 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     let _ = std::fs::remove_file(&cache_file);
     assert!(!cache_file.exists(), "Cache should not exist yet");
 
-    let message = Message::RegisterClient {
-        pid: gpy_agent::ipc::ClientPid::new(std::process::id()).unwrap(),
-        cwd: Some(SafePath::new(repo_path).unwrap()),
-        shell: Some(gpy_agent::shell::Shell::Fish),
-        shell_version: Some("3.0.0".to_owned()),
-    };
+    let pid = gpy_agent::ipc::ClientPid::new(std::process::id()).unwrap();
+    let cwd = Some(SafePath::new(repo_path).unwrap());
+    let shell_version = "3.0.0".to_owned();
 
-    let response = handler.handle(&message);
-    assert!(response.is_ok(), "Client registration should succeed");
+    let response = handler.register(
+        pid,
+        cwd,
+        Some(gpy_agent::shell::Shell::Fish),
+        Some(&shell_version),
+    );
+    assert_eq!(
+        response,
+        Response::Ack,
+        "Client registration should succeed"
+    );
 
     // The initial scan runs on a background thread.
     assert!(
@@ -303,11 +303,8 @@ fn test_instant_cache_updates_on_status_change() {
     .expect("cache path");
     let _ = std::fs::remove_file(&cache_file);
 
-    let message = Message::RepositoryStatus {
-        path: SafePath::new(repo_path).unwrap(),
-        segment: Segment::default(),
-    };
-    assert!(handler.handle(&message).is_ok());
+    let path = SafePath::new(repo_path).unwrap();
+    assert!(handler.status(&path, None).is_ok());
     assert!(wait_for_content(&cache_file), "initial cache not written");
     let initial_cache = std::fs::read_to_string(&cache_file).expect("read initial cache");
 
@@ -316,7 +313,7 @@ fn test_instant_cache_updates_on_status_change() {
     // Clear git_cache to force fresh scan
     git_cache.clear();
 
-    assert!(handler.handle(&message).is_ok());
+    assert!(handler.status(&path, None).is_ok());
 
     assert!(
         wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || {

@@ -1,10 +1,10 @@
 //! IPC handlers for client registration, workspace updates, and agent control.
 
 use super::git_handler::publish_and_repaint;
-use super::{HandlerError, RenderDeps, RequestHandler, spawn_detached};
+use super::{HandlerError, RenderDeps, spawn_detached};
 use crate::git::CompleteStatus;
 use crate::git::cache::GitStatusCache;
-use crate::ipc::{Message, Response};
+use crate::ipc::Response;
 use crate::sync_ext::MutexExt;
 use crate::warn_log;
 use crate::watcher::multi_repo::MultiRepoWatcher;
@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 /// Shared, lazily-set watcher handle.
 type WatcherRef = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
 
-/// Handler for client lifecycle, status, config reload, ping and shutdown.
+/// Handler for client lifecycle, status and config reload.
 pub struct ClientHandler {
     /// Publishing handles; see [`ClientHandler::trigger_initial_scan`].
     render: RenderDeps,
@@ -36,8 +36,9 @@ impl ClientHandler {
         }
     }
 
-    /// Handle client registration (PID already validated by the server).
-    fn handle_register_client(
+    /// Register a client (PID already validated by the server).
+    #[must_use]
+    pub fn register(
         &self,
         pid: crate::ipc::ClientPid,
         cwd: Option<crate::security::SafePath>,
@@ -81,11 +82,11 @@ impl ClientHandler {
         Response::Ack
     }
 
-    /// Handle workspace update for a registered client.
+    /// Update workspace information for a registered client.
     ///
     /// # Errors
     /// Fails if path validation fails or the PID is not registered.
-    fn handle_workspace_update(
+    pub(crate) fn workspace_update(
         &self,
         pid: crate::ipc::ClientPid,
         cwd: &crate::security::SafePath,
@@ -117,8 +118,8 @@ impl ClientHandler {
         Ok(Response::Ack)
     }
 
-    /// Handle client unregistration.
-    fn handle_unregister_client(&self, pid: crate::ipc::ClientPid) -> Response {
+    /// Unregister a client.
+    pub(crate) fn unregister(&self, pid: crate::ipc::ClientPid) -> Response {
         self.render.client_registry.unregister(pid.get());
         let current_watcher = self.watcher.lock_or_recover().clone();
         if let Some(watcher) = current_watcher {
@@ -128,8 +129,8 @@ impl ClientHandler {
         Response::Ack
     }
 
-    /// Handle agent status query.
-    fn handle_status(&self) -> Response {
+    /// Answer the agent status query.
+    pub(crate) fn status(&self) -> Response {
         let watched_repos = self
             .watcher
             .lock_or_recover()
@@ -148,11 +149,11 @@ impl ClientHandler {
         })
     }
 
-    /// Handle configuration reload request.
+    /// Reload configuration from disk.
     ///
     /// # Errors
     /// Fails if configuration reload fails.
-    fn handle_config_reload(&self) -> Result<Response, HandlerError> {
+    pub(crate) fn config_reload(&self) -> Result<Response, HandlerError> {
         self.render
             .config_manager
             .reload_now()
@@ -214,29 +215,6 @@ impl ClientHandler {
     }
 }
 
-impl RequestHandler for ClientHandler {
-    fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
-        match message {
-            Message::RegisterClient {
-                pid,
-                cwd,
-                shell,
-                shell_version,
-            } => Ok(self.handle_register_client(*pid, cwd.clone(), *shell, shell_version.as_ref())),
-            Message::UnregisterClient { pid } => Ok(self.handle_unregister_client(*pid)),
-            Message::WorkspaceUpdate { pid, cwd } => self.handle_workspace_update(*pid, cwd),
-            Message::Status => Ok(self.handle_status()),
-            Message::ConfigReload => self.handle_config_reload(),
-            Message::Ping | Message::Shutdown => Ok(Response::Ack),
-            _ => Err(HandlerError::UnexpectedMessage {
-                handler: "ClientHandler",
-                qualifier: "unexpected",
-                message: format!("{message:?}"),
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,7 +273,7 @@ mod tests {
     fn register(handler: &ClientHandler, cwd: &Path) {
         let pid = crate::ipc::ClientPid::new(std::process::id()).expect("pid");
         let safe = crate::security::SafePath::new(cwd.to_str().expect("utf8")).expect("safe");
-        let _ack = handler.handle_register_client(pid, Some(safe), None, None);
+        let _ack = handler.register(pid, Some(safe), None, None);
     }
 
     /// Registering in a repo skipped via a symlinked entry writes no git cache files.

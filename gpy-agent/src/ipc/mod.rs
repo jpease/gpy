@@ -7,6 +7,7 @@ pub mod handlers;
 pub mod protocol;
 pub mod registry;
 pub mod server;
+pub(crate) mod single_flight;
 #[cfg(unix)]
 pub(crate) mod socket_identity;
 pub mod wire;

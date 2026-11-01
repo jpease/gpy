@@ -14,9 +14,7 @@ use crate::debug_log;
 use crate::ipc::Response;
 use crate::ipc::{
     ClientDirectory,
-    handlers::{
-        ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
-    },
+    handlers::{ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, RenderDeps},
 };
 use crate::palette::PaletteCache;
 use crate::security::{GuardSettings, RateLimiter};
@@ -273,12 +271,10 @@ impl EndpointHandle {
             Arc::clone(&deps.git_cache),
             deps.watcher_slot,
         ));
-        let misc_handler = Arc::new(MiscHandler::new());
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
             client_handler,
-            misc_handler,
         ));
 
         Self {
