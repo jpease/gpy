@@ -135,6 +135,9 @@ function __gpy_source_theme_export --argument-names mode
         test $export_status -eq 0; and set -q export_text[1]; or return 1
         __gpy_g_clear_styles
         set -e __gpy_script_segments
+        # `source` from a pipe leaves $status as it found it, and erasing an
+        # unset variable leaves 4; reset it so the export's own status shows.
+        true
         string join \n -- $export_text | source
         return $status
     end

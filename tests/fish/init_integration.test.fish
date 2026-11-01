@@ -26,7 +26,7 @@ set -gx XDG_CACHE_HOME (mktemp -d)
 # A developer's own installed GPY (loaded by their fish config) may already
 # define prompt-* functions; erase them so Test 3 sees only what this
 # checkout's init defines.
-for stale in (functions -n | string match -r '^(gpy-)?prompt-.*')
+for stale in (functions -n | string match -r '^(?:gpy-)?prompt-.*')
     functions -e $stale
 end
 
@@ -59,7 +59,7 @@ end
 # undefined function, which exits 127. Both are autoloaded from fish/functions.
 echo ""
 echo "Test 3: gpy-prompt-* and prompt-* commands do not exit 127"
-set -l prompt_cmds (functions -n | string match -r '^(gpy-)?prompt-.*')
+set -l prompt_cmds (functions -n | string match -r '^(?:gpy-)?prompt-.*')
 for want in gpy-prompt-debug gpy-prompt-reload prompt-debug prompt-reload
     if contains -- $want $prompt_cmds
         pass "init makes $want available"
