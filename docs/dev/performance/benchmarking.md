@@ -14,7 +14,7 @@ To compare GPY against Starship on pinned repositories and tool versions, use `j
 
 ## Worst-Case Policy
 
-The cached prompt budget (`prompt_render` in `tests/performance-baselines.json`:
+The cached prompt budget (`prompt_render` in `benchmarks/perf-budgets.json`:
 20 ms target, 50 ms max) applies to the user-visible cached/instant-response
 path, not to fresh full computation in all cases. Fresh git or language recomputation on large or noisy repositories may
 take longer and must be communicated separately.
@@ -47,13 +47,12 @@ git status --short
 
 4. Use fresh, known-clean benchmark fixtures for the real-world suite.
 ```bash
-cd gpy-agent
-BENCH_DIR=/tmp/gpy-benchmarks ./benchmarks/setup-repos.sh
+BENCH_DIR=/tmp/gpy-benchmarks ./benchmarks/real-repos/setup-repos.sh
 ```
 
 5. Disable repo-local fsmonitor for benchmark fixtures before timing them.
 ```bash
-for repo in /tmp/gpy-benchmarks/*; do
+for repo in /tmp/gpy-benchmarks/*/; do
   git -C "$repo" config core.fsmonitor false
 done
 ```
@@ -92,7 +91,7 @@ RUSTC_WRAPPER= just bench-rust
 ```
 
 Optional:
-- Same-machine canary against the last pushed commit: `just perf-canary` (CI runs it against the PR base in the non-gating `perf` job of `pr-gate.yml`, together with the budgets in `tests/performance-baselines.json`)
+- Same-machine canary against the last pushed commit: `just perf-canary` (CI runs it against the PR base in the `Performance budgets` job of `pr-gate.yml`, where the canary step is advisory, together with the budgets in `benchmarks/perf-budgets.json`)
 
 ## End-to-End Prompt & Memory Benchmark
 
@@ -104,7 +103,7 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 
 ### What it measures
 
-| Scenario            | What it exercises                                  | Budget key (`tests/performance-baselines.json`) |
+| Scenario            | What it exercises                                  | Budget key (`benchmarks/perf-budgets.json`) |
 | ------------------- | -------------------------------------------------- | ----------------------------------------------- |
 | warm prompt         | Agent up, instant cache fresh (steady-state hit)   | `prompt_render`                                 |
 | cold cache          | Instant cache cleared before every render          | `prompt_render_cold`                            |
@@ -141,7 +140,7 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 The scenario renders a fixture plugin (`gpy-bench`, written into the sandbox)
 through the agent's real theme export and each shell's real adapter:
 `bash/core/g_segments.bash`, `zsh/core/script.zsh`, `fish/core/script.fish` and
-the shared `g_runner.bash`. Its segments are `bench-user`, a username-like
+the one shared `bash/core/g_runner.bash`. Its segments are `bench-user`, a username-like
 segment cached for the session (`ttl_secs = 3600`); `bench-cwd`, which runs on
 every command (`ttl_secs = 0`, input `pwd`); and `bench-scan`, whose
 `require_files` never matches. A sandboxed agent of its own renders the only
@@ -204,9 +203,10 @@ has two modes, set by `GPY_STRICT_DEADLINE`:
   T + 500 ms. The hard checks hold in both modes: no prompt before T, the fast
   segment shown, both hung ones hidden, no script process left.
 
-The non-gating Performance job in `.github/workflows/pr-gate.yml` runs the
+The `Performance budgets` job in `.github/workflows/pr-gate.yml` runs the
 test with `GPY_STRICT_DEADLINE=1` on ubuntu, writes the output to the step
-summary and uploads it as `deadline-strict.txt`. Locally, on a quiet machine,
+summary and uploads it as `deadline-strict.txt`; that step is advisory and
+cannot fail the gate. Locally, on a quiet machine,
 `bash tests/bash/script_segment_deadline.test.bash` runs strict.
 
 Numbers and their sources:
@@ -283,7 +283,7 @@ GPY uses multiple benchmark classes. Keep their claims separate:
   `scripts/ci-bench.sh`. Use this to answer "did we violate our prompt-performance budgets?"
 - `just bench-rust`
   Measures isolated agent internals (formatter, cache, IPC, git, language detection). Use this to localize regressions inside the Rust code.
-- `gpy-agent/benchmarks/run.sh`
+- `benchmarks/real-repos/run.sh`
   Measures the real-world `gpy-agent oneshot git --format json` path on pinned repositories.
   Default scope is `BENCH_SCOPE=benchmark-mode`, which adds `--benchmark-mode` and skips config/theme file I/O so results remain comparable to prior git-path baselines.
   Use `BENCH_SCOPE=user-config` only when you explicitly want full CLI/config behavior included.
@@ -293,7 +293,7 @@ Competitive or public-facing performance claims should cite the real-world suite
 ## Recording Results
 
 - Attach raw outputs to the pull request that changes performance.
-- Update `tests/performance-baselines.json` only when the change is intentional and verified.
+- Update `benchmarks/perf-budgets.json` only when the change is intentional and verified.
 - When recording the real-world suite, also capture:
   - `BENCH_SCOPE`
   - OS/kernel version

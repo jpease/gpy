@@ -4,7 +4,7 @@
 #
 # A broken measurement (non-zero exit, empty output, unparseable timing, zero
 # RSS, unresponsive daemon) is a hard failure in every mode. A missing jq,
-# baseline file (BASELINE_FILE overrides it) or budget key exits 2.
+# budget file (PERF_BUDGETS_FILE overrides it) or budget key exits 2.
 
 set -uo pipefail
 
@@ -36,24 +36,19 @@ if [[ " ${*:-} " == *" --ci "* ]] || [[ "${CI:-}" == "true" ]]; then
   CI_MODE=true
 fi
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-pass()    { echo -e "${GREEN}[PASS]${NC} $1"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-fail()    { echo -e "${RED}[FAIL]${NC} $1"; }
 
 # Hard failures (broken measurement) are always fatal; budget failures only in CI.
 HARD_FAILURES=0
 BUDGET_FAILURES=0
 REPORT_ROWS=()
 
-record_hard() { HARD_FAILURES=$((HARD_FAILURES + 1)); fail "$1"; }
+record_hard() { HARD_FAILURES=$((HARD_FAILURES + 1)); bench_fail "$1"; }
 record_budget() {
   BUDGET_FAILURES=$((BUDGET_FAILURES + 1))
   if [[ "$CI_MODE" == true ]]; then
-    fail "$1"
+    bench_fail "$1"
   else
-    warn "$1 (warning in local mode)"
+    bench_warn "$1 (warning in local mode)"
   fi
 }
 
@@ -75,15 +70,15 @@ require_tools() {
       record_hard "Required tools missing in CI: ${missing[*]}"
       return 1
     fi
-    warn "Skipping ci-bench: missing tools (${missing[*]}). Install them to run locally."
+    bench_warn "Skipping ci-bench: missing tools (${missing[*]}). Install them to run locally."
     exit 0
   fi
   return 0
 }
 
-# Budgets, read once in main from the baseline file.
+# Budgets, read once in main from the budget file.
 load_budgets() {
-  bench_load_baselines \
+  bench_load_budgets \
     TOLERANCE_PCT=.regression_thresholds.measurement_variance_percent \
     BUDGET_PROMPT_WARM=.budgets.prompt_render.max_ms \
     BUDGET_PROMPT_COLD=.budgets.prompt_render_cold.max_ms \
@@ -188,7 +183,7 @@ scenario_shell_prompts() {
     if [[ "$CI_MODE" == true ]]; then
       record_hard "bash prompt: bash >= 4.4 not found"
     else
-      warn "bash prompt: bash >= 4.4 not found; skipping"
+      bench_warn "bash prompt: bash >= 4.4 not found; skipping"
     fi
   else
     cd_src="cd $(printf %q "$PROJECT_ROOT") && source $(printf %q "$PROJECT_ROOT/bash/gpy.bash") && "
@@ -204,7 +199,7 @@ scenario_shell_prompts() {
     if [[ "$CI_MODE" == true ]]; then
       record_hard "zsh prompt: zsh not found"
     else
-      warn "zsh prompt: zsh not found; skipping"
+      bench_warn "zsh prompt: zsh not found; skipping"
     fi
   else
     cd_src="cd $(printf %q "$PROJECT_ROOT") && source $(printf %q "$PROJECT_ROOT/zsh/gpy.zsh") && "
@@ -230,7 +225,7 @@ preflight_render() {
 # run_latency LABEL BUDGET_MS TIMED_CMD ITERS PREFLIGHT_CMD
 run_latency() {
   local label="$1" budget="$2" cmd="$3" iters="${4:-1}" preflight="${5:-$3}"
-  info "Scenario: $label"
+  bench_info "Scenario: $label"
 
   if ! preflight_render "$preflight"; then
     record_hard "$label: command failed or produced empty output"
@@ -260,7 +255,7 @@ run_latency() {
   fi
 
   if within_budget "$mean_ms" "$budget"; then
-    pass "$label: ${mean_ms}ms/render (budget ${budget}ms +${TOLERANCE_PCT}%)"
+    bench_pass "$label: ${mean_ms}ms/render (budget ${budget}ms +${TOLERANCE_PCT}%)"
     REPORT_ROWS+=("| $label | <${budget}ms | ${mean_ms}ms | pass |")
   else
     record_budget "$label: ${mean_ms}ms exceeds budget ${budget}ms (+${TOLERANCE_PCT}%)"
@@ -283,7 +278,7 @@ check_memory() {
     return 1
   fi
   if within_budget "$measured" "$budget"; then
-    pass "$label: ${measured}MB (budget ${budget}MB)"
+    bench_pass "$label: ${measured}MB (budget ${budget}MB)"
     REPORT_ROWS+=("| $label | <${budget}MB | ${measured}MB | pass |")
   else
     record_budget "$label: ${measured}MB exceeds budget ${budget}MB"
@@ -292,7 +287,7 @@ check_memory() {
 }
 
 make_large_repo() {
-  info "Building large synthetic repository (offline)..."
+  bench_info "Building large synthetic repository (offline)..."
   rm -rf "$LARGE_REPO"
   git init -q "$LARGE_REPO"
   git -C "$LARGE_REPO" config user.email "bench@gpy.local"
@@ -366,7 +361,7 @@ scenario_memory() {
     stop_daemon
     return
   fi
-  info "Scenario: startup RSS (daemon PID $pid)"
+  bench_info "Scenario: startup RSS (daemon PID $pid)"
   local rss
   if ! rss="$(sample_rss_mb "$pid")"; then
     record_hard "startup RSS: measured an empty/zero RSS (process not alive)"
@@ -374,7 +369,7 @@ scenario_memory() {
     check_memory "startup RSS" "$BUDGET_MEMORY_STARTUP" "$rss"
   fi
 
-  info "Scenario: long-running RSS (${LONG_RUN_ITERS} iterations)"
+  bench_info "Scenario: long-running RSS (${LONG_RUN_ITERS} iterations)"
   local repo_cmd; repo_cmd="$(prompt_command "$PROJECT_ROOT")"
   local peak="$rss" i sample
   for i in $(seq 1 "$LONG_RUN_ITERS"); do
@@ -394,7 +389,7 @@ scenario_memory() {
 # --- Script ("G") segments ----------------------------------------------------
 # What plugin script segments add to a prompt, through the real adapters
 # (bash/core/g_segments.bash, zsh/core/script.zsh, fish/core/script.fish, the
-# shared g_runner.bash) and the agent's real theme export of a fixture plugin.
+# one shared bash/core/g_runner.bash) and the agent's real theme export of a fixture plugin.
 # A live agent of its own (sandbox config, cache and socket; supervisor off)
 # renders the one built-in segment, `directory`, in every config, so the
 # paired differences isolate the plugin work.
@@ -774,10 +769,10 @@ g_judge() {
   label="script segments $cfg vs ${2}"
   row="+${med} ms (IQR ${q1} to ${q3}, n=${n}; ${abs} ms/prompt)"
   if [[ -z "$budget" ]]; then
-    info "$label: $row"
+    bench_info "$label: $row"
     REPORT_ROWS+=("| $label | - | $row | reported |")
   elif within_budget "$med" "$budget"; then
-    pass "$label: $row (budget +${budget}ms $key +${TOLERANCE_PCT}%)"
+    bench_pass "$label: $row (budget +${budget}ms $key +${TOLERANCE_PCT}%)"
     REPORT_ROWS+=("| $label | +${budget}ms | $row | pass |")
   else
     record_budget "$label: $row exceeds +${budget}ms ($key +${TOLERANCE_PCT}%)"
@@ -801,12 +796,12 @@ find_bench_bash3() {
 }
 
 scenario_script_segments() {
-  info "Scenario: script segments (rounds ${G_ROUNDS}+1 warmup, ${G_PER_ROUND} samples, ${G_ITERS} prompts)"
+  bench_info "Scenario: script segments (rounds ${G_ROUNDS}+1 warmup, ${G_PER_ROUND} samples, ${G_ITERS} prompts)"
   if [[ -n "$G_DELAY" && ! "$G_DELAY" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
     record_hard "script segments: GPY_BENCH_G_DELAY must be seconds, got '$G_DELAY'"
     return 1
   fi
-  [[ -n "$G_DELAY" ]] && warn "script segments: bench-cwd sleeps ${G_DELAY}s per run (GPY_BENCH_G_DELAY canary check)"
+  [[ -n "$G_DELAY" ]] && bench_warn "script segments: bench-cwd sleeps ${G_DELAY}s per run (GPY_BENCH_G_DELAY canary check)"
   G_BASH="$(find_bench_bash)"
   G_BASH3="$(find_bench_bash3)"
   local -a shells=() configs=() variants=(base hit g expiry scan)
@@ -815,13 +810,13 @@ scenario_script_segments() {
   if [[ -n "$G_BASH3" ]]; then
     shells+=(bash3)
   else
-    info "script segments: no Bash < 4.4 here; the DEBUG-trap path (Bash 3.2-4.3) is not measured"
+    bench_info "script segments: no Bash < 4.4 here; the DEBUG-trap path (Bash 3.2-4.3) is not measured"
   fi
   command -v zsh >/dev/null 2>&1 && shells+=(zsh)
   command -v fish >/dev/null 2>&1 && shells+=(fish)
   for s in bash zsh fish; do
     if [[ " ${shells[*]} " != *" $s "* ]]; then
-      if [[ "$CI_MODE" == true ]]; then record_hard "script segments: $s not found"; else warn "script segments: $s not found; skipping it"; fi
+      if [[ "$CI_MODE" == true ]]; then record_hard "script segments: $s not found"; else bench_warn "script segments: $s not found; skipping it"; fi
     fi
   done
 
@@ -841,7 +836,7 @@ scenario_script_segments() {
     g_export_sh g g-busybox "$busybox"
     variants+=(g-busybox)
   fi
-  info "script segments: interpreter $(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/cache/gpy/theme-export.bash") ($(readlink -f "$(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/cache/gpy/theme-export.bash")" 2>/dev/null || echo unresolved))${busybox:+, busybox $busybox}"
+  bench_info "script segments: interpreter $(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/cache/gpy/theme-export.bash") ($(readlink -f "$(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/cache/gpy/theme-export.bash")" 2>/dev/null || echo unresolved))${busybox:+, busybox $busybox}"
 
   for s in "${shells[@]}"; do
     for v in "${variants[@]}"; do configs+=("$s:$v"); done
@@ -871,7 +866,7 @@ scenario_script_segments() {
   g_stop_daemon
   local loads
   loads="$(awk -F'\t' 'NR > 1 && $1 > 0 && $4 != "-" { l[$1] = $4 } END { for (r in l) print l[r] }' "$G_TSV" | quartiles)"
-  info "script segments: load1 per round (median q1 q3 n) ${loads:-unknown}; samples in $G_TSV"
+  bench_info "script segments: load1 per round (median q1 q3 n) ${loads:-unknown}; samples in $G_TSV"
 
   local budget key
   for cfg in "${configs[@]}"; do
@@ -906,11 +901,11 @@ generate_report() {
     echo "|----------|--------|----------|--------|"
     [[ ${#REPORT_ROWS[@]} -gt 0 ]] && printf '%s\n' "${REPORT_ROWS[@]}"
   } >"$report"
-  info "Report written to $report"
+  bench_info "Report written to $report"
 }
 
 main() {
-  info "Starting GPY prompt & memory benchmark (mode: $([[ "$CI_MODE" == true ]] && echo CI || echo local))"
+  bench_info "Starting GPY prompt & memory benchmark (mode: $([[ "$CI_MODE" == true ]] && echo CI || echo local))"
   mkdir -p "$RESULTS_DIR"
 
   require_tools || { print_summary; return $?; }
@@ -927,23 +922,23 @@ main() {
 
 print_summary() {
   echo
-  info "Summary: ${HARD_FAILURES} hard failure(s), ${BUDGET_FAILURES} budget overage(s)"
+  bench_info "Summary: ${HARD_FAILURES} hard failure(s), ${BUDGET_FAILURES} budget overage(s)"
 
   if [[ "$HARD_FAILURES" -gt 0 ]]; then
-    fail "Benchmark integrity failures detected — results are not trustworthy"
+    bench_fail "Benchmark integrity failures detected — results are not trustworthy"
     return 1
   fi
 
   if [[ "$BUDGET_FAILURES" -gt 0 ]]; then
     if [[ "$CI_MODE" == true ]]; then
-      fail "${BUDGET_FAILURES} budget(s) exceeded"
+      bench_fail "${BUDGET_FAILURES} budget(s) exceeded"
       return 1
     fi
-    warn "${BUDGET_FAILURES} budget(s) exceeded (warnings only in local mode)"
+    bench_warn "${BUDGET_FAILURES} budget(s) exceeded (warnings only in local mode)"
     return 0
   fi
 
-  pass "All scenarios measured and within budget"
+  bench_pass "All scenarios measured and within budget"
   return 0
 }
 

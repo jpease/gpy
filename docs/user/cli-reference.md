@@ -1350,9 +1350,9 @@ prints `Updated the GPY block in <file>`; a block whose text differs is left
 as it is, and setup says so.
 
 A theme file under `~/.config/gpy/themes/` named after a builtin theme replaces
-that builtin entirely. Setup moves one that is byte-identical to a released
-version of the builtin to `<name>.toml.bak` and reports it, so the builtin
-applies again; an edited copy or a symlink is kept and listed. Set
+that builtin entirely. Setup moves one that is byte-identical to a version of
+the builtin released up to 0.7.1 to `<name>.toml.bak` and reports it, so the
+builtin applies again; an edited copy or a symlink is kept and listed. Set
 `ui.retire_unmodified_themes` to `false` to keep every copy.
 
 The last step picks `ui.show_icons`: it detects whether a Nerd Font is

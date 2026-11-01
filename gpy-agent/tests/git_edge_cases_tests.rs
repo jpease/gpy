@@ -14,12 +14,9 @@ fn test_detached_head_state() {
     let repo = TestRepo::new().with_detached_head();
     let result = load_repository_state(repo.path(), 0, true);
 
-    assert!(
-        result.is_ok(),
-        "Should handle detached HEAD state without errors"
-    );
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = result
+        .expect("Should handle detached HEAD state without errors")
+        .expect("Should find repository");
     // `branch` is the bare short hash, no `HEAD@` prefix.
     assert!(status.detached, "Should set the detached flag");
     assert!(
@@ -35,12 +32,9 @@ fn test_initial_commit_branch_resolution() {
     let repo = TestRepo::new();
     let result = load_repository_state(repo.path(), 0, true);
 
-    assert!(
-        result.is_ok(),
-        "Should handle a zero-commit repository without errors"
-    );
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = result
+        .expect("Should handle a zero-commit repository without errors")
+        .expect("Should find repository");
     assert!(
         !status.detached,
         "an unborn HEAD on a named branch must not be reported as detached"
@@ -56,12 +50,9 @@ fn test_merge_conflict_detection() {
     let repo = TestRepo::new().with_conflicts();
     let result = load_repository_state(repo.path(), 0, true);
 
-    assert!(
-        result.is_ok(),
-        "Should successfully load repository with conflicts"
-    );
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = result
+        .expect("Should successfully load repository with conflicts")
+        .expect("Should find repository");
     let state_lower = status.state.as_str().to_lowercase();
     assert!(
         state_lower.contains("merge") || state_lower.contains("conflict"),
@@ -78,11 +69,10 @@ fn test_merge_conflict_detection() {
 #[test]
 fn test_empty_directory_not_a_repo() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let result = load_repository_state(temp_dir.path(), 0, true);
-
-    assert!(result.is_ok(), "Should not error for non-git directory");
+    let maybe_repo = load_repository_state(temp_dir.path(), 0, true)
+        .expect("Should not error for non-git directory");
     assert!(
-        result.unwrap().is_none(),
+        maybe_repo.is_none(),
         "Should return None for non-git directory"
     );
 }
@@ -107,17 +97,11 @@ fn test_symlink_loop_handling() {
         tx.send(result).unwrap();
     });
 
-    let result = rx.recv_timeout(Duration::from_secs(5));
-    assert!(
-        result.is_ok(),
-        "Timed out waiting for status check - likely hung on symlink loop"
-    );
-
-    let status_result = result.unwrap();
-    assert!(
-        status_result.is_ok(),
-        "Should return Ok status even with symlink loops"
-    );
+    let status_result = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Timed out waiting for status check - likely hung on symlink loop");
+    let maybe_status = status_result.expect("Should return Ok status even with symlink loops");
+    assert!(maybe_status.is_some(), "Should find repository");
 }
 
 #[test]
@@ -128,11 +112,9 @@ fn test_large_repository_counts_every_untracked_file() {
         repo.create_file(&format!("file{i}.txt"), "content");
     }
 
-    let result = load_repository_state(repo.path(), 0, true);
-
-    assert!(result.is_ok(), "Should handle large repository");
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+        .expect("Should handle large repository")
+        .expect("Should find repository");
     assert_eq!(
         status.untracked, 1000,
         "Should accurately count all 1000 untracked files"
@@ -147,14 +129,9 @@ fn test_repository_with_binary_files() {
     std::fs::write(repo.path().join("binary.dat"), binary_data)
         .expect("Failed to write binary file");
 
-    let result = load_repository_state(repo.path(), 0, true);
-
-    assert!(
-        result.is_ok(),
-        "Should handle repositories with binary files"
-    );
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+        .expect("Should handle repositories with binary files")
+        .expect("Should find repository");
     assert_eq!(
         status.untracked, 1,
         "Binary file should be detected as untracked"
@@ -186,10 +163,9 @@ fn test_file_permission_changes() {
     non_exec_perms.set_mode(0o644); // Remove execute bit
     std::fs::set_permissions(&script_path, non_exec_perms).expect("Failed to set permissions");
 
-    let result = load_repository_state(repo.path(), 0, true);
-    assert!(result.is_ok(), "Should handle permission changes");
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+        .expect("Should handle permission changes")
+        .expect("Should find repository");
     assert!(
         status.unstaged > 0 || status.staged > 0,
         "Permission changes should be detected"
@@ -206,14 +182,9 @@ fn test_mixed_encoding_files() {
     std::fs::write(repo.path().join("latin1.txt"), latin1_data)
         .expect("Failed to write Latin-1 file");
 
-    let result = load_repository_state(repo.path(), 0, true);
-
-    assert!(
-        result.is_ok(),
-        "Should handle mixed encoding files without panicking"
-    );
-
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+        .expect("Should handle mixed encoding files without panicking")
+        .expect("Should find repository");
     assert_eq!(
         status.untracked, 2,
         "Both UTF-8 and non-UTF-8 files should be detected"
@@ -233,10 +204,9 @@ fn test_shallow_clone_handling() {
         .commit("Third commit");
 
     let shallow = TestRepo::as_shallow_clone(&source, 1);
-    let result = load_repository_state(shallow.path(), 0, true);
-
-    assert!(result.is_ok(), "Should handle shallow clones");
-    let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
+    let CompleteStatus { status, .. } = load_repository_state(shallow.path(), 0, true)
+        .expect("Should handle shallow clones")
+        .expect("Should find repository");
 
     assert_eq!(
         status.branch, "main",

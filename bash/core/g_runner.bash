@@ -7,8 +7,9 @@
 #
 # Bash 3.2 code only. Bash sources this file and calls both entry points
 # inside `$( )`, so the interactive shell keeps its `$!`, jobs, traps, options
-# and descriptors. zsh/core and fish/core hold byte-identical copies, which
-# run in a Bash child (`bash -p -c "$src" gpy ARGS`); keep the copies in sync.
+# and descriptors. Fish and Zsh run this file in a Bash child
+# (`bash -p -c "$src" gpy ARGS`); `gpy setup` installs it into their trees as
+# core/g_runner.bash.
 # No comment in this file may hold an apostrophe: Bash 3.2 mis-parses one
 # inside a process substitution.
 #

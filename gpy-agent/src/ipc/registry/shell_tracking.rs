@@ -80,7 +80,8 @@ impl ShellFlag {
 }
 
 #[cfg(unix)]
-/// `<runtime_root>/shells`; must match the shells' `__gpy_shell_registry_dir`.
+/// `<runtime_root>/shells`. The shells' `__gpy_shell_registry_dir` copy is
+/// pinned by `xdg_absoluteness_shared_vectors` and the `path_parity` tests.
 #[must_use]
 pub(crate) fn default_shell_dir() -> PathBuf {
     crate::paths::runtime_dir().join("shells")

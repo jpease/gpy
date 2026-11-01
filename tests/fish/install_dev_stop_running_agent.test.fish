@@ -18,7 +18,7 @@
 # ahead of the real one on PATH records whether it is ever invoked.
 #
 # Function definitions are pulled out of install-dev.fish by actually
-# sourcing the file (with --fish-only and PATH scrubbed so gpy-agent is
+# sourcing the file (with --files-only and PATH scrubbed so gpy-agent is
 # unreachable, mirroring install_dev_config_theme_preserve.test.fish's
 # once against a throwaway $HOME, then PATH is switched back in so the
 # defined _stop_running_agent can be called directly against the two
@@ -65,7 +65,7 @@ set -l driver "$home_dir/driver.fish"
 printf '%s\n' \
     "cd '$repo_root'" \
     "set -gx PATH '$safe_path'" \
-    "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
+    "source install-dev.fish --files-only --allow-shadow >/dev/null 2>&1" \
     "" \
     "set -gx PATH '$stub_dir' '$agent_dir' '$safe_path'" \
     "set -e XDG_RUNTIME_DIR" \

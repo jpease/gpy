@@ -42,7 +42,6 @@ set -gx GPY_AGENT_SOCKET_PATH $sock
 # the sandbox instead of the caller's XDG_RUNTIME_DIR or ~/.cache.
 set -gx XDG_CACHE_HOME $__ws_tmp/cache
 set -e XDG_RUNTIME_DIR
-set -e GPY_SUPERVISOR_CHILD
 
 # Drive __gpy_sync_workspace explicitly so each cd is exactly one sync.
 functions -e __gpy_workspace_on_pwd

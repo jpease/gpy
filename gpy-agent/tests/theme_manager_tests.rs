@@ -186,7 +186,6 @@ fn test_theme_manager_loads_valid_theme() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create theme file
     create_test_theme_toml(&config_dir, "test", MINIMAL_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -195,7 +194,6 @@ fn test_theme_manager_loads_valid_theme() {
     let manager = ThemeManager::new("test").unwrap();
     let theme = manager.get();
 
-    // Verify theme loaded correctly
     assert_eq!(theme.ui.prompt_icon, "❯");
     assert_eq!(theme.ui.root_prompt_icon, "#");
     assert_eq!(theme.segments.clock.bg_color, "blue");
@@ -208,7 +206,6 @@ fn test_theme_manager_loads_custom_theme() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create custom theme file
     create_test_theme_toml(&config_dir, "custom", CUSTOM_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -217,7 +214,6 @@ fn test_theme_manager_loads_custom_theme() {
     let manager = ThemeManager::new("custom").unwrap();
     let theme = manager.get();
 
-    // Verify custom values
     assert_eq!(theme.ui.prompt_icon, "→");
     assert_eq!(theme.ui.root_prompt_icon, "⚡");
     assert_eq!(theme.ui.prompt_color.as_deref(), Some("cyan"));
@@ -245,7 +241,6 @@ fn test_theme_manager_export_fish_format() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create theme file
     create_test_theme_toml(&config_dir, "export_test", CUSTOM_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -262,7 +257,6 @@ fn test_theme_manager_export_fish_format() {
         &gpy_agent::template::Palette::default(),
     );
 
-    // Verify Fish output contains expected variables
     assert!(fish_output.contains("# GPY Theme: export_test"));
     assert!(fish_output.contains("set -g __gpy_theme_name \"export_test\""));
     assert!(fish_output.contains("set -g __icon_prompt \"→\""));
@@ -289,7 +283,6 @@ fn test_theme_manager_reload() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "reload_test", MINIMAL_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -297,7 +290,6 @@ fn test_theme_manager_reload() {
     // Load the theme
     let manager = ThemeManager::new("reload_test").unwrap();
 
-    // Verify initial state
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
@@ -310,7 +302,6 @@ fn test_theme_manager_reload() {
     // Reload
     manager.reload().unwrap();
 
-    // Verify new state
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "→");
@@ -349,7 +340,6 @@ fn test_theme_manager_reload_keeps_old_on_error() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "error_test", MINIMAL_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -357,7 +347,6 @@ fn test_theme_manager_reload_keeps_old_on_error() {
     // Load the theme
     let manager = ThemeManager::new("error_test").unwrap();
 
-    // Verify initial state
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
@@ -370,7 +359,6 @@ fn test_theme_manager_reload_keeps_old_on_error() {
     let result = manager.reload();
     assert!(result.is_err());
 
-    // Verify old theme is still active
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
@@ -387,7 +375,6 @@ fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() 
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "missing_test", MINIMAL_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -395,7 +382,6 @@ fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() 
     // Load the theme
     let manager = ThemeManager::new("missing_test").unwrap();
 
-    // Verify initial state
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
@@ -412,7 +398,6 @@ fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() 
         "error should name the theme, got: {err}"
     );
 
-    // Verify the last-good theme is still in place, unchanged.
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
@@ -425,7 +410,6 @@ fn test_theme_manager_start_stop_watching() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create theme file
     create_test_theme_toml(&config_dir, "watch_test", MINIMAL_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -434,12 +418,14 @@ fn test_theme_manager_start_stop_watching() {
     let manager = ThemeManager::new("watch_test").unwrap();
 
     // Start watching
-    let result = manager.start_watching(Duration::from_millis(100));
-    assert!(result.is_ok());
+    manager
+        .start_watching(Duration::from_millis(100))
+        .expect("start watching");
 
     // Starting again should be a no-op
-    let second = manager.start_watching(Duration::from_millis(100));
-    assert!(second.is_ok());
+    manager
+        .start_watching(Duration::from_millis(100))
+        .expect("second start watching");
 
     // Stop watching
     manager.stop_watching();
@@ -454,7 +440,6 @@ fn test_theme_manager_get_returns_arc_clone() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create theme file
     create_test_theme_toml(&config_dir, "arc_test", MINIMAL_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -480,7 +465,6 @@ fn test_theme_manager_respects_xdg_config_home() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("custom_config").join("gpy");
 
-    // Create theme file
     create_test_theme_toml(&config_dir, "xdg_test", CUSTOM_THEME);
 
     // Set custom XDG_CONFIG_HOME
@@ -491,7 +475,6 @@ fn test_theme_manager_respects_xdg_config_home() {
     let manager = ThemeManager::new("xdg_test").unwrap();
     let theme = manager.get();
 
-    // Verify custom theme loaded
     assert_eq!(theme.ui.prompt_icon, "→");
     assert_eq!(theme.segments.clock.bg_color, "magenta");
 }
@@ -526,7 +509,6 @@ fn test_theme_manager_export_includes_all_segments() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create theme file
     create_test_theme_toml(&config_dir, "full_export", CUSTOM_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -557,13 +539,11 @@ fn test_theme_manager_export_includes_all_segments() {
     assert!(fish_output.contains("__color_status_ok_bg"));
     assert!(fish_output.contains("__color_status_fail_bg"));
 
-    // Verify delimiter exports
     assert!(fish_output.contains("__segment_delim_first"));
     assert!(fish_output.contains("__segment_delim_start"));
     assert!(fish_output.contains("__segment_delim_end"));
     assert!(fish_output.contains("__segment_delim_last"));
 
-    // Verify enabled segments list
     assert!(
         fish_output
             .contains("set -g __enabled_segments clock directory duration status git language")
@@ -646,7 +626,6 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "hotreload", MINIMAL_THEME);
 
     let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
@@ -654,7 +633,6 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     // Load the theme
     let manager = ThemeManager::new("hotreload").unwrap();
 
-    // Verify initial state
     {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
@@ -679,7 +657,7 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     manager.stop_watching();
 }
 
-// Test that a reload (flag file + SIGURG doorbell) reaches Fish clients when the theme file changes
+/// A reload (flag file + SIGURG doorbell) reaches Fish clients when the theme file changes.
 //
 // This ensures that when a user edits their theme file (e.g., changes colors),
 // Fish shells automatically reload the theme variables without needing to restart.
@@ -698,10 +676,8 @@ fn test_theme_change_sends_reload() {
 
     let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", config_home);
 
-    // Create initial theme
     let theme_path = create_test_theme_toml(&config_home.join("gpy"), "reload_test", MINIMAL_THEME);
 
-    // Create theme manager and client registry (flags land in a tempdir)
     let manager = ThemeManager::new("reload_test").unwrap();
     let shell_dir = TempDir::new().expect("create shell dir");
     let client_registry = Arc::new(ClientDirectory::with_shell_dir(
@@ -775,7 +751,6 @@ fail_text_color = "white"
         reload_flag.display()
     );
 
-    // Verify theme was actually reloaded
     let theme = manager.get();
     assert_eq!(theme.ui.prompt_icon, ">");
     assert_eq!(theme.segments.clock.bg_color, "red");

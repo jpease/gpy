@@ -44,15 +44,13 @@ run_shell() {
     : >"$CALL_LOG"
     local -a env_args=(
         "PATH=$TMP_DIR/bin:$PATH"
-        # A sandbox HOME/XDG so Fish's detached supervisor loop can never find
-        # (and run) a real install.
+        # A sandbox HOME/XDG so a shell can never find (and run) a real install.
         "HOME=$TMP_DIR/home"
         "XDG_CONFIG_HOME=$TMP_DIR/home/.config"
         "GPY_AGENT_ENABLED=$agent"
         "GPY_AGENT_SUPERVISOR_ENABLED=$supervisor"
         "GPY_AGENT_SOCKET_PATH=$TMP_DIR/dead.sock"
         "XDG_CACHE_HOME=$TMP_DIR/cache"
-        "GPY_AGENT_START_DELAY_MS=0"
         "GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0"
     )
     case "$shell" in

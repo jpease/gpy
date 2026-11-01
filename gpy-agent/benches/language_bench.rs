@@ -264,7 +264,7 @@ fn bench_language_detect_realistic(c: &mut Criterion) {
         });
     });
 
-    // Budget: tests/performance-baselines.json. Keep ids under ~22 chars or
+    // Budget: benchmarks/perf-budgets.json. Keep ids under ~22 chars or
     // criterion wraps "time:" and breaks `scripts/bench.sh`'s `check_budget` grep.
     c.bench_function("lang_detect_5k", |b| {
         b.iter(|| {

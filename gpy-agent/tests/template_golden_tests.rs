@@ -1,7 +1,4 @@
 //! Golden fidelity tests: GPY engine output vs. Starship default module formats.
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
 
 use gpy_agent::template::{MapResolver, RenderContext, Span, render};
 

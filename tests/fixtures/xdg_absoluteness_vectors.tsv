@@ -19,6 +19,11 @@
 # whole-column token \e meaning the EMPTY string (an empty column would be
 # collapsed by bash/zsh `read`). Every reader MUST fail if this file is
 # missing or yields zero vectors.
+#
+# Rust checks every row (`xdg_absoluteness_shared_vectors`): `xdg_path` honours
+# the value iff `absolute` is yes, and each of `runtime_root_for`,
+# `cache_root_for` and `config_root_for` either roots at `value/gpy` or falls
+# through as if the value were unset.
 /abs	yes
 relative	no
 ./x	no

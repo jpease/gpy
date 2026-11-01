@@ -26,6 +26,16 @@
 #             down_after_prime    stop the agent after the `prime` render
 #             aged_cache          backdate what the `prime` render cached by 5 s,
 #                                 so it is older than a 1 s TTL
+#             check_now           the drivers set the supervisor check interval
+#                                 to 0, so every prompt runs the check
+#             kill_after_first    the agent dies after the first prompt (the
+#                                 harness kills its proxy and removes p.sock)
+#             renders<N>          render N prompts in one shell process and
+#                                 compare the last (state that spans prompts,
+#                                 such as the script segment breaker); between
+#                                 two prompts the driver simulates a command
+#                                 (`SCN_BETWEEN`: an executable the harness may
+#                                 place at <sandbox>/between.sh, run then)
 # agent     up    the real agent, behind the recording IPC proxy (default)
 #           down  no agent and no socket
 #           slow  up, but a data request (git, directory, ...) is held 1.8 s
@@ -39,6 +49,7 @@
 # expect    space-separated absolute checks applied to EACH shell, or -:
 #             starts=N  oneshots=a,b|-  registers=N  ipc_total=N  ipc.<op>=N
 #             other_calls=a,b|-   (the keys effects.py prints; an absent ipc.<op> is 0)
+#             gpy_stderr=N   (stderr lines that start with `gpy:`)
 #             prompt~=TEXT  prompt!~=TEXT   (normalized prompt contains / lacks TEXT)
 #
 # Side effects are what the shells did to the agent, seen from outside: `gpy-agent`
@@ -81,6 +92,10 @@ template-username-first	golden-template	username,status	0	-	root	up	-	-	-	prompt
 disabled	default	directory	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory
 # `[agent.supervisor] enabled=false` only gates restarts: the agent is still started
 supervisor-off-down	default	directory,git	0	-	-	down	repo	[agent.supervisor]\nenabled = false	-	starts=1 registers=0 oneshots=directory prompt!~=main
+# the agent dies between two prompts: the next checked prompt runs `start` once
+restart-after-crash	golden-ascii	directory	0	-	renders2,check_now,kill_after_first	up	-	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 5	-	starts=1
+# every start fails: the initial start plus max_restart_attempts retries
+restart-cap	golden-ascii	directory	0	-	renders4,check_now	down	-	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 5\nmax_restart_attempts = 2	-	starts=3
 # cold git miss, agent down: the segment is omitted, no foreground `oneshot git`
 cold-miss-down	default	directory,git	0	-	-	down	repo	-	-	starts=1 registers=0 oneshots=directory prompt!~=main
 # cold git miss, agent up: one bounded synchronous query
@@ -116,3 +131,10 @@ multiline-oneshot	golden-multiline	directory	0	-	-	down	repo	[agent]\nenabled = 
 multiline-git-cached	golden-multiline	git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	ipc.git=0 prompt~=git\nmain
 multiline-directory-live	golden-multiline	directory	0	-	-	up	repo	-	-	oneshots=- prompt~=dir\n
 multiline-git-live	golden-multiline	git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=0	-	up	repo	-	-	oneshots=- prompt~=git\nmain
+# --- script segments (fixture plugin contract-scripts), agent stopped: the shell runner draws them
+# a script past its timeout_ms is hidden, as is one over the 4096-byte cap; the colour variant is styled
+# the same in every shell; two timeouts in a row trip the breaker with one `gpy:` line
+script-timeout	golden-ascii	slow	0	-	-	down	-	-	-	prompt!~=late
+script-cap	golden-ascii	big	0	-	-	down	-	-	-	prompt!~=bigstart
+script-variant	golden-script-variant	variant	0	-	-	down	-	-	-	prompt~=vtext
+script-breaker	golden-ascii	slow	0	-	renders3	down	-	-	-	prompt!~=late gpy_stderr=1

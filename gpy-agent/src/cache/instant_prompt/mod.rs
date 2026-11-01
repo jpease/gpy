@@ -12,7 +12,9 @@ mod key;
 mod name;
 mod sweep;
 
-use crate::cache::bounded::{INSTANT_PROMPT_LAST_WRITTEN_CAPACITY, evict_to_capacity};
+use crate::cache::bounded::{
+    INSTANT_PROMPT_KEY_CAPACITY, INSTANT_PROMPT_LAST_WRITTEN_CAPACITY, evict_to_capacity,
+};
 use crate::config::Config;
 use crate::debug_log;
 use crate::formatter::{Formatter, PromptDialect, PromptFormatter, RenderContext, SegmentPosition};
@@ -78,6 +80,8 @@ pub struct InstantPromptCache {
     /// Content and write-recency tick per [`CacheFileName`] (unchunked key).
     /// Invariant: `content` equals the file's content.
     last_written: Mutex<LastWritten>,
+    /// Most records `last_written` keeps before the least recently written go.
+    last_written_capacity: usize,
     /// `prev_bg` contexts seen per key; background writers refresh all of them.
     seen_contexts: RwLock<SeenContexts>,
     /// Keys whose filename cannot fit `NAME_MAX` even chunked; logged once each.
@@ -120,9 +124,18 @@ impl InstantPromptCache {
             }),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
+            last_written_capacity: INSTANT_PROMPT_LAST_WRITTEN_CAPACITY,
             #[cfg(any(test, feature = "test-support"))]
             _temp_dir: None,
         }
+    }
+
+    /// Bound the write records at `capacity`, so eviction tests need not write
+    /// [`INSTANT_PROMPT_LAST_WRITTEN_CAPACITY`] files.
+    #[cfg(test)]
+    const fn with_last_written_capacity(mut self, capacity: usize) -> Self {
+        self.last_written_capacity = capacity;
+        self
     }
 
     /// Create a new instant-prompt cache manager.
@@ -245,6 +258,84 @@ impl InstantPromptCache {
         changed
     }
 
+    /// Refresh the mtime of the cached git files of the repository at `path`
+    /// (the `prev_bg` context requested, or every known context for `None`;
+    /// every position and dialect, plus the git background files) instead of
+    /// rendering them, and bump their records' recency. Returns `true` only
+    /// when every file existed and the repository is not suppressed; the
+    /// caller then falls back to a write. Content is untouched, so no shell
+    /// needs waking.
+    #[must_use]
+    pub fn touch_git(&self, path: &Path, prev_bg: Option<&str>) -> bool {
+        let key = path_to_cache_key(&find_project_root(path));
+        let contexts = self.known_contexts(&key, prev_bg);
+        let now = SystemTime::now();
+
+        // Held for the whole call, as in `write_cache_file` and `remove_git`.
+        let mut cache = self.last_written.lock_or_recover();
+        if self.suppressed_git.lock_or_recover().contains_key(&key) {
+            return false;
+        }
+        let bg_names = PromptDialect::ALL.map(|dialect| CacheFileName {
+            key: &key,
+            kind: CacheKind::GitBg,
+            position: SEGMENT_POSITIONS[0],
+            token: NO_PREV_BG_TOKEN,
+            dialect,
+        });
+        for name in &bg_names {
+            if !self.touch_cache_file(&mut cache, name, now) {
+                return false;
+            }
+        }
+        for context in contexts
+            .iter()
+            .filter(|context| prev_bg.is_none() || context.as_deref() == prev_bg)
+        {
+            let token = prev_bg_token(context.as_deref());
+            for position in SEGMENT_POSITIONS {
+                for dialect in PromptDialect::ALL {
+                    let name = CacheFileName {
+                        key: &key,
+                        kind: CacheKind::Git,
+                        position,
+                        token: &token,
+                        dialect,
+                    };
+                    if !self.touch_cache_file(&mut cache, &name, now) {
+                        return false;
+                    }
+                }
+            }
+        }
+        drop(cache);
+        true
+    }
+
+    /// Set `name`'s mtime to `now` and bump its record's tick; `false` when
+    /// the file cannot be opened or stamped (a missing file is the usual cause).
+    fn touch_cache_file(
+        &self,
+        cache: &mut LastWritten,
+        name: &CacheFileName<'_>,
+        now: SystemTime,
+    ) -> bool {
+        let tail = name.tail();
+        let (dir, file_name) = cache_file_parts(&self.cache_dir, name.key, &tail);
+        let touched = std::fs::File::options()
+            .write(true)
+            .open(dir.join(file_name))
+            .and_then(|file| file.set_modified(now))
+            .is_ok();
+        if touched {
+            let tick = cache.next_tick();
+            if let Some(written) = cache.entries.get_mut(&format!("{}.{tail}", name.key)) {
+                written.tick = tick;
+            }
+        }
+        touched
+    }
+
     /// Write every language variant, dialect and known `prev_bg` context;
     /// returns `true` when any content changed. `languages` are resolved
     /// display entries, so writing never probes a version.
@@ -354,11 +445,9 @@ impl InstantPromptCache {
         let known = contexts.list.clone();
 
         // Bound the number of repositories tracked; `key` holds the newest tick.
-        evict_to_capacity(
-            &mut seen.entries,
-            INSTANT_PROMPT_LAST_WRITTEN_CAPACITY,
-            |entry| entry.tick,
-        );
+        evict_to_capacity(&mut seen.entries, INSTANT_PROMPT_KEY_CAPACITY, |entry| {
+            entry.tick
+        });
         drop(guard);
         known
     }
@@ -463,11 +552,9 @@ impl InstantPromptCache {
             },
         );
         // Keep the dedup table bounded; the least recently written go first.
-        evict_to_capacity(
-            &mut cache.entries,
-            INSTANT_PROMPT_LAST_WRITTEN_CAPACITY,
-            |written| written.tick,
-        );
+        evict_to_capacity(&mut cache.entries, self.last_written_capacity, |written| {
+            written.tick
+        });
         drop(cache);
 
         Ok(true)
@@ -476,7 +563,7 @@ impl InstantPromptCache {
     /// Log once per root that `key`'s files exceed `NAME_MAX` and are skipped.
     fn note_unwritable_key(&self, key: &str) {
         let mut seen = self.unwritable_keys.lock_or_recover();
-        if seen.len() < INSTANT_PROMPT_LAST_WRITTEN_CAPACITY && seen.insert(key.to_owned()) {
+        if seen.len() < INSTANT_PROMPT_KEY_CAPACITY && seen.insert(key.to_owned()) {
             debug_log!(
                 "cache",
                 "Skipping instant cache for {key}: its filename exceeds {NAME_MAX_BYTES} bytes"
@@ -535,5 +622,11 @@ fn render_all_dialects(
 
 #[cfg(test)]
 mod git_bg_tests;
+#[cfg(all(test, unix))]
+mod git_root_vectors_tests;
+#[cfg(test)]
+mod naming_vectors_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod touch_tests;

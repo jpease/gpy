@@ -81,7 +81,7 @@ fn bench_ipc_ping(c: &mut Criterion) {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let socket_path = temp_dir.path().join("gpy.sock");
     ipc::start_and_wait(&rt, &socket_path);
-    ipc::bench_ipc_roundtrip(c, &rt, &socket_path);
+    ipc::bench_ipc_roundtrip(c, "ipc_roundtrip", &rt, &socket_path);
 }
 
 /// Ping p50/p99 latency while concurrent requests keep the agent busy;

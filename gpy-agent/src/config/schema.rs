@@ -6,8 +6,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Pure so precedence is testable without `set_var` (forbidden by `unsafe_code`).
 /// Empty `GPY_CONFIG_PATH` is dropped (else `config set` writes to `""`);
-/// `XDG_CONFIG_HOME` goes through [`crate::paths::xdg_path`]. Matches Fish's
-/// `__gpy_user_config_candidates`. No `~/.gpy.toml` or project-local file: the
+/// `XDG_CONFIG_HOME` goes through [`crate::paths::xdg_path`]. No `~/.gpy.toml` or project-local file: the
 /// daemon serves every directory, so CLI and prompt must agree on one file.
 #[must_use]
 pub fn config_candidates_for(

@@ -250,10 +250,9 @@ fn test_format_parameter_honored() {
         json_stdout.contains('{') && json_stdout.contains('}'),
         "JSON format should contain braces. Got: {json_stdout}"
     );
-    assert!(
-        serde_json::from_str::<serde_json::Value>(&json_stdout).is_ok(),
-        "JSON format should be valid JSON. Got: {json_stdout}"
-    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json_stdout).expect("JSON format should be valid JSON");
+    assert!(parsed.is_object(), "JSON stdout should be an object");
 
     let fish_rendered_output = {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
@@ -349,10 +348,11 @@ impl RunningAgent {
             String::from_utf8_lossy(&started.stderr)
         );
 
+        let accepted = wait::wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
+            UnixStream::connect(&socket_path).is_ok()
+        });
         assert!(
-            wait::wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
-                UnixStream::connect(&socket_path).is_ok()
-            }),
+            accepted,
             "agent never accepted a connection on {}",
             socket_path.display()
         );

@@ -53,6 +53,9 @@ else
 fi
 
 registered() { shell_e2e_assert_registered "$client_pid"; }
+# The start is detached, so the first prompt can run before the agent binds
+# its socket; a second prompt retries the registration.
+registered || shell_e2e_send '\r'
 if shell_e2e_poll 5 registered; then
     pass "client $client_pid registered with the agent"
 else

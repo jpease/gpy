@@ -55,17 +55,6 @@ fn isolate_user_dirs() -> UserDirs {
     }
 }
 
-/// Create a git repository with one commit.
-fn create_git_repo() -> TempDir {
-    let temp_dir = TempDir::new().expect("create temp dir");
-    let repo_path = temp_dir.path();
-    git::git_init(repo_path);
-    std::fs::write(repo_path.join("README.md"), "# Test").expect("write file");
-    git::git(repo_path, &["add", "."]);
-    git::git(repo_path, &["commit", "-q", "-m", "Initial commit"]);
-    temp_dir
-}
-
 /// Wait until `path` exists with non-empty content.
 fn wait_for_content(path: &Path) -> bool {
     wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || {
@@ -100,7 +89,7 @@ fn render_deps(
 #[test]
 #[serial]
 fn test_git_handler_writes_instant_cache_on_ipc_request() {
-    let repo = create_git_repo();
+    let repo = git::TestRepo::new().with_initial_commit();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
 
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
@@ -135,8 +124,13 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
 
     let path = SafePath::new(repo_path).unwrap();
 
-    let response = handler.status(&path, None);
-    assert!(response.is_ok(), "Git status request should succeed");
+    let response = handler
+        .status(&path, None)
+        .expect("Git status request should succeed");
+    assert!(
+        matches!(response, Response::RepositoryStatus(_)),
+        "expected RepositoryStatus response, got {response:?}"
+    );
 
     assert!(
         wait_for_content(&cache_file),
@@ -149,7 +143,7 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
 #[test]
 #[serial]
 fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
-    let repo = create_git_repo();
+    let repo = git::TestRepo::new().with_initial_commit();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
 
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
@@ -198,8 +192,13 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
 
     let path = SafePath::new(repo_path).unwrap();
 
-    let response = handler.status(&path, None);
-    assert!(response.is_ok(), "Git status request should succeed");
+    let response = handler
+        .status(&path, None)
+        .expect("Git status request should succeed");
+    assert!(
+        matches!(response, Response::RepositoryStatus(_)),
+        "expected RepositoryStatus response, got {response:?}"
+    );
 
     assert!(
         wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || cache_file.exists()),
@@ -216,7 +215,7 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     use gpy_agent::ipc::registry::ClientDirectory;
     use std::sync::Mutex;
 
-    let repo = create_git_repo();
+    let repo = git::TestRepo::new().with_initial_commit();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
 
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
@@ -275,7 +274,7 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
 #[test]
 #[serial]
 fn test_instant_cache_updates_on_status_change() {
-    let repo = create_git_repo();
+    let repo = git::TestRepo::new().with_initial_commit();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
 
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
@@ -304,7 +303,13 @@ fn test_instant_cache_updates_on_status_change() {
     let _ = std::fs::remove_file(&cache_file);
 
     let path = SafePath::new(repo_path).unwrap();
-    assert!(handler.status(&path, None).is_ok());
+    let initial_status = handler
+        .status(&path, None)
+        .expect("initial git status request");
+    assert!(
+        matches!(initial_status, Response::RepositoryStatus(_)),
+        "expected RepositoryStatus response, got {initial_status:?}"
+    );
     assert!(wait_for_content(&cache_file), "initial cache not written");
     let initial_cache = std::fs::read_to_string(&cache_file).expect("read initial cache");
 
@@ -313,7 +318,13 @@ fn test_instant_cache_updates_on_status_change() {
     // Clear git_cache to force fresh scan
     git_cache.clear();
 
-    assert!(handler.status(&path, None).is_ok());
+    let updated_status = handler
+        .status(&path, None)
+        .expect("updated git status request");
+    assert!(
+        matches!(updated_status, Response::RepositoryStatus(_)),
+        "expected RepositoryStatus response, got {updated_status:?}"
+    );
 
     assert!(
         wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || {

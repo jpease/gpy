@@ -223,10 +223,9 @@ esac
 case ",$SHELLS," in *,zsh,*)
     echo "--- zsh: one prompt from the shell archive's zsh/ tree ---"
     if command -v zsh >/dev/null 2>&1; then
-        mkdir -p "$XDG_CONFIG_HOME/gpy"
-        cp -R "$SHELL_TREES/zsh" "$XDG_CONFIG_HOME/gpy/zsh"
-        mkdir -p "$XDG_CONFIG_HOME/gpy/zsh/completions"
-        "$CLI_BIN" completions zsh >"$XDG_CONFIG_HOME/gpy/zsh/completions/_gpy" 2>/dev/null || true
+        # setup installs the tree, its completions and the shared bash runner.
+        "$CLI_BIN" setup --shell zsh --non-interactive --from "$SHELL_TREES" >/dev/null ||
+            fail "gpy setup --shell zsh failed"
         printf 'source "%s/gpy/zsh/gpy.zsh"\n' "$XDG_CONFIG_HOME" >"$HOME/.zshrc"
         zsh_out="$(zsh -i -c '__gpy_precmd; print -r -- "$PROMPT"' </dev/null 2>&1 || true)"
         assert_prompt zsh "$zsh_out"

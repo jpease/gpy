@@ -21,8 +21,8 @@ Usage: ./scripts/install-hooks.sh [--uninstall]
 Installs the repository git hooks via prek:
   - pre-commit: fast checks filtered to the file types that changed (clippy,
                 rustfmt, fish syntax/format, and secret scans)
-  - pre-push:   repeats the clippy pass; the heavy gates (Rust gate,
-                shell suites, perf canary) run in CI and via 'just'
+  - pre-push:   repeats the clippy pass; the full gate
+                runs in CI and via 'just check' (run it before pushing)
 See .pre-commit-config.yaml. Run once per clone.
 
 Options:

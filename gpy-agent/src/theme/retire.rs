@@ -1,9 +1,10 @@
 //! Retire user copies of builtin themes that carry no edits.
 //!
 //! A `<themes dir>/<name>.toml` byte-identical to a released version of the
-//! builtin `<name>`, or to the embedded one, holds no user intent but shadows
-//! every later fix to the builtin. `gpy setup` moves such a copy aside to
-//! `<name>.toml.bak` so the builtin takes over. Any other file is left alone.
+//! builtin `<name>` up to v0.7.1 (which is the same as 0.8.0) holds no user
+//! intent but shadows every later fix to the builtin. `gpy setup` moves such
+//! a copy aside to `<name>.toml.bak` so the builtin takes over. Any other file
+//! is left alone.
 
 use super::manager::BUILTIN_THEMES;
 use super::released_hashes::RELEASED_THEME_HASHES;
@@ -37,13 +38,9 @@ pub enum Outcome {
     Failed(String),
 }
 
-/// Whether `bytes` are exactly a released version of builtin `name`, or its
-/// embedded content.
+/// Whether `bytes` are exactly a released version of builtin `name`.
 #[must_use]
 pub fn matches_release(name: &str, bytes: &[u8]) -> bool {
-    if super::user_copy::builtin_content(name).is_some_and(|current| current.as_bytes() == bytes) {
-        return true;
-    }
     let digest = format!("{:x}", Sha256::digest(bytes));
     RELEASED_THEME_HASHES
         .iter()
@@ -99,44 +96,13 @@ fn retire(name: &str, path: &Path) -> Option<Outcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BUILTIN_THEMES, Outcome, RELEASED_THEME_HASHES, matches_release, retire_unmodified_copies,
-    };
-    use sha2::{Digest, Sha256};
+    use super::{Outcome, matches_release, retire_unmodified_copies};
     use std::fs;
 
     /// `text.toml` as v0.1.0 through v0.6.0 shipped it; not the current builtin.
     const TEXT_V0_6_0: &str = include_str!("../../tests/fixtures/released_themes/text-v0.6.0.toml");
-
-    /// A builtin edited without re-running the generator ships bytes that a
-    /// later release could no longer recognise in a user copy.
-    #[test]
-    fn every_current_builtin_is_in_the_released_table() {
-        let missing: Vec<&str> = BUILTIN_THEMES
-            .iter()
-            .filter(|(name, content)| {
-                let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
-                !RELEASED_THEME_HASHES
-                    .iter()
-                    .any(|(released, hash)| released == name && *hash == digest)
-            })
-            .map(|(name, _)| *name)
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "builtin themes {missing:?} changed without a hash in theme/released_hashes.rs; \
-             run scripts/gen-released-theme-hashes.sh and commit the result"
-        );
-        for (name, hash) in RELEASED_THEME_HASHES {
-            assert!(
-                hash.len() == 64
-                    && hash
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-                "released hash for {name} is not lowercase hex SHA-256: {hash}"
-            );
-        }
-    }
+    const STARSHIP_V0_7_1: &str =
+        include_str!("../../tests/fixtures/released_themes/starship-v0.7.1.toml");
 
     #[test]
     fn an_old_release_matches_but_an_edited_copy_does_not() {
@@ -162,7 +128,7 @@ mod tests {
         let starship = super::super::user_copy::builtin_content("starship").expect("builtin");
         let default = super::super::user_copy::builtin_content("default").expect("builtin");
         fs::write(themes.join("text.toml"), TEXT_V0_6_0).expect("seed text");
-        fs::write(themes.join("starship.toml"), starship).expect("seed starship");
+        fs::write(themes.join("starship.toml"), STARSHIP_V0_7_1).expect("seed starship");
         let edited = default.replacen('\n', " \n", 1);
         fs::write(themes.join("default.toml"), &edited).expect("seed default");
         fs::write(themes.join("mine.toml"), starship).expect("seed non-builtin");

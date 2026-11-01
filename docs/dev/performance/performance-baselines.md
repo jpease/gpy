@@ -19,7 +19,7 @@ or host condition; those have their own, larger budgets (`prompt_render_cold`,
 ## Overview
 
 The agent and shell integration run on every prompt render. Budgets live in
-`tests/performance-baselines.json`; baselines cover:
+`benchmarks/perf-budgets.json`; baselines cover:
 
 1. **Formatter hot paths** - Git status and language formatting
 2. **IPC roundtrip** - Agent communication latency (`ipc_latency`: 1 ms target, 1.5 ms max)
@@ -121,15 +121,13 @@ in-process benchmarks for that reason.
 The repository benchmark suite exercises the `gpy-agent oneshot git --format json` path against pinned open-source repositories:
 
 ```bash
-cd gpy-agent
-./benchmarks/run.sh --compare
+./benchmarks/real-repos/run.sh --compare
 ```
 
 By default this runs in `benchmark-mode` scope, which skips config/theme file I/O so the measurements reflect the git-status request path rather than user-specific config loading. To measure full CLI behavior instead:
 
 ```bash
-cd gpy-agent
-BENCH_SCOPE=user-config ./benchmarks/run.sh --compare
+BENCH_SCOPE=user-config ./benchmarks/real-repos/run.sh --compare
 ```
 
 Use the default scope for comparative or public-facing git performance claims. Use `user-config` only for troubleshooting or end-to-end CLI investigations.
@@ -139,12 +137,11 @@ Use the default scope for comparative or public-facing git performance claims. U
 For repeatable real-world runs on any developer machine:
 
 ```bash
-cd gpy-agent
-BENCH_DIR=/tmp/gpy-benchmarks ./benchmarks/setup-repos.sh
-for repo in /tmp/gpy-benchmarks/*; do
+BENCH_DIR=/tmp/gpy-benchmarks ./benchmarks/real-repos/setup-repos.sh
+for repo in /tmp/gpy-benchmarks/*/; do
   git -C "$repo" config core.fsmonitor false
 done
-BENCH_DIR=/tmp/gpy-benchmarks BENCH_RUNS=5 ./benchmarks/run.sh
+BENCH_DIR=/tmp/gpy-benchmarks BENCH_RUNS=5 ./benchmarks/real-repos/run.sh
 ```
 
 Rules:
@@ -172,7 +169,7 @@ cargo bench --bench formatter_bench
 
 ### 2. Record the budget
 
-`tests/performance-baselines.json` holds only what a script reads:
+`benchmarks/perf-budgets.json` holds only what a script reads:
 
 ```json
 {
@@ -199,7 +196,7 @@ documentation only. `measurement_variance_percent` is the tolerance both
 scripts add on top of every `max_*`. `scripts/bench.sh --ci` and
 `scripts/ci-bench.sh` read every key they use in one `jq` call
 (`scripts/lib/bench-common.sh`) and exit 2, naming the problem, when `jq`, the
-file or a key is missing; they never substitute a default. Set `BASELINE_FILE`
+file or a key is missing; they never substitute a default. Set `PERF_BUDGETS_FILE`
 to point either script at another file. Add a budget only together with the
 benchmark that measures it.
 
@@ -253,9 +250,14 @@ differences), not a whole render.
 
 ### CI Integration
 
-`pr-gate.yml`'s non-gating `perf` job runs `./scripts/bench.sh --ci` and the
-base-vs-head canary (`scripts/perf-canary.sh`). `release.yml`'s `validate` job
-runs `just bench-ci`, so an exceeded budget blocks a release.
+`pr-gate.yml`'s `perf` job (`Performance budgets`) runs `./scripts/bench.sh --ci`
+and is part of `gate-result`, so a Rust micro-benchmark over its budget blocks
+the merge; `bench.sh --ci` also fails when two bench targets register the same
+benchmark ID. The base-vs-head canary (`scripts/perf-canary.sh`, benchmarks
+`canary_ipc_roundtrip` and `canary_git_status_cold`) and the strict
+script-segment deadline run in the same job as advisory steps. `release.yml`'s
+`validate` job runs `just bench-ci`, which adds the end-to-end budgets
+(`ci-bench.sh`), so an exceeded budget blocks a release.
 
 **Manual CI-mode benchmarks:**
 You can also run benchmarks with budget enforcement locally:
@@ -275,7 +277,7 @@ Compare current results to baseline for deeper analysis:
 cargo bench --bench formatter_bench > current-results.txt
 
 # Or read the budgets
-jq '.budgets' tests/performance-baselines.json
+jq '.budgets' benchmarks/perf-budgets.json
 ```
 
 **Red flags:**
@@ -341,7 +343,7 @@ cargo bench --bench formatter_bench
 - Cold caches
 
 **Fix:**
-- Increase budget tolerance in `tests/performance-baselines.json`
+- Increase budget tolerance in `benchmarks/perf-budgets.json`
 - Add warmup iterations
 - Consider hardware-specific baselines
 

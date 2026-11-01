@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Summarise one shell's observable side effects for the contract harness.
 
-    effects.py CALLS IPC
+    effects.py CALLS IPC STDERR
 
 CALLS  one line per `gpy-agent` invocation the shell made (the argv), written
        by the recording wrapper on PATH
 IPC    one line per IPC request (the op), written by ipc_proxy.py
+STDERR the shell driver's stderr file
 
 Prints `key=value` lines, identical in shape for every shell so the three
 outputs can be diffed and individual keys asserted:
@@ -17,6 +18,8 @@ outputs can be diffed and individual keys asserted:
     registers=N       `register` IPC requests
     ipc_total=N       every IPC request except the probes below
     ipc.<op>=N        IPC requests per op
+    gpy_stderr=N      stderr lines that start with `gpy:` (the script segment
+                      breaker line, for one)
 
 Not counted: `ping`, `status` and `unregister` requests and `gpy-agent status`
 calls (readiness probes and shell-exit teardown, which the shells do their own way).
@@ -56,6 +59,7 @@ def main():
     print(f"ipc_total={len(ipc)}")
     for op in sorted(counts):
         print(f"ipc.{op}={counts[op]}")
+    print(f"gpy_stderr={sum(1 for line in lines(sys.argv[3]) if line.startswith('gpy:'))}")
 
 
 if __name__ == "__main__":

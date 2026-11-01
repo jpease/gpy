@@ -476,7 +476,7 @@ mod tests {
         std::fs::create_dir_all(&user_dir).expect("create user plugin dir");
 
         // `discover_plugins()` reads the ambient environment, so only assert
-        // the builtins survive; end-to-end coverage is in `gpy_cli_tests.rs`.
+        // the builtins survive; end-to-end coverage is in `gpy-agent/tests/gpy_cli_tests/`.
         let segments = available_segments_with_plugin_dirs(&[user_dir]);
 
         for builtin in BUILTIN_ORDER {

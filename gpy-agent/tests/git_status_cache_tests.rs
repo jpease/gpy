@@ -1,8 +1,6 @@
 //! `GitStatusCache` behaviour through its public API.
 
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
 
 #[cfg(unix)]
 #[path = "common/git.rs"]
@@ -127,7 +125,6 @@ fn test_cache_multiple_repos() {
 
     assert_eq!(cache.len(), 3);
 
-    // Verify each can be retrieved independently
     assert_eq!(cache.get(&repo1).unwrap().branch, "main");
     assert_eq!(cache.get(&repo2).unwrap().branch, "develop");
     assert_eq!(cache.get(&repo3).unwrap().branch, "feature");

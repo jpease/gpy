@@ -1,9 +1,5 @@
 //! Tests for `gpy_agent::Error` conversions, source chaining, and message composition.
 
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 use gpy_agent::{Error, Result};
 use std::error::Error as StdError;
 use std::io;

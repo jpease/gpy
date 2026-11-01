@@ -23,7 +23,7 @@ if [[ -f "$IDENTIFIERS_FILE" ]]; then
 fi
 
 # The patterns above are data in these files.
-SELF_PATHS='scripts/check-privacy-patterns\.sh|tests/bash/privacy_patterns\.test\.bash'
+SELF_PATHS='scripts/check-privacy-patterns\.sh|tests/repo/privacy_patterns\.test\.bash'
 
 failures=0
 

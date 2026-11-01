@@ -74,9 +74,11 @@ impl Daemon {
             "agent failed to start: {}",
             String::from_utf8_lossy(&started.stderr)
         );
+        let accepted = wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || {
+            UnixStream::connect(&socket).is_ok()
+        });
         assert!(
-            wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || UnixStream::connect(&socket)
-                .is_ok()),
+            accepted,
             "agent never accepted a connection on {}",
             socket.display()
         );

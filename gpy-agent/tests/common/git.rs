@@ -75,6 +75,17 @@ pub fn git_commit_all(dir: &Path, message: &str) {
     git(dir, &["commit", "-q", "-m", message]);
 }
 
+/// Initialize a repository at `dir` (created if missing) on branch `main` with an initial commit.
+pub fn init_with_commit(dir: &Path) {
+    fs::create_dir_all(dir).expect("create repository dir");
+    git_init(dir);
+    // A global `core.fsmonitor` daemon competes for the same FSEvents and starves
+    // gpy's stream of its first event under load.
+    git(dir, &["config", "core.fsmonitor", "false"]);
+    fs::write(dir.join("README.md"), b"# Test repo").expect("write README");
+    git_commit_all(dir, "Initial commit");
+}
+
 /// A temporary git repository on branch `main`, removed on drop.
 pub struct TestRepo {
     dir: TempDir,

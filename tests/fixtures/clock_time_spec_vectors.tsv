@@ -18,6 +18,12 @@
 #
 # Contract: only `24` selects the 24-hour clock and only `1` enables an
 # option; anything else is the default (12-hour, no leading zero, no seconds).
+#
+# Rust is the oracle: `clock_time_spec_shared_vectors`
+# (gpy-agent/src/formatter/clock_resolver.rs) asserts `time_spec` for every row
+# whose time format is `12`, `24` or `\e` and whose flags are `0`, `1` or `\e`.
+# It skips rows with other spellings (`24h true yes`), which test the shells'
+# "anything else is the default" rule.
 
 12	0	0	%-I:%M %p
 12	1	0	%I:%M %p

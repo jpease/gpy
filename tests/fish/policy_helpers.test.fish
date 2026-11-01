@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Unit tests for the pure policy helpers:
-#   __gpy_breaker_gate, __gpy_breaker_record_failure (fish/core/util.fish)
 #   __gpy_cache_freshness, __gpy_throttle_elapsed (fish/core/util.fish)
 #   __gpy_cache_status_stale, __gpy_cache_status_variant (fish/core/util.fish)
 #   __gpy_uint_or_default (fish/core/constants.fish)
@@ -24,53 +23,6 @@ source fish/core/util.fish
 function check_status --argument-names label expected_status actual_status
     check "$label" $expected_status $actual_status
 end
-
-# --- __gpy_breaker_gate backoff_until now -> allow|deny ---
-
-check "gate: backoff in the future denies" \
-    deny (__gpy_breaker_gate 200 100)
-
-check "gate: backoff in the past allows" \
-    allow (__gpy_breaker_gate 50 100)
-
-check "gate: backoff equal to now allows (strictly-after only)" \
-    allow (__gpy_breaker_gate 100 100)
-
-check "gate: empty now allows (date fork failed)" \
-    allow (__gpy_breaker_gate 200 "")
-
-check "gate: empty backoff_until allows" \
-    allow (__gpy_breaker_gate "" 100)
-
-check "gate: non-numeric backoff_until allows" \
-    allow (__gpy_breaker_gate abc 100)
-
-check "gate: non-numeric now allows" \
-    allow (__gpy_breaker_gate 200 abc)
-
-check "gate: backoff_until zero (breaker closed) allows" \
-    allow (__gpy_breaker_gate 0 100)
-
-# --- __gpy_breaker_record_failure failure_count now threshold backoff_secs
-#     -> "<new_count> <new_until>" ---
-
-check "record: below threshold just increments, until stays 0" \
-    "1 0" (__gpy_breaker_record_failure 0 1000 3 60)
-
-check "record: one below threshold" \
-    "2 0" (__gpy_breaker_record_failure 1 1000 3 60)
-
-check "record: reaching threshold opens the breaker and resets the count" \
-    "0 1060" (__gpy_breaker_record_failure 2 1000 3 60)
-
-check "record: past threshold still opens (count already inconsistent)" \
-    "0 1060" (__gpy_breaker_record_failure 5 1000 3 60)
-
-check "record: empty failure_count treated as 0" \
-    "1 0" (__gpy_breaker_record_failure "" 1000 3 60)
-
-check "record: opening with empty now treats it as 0" \
-    "0 60" (__gpy_breaker_record_failure 2 "" 3 60)
 
 # --- __gpy_cache_freshness now mtime ttl -> fresh|stale ---
 

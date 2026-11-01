@@ -1,0 +1,103 @@
+name: Gate legs
+
+# The Rust and shell gate legs on Linux and macOS, shared by the PR gate and
+# the post-merge/weekly run (cross-platform-test.yml). Callers choose the cache
+# policy; the legs and shards are the same everywhere.
+on:
+  workflow_call:
+    inputs:
+      cache:
+        description: Restore the cargo build cache.
+        type: boolean
+        default: true
+      save-cache:
+        description: Save the cargo build cache from the Rust leg.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+
+jobs:
+  rust:
+    name: Rust gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The Rust leg owns saving the shared cache; the shell legs only restore.
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          components: clippy, rustfmt
+          cache: ${{ inputs.cache }}
+          shared-key: rust
+          save-if: ${{ inputs.save-cache }}
+
+      # quality-check.sh fails under CI when any of these is missing.
+      - name: Install Rust tooling (nextest, audit, deny, machete)
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just
+
+      # Some Rust integration targets drive real shells.
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
+
+      - name: Rust toolchain gate
+        run: just check-rust
+
+  shell:
+    name: Shell gate (${{ matrix.os }}, ${{ matrix.parts }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # Three shards of `quality-check.sh --shell-only` per OS, balanced on
+        # measured wall time: the Bash suite in two halves (bash1, bash2),
+        # and everything else. Together they must cover every part
+        # (tests/repo/ci_gate_shape).
+        parts: [bash1, bash2, "checks,repo,fish,zsh"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: ${{ inputs.cache }}
+          shared-key: rust
+          save-if: "false"
+
+      # One shellcheck version on every runner; cargo-audit backs the
+      # dependency-advisory claims test.
+      - name: Install just, shellcheck and cargo-audit
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just,shellcheck,cargo-audit
+
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
+
+      - name: Shell integration gate
+        env:
+          SHELL_PARTS: ${{ matrix.parts }}
+        run: just check-shell "$SHELL_PARTS"

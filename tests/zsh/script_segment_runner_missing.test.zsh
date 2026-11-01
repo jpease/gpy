@@ -2,7 +2,8 @@
 # tests/zsh/script_segment_runner_missing.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# When g_runner.bash is missing, zsh/core/script.zsh turns script segments off
+# When g_runner.bash is missing (neither beside script.zsh nor in the sibling
+# bash/core), zsh/core/script.zsh turns script segments off
 # and emits a warning on stderr if GPY_DEBUG=1 or GPY_VERBOSE=1, matching Fish.
 
 ROOT=${0:a:h:h:h}
@@ -12,19 +13,22 @@ WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/gpy-runner-missing.XXXXXX") || exit 1
 WORKDIR=${WORKDIR:A}
 trap 'rm -rf "$WORKDIR"' EXIT
 
-mkdir -p "$WORKDIR/core"
-cp "$ROOT/zsh/core/script.zsh" "$WORKDIR/core/script.zsh"
-# g_runner.bash is intentionally omitted under $WORKDIR/core
+# Two levels below the sandbox root, so the checkout fallback
+# $WORKDIR/a/bash/core/g_runner.bash also lies inside the sandbox.
+CORE="$WORKDIR/a/b/core"
+mkdir -p "$CORE"
+cp "$ROOT/zsh/core/script.zsh" "$CORE/script.zsh"
+# g_runner.bash is intentionally omitted under $CORE and $WORKDIR/a/bash/core
 
 run_with() {
     (
         eval "$1"
-        source "$WORKDIR/core/script.zsh"
+        source "$CORE/script.zsh"
         print -r -- "src=$__gpy_g_src"
     ) 2>&1
 }
 
-runner_file="$WORKDIR/core/g_runner.bash"
+runner_file="$WORKDIR/a/bash/core/g_runner.bash"
 expected_warn="gpy[script]: warning: Runner $runner_file missing - script segments disabled"
 
 check "missing runner, GPY_DEBUG=1: one warning, runner disabled" \

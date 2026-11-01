@@ -2,7 +2,7 @@
 
 The register of GPY's dependency advisories and duplicate crate versions.
 `gpy-agent/deny.toml` holds the machine-readable lists that cargo-deny enforces.
-`tests/bash/deny_skip_list.test.bash` checks that every crate in `deny.toml`'s
+`tests/repo/deny_skip_list.test.bash` checks that every crate in `deny.toml`'s
 `[bans] skip` list is still duplicated in `Cargo.lock`.
 
 **Audited:** 2026-10-13 against `gpy-agent/Cargo.lock` (320 crate dependencies)
@@ -73,5 +73,5 @@ Reproduce with:
 ```bash
 (cd gpy-agent && cargo audit)
 (cd gpy-agent && cargo deny check advisories licenses bans sources)
-bash tests/bash/deny_skip_list.test.bash
+bash tests/repo/deny_skip_list.test.bash
 ```

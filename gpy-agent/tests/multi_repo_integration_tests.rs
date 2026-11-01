@@ -10,7 +10,7 @@ mod wait;
 
 #[cfg(unix)]
 use git_helpers::git_command;
-use git_helpers::{git, git_bare, git_init, git_stdout};
+use git_helpers::{git, git_bare, git_init, git_stdout, init_with_commit};
 use gpy_agent::ipc::ClientDirectory;
 use gpy_agent::watcher::multi_repo::MultiRepoWatcher;
 use gpy_agent::watcher::{DebouncedEvent, FileEvent, WatcherConfig};
@@ -32,23 +32,10 @@ const PROBE_REWRITE: Duration = Duration::from_secs(1);
 /// happens.
 const ABSENCE_WINDOW: Duration = Duration::from_secs(3);
 
-/// Create `<parent>/<name>` as a git repo on `main` with one commit.
-///
-/// Uses [`git`]'s `-c` identity so the fixture ignores global git config
-/// without writing `.git/config` entries that perturb `FSEvents` timing.
+/// Create `<parent>/<name>` as a git repo on `main` with one commit via [`init_with_commit`].
 fn create_git_repo(parent: &Path, name: &str) -> PathBuf {
     let repo_path = parent.join(name);
-    fs::create_dir_all(&repo_path).expect("create repo dir");
-    git_init(&repo_path);
-
-    // A global `core.fsmonitor` daemon competes for the same FSEvents and starves
-    // gpy's stream of its first event under load.
-    git(&repo_path, &["config", "core.fsmonitor", "false"]);
-
-    fs::write(repo_path.join("README.md"), b"# Test repo").expect("write README");
-    git(&repo_path, &["add", "README.md"]);
-    git(&repo_path, &["commit", "-q", "-m", "Initial commit"]);
-
+    init_with_commit(&repo_path);
     repo_path
 }
 

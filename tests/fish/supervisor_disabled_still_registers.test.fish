@@ -5,7 +5,7 @@
 # With the supervisor disabled ([agent.supervisor] enabled = false, exported
 # as GPY_AGENT_SUPERVISOR_ENABLED=0) and the agent running, the first prompt
 # in a plain directory still registers the shell with the agent; only the
-# background restart loop is skipped.
+# per-prompt restart check is skipped.
 
 set -l repo_root (path resolve (status dirname)/../..)
 source $repo_root/tests/lib/test_helpers.fish
@@ -23,10 +23,6 @@ printf '%s\n' '[agent.supervisor]' 'enabled = false' >$XDG_CONFIG_HOME/gpy/confi
 set -g pidfile $XDG_RUNTIME_DIR/gpy/supervisor.pid
 
 function finish --argument-names code
-    if test -f $pidfile
-        set -l pid (cat $pidfile 2>/dev/null)
-        test -n "$pid"; and kill $pid 2>/dev/null
-    end
     stop_test_agent
     cleanup_test_files
     exit $code
@@ -50,7 +46,7 @@ emit fish_prompt
 
 set -q __gpy_registered; or die "shell did not register on its first prompt with the supervisor disabled"
 poll_until 3 __gpy_agent_has_registered_client; or die "agent reports no registered client"
-functions -q __gpy_start_supervisor_on_prompt; and die "registration hook was not removed after registering"
+functions -q __gpy_supervisor_on_prompt; or die "the prompt handler must stay registered for the life of the shell"
 test -e $pidfile; and die "supervisor.pid was created with GPY_AGENT_SUPERVISOR_ENABLED=0"
 
 cd /

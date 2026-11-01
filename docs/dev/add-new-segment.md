@@ -11,7 +11,7 @@ A short checklist for adding a shell-rendered segment to the Fish prompt (for ex
 | Command output under ~10 ms | Shell-only |
 | Slower command, external API, complex parsing | Agent-assisted |
 
-A shell-only segment runs synchronously on every prompt, so everything it does counts against the prompt budget (`prompt_render`: 20 ms target, 50 ms max in `tests/performance-baselines.json`).
+A shell-only segment runs synchronously on every prompt, so everything it does counts against the prompt budget (`prompt_render`: 20 ms target, 50 ms max in `benchmarks/perf-budgets.json`).
 
 ## 2. Write the segment file
 

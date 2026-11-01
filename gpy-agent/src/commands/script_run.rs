@@ -1,10 +1,13 @@
 //! One timed trial run of a script segment, for `gpy doctor`.
 //!
-//! Applies the runner's process rules from `docs/dev/plugins.md` ("Environment
-//! and process rules"): `/bin/sh <script>` in a clean environment, stdin on
-//! `/dev/null`, stderr discarded, its own process group, the segment's
-//! `timeout_ms` (TERM, CONT, then KILL after a 50 ms grace) and the output
-//! protocol. It does not evaluate the `require_*` triggers and does not cache.
+//! Applies the rules of the runner, `bash/core/g_runner.bash`, from
+//! `docs/dev/plugins.md` ("Environment and process rules"): `/bin/sh <script>`
+//! in a clean environment, stdin on `/dev/null`, stderr discarded, its own
+//! process group, the segment's `timeout_ms` (TERM, CONT, then KILL after a
+//! 50 ms grace) and the output protocol. It does not evaluate the `require_*`
+//! triggers and does not cache. The conformance test
+//! `tests/bash/script_runner_conformance.test.bash` holds this trial to the
+//! runner's verdicts and environment.
 
 use crate::config::plugin_segments::ResolvedScriptSegment;
 use crate::plugin::{EnvName, InputName, ScriptSegmentManifest, VariantName};

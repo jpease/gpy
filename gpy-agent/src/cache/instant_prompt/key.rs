@@ -19,7 +19,8 @@ pub(super) const CACHE_KEY_CHUNK_CHARS: usize = 50;
 pub(super) const NAME_MAX_BYTES: usize = 255;
 
 /// Convert a path to an injective cache key: `_` is escaped first (to `__`), then `/` `_s`, `\` `_b`, `:` `_c`, space `_w`.
-/// The Unix output MUST match the shells' `__gpy_path_to_cache_key` byte-for-byte.
+/// The shells' `__gpy_path_to_cache_key` copy is pinned by
+/// `test_path_to_cache_key_shared_vectors`.
 /// Long keys are chunked on disk by [`cache_key_path`].
 pub(super) fn path_to_cache_key(path: &Path) -> String {
     #[cfg(windows)]
@@ -29,7 +30,8 @@ pub(super) fn path_to_cache_key(path: &Path) -> String {
     path_to_cache_key_for(&path.to_string_lossy(), os)
 }
 
-/// [`path_to_cache_key`] for an explicit [`Os`](crate::paths::Os); only the Unix arm must match the shells.
+/// [`path_to_cache_key`] for an explicit [`Os`](crate::paths::Os). The shells
+/// copy only the Unix arm, pinned by `test_path_to_cache_key_shared_vectors`.
 pub(super) fn path_to_cache_key_for(path_str: &str, os: crate::paths::Os) -> String {
     // `_` MUST be first so later tokens are not re-escaped.
     let escaped = path_str
@@ -87,8 +89,9 @@ pub(super) fn cache_key_path(key: &str) -> Cow<'_, str> {
 }
 
 /// Relative on-disk stem: the key up to [`FLAT_CACHE_KEY_MAX_CHARS`], else
-/// 50-character chunks joined by `/`. The shells' `__gpy_chunk_cache_key` MUST match (see
-/// `tests/fixtures/cache_key_vectors.tsv`). Windows keys are already capped and
+/// 50-character chunks joined by `/`. The shells' `__gpy_chunk_cache_key` copy
+/// is pinned by `test_path_to_cache_key_shared_vectors`
+/// (`tests/fixtures/cache_key_vectors.tsv`). Windows keys are already capped and
 /// returned unchanged.
 pub(super) fn cache_key_path_for(key: &str, os: crate::paths::Os) -> Cow<'_, str> {
     if matches!(os, crate::paths::Os::Windows) || key.chars().count() <= FLAT_CACHE_KEY_MAX_CHARS {
@@ -123,7 +126,8 @@ pub(super) fn cache_file_parts(cache_dir: &Path, key: &str, tail: &str) -> (Path
     (dir, format!("{last}.{tail}"))
 }
 
-/// Project root for a path (git root or the path itself), matching the shells.
+/// Project root for a path (git root or the path itself). The shells' copy is
+/// pinned by `git_root_shared_vectors`.
 pub(super) fn find_project_root(path: &Path) -> PathBuf {
     let mut current = path;
     loop {

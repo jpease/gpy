@@ -57,7 +57,7 @@ as files change, so that next prompt does not wait on git.
 Bash re-registers after an agent restart, and applies a config reload, at its
 next prompt: the agent leaves a `<pid>.reregister` or `<pid>.reload` flag, and
 the prompt drawn after the next Enter consumes it before rendering. A dead
-agent is recovered by the periodic supervisor check, so live updates resume
+agent is recovered by the per-prompt restart check, so live updates resume
 without reopening the shell.
 
 ---
@@ -66,7 +66,7 @@ without reopening the shell.
 
 Bash renders the prompt in shell code through `PROMPT_COMMAND`, and its string
 and array handling is slower than Fish's or Zsh's. The render-time budgets
-every gate enforces are in `tests/performance-baselines.json`
+every gate enforces are in `benchmarks/perf-budgets.json`
 (`./scripts/bench.sh --ci` checks them).
 
 ---

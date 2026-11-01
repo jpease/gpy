@@ -1,5 +1,5 @@
 # Pinned so the clippy lint set is the same locally and in CI. Must be >=
-# rust-version in Cargo.toml (tests/bash/msrv_consistency.test.bash).
+# rust-version in Cargo.toml (tests/repo/msrv_consistency.test.bash).
 #
 # CI installs from this file via actions-rust-lang/setup-rust-toolchain, which
 # silently falls back to `stable` when it cannot find it; every job therefore

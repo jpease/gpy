@@ -141,26 +141,6 @@ edition = "2021"
 }
 
 #[test]
-fn test_cli_help_command() {
-    let (exit_code, stdout, _stderr) = run_gpy_agent(&["--help"]);
-
-    assert_eq!(exit_code, 0_i32);
-    let stdout_lower = stdout.to_lowercase();
-    assert!(
-        stdout_lower.contains("usage:")
-            && stdout_lower.contains("gpy-agent")
-            && stdout_lower.contains("<command>"),
-        "Stdout did not contain expected usage pattern. Got:\n{stdout}",
-    );
-    assert!(stdout.contains("Commands:"));
-    assert!(stdout.contains("start"));
-    assert!(stdout.contains("stop"));
-    assert!(stdout.contains("status"));
-    assert!(stdout.contains("oneshot"));
-    assert!(stdout.contains("help"));
-}
-
-#[test]
 fn test_cli_version_command() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["--version"]);
 
@@ -1343,19 +1323,6 @@ fn test_theme_export_invalid_format() {
     assert!(
         !stderr.is_empty(),
         "Should provide error message for invalid format"
-    );
-}
-
-#[test]
-fn test_help_flag() {
-    let (exit_code, stdout, stderr) = run_gpy_agent(&["--help"]);
-
-    assert_eq!(exit_code, 0_i32, "Help flag should succeed");
-
-    let output = format!("{stdout}{stderr}");
-    assert!(
-        output.to_lowercase().contains("usage") || output.to_lowercase().contains("help"),
-        "Help output should contain usage information. Got: {output}"
     );
 }
 

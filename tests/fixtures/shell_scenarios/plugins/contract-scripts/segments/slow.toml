@@ -1,0 +1,5 @@
+description = "Contract fixture: slow"
+command = "bin/slow.sh"
+inputs = []
+ttl_secs = 3600
+timeout_ms = 50

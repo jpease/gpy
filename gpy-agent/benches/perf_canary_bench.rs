@@ -49,8 +49,8 @@ fn bench_perf_canary(c: &mut Criterion) {
     let repo = git::committed_repo(100);
     let repo_path = repo.path().to_str().expect("repo path to str");
 
-    ipc::bench_ipc_roundtrip(c, &rt, &socket_path);
-    c.bench_function("git_status_cold", |b| {
+    ipc::bench_ipc_roundtrip(c, "canary_ipc_roundtrip", &rt, &socket_path);
+    c.bench_function("canary_git_status_cold", |b| {
         b.iter(|| {
             let result = load_repository_state(repo_path, 0, true);
             black_box(result).expect("load repository state");

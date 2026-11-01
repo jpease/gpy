@@ -32,6 +32,9 @@ That avoids spending time on a change that would not get merged.
   asserts it did
 - [`just`](https://github.com/casey/just), the recipe runner the commands
   below use
+- [`yq`](https://github.com/mikefarah/yq) (mikefarah, ≥ 4.52.4; `brew install
+  yq`, not Debian's `apt install yq`), which the `tests/repo` invariant tests
+  use to parse workflow and TOML files
 - [`cargo nextest`](https://nexte.st/) — `cargo install cargo-nextest` (or
   `brew install cargo-nextest`); the Rust test suite runs through it
 - Fish, Zsh, and Bash 4 or newer (macOS's `/bin/bash` is 3.2; `brew install
@@ -77,13 +80,17 @@ to run when a packaged gpy (for example Homebrew's) is already on `PATH`; pass
 
 ## Quality Gates
 
-Before pushing, run `just check`; CI runs the same checks. `just check-fast` is
+Before pushing, run `just check`: the full gate, strict about missing optional
+tools as CI is (`GPY_GATE_STRICT=1`). `just check-fast` is
 the quick loop. Run `just check-platforms` before a change to `cfg`-gated code
 (needs Docker).
 
 Lint policy: the `[lints]` tables in `gpy-agent/Cargo.toml`; run it with
 `just lint`. File-size and new-`allow` rules:
-[`scripts/README.md`](scripts/README.md).
+[`scripts/README.md`](scripts/README.md). The 800-line file cap counts test
+files too (`gpy-agent/tests/` targets, `tests.rs` and `*_tests.rs`); the ones
+still over it are on the allowlist, and new tests for their code go in a new
+file.
 
 Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable

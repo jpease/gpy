@@ -1,8 +1,5 @@
 //! Parsing of shell names, the `ansi` format, and the `ansi` IPC format field.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
-
 use gpy_agent::formatter::Format;
 use gpy_agent::ipc::Message;
 use gpy_agent::ipc::protocol::deserialize_message;

@@ -133,7 +133,7 @@ Values the shell passes to the script (`GPY_PWD` and the other `GPY_*` inputs, d
 
 ### As built (#997)
 
-Where this differs from the rules above, the shipped adapters (`bash/core/g_runner.bash`, with byte-identical copies in `zsh/core` and `fish/core`; `bash/core/g_segments.bash`, `zsh/core/script.zsh`, `fish/core/script.fish`) behave as follows:
+Where this differs from the rules above, the shipped adapters (`bash/core/g_runner.bash`, with byte-identical copies in `zsh/core` and `fish/core` [note 2026-10-30: the repository holds only the Bash copy; `gpy setup` installs it into the Fish and Zsh trees, and a checkout uses it in place]; `bash/core/g_segments.bash`, `zsh/core/script.zsh`, `fish/core/script.fish`) behave as follows:
 
 - **Start.** The interpreter runs as `sh -c PROLOGUE SCRIPT` after `exec -c` (empty environment). The prologue reads `export NAME='value'` lines on descriptor 3, closes it and sources the script. No value is in any argv; for a folder-scoped segment the runner gets an empty working-directory argument and keeps the one it inherited, so `$PWD` is not in argv either.
 - **Fish output.** Fish does not cap, strip or check output itself: the Bash runner does steps 1 to 4 for all three shells, so the Fish forms in step 4 and the `head -c` cap are not used.

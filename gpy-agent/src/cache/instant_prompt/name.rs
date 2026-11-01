@@ -17,7 +17,8 @@ pub(super) const NO_PREV_BG_TOKEN: &str = "none";
 
 /// Filename token for the `prev_bg` an entry was rendered with: `none` when
 /// absent, else non-alphanumeric bytes → `_`. Never contains `.`.
-/// The shells' `__gpy_prev_bg_token` MUST match.
+/// The shells' `__gpy_prev_bg_token` copy is pinned by
+/// `instant_cache_naming_shared_vectors`.
 pub(super) fn prev_bg_token(prev_bg: Option<&str>) -> String {
     match prev_bg {
         Some(s) if !s.is_empty() => s
@@ -60,9 +61,10 @@ impl CacheKind {
     }
 }
 
-/// Rest of the variant after the kind, e.g. `_first_last`; with the kind it
-/// MUST match the shells' `__gpy_cache_variant_suffix`.
-const fn position_suffix(position: SegmentPosition) -> &'static str {
+/// Rest of the variant after the kind, e.g. `_first_last`. The shells'
+/// `__gpy_cache_variant_suffix` copy is pinned by
+/// `instant_cache_naming_shared_vectors`.
+pub(super) const fn position_suffix(position: SegmentPosition) -> &'static str {
     match (position.is_first, position.is_last) {
         (IsFirst::No, IsLast::No) => "",
         (IsFirst::No, IsLast::Yes) => "_last",

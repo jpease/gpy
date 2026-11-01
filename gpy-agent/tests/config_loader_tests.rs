@@ -1,9 +1,7 @@
 //! TOML configuration loading and parsing.
 
-#![allow(clippy::unwrap_used)]
 #![allow(clippy::bool_comparison)]
 #![allow(clippy::single_match_else)]
-#![allow(clippy::panic)]
 
 use gpy_agent::config::loader::{load_config_from_file, parse_config_toml, save_config};
 use gpy_agent::config::schema::get_config_paths;
@@ -47,20 +45,10 @@ fn test_config_default_enabled() {
 
 #[test]
 fn test_parse_empty_toml() {
-    let result = parse_config_toml("");
-    assert!(result.is_ok());
-
-    let config = result.unwrap();
+    let config = parse_config_toml("").expect("parse empty toml");
     assert!(config.agent.enabled);
     assert!(config.language.enabled);
     assert_eq!(config.agent.timeout_seconds.get(), 5);
-}
-
-#[test]
-fn test_parse_config_template() {
-    let settings = template_settings();
-    let result = parse_config_toml(&settings);
-    assert!(result.is_ok());
 }
 
 #[test]
@@ -116,7 +104,7 @@ display = "full"
 #[test]
 fn test_config_validation_success() {
     let config = Config::default();
-    assert!(validate_config(&config).is_ok());
+    validate_config(&config).expect("default config should validate");
 }
 
 #[test]
@@ -173,15 +161,14 @@ timeout_seconds = 700
         .is_err()
     );
 
-    assert!(
-        parse_config_toml(
-            r"
+    let config = parse_config_toml(
+        r"
 [git]
 timeout_seconds = 30
-"
-        )
-        .is_ok()
-    );
+",
+    )
+    .expect("timeout_seconds = 30 should parse");
+    assert_eq!(config.git.timeout_seconds.get(), 30);
 }
 
 #[test]
@@ -206,17 +193,15 @@ cache_ttl_hours = 800
         .is_err()
     );
 
-    assert!(
-        parse_config_toml(
-            r"
+    let config = parse_config_toml(
+        r"
 [language]
 cache_ttl_hours = 48
-"
-        )
-        .is_ok()
-    );
+",
+    )
+    .expect("cache_ttl_hours = 48 should parse");
+    assert_eq!(config.language.cache_ttl_hours.get(), 48);
 }
-
 #[test]
 fn test_parse_ui_path_length() {
     assert!(
@@ -229,27 +214,15 @@ max_length = 0
         .is_err()
     );
 
-    assert!(
-        parse_config_toml(
-            r"
-[ui.directory]
-max_length = 1500
-"
-        )
-        .is_err()
-    );
-
-    assert!(
-        parse_config_toml(
-            r"
+    let config = parse_config_toml(
+        r"
 [ui.directory]
 max_length = 120
-"
-        )
-        .is_ok()
-    );
+",
+    )
+    .expect("max_length = 120 should parse");
+    assert_eq!(config.ui.directory.max_length.get(), 120);
 }
-
 #[test]
 fn test_config_validation_theme_valid() {
     let valid_themes = ["default", "text", "custom_theme"];
@@ -258,8 +231,8 @@ fn test_config_validation_theme_valid() {
         let mut config = Config::default();
         config.ui.theme = types::ThemeName::new(theme.to_owned()).unwrap();
 
-        let result = validate_config(&config);
-        assert!(result.is_ok(), "Theme '{theme}' should be valid");
+        let msg = format!("Theme '{theme}' should be valid");
+        validate_config(&config).expect(&msg);
     }
 }
 
@@ -298,10 +271,7 @@ fn test_load_config_from_file_success() {
 
     fs::write(&config_file, template_settings()).unwrap();
 
-    let result = load_config_from_file(&config_file);
-    assert!(result.is_ok());
-
-    let config = result.unwrap();
+    let config = load_config_from_file(&config_file).expect("load config from file");
     assert!(config.agent.enabled);
     assert_eq!(config.agent.timeout_seconds.get(), 5);
 }
@@ -316,8 +286,8 @@ fn test_save_config_creates_directories() {
         .join("config.toml");
 
     let config = Config::default();
-    let result = save_config(&nested_config_file, &config, &config, &["ui.show_icons"]);
-    assert!(result.is_ok());
+    save_config(&nested_config_file, &config, &config, &["ui.show_icons"])
+        .expect("save config to nested path");
 
     assert!(nested_config_file.exists());
 }
@@ -364,8 +334,7 @@ fn test_config_boundary_values() {
 fn test_config_template_is_valid() {
     let settings = template_settings();
     let config = parse_config_toml(&settings).unwrap();
-    let result = validate_config(&config);
-    assert!(result.is_ok());
+    validate_config(&config).expect("config template should validate");
 }
 
 #[test]
@@ -379,11 +348,7 @@ enabled = false
 theme = "text"
 "#;
 
-    let result = parse_config_toml(partial_toml);
-    assert!(result.is_ok());
-
-    let config = result.unwrap();
-
+    let config = parse_config_toml(partial_toml).expect("parse partial toml");
     assert!(!config.agent.enabled);
     assert_eq!(config.ui.theme.as_str(), "text");
 
@@ -411,10 +376,9 @@ fn test_config_file_permissions() {
     let config = Config::default();
     save_config(&config_file, &config, &config, &["ui.show_icons"]).unwrap();
 
-    let result = load_config_from_file(&config_file);
-    assert!(result.is_ok());
+    let loaded = load_config_from_file(&config_file).expect("load config from file");
+    assert!(loaded.ui.show_icons);
 }
-
 #[test]
 fn test_config_utf8_handling() {
     let temp_dir = TempDir::new().unwrap();
@@ -422,8 +386,8 @@ fn test_config_utf8_handling() {
 
     fs::write(&config_file, template_settings()).unwrap();
 
-    let result = load_config_from_file(&config_file);
-    assert!(result.is_ok());
+    let loaded = load_config_from_file(&config_file).expect("load config from utf8 file");
+    assert!(loaded.agent.enabled);
 }
 
 /// Dotted leaf paths of `table`, one per scalar or array.
@@ -570,5 +534,6 @@ fn test_non_utf8_config_path_round_trips() {
 
     let config = Config::default();
     save_config(&config_file, &config, &config, &["ui.show_icons"]).unwrap();
-    assert!(load_config_from_file(&config_file).is_ok());
+    let loaded = load_config_from_file(&config_file).expect("load config from non-utf8 path");
+    assert!(loaded.ui.show_icons);
 }

@@ -67,8 +67,11 @@ pub fn start_and_wait(rt: &Runtime, socket_path: &Path) {
 }
 
 /// Measure single-connection ping round-trip latency against `socket_path`.
-pub fn bench_ipc_roundtrip(c: &mut Criterion, rt: &Runtime, socket_path: &Path) {
-    c.bench_function("ipc_roundtrip", |b| {
+///
+/// `id` is the criterion benchmark ID; every bench target must register a
+/// distinct one, because `scripts/bench.sh` reads budgets by ID.
+pub fn bench_ipc_roundtrip(c: &mut Criterion, id: &str, rt: &Runtime, socket_path: &Path) {
+    c.bench_function(id, |b| {
         b.to_async(rt).iter(|| async {
             let mut stream = UnixStream::connect(socket_path).await.expect("connect");
             stream

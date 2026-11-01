@@ -30,7 +30,17 @@ pub const IGNORE_CACHE_CAPACITY: usize = 256;
 pub const NATIVE_GIT_CONFIG_CACHE_CAPACITY: usize = 512;
 
 /// Maximum entries retained in the `InstantPromptCache::last_written` map.
-pub const INSTANT_PROMPT_LAST_WRITTEN_CAPACITY: usize = 1024;
+///
+/// 32 repositories × 16 `prev_bg` contexts (`MAX_PREV_BG_CONTEXTS_PER_KEY`) ×
+/// 4 segment positions × 3 prompt dialects × 2 kinds (git and language), so 32
+/// repositories at the context maximum keep every record. A record is about
+/// 100 B of name plus at most 400 B of content: about 6 MB worst case.
+pub const INSTANT_PROMPT_LAST_WRITTEN_CAPACITY: usize = 12_288;
+
+/// Maximum keys retained in the `InstantPromptCache` `seen_contexts` and
+/// `unwritable_keys` tables. Language keys include every non-git directory a
+/// shell visits, so this table holds far more keys than are written at once.
+pub const INSTANT_PROMPT_KEY_CAPACITY: usize = 1024;
 
 /// Evict the least-recently-updated entries (smallest `recency`) until `map`
 /// holds at most `capacity` entries; `0` disables eviction.

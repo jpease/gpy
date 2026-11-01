@@ -50,6 +50,7 @@ esac
 PKG="$SHELL_E2E_ROOT/pkg"
 mkdir -p "$PKG/bin"
 cp -R "$ROOT/fish" "$PKG/fish"
+cp -R "$ROOT/bash" "$PKG/bash"
 cp "$ROOT/install.sh" "$PKG/install.sh"
 cp "$SHELL_E2E_AGENT_BIN" "$PKG/bin/$AGENT_ASSET"
 cp "$GPY_CLI" "$PKG/bin/$CLI_ASSET"

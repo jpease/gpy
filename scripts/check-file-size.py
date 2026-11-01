@@ -9,10 +9,10 @@ arguments (in any position; `test` nested in `any`/`not` does not count),
 through the first `}` at column 0 after it (rustfmt
 layout; a `}` at column 0 inside a raw string in a test module ends the skip
 early, so such a file counts slightly short). `cfg(any(test, ...))` modules are
-counted, since they also compile outside tests. File-backed test modules
-(`tests.rs`, `*_tests.rs`), everything under `tests/`, `benches/` and
-`examples/` directories, and tracked files missing from the worktree are not
-checked.
+counted, since they also compile outside tests. Every tracked `.rs` file is
+checked, including test files (`tests.rs`, `*_tests.rs`) and everything under
+`tests/`, `benches/` and `examples/`; only tracked files missing from the
+worktree are skipped.
 
 Files already over the cap are listed in the allowlist, one `<size> <path>` per
 line (full-line `#` comments allowed). A listed file may not grow past its recorded size;
@@ -39,7 +39,6 @@ DEFAULT_CAP = 800
 DEFAULT_ALLOWLIST = "scripts/file-size-allowlist.txt"
 CFG = re.compile(r"^#\[cfg\((.*)\)\]\s*$")
 MOD_OPEN = re.compile(r"^(pub(\([^)]*\))?\s+)?mod\s+\w+\s*\{")
-SKIP_DIRS = {"tests", "benches", "examples"}
 
 
 def top_level_args(text):
@@ -102,12 +101,6 @@ def checked_files(excludes):
     ).stdout
     for path in out.split("\0"):
         if not path:
-            continue
-        parts = path.split("/")
-        name = parts[-1]
-        if SKIP_DIRS.intersection(parts[:-1]):
-            continue
-        if name == "tests.rs" or name.endswith("_tests.rs"):
             continue
         if any(fnmatch.fnmatch(path, glob) for glob in excludes):
             continue

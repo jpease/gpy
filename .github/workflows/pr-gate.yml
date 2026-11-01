@@ -1,7 +1,8 @@
 name: PR Quality Gate
 
-# Rust and shell gates on Linux and macOS, the CLI-only Windows leg and a
-# clean-container install, plus non-gating coverage and perf jobs.
+# Rust and shell gates on Linux and macOS (reusable gate-legs.yml), the
+# CLI-only Windows leg, a clean-container install and the absolute performance
+# budgets, plus a non-gating coverage job.
 #
 # Require only `gate-result` in the branch ruleset; it fails unless every
 # gating leg succeeded.
@@ -25,107 +26,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust:
-    name: Rust gate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-          components: clippy, rustfmt
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
-      # Restores the cache cross-platform-test.yml saves on main; a PR never
-      # saves one (a PR's cache is readable only by that PR, and 8 per PR
-      # overran the repository's 10 GB cache limit).
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: gpy-agent
-          shared-key: rust
-          save-if: "false"
-
-      # quality-check.sh fails under CI when any of these is missing.
-      - name: Install Rust tooling (nextest, audit, deny, machete)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just
-
-      # Some Rust integration targets drive real shells.
-      - name: Install shells and shell-suite prerequisites
-        uses: ./.github/actions/install-shells
-
-      - name: Rust toolchain gate
-        run: just check-rust
-
-  shell:
-    name: Shell gate (${{ matrix.os }}, ${{ matrix.parts }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        # Four shards of `quality-check.sh --shell-only` per OS, balanced on
-        # measured wall time: the Bash suite in two halves (bash1, bash2),
-        # and everything else. Together they must cover every part
-        # (tests/bash/ci_gate_shape).
-        parts: [bash1, bash2, "checks,fish,zsh"]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: gpy-agent
-          shared-key: rust
-          save-if: "false"
-
-      # One shellcheck version on every runner; cargo-audit backs the
-      # dependency-advisory claims test.
-      - name: Install just, shellcheck and cargo-audit
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: just,shellcheck,cargo-audit
-
-      - name: Install shells and shell-suite prerequisites
-        uses: ./.github/actions/install-shells
-
-      - name: Shell integration gate
-        env:
-          SHELL_PARTS: ${{ matrix.parts }}
-        run: just check-shell "$SHELL_PARTS"
+  gate-legs:
+    # The Rust and shell legs; cross-platform-test.yml runs the same legs
+    # after merge. This PR run restores the cache that run saves on main.
+    uses: ./.github/workflows/gate-legs.yml
+    with:
+      cache: true
+      save-cache: false
 
   coverage:
     # Non-gating: not a `needs` of gate-result.
@@ -140,22 +47,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-          components: clippy, rustfmt, llvm-tools-preview
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
       # llvm-cov builds with its own flags, so nothing seeded on main fits.
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
-          workspaces: gpy-agent
+          components: clippy, rustfmt, llvm-tools-preview
+          shared-key: ""
           save-if: "false"
 
       - name: Install Rust tooling (nextest, llvm-cov)
@@ -178,13 +75,12 @@ jobs:
           if-no-files-found: warn
 
   perf:
-    # Absolute budgets (tests/performance-baselines.json) plus a base-vs-head
-    # canary on the same runner. Non-gating until shared-runner variance is
-    # known; then add it to gate-result's `needs`.
-    name: Performance (non-gating)
+    # The absolute micro-benchmark budgets (benchmarks/perf-budgets.json)
+    # gate. The base-vs-head canary on the same runner and the strict
+    # script-segment deadline are advisory: reported in the step summary only.
+    name: Performance budgets
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -194,30 +90,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
       # Restores the cache cross-platform-test.yml saves on main (release
       # profile and every dependency); never saves, since only main's cache
       # is readable by every PR.
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
-          workspaces: gpy-agent
           shared-key: rust
           save-if: "false"
 
       - name: Absolute performance budgets
         run: ./scripts/bench.sh --ci
 
+      # Advisory: the canary does not measure its own noise floor.
       - name: Base-vs-head canary
+        continue-on-error: true
         if: ${{ github.event_name == 'pull_request' && !cancelled() }}
         env:
           GPY_PERF_CANARY_BASE_REF: ${{ github.event.pull_request.base.sha }}
@@ -232,11 +119,15 @@ jobs:
 
       # The quiet-host acceptance of ADR-0011 Spike 2 (p99 within T + 80 ms).
       # The shell gate runs the same test with only the hang bound enforced.
+      # Advisory, like the two steps below it.
       - name: Install shells for the strict deadline test
+        continue-on-error: true
         if: ${{ !cancelled() }}
         uses: ./.github/actions/install-shells
 
+      # Advisory: shared-runner timing is too noisy to gate on p99.
       - name: Script segment deadline, strict p99
+        continue-on-error: true
         if: ${{ !cancelled() }}
         env:
           GPY_STRICT_DEADLINE: "1"
@@ -305,10 +196,10 @@ jobs:
 
   gate-result:
     # `always()` so a failed or cancelled leg turns this red instead of
-    # skipped. List every gating job in `needs` (tests/bash/ci_gate_shape).
+    # skipped. List every gating job in `needs` (tests/repo/ci_gate_shape).
     name: gate-result
     if: ${{ always() }}
-    needs: [rust, shell, fresh-install, windows-gate, new-allows]
+    needs: [gate-legs, perf, fresh-install, windows-gate, new-allows]
     runs-on: ubuntu-latest
     permissions: {}
     steps:

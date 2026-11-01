@@ -27,7 +27,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: ""
   # Oldest glibc the Linux binaries may require (Ubuntu 20.04, Debian 11).
-  # Kept in step with docs/INSTALL.md by tests/bash/release_glibc_floor.test.bash.
+  # Kept in step with docs/INSTALL.md by tests/repo/release_glibc_floor.test.bash.
   GPY_GLIBC_FLOOR: "2.31"
   GPY_GLIBC_FLOOR_IMAGE: ubuntu:20.04
 
@@ -87,22 +87,10 @@ jobs:
           echo "version=$VERSION" >>"$GITHUB_OUTPUT"
           echo "Version metadata is consistent across Cargo.toml and CHANGELOG.md"
 
-      - name: Install Rust toolchain
-        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
-          rust-src-dir: gpy-agent
-          cache: false
           components: clippy, rustfmt
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: gpy-agent
 
       - name: Install Rust tooling (nextest, audit, deny, machete)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
@@ -119,9 +107,10 @@ jobs:
       - name: Shell integration gate
         run: just check-shell
 
-      # The only place the budgets are enforced. Shared runners are noisy, so
-      # these are the loose `max` ceilings: they catch order-of-magnitude
-      # regressions, not a few percent.
+      # The PR gate enforces the micro-benchmark budgets; release adds the
+      # end-to-end ones (ci-bench.sh). Shared runners are noisy, so these are
+      # the loose `max` ceilings: they catch order-of-magnitude regressions,
+      # not a few percent.
       - name: Performance budgets
         run: just bench-ci
 
@@ -136,7 +125,7 @@ jobs:
           # installers' contract; renaming a row means updating
           # EXPECTED_ASSETS in scripts/package-release.sh and the platform
           # cases in install.sh / install-oneline.sh
-          # (tests/bash/release_asset_contract.test.bash).
+          # (tests/repo/release_asset_contract.test.bash).
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: gpy-agent
@@ -175,16 +164,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
-          rust-src-dir: gpy-agent
           target: ${{ matrix.target }}
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
+          cache-on-failure: "true"
 
       # Link Linux binaries against the glibc floor via zig's stubs (a plain
       # build on ubuntu-latest needs glibc 2.39); also cross-links aarch64.
@@ -257,11 +241,11 @@ jobs:
 
       # Only for cargo metadata (SBOM from Cargo.lock); nothing compiles here,
       # so no check-active-toolchain.sh step.
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
-          rust-src-dir: gpy-agent
-          cache: false
+          check-pin: "false"
+          cache: "false"
 
       # package-release.sh requires --sbom or an explicit --no-sbom.
       - name: Generate SBOM

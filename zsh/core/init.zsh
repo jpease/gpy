@@ -243,6 +243,12 @@ function __gpy_precmd() {
 
     __gpy_update_prompts $ret
 
+    # Retry until registered (agent started late or restarted), after the
+    # render so a cold start never delays this prompt.
+    if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
+        __gpy_register_with_agent &>/dev/null
+    fi
+
     # Pull back cache-miss writes from the render subshell.
     __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
     __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val

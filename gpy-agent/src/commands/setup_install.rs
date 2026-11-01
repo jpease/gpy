@@ -31,6 +31,10 @@ fn io_at<'a>(action: &'a str, path: &'a Path) -> impl FnOnce(io::Error) -> io::E
     }
 }
 
+/// The runner in a source tree, and where Fish and Zsh installs keep a copy.
+const RUNNER_SOURCE: &str = "bash/core/g_runner.bash";
+const RUNNER_INSTALLED: &str = "core/g_runner.bash";
+
 /// Write `bytes` to `path`, creating its parent directories.
 fn write_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
@@ -434,8 +438,29 @@ pub(super) fn install_files(
         Shell::Bash => (Some(("completions/gpy.bash", generated)), None),
     };
 
+    // The one committed runner lives in the Bash tree; Fish and Zsh run it in
+    // a Bash child, so their installed trees carry a copy.
+    let runner = if shell == Shell::Bash {
+        None
+    } else {
+        let runner_path = source_root.join(RUNNER_SOURCE);
+        let Ok(bytes) = fs::read(&runner_path) else {
+            if let Some(completion) = &pending {
+                completion.discard();
+            }
+            return Err(Error::invalid(format!(
+                "{} has no {RUNNER_SOURCE}; the script tree is incomplete",
+                source_root.display()
+            )));
+        };
+        Some(bytes)
+    };
+
     let swapped = stage_and_swap(&live, Swap::Entries, |stage| {
         copy_tree(&source, stage, skip)?;
+        if let Some(bytes) = &runner {
+            write_file(&stage.join(RUNNER_INSTALLED), bytes)?;
+        }
         if let Some((relative, bytes)) = &staged_completion {
             write_file(&stage.join(relative), bytes)?;
         }

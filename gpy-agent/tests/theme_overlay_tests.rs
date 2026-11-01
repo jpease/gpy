@@ -67,7 +67,7 @@ fn daemon_theme_manager_loads_a_self_named_overlay() {
         Some(OVERLAY_FORMAT)
     );
     assert_eq!(theme.segments.git.format, builtin.segments.git.format);
-    assert!(manager.reload().is_ok(), "reloading re-reads the chain");
+    manager.reload().expect("reloading re-reads the chain");
 }
 
 #[test]

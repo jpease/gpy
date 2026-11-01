@@ -394,8 +394,8 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
     )
 }
 
-/// Exit-status pill drawn without a theme `format`, mirroring the shells' local
-/// fallback; a Nerd Font icon under [`Glyphs::Plain`] gives way to the ASCII fallback.
+/// Exit-status pill drawn without a theme `format`; a Nerd Font icon under
+/// [`Glyphs::Plain`] gives way to the ASCII fallback.
 fn status_pill_spans(
     theme: &ThemeConfig,
     success: bool,

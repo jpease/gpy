@@ -25,7 +25,7 @@ function run_case --argument-names pre_code
     set -q argv[2]; and set extra $argv[2..-1]
     command env -i HOME=$t_sandbox/home XDG_CONFIG_HOME=$t_sandbox/config XDG_CACHE_HOME=$t_sandbox/cache \
         XDG_RUNTIME_DIR=$t_sandbox/run TMPDIR=$t_sandbox PATH=$t_sandbox/bin:/usr/bin:/bin TERM=dumb \
-        GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_AUTOSTART_MAX_ATTEMPTS=0 \
+        GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0 \
         GPY_AGENT_SOCKET_PATH=$t_sandbox/run/gpy.sock STUB_AGENT_LOG=$t_calls GPY_T_ROOT=$__gpy_root \
         $extra $t_fish --no-config -c "$pre_code
 source \$GPY_T_ROOT/fish/core/init.fish

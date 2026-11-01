@@ -18,7 +18,7 @@ tag they came from.
 - `CHANGELOG.md` — a `## [X.Y.Z]` heading. `scripts/release-notes.sh` builds the
   GitHub release body from that section and fails if it is empty.
 
-`tests/bash/release_version_consistency.test.bash` checks that the two agree,
+`tests/repo/release_version_consistency.test.bash` checks that the two agree,
 that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference, and
 that `SECURITY.md` names exactly one supported series, `X.Y.x`.
 
@@ -32,21 +32,6 @@ Everything below runs on `main`, with a clean tree.
    [gpy-agent/SCHEMA_EVOLUTION.md](../../gpy-agent/SCHEMA_EVOLUTION.md).
 
 2. **Bump the two version-bearing files** listed above to the same `X.Y.Z`.
-
-   Then record the builtin themes this version ships, so `gpy setup` can later
-   retire unedited user copies of them:
-
-   ```sh
-   scripts/gen-released-theme-hashes.sh
-   ```
-
-   It rewrites `gpy-agent/src/theme/released_hashes.rs`, labelling builtin
-   bytes no tag has shipped yet with the new `vX.Y.Z`; commit the result with
-   the bump. Existing entries are kept, including the v0.1.0–v0.3.1 ones read
-   once from the pre-squash mirror (`--git-dir <mirror>.git`). Between
-   releases, a change to `config/themes/*.toml` needs a run too (labelled
-   `unreleased`): `theme::retire`'s
-   `every_current_builtin_is_in_the_released_table` test fails until then.
 
 3. **Close the CHANGELOG section.** Rename `## [Unreleased]` work into a
    `## [X.Y.Z] - YYYY-MM-DD` heading and **replace `YYYY-MM-DD` with the real
@@ -65,7 +50,7 @@ Everything below runs on `main`, with a clean tree.
 
 4. **Bump `SECURITY.md`.** The Supported Versions table names one row, the
    released minor series (`0.4.x` for v0.4.0).
-   `tests/bash/release_version_consistency.test.bash`, run by `just check-shell`
+   `tests/repo/release_version_consistency.test.bash`, run by `just check-shell`
    in the `validate` job, fails unless it matches.
 
 5. **Preview the release body.** This is exactly what the workflow publishes:
@@ -161,14 +146,14 @@ Everything below runs on `main`, with a clean tree.
 | No Linux binary (either arch) references a glibc newer than `GPY_GLIBC_FLOOR` (2.31); the Linux legs link against that floor with `cargo zigbuild --target <triple>.2.31`, and the packaged x86_64 binaries run their `--version` in `ubuntu:20.04` | `release.yml`, `build` → `scripts/check-glibc-floor.sh`; `smoke` |
 | Release notes are non-empty and CHANGELOG-derived | `scripts/release-notes.sh` |
 | Archives contain the files the installers reach for | `scripts/package-release.sh` |
-| Build matrix agrees with both installers' asset names | `tests/bash/release_asset_contract.test.bash` |
-| Packaging and note generation still work | `tests/bash/release_packaging.test.bash` |
-| The Linux legs stay pinned to the glibc floor, the gate checks it, and `docs/INSTALL.md` states the same floor | `tests/bash/release_glibc_floor.test.bash` |
-| Cargo.toml and the newest CHANGELOG heading declare the same version | `tests/bash/release_version_consistency.test.bash` |
-| The smoke run passes on the real debug binaries and fails on an agent that answers `--version` but nothing else | `tests/bash/release_smoke.test.bash` |
+| Build matrix agrees with both installers' asset names | `tests/repo/release_asset_contract.test.bash` |
+| Packaging and note generation still work | `tests/repo/release_packaging.test.bash` |
+| The Linux legs stay pinned to the glibc floor, the gate checks it, and `docs/INSTALL.md` states the same floor | `tests/repo/release_glibc_floor.test.bash` |
+| Cargo.toml and the newest CHANGELOG heading declare the same version | `tests/repo/release_version_consistency.test.bash` |
+| The smoke run passes on the real debug binaries and fails on an agent that answers `--version` but nothing else | `tests/repo/release_smoke.test.bash` |
 | A stock `ubuntu:24.04` container with an empty `$HOME` installs from an archive built from the checkout and renders one prompt per shell | `scripts/test-fresh-install.sh` (`tests/docker/Dockerfile.fresh-install`; the `fresh-install` job in `pr-gate.yml`) |
 
-The `tests/bash/*` rows run on every `./scripts/quality-check.sh`, not only when
+The `tests/repo/*` rows run on every `./scripts/quality-check.sh`, not only when
 a tag is pushed. The container check needs a running docker daemon; run it
 locally before a release with `scripts/test-fresh-install.sh`.
 

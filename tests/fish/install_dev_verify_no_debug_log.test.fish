@@ -44,7 +44,7 @@ set -l driver "$home_dir/driver.fish"
 printf '%s\n' \
     "cd '$repo_root'" \
     "set -gx PATH '$safe_path'" \
-    "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
+    "source install-dev.fish --files-only --allow-shadow >/dev/null 2>&1" \
     "set -gx PATH '$stub_dir' '$safe_path'" \
     _verify_installation >$driver
 

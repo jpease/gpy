@@ -1,0 +1,140 @@
+# GPY Default Theme Configuration
+# Colors and icons for each prompt segment grouped under `[segments.*]`
+
+[ui]
+prompt_icon = "❯"
+prompt_color = "white"
+root_prompt_icon = "!❯!"
+root_prompt_color = "red"
+# Segments on one line, the prompt character on the next. Fish, Bash and Zsh
+# all read this flag, so the same theme looks the same in every shell.
+two_line = true
+
+[ui.prompt_open]
+icon = ""
+icon_color = "transparent"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "black"
+
+[ui.segment_open]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+# Built-in defaults, so `gpy theme use default --force` restores GPY's
+# stock layout/display after another preset changed `config.ui` (round-trip).
+# Advisory only: never exported to shells; applied solely via --force.
+[ui.recommended]
+enabled_segments = ["clock", "duration", "language", "directory", "git"]
+show_icons = true
+# Stock GPY behavior: content-scan detection (clean round-trip from markers presets).
+language_detection = "content"
+
+[ui.recommended.directory]
+display = "basename"
+# Stock GPY behavior: no repo anchoring (clean round-trip from other presets).
+truncate_to_repo = false
+
+[segments.clock]
+# Agent-rendered, like every other segment. `$time` resolves to the requesting
+# shell's own live-time prompt token (`%D{…}` for zsh, `\D{…}` for bash) built
+# from time_format/show_leading_zero/show_seconds below, so the clock keeps
+# ticking between draws while the agent owns the caps and colors.
+format = "([$sep_open](fg:$bg bg:default))[ $time]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "white"
+bg_color = "black"
+time_format = "12"
+show_leading_zero = false
+show_seconds = false
+
+[segments.clock.open]
+icon = ""
+
+[segments.clock.close]
+icon = ""
+
+[segments.duration]
+format = "([$sep_open](fg:$bg bg:default))[ $duration]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+icon = "󰑧"
+text_color = "white"
+bg_color = "black"
+show_if_exceeds_ms = 100
+
+[segments.directory]
+format = "([$sep_open](fg:$bg bg:default))[ $path]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "white"
+bg_color = "black"
+
+[segments.status]
+# Agent-rendered like the other pills; `$symbol`, `$style` and `$bg` follow the
+# previous command's outcome (the ok_* or fail_* values below).
+format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+ok_icon = ""
+ok_text_color = "black"
+ok_bg_color = "green"
+fail_icon = ""
+fail_text_color = "black"
+fail_bg_color = "red"
+
+# The agent renders the final prompt symbol via the `character` segment
+# (Response::Character); the exit-status pill is the `status` segment above.
+[segments.character]
+format = "[ ](fg:prev_bg)[$symbol]($style) "
+
+[segments.git]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol $branch]($style)([ $state]($style))([ $ahead_behind]($style))([ $status]($style))([ $stash]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "black"
+bg_color = "white"
+clean_text_color = "black"
+clean_bg_color = "green"
+dirty_text_color = "black"
+dirty_bg_color = "red"
+ahead_behind_text_color = "black"
+ahead_behind_bg_color = "yellow"
+conflicts_text_color = "black"
+conflicts_bg_color = "red"
+# Distinct from dirty_*/clean_* so untracked-only and in-progress repos are
+# visually distinguishable out of the box, not just via fallback.
+untracked_only_text_color = "black"
+untracked_only_bg_color = "cyan"
+in_progress_text_color = "white"
+in_progress_bg_color = "magenta"
+
+# Hostname: a script segment (the bundled `hostname` plugin), drawn as a pill
+# like the others. Shown over SSH, or always with `plugin.hostname.show_always`;
+# `ssh_icon` (unset) would show before the name over SSH only.
+[segments.hostname]
+bg_color = "black"
+text_color = "white"
+
+# Username: a script segment (the bundled `username` plugin). Opt-in, not in
+# the default enabled_segments; add "username" to config.ui.enabled_segments to
+# show it. Shown as root, under sudo or over SSH (or always with
+# `plugin.username.show_always`), as Starship's `username`: a yellow pill for
+# everyone (Starship's `style_user`), a red one for the `root` variant the
+# plugin prints as root (`style_root`).
+[segments.username]
+bg_color = "yellow"
+text_color = "black"
+root_bg_color = "red"
+root_text_color = "white"
+
+[segments.language]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([ $version]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "black"
+bg_color = "white"
+rust_bg_color = "red"
+python_bg_color = "blue"
+node_bg_color = "green"
+go_bg_color = "cyan"
+java_bg_color = "blue"
+ruby_bg_color = "red"

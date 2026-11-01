@@ -1,0 +1,5 @@
+description = "Contract fixture: c1"
+command = "bin/c1.sh"
+inputs = []
+ttl_secs = 3600
+timeout_ms = 500
