@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Library API: `language::version::ReleaseSource` is renamed `VersionSource`; `detect_language_release[_at]` → `detect_version[_at]`; `lookup_language_release_at` → `lookup_version_at`.
 - Library API: `cache::get_theme_export_cache_path` → `fish_theme_export_path`; `cache::theme_export::theme_export_dir` is removed (use `paths::gpy_cache_dir`); the four `*Source`/`Discovered*` palette and theme aliases are removed (use `config::discovery::{Source, Discovered}`).
+- Library API: `security::PathValidator::validate_path` and `security::PidValidator::validate_pid_liveness` become free functions `security::validate_path` and `security::validate_pid_liveness`.
+- Library API: `RepositoryState::InProgress` and `language::metadata::get_icon_key` / `LanguageMeta::icon_key` are removed (use `get_canonical_name`); `WatchCoordinator::flush_pending_events` is available only with the `test-support` feature.
 
 - INSTALL.md puts the install methods first, and manual installation uses the release's shell-files archive and `gpy setup`.
 - README: states the `socat`/`nc -U` requirement for Bash and Fish and what `gpy setup` does without a Nerd Font, and links the dated benchmark instead of repeating it.

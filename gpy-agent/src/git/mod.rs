@@ -183,8 +183,6 @@ pub enum RepositoryState {
     Bisecting,
     /// Repository is applying patches (e.g., `git am`).
     Applying,
-    /// Repository has an in-progress state that doesn't fit other variants.
-    InProgress,
 }
 
 impl RepositoryState {
@@ -201,7 +199,6 @@ impl RepositoryState {
             Self::Reverting => "reverting",
             Self::Bisecting => "bisecting",
             Self::Applying => "applying",
-            Self::InProgress => "in-progress",
         }
     }
 

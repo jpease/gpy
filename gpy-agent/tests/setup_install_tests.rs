@@ -1,7 +1,7 @@
 //! Integration tests for how `gpy setup` replaces installed files: a failure
 //! while preparing the replacement must leave the previous install exactly as
-//! it was (#1104), and an install location that aliases or overlaps the
-//! source must be refused before anything is touched (#1103).
+//! it was, and an install location that aliases or overlaps the
+//! source must be refused before anything is touched.
 //!
 //! Every test drives the real `gpy` binary against a disposable HOME (whose
 //! `~/.local/share/gpy` is the data root), a copy of the repository's shell
@@ -296,7 +296,7 @@ fn zsh_startup(zsh: &Path, install: &Path, home: &Path) -> (String, bool) {
     )
 }
 
-// ---- #1103: aliased and overlapping install locations ----------------------
+// ---- aliased and overlapping install locations ----------------------
 
 const UNCOMMITTED: &str = "# uncommitted local change\n";
 
@@ -497,7 +497,7 @@ fn a_symlinked_install_dir_to_a_separate_tree_is_updated_in_place() {
     );
 }
 
-// ---- #1104: a failed setup must keep the previous install ------------------
+// ---- a failed setup must keep the previous install ------------------
 
 #[test]
 fn a_successful_rerun_removes_retired_scripts_and_keeps_unrelated_files() {

@@ -1,4 +1,4 @@
-//! Table merge rules of theme overlays (ADR-0012 section 2): tables merge
+//! Table merge rules of theme overlays (ADR-0012): tables merge
 //! deeply at every depth, anything else (arrays included) replaces, `unset`
 //! removes a leaf or a table, and `[segments.language]` has one spelling.
 

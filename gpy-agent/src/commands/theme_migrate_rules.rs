@@ -49,7 +49,7 @@ const PILL_DRAWN_BY_FRAMEWORK: &str = "the plugin framework draws the pill";
 /// Every rule set, oldest first.
 const RULE_SETS: &[RuleSet] = &[RuleSet {
     since: "0.7",
-    // `username` and `hostname` became bundled script plugins (#1003).
+    // `username` and `hostname` became bundled script plugins.
     rules: &[
         Rule::Drop {
             segment: "username",

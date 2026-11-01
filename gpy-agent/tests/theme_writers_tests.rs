@@ -1,5 +1,5 @@
-//! `gpy theme new` and `gpy theme save` write overlays (ADR-0012 section 5,
-//! "Writers"); `--full` writes the effective theme as a full file.
+//! `gpy theme new` and `gpy theme save` write overlays (ADR-0012);
+//! `--full` writes the effective theme as a full file.
 //!
 //! The loads that compare two written themes run in-process with
 //! `XDG_CONFIG_HOME` pointed at the CLI env through [`EnvGuard`], so every

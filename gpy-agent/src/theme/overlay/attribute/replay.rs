@@ -1,5 +1,4 @@
-//! Merge replay: which file last changed each path of the merged table
-//! (ADR-0012 section 2, attribution step 2).
+//! Merge replay: which file last changed each path of the merged table.
 
 use super::super::header::UnsetEntry;
 use super::super::merge;

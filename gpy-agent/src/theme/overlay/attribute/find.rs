@@ -1,5 +1,5 @@
-//! Finding the failing key of a merged theme table (ADR-0012 section 2,
-//! attribution step 1). The key path of a `toml::de::Error` is private, and a
+//! Finding the failing key of a merged theme table. The key path of a
+//! `toml::de::Error` is private, and a
 //! merged table has no spans, so the key is found structurally: each table,
 //! then each direct key of the first failing table, is deserialized alone.
 //! That works because every container defaults its missing fields.

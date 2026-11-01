@@ -20,8 +20,8 @@ pub fn repo_root() -> PathBuf {
 }
 
 pub fn setup(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .arg("setup")
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_gpy"));
+    cmd.arg("setup")
         .args(["--non-interactive", "--from"])
         .arg(repo_root())
         .args(args)
@@ -29,9 +29,13 @@ pub fn setup(home: &Path, args: &[&str]) -> Output {
         .env_clear()
         .env("HOME", home)
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("GPY_NERD_FONT", "0")
-        .output()
-        .expect("failed to spawn gpy setup")
+        .env("GPY_NERD_FONT", "0");
+    // `env_clear` drops the profile path cargo-llvm-cov exports; without it an
+    // instrumented child writes `default_*.profraw` into its cwd (the temp HOME).
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile);
+    }
+    cmd.output().expect("failed to spawn gpy setup")
 }
 
 pub fn assert_ok(output: &Output) {

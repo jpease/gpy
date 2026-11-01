@@ -67,8 +67,7 @@
             "cherry-picking",
             "reverting",
             "bisecting",
-            "applying",
-            "in-progress"
+            "applying"
           ]
         },
         "stash_count": {

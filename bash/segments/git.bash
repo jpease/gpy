@@ -22,7 +22,7 @@ __gpy_segment_git() {
 
     local root="$PWD"
 
-# Exit code: 1 = miss, bit 2 = stale, bit 4 = variant fallback.
+    # Exit code: 1 = miss, bit 2 = stale, bit 4 = variant fallback.
     local rendered_output
     __gpy_read_instant_cache "$cache_suffix" "$root" "$prev_bg" rendered_output
     local cache_status=$?

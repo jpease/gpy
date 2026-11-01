@@ -8,7 +8,7 @@ use crate::ipc::{
     ClientDirectory, Message, Response, Segment, handlers::HandlerRegistry, protocol,
 };
 use crate::palette::PaletteCache;
-use crate::security::{GuardSettings, PidValidator};
+use crate::security::{GuardSettings, validate_pid_liveness};
 use crate::template::{Color, parse_color};
 use crate::theme::ThemeManager;
 use crate::warn_log;
@@ -308,7 +308,7 @@ impl ConnectionHandler {
     ) -> RouteResult {
         if let Message::RegisterClient { pid, .. } = msg
             && security_config.validate_pids
-            && let Err(e) = PidValidator::validate_pid_liveness(pid.get())
+            && let Err(e) = validate_pid_liveness(pid.get())
         {
             return RouteResult {
                 response: Response::Error {

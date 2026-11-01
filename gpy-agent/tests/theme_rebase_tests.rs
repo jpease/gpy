@@ -1,4 +1,4 @@
-//! `gpy theme rebase` (ADR-0012 section 4): a modified full copy becomes an
+//! `gpy theme rebase` (ADR-0012): a modified full copy becomes an
 //! overlay that keeps only what differs from its base.
 #![allow(
     clippy::unwrap_used,

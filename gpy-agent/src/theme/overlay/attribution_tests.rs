@@ -1,4 +1,4 @@
-//! Error attribution through an overlay merge (ADR-0012 section 2): each
+//! Error attribution through an overlay merge (ADR-0012): each
 //! failure names the file and line that caused it, and the chain.
 
 use super::attribute::{rebuild, table_error};

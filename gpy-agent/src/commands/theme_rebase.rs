@@ -1,5 +1,5 @@
 //! `gpy theme rebase`: rewrite a modified full copy of a theme as an overlay
-//! that keeps only what differs from its base (ADR-0012 section 4).
+//! that keeps only what differs from its base (ADR-0012).
 //!
 //! The copy and the base are compared as normalised typed values,
 //! `N(Table::try_from(theme))` (see [`normalised_table`]), never as raw text:

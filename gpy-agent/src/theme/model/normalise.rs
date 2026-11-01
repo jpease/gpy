@@ -1,4 +1,4 @@
-//! The normalisation `N` of ADR-0012 section 4: a theme serialized to a table
+//! The normalisation `N`: a theme serialized to a table
 //! with each defaulted `Option` field treated as unset, so an absent field and
 //! one set to the default its accessor supplies compare equal. `gpy theme
 //! rebase` and `gpy theme diff` compare themes through it.

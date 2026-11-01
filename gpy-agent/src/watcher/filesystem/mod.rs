@@ -311,7 +311,9 @@ impl FileSystemWatcher {
                 break;
             }
 
-            // Permissive parent-guess fallback is pinned behavior here.
+            // Last tier after the watched-root prefix and the ancestor `.git` walk: with no
+            // repo evidence the parent directory is used (`ParentGuess`); only
+            // `RepoEvidence::AnyAttribution` accepts it.
             if let Some(repo) = worktree_git_repo(
                 event,
                 path,

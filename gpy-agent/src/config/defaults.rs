@@ -113,7 +113,7 @@ pub(crate) const GIT_GLYPHS_NERD_FONT: GitGlyphs = GitGlyphs {
 /// Branch glyph drawn when `ui.show_icons` is on and HEAD is on a branch.
 pub(crate) const BRANCH_GLYPH: &str = "\u{e0a0}";
 
-/// Built-in Nerd Font language icons by icon key; they need a patched font.
+/// Built-in Nerd Font language icons by canonical name; they need a patched font.
 pub const DEFAULT_LANGUAGE_ICONS: &[(&str, &str)] = &[
     ("rust", "\u{f1617}"),
     ("python", "\u{f0320}"),

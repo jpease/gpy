@@ -86,7 +86,7 @@
           "const": "file"
         },
         {
-          "description": "The plugin provides `segments/<name>.toml` script segment manifests, each\nnaming a POSIX `sh` script that every shell runs (ADR-0011 option G).",
+          "description": "The plugin provides `segments/<name>.toml` script segment manifests, each\nnaming a POSIX `sh` script that every shell runs.",
           "type": "string",
           "const": "script"
         },

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # tests/fish/script_segment_adapter.test.fish
 #
-# Script ("G") segments in Fish (fish/core/script.fish): the issue #997
-# acceptance list, driven through the real init path. Each case writes a
+# Script ("G") segments in Fish (fish/core/script.fish): the acceptance
+# list, driven through the real init path. Each case writes a
 # plugin directory with `sh` scripts and a theme export cache holding the
 # `__gpy_script_*` block (the contract in docs/dev/plugins.md "Theme
 # export"), then runs a fresh `fish --no-config -c` that sources

@@ -296,7 +296,7 @@ fn parse_shell(name: Option<&str>) -> Option<crate::shell::Shell> {
 }
 
 fn validate_virtual_env(venv: String) -> Result<String> {
-    crate::security::PathValidator::validate_path(&venv)
+    crate::security::validate_path(&venv)
         .map_err(|e| Error::invalid(format!("Invalid virtual_env: {e}")))?;
     Ok(venv)
 }

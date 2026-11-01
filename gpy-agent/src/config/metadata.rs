@@ -441,7 +441,7 @@ fn language_icon_name(key: &str) -> Option<String> {
         return None;
     }
     Some(
-        crate::language::metadata::get_icon_key(lang)
+        crate::language::metadata::get_canonical_name(lang)
             .unwrap_or(lang)
             .to_owned(),
     )

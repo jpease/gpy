@@ -97,35 +97,35 @@ pub enum Error {
 }
 
 impl Error {
-    /// Create a Git error with context
+    /// A git command or repository read failed.
     pub fn git<S: Into<String>>(message: S) -> Self {
         Self::Git {
             message: message.into(),
         }
     }
 
-    /// Create a Language error
+    /// A language detection step failed.
     pub fn language<S: Into<String>>(message: S) -> Self {
         Self::Language {
             message: message.into(),
         }
     }
 
-    /// Create an IPC error
+    /// An agent IPC send, receive, or decode failed.
     pub fn ipc<S: Into<String>>(message: S) -> Self {
         Self::Ipc {
             message: message.into(),
         }
     }
 
-    /// Create a Watcher error
+    /// A file watcher could not be armed or kept running.
     pub fn watcher<S: Into<String>>(message: S) -> Self {
         Self::Watcher {
             message: message.into(),
         }
     }
 
-    /// Create a Config error
+    /// A config file could not be loaded or validated; `source` holds the cause.
     pub fn config<S: Into<String>>(message: S) -> Self {
         Self::Config {
             message: message.into(),
@@ -133,7 +133,7 @@ impl Error {
         }
     }
 
-    /// Create an Agent error
+    /// The agent process could not be started or managed.
     pub fn agent<S: Into<String>>(message: S) -> Self {
         Self::Agent {
             message: message.into(),
@@ -150,7 +150,7 @@ impl Error {
         ))
     }
 
-    /// Create a Process error
+    /// An external command failed to run or exited unsuccessfully.
     pub fn process(command: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Process {
             command: command.into(),
@@ -158,7 +158,7 @@ impl Error {
         }
     }
 
-    /// Create an Invalid error
+    /// An input value was rejected as malformed or out of range.
     pub fn invalid<S: Into<String>>(message: S) -> Self {
         Self::Invalid {
             message: message.into(),

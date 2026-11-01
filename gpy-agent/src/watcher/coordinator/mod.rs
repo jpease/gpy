@@ -83,6 +83,7 @@ fn ingest(
 pub struct WatchCoordinator {
     watcher: Option<filesystem::FileSystemWatcher>,
     debouncer: Arc<Mutex<debouncer::DebounceEngine>>,
+    #[cfg(feature = "test-support")]
     callback: Arc<EventCallback>,
     stop_flag: Arc<AtomicBool>,
     flush_handle: Option<JoinHandle<()>>,
@@ -179,6 +180,7 @@ impl WatchCoordinator {
         Ok(Self {
             watcher: Some(watcher),
             debouncer: debouncer_arc,
+            #[cfg(feature = "test-support")]
             callback: callback_arc,
             stop_flag,
             flush_handle: Some(flush_handle),
@@ -271,6 +273,7 @@ impl WatchCoordinator {
 
     /// Deliver pending debounced events synchronously; the callback runs
     /// after the debouncer lock is released.
+    #[cfg(feature = "test-support")]
     pub fn flush_pending_events(&self) {
         let expired = self.debouncer.lock_or_recover().drain_expired_events();
         for event in expired {

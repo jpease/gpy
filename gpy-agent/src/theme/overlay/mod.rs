@@ -204,7 +204,7 @@ pub(crate) fn own_user_link(name: &str) -> Result<ChainLink> {
     )
 }
 
-/// Where `extends = "<name>"` in the file `from` resolves (ADR-0012 section 3).
+/// Where `extends = "<name>"` in the file `from` resolves (ADR-0012).
 ///
 /// # Errors
 /// Returns the diagnostic when `name` resolves to nothing allowed.

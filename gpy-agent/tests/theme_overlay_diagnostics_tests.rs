@@ -1,4 +1,4 @@
-//! Overlay-aware listing and diagnostics (ADR-0012 follow-up 5): a load error
+//! Overlay-aware listing and diagnostics (ADR-0012): a load error
 //! of a self-named overlay is the chain error, `gpy theme list` names an
 //! overlay's base, `gpy theme validate` warns about `unset`, and
 //! `gpy plugin validate` checks the theme files of a plugin.

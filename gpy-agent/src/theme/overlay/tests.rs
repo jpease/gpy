@@ -1,4 +1,4 @@
-//! Overlay merge rules and chain resolution (ADR-0012 follow-up 1), resolved
+//! Overlay merge rules and chain resolution (ADR-0012), resolved
 //! against a temporary user themes directory and a fixed plugin list.
 
 use super::resolve::{Candidates, OwnName, PluginTheme, link_for_path, own_entry};

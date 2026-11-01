@@ -1,4 +1,4 @@
-//! The overlay keys of a theme file: `extends` and `unset` (ADR-0012 section 1).
+//! The overlay keys of a theme file: `extends` and `unset` (ADR-0012).
 
 use super::{merge, overlay_error};
 use crate::Result;
