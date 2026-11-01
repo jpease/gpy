@@ -127,6 +127,9 @@ fn uninstall_keeps_config_unless_purged() {
     let env = CliTestEnv::new().unwrap();
     setup_shell(&env, "bash");
     let config = env.config_dir();
+    // `gpy setup` retires the unedited builtin copy (`default.toml`), so the
+    // fixture needs a theme the user wrote.
+    fs::write(env.themes_dir().join("mine.toml"), "x = 1\n").unwrap();
     fs::create_dir_all(config.join("palettes")).unwrap();
     fs::write(config.join("palettes/mine.toml"), "x = 1\n").unwrap();
     fs::write(env.plugins_dir().join("mine.txt"), "plugin").unwrap();
@@ -134,7 +137,7 @@ fn uninstall_keeps_config_unless_purged() {
     uninstall(&env, &["--yes"]).assert_success("gpy uninstall --yes");
 
     assert!(env.config_path().is_file());
-    assert!(env.themes_dir().join("default.toml").is_file());
+    assert!(env.themes_dir().join("mine.toml").is_file());
     assert!(config.join("palettes/mine.toml").is_file());
     assert!(env.plugins_dir().join("mine.txt").is_file());
 
