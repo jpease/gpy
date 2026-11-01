@@ -1495,7 +1495,16 @@ These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY
 | Switch | Effect |
 |---|---|
 | `GPY_SHOW_STATUS` | `0` hides the standalone `✔`/`✖` exit-status indicator printed before the prompt symbol. Default `1`. The indicator is never shown while the prompt symbol itself is rendered by the agent (it is already coloured by the exit status), so this matters mainly when the agent is unavailable. |
-| `gpy-prompt-reload` | A function, not a variable: re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file), mainly for debugging or when the agent is disabled. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. `prompt-reload` is its deprecated former name. |
+
+### Shell commands
+
+Functions the integration defines in Fish, Bash and Zsh (not executables).
+
+| Command | Effect |
+|---|---|
+| `gpy-prompt-reload` | Re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file, which a stopped agent leaves stale), so it works whether the agent is running, disabled or stopped. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. An invalid `config.toml` applies the built-in defaults, shows the agent's `Warning: [Config loading] …` line and returns 0. In Fish, `prompt-reload` is its deprecated former name. |
+
+Fish also has `gpy-prompt-debug` (`validate`, `benchmark`, `cache`, `vars`; `prompt-debug` is its deprecated former name). In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug commands.
 
 ---
 

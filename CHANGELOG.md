@@ -74,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nc -U`) (#1175).
 - `gpy theme save --yes` skips the overwrite confirmation (#1177).
 - `gpy-agent restart` (#1173).
+- Bash and Zsh have `gpy-prompt-reload`, which re-reads `config.toml` into the
+  running shell (#1180).
 
 ### Changed
 
