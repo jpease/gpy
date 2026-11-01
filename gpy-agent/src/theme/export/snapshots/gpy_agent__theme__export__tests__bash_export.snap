@@ -126,7 +126,7 @@ __gpy_lang_marker_files=(.ruby-version CMakeLists.txt Cargo.toml Gemfile Makefil
 __gpy_segment_bg() {
     local __gpy_sbg=""
     case "$1" in
-        git) __gpy_sbg="${__color_git_clean_bg:-}" ;;
+        git) if declare -F __gpy_git_segment_bg >/dev/null; then __gpy_git_segment_bg __gpy_sbg; else __gpy_sbg="${__color_git_clean_bg:-}"; fi ;;
         language) __gpy_sbg="${__color_language_bg:-}" ;;
         directory) __gpy_sbg="${__color_directory_bg:-}" ;;
         duration) __gpy_sbg="${__color_duration_bg:-}" ;;

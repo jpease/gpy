@@ -69,12 +69,10 @@ pub fn socket_path_problem(path: &Path, capacity: usize) -> Option<String> {
         return None;
     }
     Some(format!(
-        "socket path '{}' is {len} bytes, but a Unix socket path holds at most {max} \
-         ({capacity} with the terminating NUL; the limit is 104 on macOS and the BSDs, \
-         108 on Linux). Shorten it: point XDG_RUNTIME_DIR (or XDG_CACHE_HOME / HOME) at a \
-         shorter directory, or set GPY_AGENT_SOCKET_PATH to a short path in a directory \
-         only you can write, such as /tmp/gpy-$USER/gpy.sock after \
-         `mkdir -m 700 /tmp/gpy-$USER`",
+        "socket path '{}' is {len} bytes; this system allows at most {max}\n  \
+         Remediation: point XDG_RUNTIME_DIR at a shorter directory, or set \
+         GPY_AGENT_SOCKET_PATH to a short path in a private directory \
+         (mkdir -m 700 /tmp/gpy-$USER; GPY_AGENT_SOCKET_PATH=/tmp/gpy-$USER/gpy.sock)",
         path.display()
     ))
 }
@@ -697,6 +695,17 @@ mod tests {
             ] {
                 assert!(problem.contains(&needle), "`{needle}` in: {problem}");
             }
+            let mut lines = problem.lines();
+            assert!(
+                lines.next().is_some_and(|first| first.contains("bytes")),
+                "the first line names the length: {problem}"
+            );
+            assert!(
+                lines
+                    .next()
+                    .is_some_and(|second| second.starts_with("  Remediation:")),
+                "the second line is the remediation: {problem}"
+            );
         }
     }
 

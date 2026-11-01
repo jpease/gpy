@@ -52,6 +52,10 @@ while IFS=$'\t' read -r kind c2 c3 c4 c5 _rest; do
             __gpy_cache_variant_suffix "$c2" "$(unescape_value "$c3")" "$(unescape_value "$c4")" actual
             check "$label" "$c5" "$actual"
             ;;
+        bgfile)
+            __gpy_git_bg_file_tail "$c2" actual
+            check "$label" "$c3" "$actual"
+            ;;
         status)
             check "$label stale" "$c3" "$(yes_no __gpy_cache_status_stale "$c2")"
             check "$label variant" "$c4" "$(yes_no __gpy_cache_status_variant "$c2")"

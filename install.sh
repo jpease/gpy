@@ -1,4 +1,5 @@
 #!/bin/bash
+[ -n "${BASH_VERSION:-}" ] || { echo "error: run this installer with bash: bash install.sh" >&2; exit 1; }
 # Install GPY from an extracted release archive: run `bash install.sh` inside it.
 set -eE
 
@@ -28,6 +29,32 @@ handle_error() {
 }
 
 trap 'handle_error $?' ERR
+
+usage() {
+    cat <<'EOF'
+Usage: bash install.sh [-h|--help]
+
+Installs the release archive it was extracted from. Takes no other options.
+Configure with environment variables:
+  GPY_SHELL=fish|zsh|bash  Shell to wire up (default: basename of $SHELL).
+                           Any other shell installs the binaries only.
+  GPY_NERD_FONT=1|0|unknown  Set the icon style without asking.
+EOF
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "unknown argument: $arg"
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
 # Without a SHA-256 tool nothing can be verified, so this is fatal.
 if command -v sha256sum >/dev/null 2>&1; then
@@ -61,16 +88,17 @@ verify_checksum() {
     ok "Verified $label binary checksum"
 }
 
-# Usage: install_binary <source_path> <dest_path> <label>
-# Runs the verified binary from a staging path before it replaces the install,
-# so one that cannot run here leaves the old install intact. Staging beside the
-# destination keeps mv atomic.
-install_binary() {
+# Usage: stage_binary <source_path> <dest_path> <label>
+# Verifies the binary and runs it from a staging path before anything replaces
+# the install, so one that cannot run here leaves the old install intact.
+# Staging beside the destination keeps mv atomic. Records the staged path in
+# STAGED_AGENT or STAGED_CLI.
+stage_binary() {
     src_path="$1"
     dest_path="$2"
     label="$3"
 
-    CURRENT_STEP="installing the $label binary"
+    CURRENT_STEP="staging the $label binary"
 
     if [ ! -f "$src_path" ]; then
         die "binary $src_path not found. Get a release archive from https://github.com/jpease/gpy/releases or build from source: https://github.com/jpease/gpy/blob/main/docs/INSTALL.md#building-from-source"
@@ -80,7 +108,10 @@ install_binary() {
     verify_checksum "$src_path" "$label"
 
     staged="$(dirname "$dest_path")/.$(basename "$dest_path").new.$$"
-    trap 'rm -f "$staged"' EXIT
+    case "${dest_path##*/}" in
+        gpy-agent) STAGED_AGENT=$staged ;;
+        gpy) STAGED_CLI=$staged ;;
+    esac
 
     if command -v install >/dev/null 2>&1; then
         install -m 755 "$src_path" "$staged"
@@ -98,6 +129,15 @@ install_binary() {
     if ! "$staged" --version >/dev/null 2>&1; then
         die "the $label binary is not functional on this host; the existing install was left untouched"
     fi
+}
+
+# Usage: commit_binary <staged> <dest_path> <label>
+commit_binary() {
+    staged_path="$1"
+    dest_path="$2"
+    label="$3"
+
+    CURRENT_STEP="installing the $label binary"
 
     # Back up only once a working replacement exists; keep just the newest.
     if [ -f "$dest_path" ]; then
@@ -113,7 +153,7 @@ install_binary() {
 
     # mv, not cp: a rename replaces the directory entry, so it is ETXTBSY-safe
     # while the old binary is running.
-    mv "$staged" "$dest_path"
+    mv "$staged_path" "$dest_path"
     ok "$label binary installed to $dest_path"
 }
 
@@ -164,9 +204,25 @@ info "CLI binary:   $CLI_BINARY"
 echo ""
 
 INSTALL_DIR="$HOME/.local/bin"
+
+# Decide the shell as `gpy setup` does: GPY_SHELL, then the basename of $SHELL.
+# Never guess; an unsupported shell gets the binaries only.
+shell_name="${GPY_SHELL:-${SHELL##*/}}"
+case "$shell_name" in
+    fish|zsh|bash) wire_shell=1 ;;
+    *)
+        wire_shell=0
+        warn "Unsupported shell '$shell_name'${GPY_SHELL:+ (from GPY_SHELL)}: installing the binaries only. For shell integration re-run with GPY_SHELL=fish, zsh or bash"
+        ;;
+esac
+
 mkdir -p "$INSTALL_DIR"
-install_binary "bin/$BINARY" "$INSTALL_DIR/gpy-agent" "agent"
-install_binary "bin/$CLI_BINARY" "$INSTALL_DIR/gpy" "CLI"
+# Stage and test both binaries before committing either.
+trap 'rm -f "${STAGED_AGENT:-}" "${STAGED_CLI:-}"' EXIT
+stage_binary "bin/$BINARY" "$INSTALL_DIR/gpy-agent" "agent"
+stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/gpy" "CLI"
+commit_binary "$STAGED_AGENT" "$INSTALL_DIR/gpy-agent" "agent"
+commit_binary "$STAGED_CLI" "$INSTALL_DIR/gpy" "CLI"
 trap - EXIT
 
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
@@ -175,22 +231,30 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
 fi
 
 # Shell is detected from $SHELL; GPY_SHELL overrides.
-CURRENT_STEP="gpy setup (shell integration; binaries are already installed)"
-info "Installing shell integration..."
-"$INSTALL_DIR/gpy" setup --from "$(pwd)"
+if [ "$wire_shell" = 1 ]; then
+    CURRENT_STEP="gpy setup (shell integration; binaries are already installed)"
+    info "Installing shell integration..."
+    "$INSTALL_DIR/gpy" setup --from "$(pwd)"
+fi
 
 # Restart so an old daemon picks up the new binary; `start` is a no-op when the
 # running version already matches.
 CURRENT_STEP="restarting the agent"
 info "Restarting GPY agent..."
-if "$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1; then
-    ok "GPY agent started"
-else
-    warn "could not start the agent automatically (it will start on the next shell session)"
-fi
+rc=0
+"$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1 || rc=$?
+case $rc in
+    0) ok "GPY agent started" ;;
+    6) info "agent disabled in config (agent.enabled = false); not started" ;;
+    *) warn "could not start the agent automatically (it will start on the next shell session)" ;;
+esac
 
 echo ""
-ok "GPY installed successfully"
+if [ "$wire_shell" = 1 ]; then
+    ok "GPY installed successfully"
+else
+    warn "GPY binaries installed; shell integration was NOT set up. Re-run with GPY_SHELL=fish, zsh or bash"
+fi
 echo ""
 echo "Agent:     $INSTALL_DIR/gpy-agent"
 echo "CLI:       $INSTALL_DIR/gpy"

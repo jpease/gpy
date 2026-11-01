@@ -100,7 +100,7 @@ detection_mode = "markers"
 confidence_threshold = 0.3
 ```
 
-`filter = "primary"` collapses detection down to the single most-confident language instead of listing every one detected. `detection_mode = "markers"` swaps content-scanning (which can pick up stray files in a polyglot repo) for Starship-style marker-file detection. `confidence_threshold` raises the bar above the default `0.1` to hide low-confidence noise either mode can still produce.
+`filter = "primary"` collapses detection down to the single most-confident language instead of listing every one detected. `detection_mode = "markers"` (the default) uses Starship-style marker-file detection instead of content-scanning, which can pick up stray files in a polyglot repo. `confidence_threshold` raises the bar above the default `0.1`; it applies only to `content` and `hybrid` modes, where confidence ranks languages (in `markers` mode every detected language has confidence 1.0).
 
 For prevalence ranking *and* noise control together, `detection_mode = "hybrid"` runs the content scan but keeps only languages whose project marker file is also present — a Rust repo with a stray `.py` helper script still ranks languages by how much of the repo they make up, but drops `python` since there's no `pyproject.toml`/`setup.py`/etc. backing it.
 

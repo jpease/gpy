@@ -315,8 +315,8 @@ fn reconcile_never_scans_or_publishes_a_skipped_repo() {
     );
     assert_eq!(
         daemon.watched_and_cached(),
-        (2, 1),
-        "both repos are watched, but only the enabled one may be scanned"
+        (1, 1),
+        "a skipped repo is not watched, and only the enabled one may be scanned"
     );
 }
 

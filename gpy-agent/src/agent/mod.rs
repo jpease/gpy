@@ -262,6 +262,7 @@ impl Agent {
         // on every coordinator, so they must see the same config paths.
         let watch_registry = Arc::new(crate::watcher::WatchRegistry::new());
         watch_registry.set_worktree_enabled(initial_config.git.watch_worktree);
+        watch_registry.set_repo_filter(events::git_repo_filter(&initial_config.git));
 
         let theme_manager = Self::init_theme_manager(&initial_config)?;
 

@@ -34,6 +34,8 @@ base24 standard slot (tinted-theming `base24/styling.md`):
 standard ANSI names. Every other role is already familiar from terminal color
 configuration.
 
+A `ui.palette` that cannot be loaded (an unknown name, or a missing or broken palette file, including a broken user `default.toml`) falls back to the builtin `default` palette, so these two roles keep rendering.
+
 Every spelling of an ANSI color follows the palette role for it: `purple` (SGR 35
 when no palette defines it) recolors with the `magenta` role, and `gray`/`grey`,
 `brblack` and `bright-black` with `bright_black`. See

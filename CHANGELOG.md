@@ -47,12 +47,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config-changing commands no longer print "Agent not reloaded" when no agent
   is running. `gpy config open` says when it created the file and which opener
   it used, and fails with a hint when no editor is available (#1177).
+- The segment after git draws its separator in the git segment's state
+  colour (dirty, ahead/behind, conflicts) instead of the clean colour
+  (#1142).
+- Live updates in linked worktrees and submodules see edits to `git add -f`
+  files and honour `info/exclude` rules (#1143).
+- A `ui.palette` that cannot be loaded falls back to the builtin `default`
+  palette instead of an empty one, and palette errors name the file (#1162).
+- An explicit `[git.icons]` value is kept under `nerd_font` even when it
+  equals the Unicode default (#1163).
+- Dynamic completions pick up themes, palettes and segments created earlier
+  in the same shell session (#1158).
+- `gpy-agent start` errors no longer present internal steps as a failed
+  command (#1128).
 
 ### Added
 
 - `gpy doctor` warns when Bash or Fish has no IPC client (`socat` or
   `nc -U`) (#1175).
 - `gpy theme save --yes` skips the overwrite confirmation (#1177).
+- `gpy-agent restart` (#1173).
 
 ### Changed
 
@@ -67,6 +81,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one. The `agent.version` marker file is no longer written (#1134).
 - **Breaking:** `gpy theme save` exits 1 when the overwrite is declined or
   cannot be confirmed (it exited 0 after `Aborted.`) (#1177).
+- **Breaking:** `language.detection_mode` defaults to `markers`. Set
+  `language.detection_mode = "content"` to keep prevalence ranking (#1145).
+- `language.cache_ttl_hours` no longer changes how often the agent re-checks
+  git's untracked cache; the docs say whose PATH the version probes use
+  (#1146).
+- Language icons: built-in icons are used when neither the theme nor
+  `[language.icons]` sets one, and the default theme colours the same 14
+  languages as `text` (#1163).
+- A repository rooted at your home directory or `/` is no longer watched
+  recursively, the polling fallback no longer re-reads working-tree files,
+  and `git.skip_paths` also stops the agent watching those repositories;
+  language detection there re-runs every 30 s (#1144).
+- **Breaking:** `gpy status` and `gpy-agent status` print `key: value` lines.
+  `status` exits 3 (not running) or 4 (not answering); `start` and `restart`
+  exit 6 when `agent.enabled = false`; `start` and `stop` print one outcome
+  line on stdout and take `--quiet`. Lifecycle commands list their exit
+  codes in `--help`; `gpy-agent oneshot` failures print one `Error:` line
+  (#1171, #1172).
+- `gpy restart` runs `gpy-agent restart`. The status reply carries the
+  agent's `pid` (#1173).
+- `oneshot status` is now `oneshot exit-status` and `theme export --format`
+  is `--shell`; the old spellings still work with a stderr warning.
+  `--benchmark-mode` is hidden from help (#1174).
+- **Breaking:** `install.sh` and `install-oneline.sh` reject unknown
+  arguments with exit 2; use `GPY_SHELL`, `GPY_VERSION` (one-line installer)
+  and `GPY_NERD_FONT`. For an unsupported shell they install the binaries
+  only, and both binaries are verified before either is replaced (#1125).
+- **Breaking (library):** `Error::json` is removed and `Error::Json` wraps a
+  `serde_json::Error`; `GitIcons` fields are `Option<Icon>` (#1128, #1163).
 
 ## [0.8.0] - 2026-10-29
 

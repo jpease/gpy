@@ -113,8 +113,7 @@ start_daemon() {
   XDG_CACHE_HOME="$BENCH_CACHE" "$AGENT_BIN" start --socket "$BENCH_SOCKET" >/dev/null 2>&1
 
   for _ in $(seq 1 50); do
-    if XDG_CACHE_HOME="$BENCH_CACHE" "$AGENT_BIN" status --socket "$BENCH_SOCKET" 2>/dev/null \
-        | grep -q "Running and Responding"; then
+    if XDG_CACHE_HOME="$BENCH_CACHE" "$AGENT_BIN" status --socket "$BENCH_SOCKET" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
@@ -427,7 +426,7 @@ g_start_daemon() {
     "$AGENT_BIN" start --socket "$G_SOCKET" >/dev/null 2>&1
   for _ in $(seq 1 50); do
     if XDG_CONFIG_HOME="$G_DIR/v/base/config" XDG_CACHE_HOME="$G_AGENT_CACHE" \
-        "$AGENT_BIN" status --socket "$G_SOCKET" 2>/dev/null | grep -q "Running and Responding"; then
+        "$AGENT_BIN" status --socket "$G_SOCKET" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
@@ -524,7 +523,7 @@ g_export() {
   printf '[agent]\nenabled = true\n\n[agent.supervisor]\nenabled = false\n\n[ui]\nenabled_segments = [%s]\n%s' \
     "$segments" "$extra" >"$d/config/gpy/config.toml"
   for sh in bash zsh fish; do
-    if ! XDG_CONFIG_HOME="$d/config" XDG_CACHE_HOME="$d/cache" "$AGENT_BIN" theme export --format "$sh" \
+    if ! XDG_CONFIG_HOME="$d/config" XDG_CACHE_HOME="$d/cache" "$AGENT_BIN" theme export --shell "$sh" \
         >"$d/cache/gpy/theme-export.$sh" 2>/dev/null; then
       record_hard "script segments: theme export ($variant, $sh) failed"
       return 1

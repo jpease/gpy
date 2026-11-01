@@ -66,7 +66,7 @@ fn parse_format(value: Option<&str>) -> Option<Format> {
 fn parse_request(data: &[u8]) -> Result<ShellIpcMessage> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)
-        .map_err(|e| Error::json(format!("Invalid UTF-8 in message: {e}")))?;
+        .map_err(|e| Error::ipc(format!("Invalid UTF-8 in message: {e}")))?;
 
     serde_json::from_str(json).map_err(|e| {
         crate::debug_log!("protocol", "Failed to deserialize IPC message: {e}");
@@ -93,7 +93,7 @@ pub fn serialize_response(resp: &Response) -> Result<Vec<u8>> {
 pub fn deserialize_response(data: &[u8]) -> Result<Response> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)
-        .map_err(|e| Error::json(format!("Invalid UTF-8 in response: {e}")))?;
+        .map_err(|e| Error::ipc(format!("Invalid UTF-8 in response: {e}")))?;
     serde_json::from_str(json)
         .map_err(|e| Error::ipc(format!("Failed to deserialize response: {e}")))
 }

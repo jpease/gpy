@@ -40,20 +40,13 @@ pub(super) fn create_pruning_timer() -> tokio::time::Interval {
 #[cfg(unix)]
 pub(super) fn create_shutdown_signal() -> ShutdownSignal {
     Box::pin(async {
-        let mut sigterm =
-            signal::unix::signal(signal::unix::SignalKind::terminate()).map_err(|e| {
-                Error::process(
-                    "shutdown signal",
-                    format!("Failed to setup SIGTERM handler: {e}"),
-                )
-            })?;
+        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+            .map_err(|e| Error::agent(format!("cannot install the SIGTERM handler: {e}")))?;
 
         tokio::select! {
             result = signal::ctrl_c() => {
                 result.map_err(|e| {
-                    Error::process("shutdown signal",
-                        format!("Failed to setup signal handler: {e}"),
-                    )
+                    Error::agent(format!("cannot install the signal handler: {e}"))
                 })?;
             }
             _ = sigterm.recv() => {}
@@ -68,12 +61,9 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
 #[cfg(not(unix))]
 pub(super) fn create_shutdown_signal() -> ShutdownSignal {
     Box::pin(async {
-        signal::ctrl_c().await.map_err(|e| {
-            Error::process(
-                "shutdown signal",
-                format!("Failed to setup signal handler: {e}"),
-            )
-        })?;
+        signal::ctrl_c()
+            .await
+            .map_err(|e| Error::agent(format!("cannot install the signal handler: {e}")))?;
         println!("Received shutdown signal, shutting down gracefully...");
         Ok::<(), Error>(())
     })

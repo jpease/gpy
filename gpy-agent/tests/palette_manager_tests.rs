@@ -242,3 +242,21 @@ fn validate_by_name_accepts_builtin_default() {
     assert_eq!(report.target, "default");
     assert_eq!(report.source, "named palette");
 }
+
+#[test]
+#[serial]
+fn user_palette_parse_error_names_file_and_palette() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let palettes_dir = temp_dir.path().join("gpy").join("palettes");
+    std::fs::create_dir_all(&palettes_dir).unwrap();
+    let file = palettes_dir.join("broken.toml");
+    std::fs::write(&file, "name = [\n").unwrap();
+
+    let error = PaletteManager::new("broken")
+        .err()
+        .expect("broken palette must error")
+        .to_string();
+    assert!(error.contains(&file.display().to_string()), "{error}");
+    assert!(error.contains("'broken'"), "{error}");
+}

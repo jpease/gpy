@@ -20,7 +20,7 @@ function test_theme_prompt_render
     # Run theme export and source it
     set -l theme_export $tmp_dir/theme-export.fish
     set -lx XDG_CONFIG_HOME $config_root
-    gpy-agent theme export --format fish >$theme_export
+    gpy-agent theme export --shell fish >$theme_export
 
     source $theme_export
 

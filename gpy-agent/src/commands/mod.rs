@@ -1,5 +1,7 @@
 //! Command implementations for the GPY CLI.
 
+/// What the `gpy-agent` lifecycle commands print and return.
+pub mod agent_report;
 #[cfg(unix)]
 mod backup_stamp;
 /// Hidden `gpy __complete <kind>` command used by shell completion glue.
@@ -15,6 +17,8 @@ pub mod doctor;
 mod doctor_bundled;
 mod doctor_ipc;
 mod doctor_themes;
+/// Lifecycle exit codes and the `--help` text that lists them.
+pub mod exit_codes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
 /// Language configuration commands.

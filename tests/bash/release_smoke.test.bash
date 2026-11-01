@@ -77,7 +77,7 @@ else
     fail "smoke-release.sh failed on the real binaries:"
     tail -n 30 "$work/good/smoke.log"
 fi
-for line in "gpy-agent --version reports" "oneshot git renders" "Running and Responding" \
+for line in "gpy-agent --version reports" "oneshot git renders" "gpy-agent status: running" \
     "fish renders a prompt" "zsh renders a prompt" "bash renders a prompt"; do
     if grep -q "PASS: .*$line" "$work/good/smoke.log"; then
         pass "the smoke run asserted: $line"

@@ -846,7 +846,7 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
 
 3. **Theme Loading Must Use Pipe-to-Source**:
    ```fish
-   gpy-agent theme export --format fish | source
+   gpy-agent theme export --shell fish | source
    ```
    NOT `eval (...)` - command substitution flattens newlines, breaking multi-line scripts.
 

@@ -334,28 +334,113 @@ pub(super) fn build_native_watcher(event_tx: &Sender<Event>) -> Result<Box<dyn W
     Ok(Box::new(watcher))
 }
 
-/// Build the polling fallback backend (`notify::PollWatcher`).
+/// Poll backend that compares file contents only where it matters.
 ///
-/// Content comparison is on because notify compares only whole-second mtimes,
-/// missing same-second rewrites (e.g. a moved ref).
+/// Two `PollWatcher`s share one event channel: `gitdir` compares contents and
+/// `worktree` does not. notify compares only whole-second mtimes, so a same-second
+/// same-size rewrite of a ref, `HEAD`, `index` or `packed-refs` would be missed
+/// without hashing. Hashing every worktree file or git object pack each tick would
+/// re-read the whole repository, so those paths are compared by mtime and size.
+pub(super) struct SplitPollWatcher {
+    gitdir: PollWatcher,
+    worktree: PollWatcher,
+    registry: Arc<WatchRegistry>,
+}
+
+/// Whether the poll backend watches `path` with content comparison: git
+/// metadata outside the `objects` store. Object files are written once under
+/// content-addressed names, so name and mtime already show a change.
+pub(super) fn routes_to_gitdir(path: &Path, registry: &WatchRegistry) -> bool {
+    if path
+        .components()
+        .any(|component| component.as_os_str() == "objects")
+    {
+        return false;
+    }
+    path.components()
+        .any(|component| component.as_os_str() == ".git")
+        || registry.is_under_registered_external_gitdir(path)
+        || registry.is_under_registered_common_gitdir(path)
+}
+
+impl SplitPollWatcher {
+    /// Both inner pollers, forwarding to clones of `event_tx`.
+    ///
+    /// # Errors
+    /// Returns an error if either poll watcher cannot be initialized.
+    pub(super) fn new_split(
+        event_tx: &Sender<Event>,
+        poll_interval: Duration,
+        registry: Arc<WatchRegistry>,
+    ) -> Result<Self> {
+        Ok(Self {
+            gitdir: Self::poll_half(event_tx, poll_interval, true)?,
+            worktree: Self::poll_half(event_tx, poll_interval, false)?,
+            registry,
+        })
+    }
+
+    /// One inner poller; directory-mtime echoes of child changes are dropped.
+    fn poll_half(
+        event_tx: &Sender<Event>,
+        poll_interval: Duration,
+        compare_contents: bool,
+    ) -> Result<PollWatcher> {
+        let tx_clone = event_tx.clone();
+        PollWatcher::new(
+            move |res: notify::Result<Event>| match res {
+                Ok(event) if is_poll_directory_mtime_noise(&event) => {}
+                other => FileSystemWatcher::forward_event(&tx_clone, other),
+            },
+            notify::Config::default()
+                .with_poll_interval(poll_interval)
+                .with_compare_contents(compare_contents),
+        )
+        .map_err(|e| Error::watcher(format!("Failed to create poll-fallback watcher: {e}")))
+    }
+}
+
+impl Watcher for SplitPollWatcher {
+    fn new<F: notify::EventHandler>(
+        _event_handler: F,
+        _config: notify::Config,
+    ) -> notify::Result<Self> {
+        Err(notify::Error::generic(
+            "SplitPollWatcher is built with SplitPollWatcher::new_split",
+        ))
+    }
+
+    fn watch(&mut self, path: &Path, recursive_mode: notify::RecursiveMode) -> notify::Result<()> {
+        if routes_to_gitdir(path, &self.registry) {
+            self.gitdir.watch(path, recursive_mode)
+        } else {
+            self.worktree.watch(path, recursive_mode)
+        }
+    }
+
+    /// Asks both pollers: no route table is kept, and the registry predicate may
+    /// have changed since `watch`. Succeeds when either held the path.
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        let from_gitdir = self.gitdir.unwatch(path);
+        let from_worktree = self.worktree.unwatch(path);
+        from_gitdir.or(from_worktree)
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::PollWatcher
+    }
+}
+
+/// Build the polling fallback backend: a [`SplitPollWatcher`].
 ///
 /// # Errors
-/// Returns an error if the poll watcher cannot be initialized.
+/// Returns an error if the poll watchers cannot be initialized.
 pub(super) fn build_poll_watcher(
     event_tx: &Sender<Event>,
     poll_interval: Duration,
+    registry: Arc<WatchRegistry>,
 ) -> Result<Box<dyn Watcher + Send>> {
-    let tx_clone = event_tx.clone();
-    let watcher = PollWatcher::new(
-        move |res: notify::Result<Event>| match res {
-            Ok(event) if is_poll_directory_mtime_noise(&event) => {}
-            other => FileSystemWatcher::forward_event(&tx_clone, other),
-        },
-        notify::Config::default()
-            .with_poll_interval(poll_interval)
-            .with_compare_contents(true),
-    )
-    .map_err(|e| Error::watcher(format!("Failed to create poll-fallback watcher: {e}")))?;
+    let watcher = SplitPollWatcher::new_split(event_tx, poll_interval, registry)?;
     Ok(Box::new(watcher))
 }
 

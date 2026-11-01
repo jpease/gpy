@@ -10,10 +10,12 @@ use std::time::{Duration, SystemTime};
 
 use super::bounded::evict_to_capacity;
 
-/// Shared TTL (seconds) governing every [`TtlMap`] built with [`TtlMap::new`].
+/// TTL (seconds) from `language.cache_ttl_hours`, governing every [`TtlMap`]
+/// built with [`TtlMap::new`] (the language version, mise and venv caches). A
+/// cache with another lifetime uses [`TtlMap::with_ttl`].
 static SHARED_CACHE_TTL_SECONDS: AtomicU64 = AtomicU64::new(24 * 60 * 60);
 
-/// Update the shared cache TTL (in hours), clamped to `[1, 720]`.
+/// Update the language cache TTL (in hours), clamped to `[1, 720]`.
 pub fn set_shared_cache_ttl(hours: u64) {
     let clamped = hours.clamp(1, 720);
     SHARED_CACHE_TTL_SECONDS.store(clamped.saturating_mul(3600), Ordering::SeqCst);
@@ -55,7 +57,7 @@ where
     V: Clone,
 {
     /// Create an empty cache bounded to `capacity` entries (`0` = unbounded),
-    /// following the shared TTL.
+    /// following `language.cache_ttl_hours`; only language caches use this.
     #[must_use]
     pub const fn new(capacity: usize) -> Self {
         Self {
@@ -65,8 +67,8 @@ where
         }
     }
 
-    /// Like [`TtlMap::new`], but entries expire after `ttl` regardless of the
-    /// shared knob.
+    /// Like [`TtlMap::new`], but entries expire after `ttl` regardless of
+    /// `language.cache_ttl_hours`. A cache with its own lifetime uses this.
     #[must_use]
     pub const fn with_ttl(capacity: usize, ttl: Duration) -> Self {
         Self {
@@ -155,6 +157,28 @@ where
     }
 }
 
+/// Test guard that sets `language.cache_ttl_hours` and restores the 24 h
+/// default on drop, even when an assertion fails.
+#[cfg(test)]
+pub(crate) struct LanguageTtlGuard;
+
+#[cfg(test)]
+impl LanguageTtlGuard {
+    /// Set the language cache TTL to `hours` until the guard drops.
+    #[must_use]
+    pub(crate) fn set(hours: u64) -> Self {
+        set_shared_cache_ttl(hours);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for LanguageTtlGuard {
+    fn drop(&mut self) {
+        set_shared_cache_ttl(24);
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -218,7 +242,7 @@ mod tests {
     #[test]
     #[serial_test::serial(global_ttl)]
     fn get_evicts_and_returns_none_once_ttl_has_elapsed() {
-        set_shared_cache_ttl(1);
+        let _ttl = LanguageTtlGuard::set(1);
         let map: TtlMap<&str, u32> = TtlMap::new(0);
 
         map.insert_at("k", 1, SystemTime::now() - Duration::from_secs(3600 + 5));
@@ -226,8 +250,6 @@ mod tests {
 
         assert_eq!(map.get("k"), None, "stale entry should read as a miss");
         assert_eq!(map.len(), 0, "stale entry should be evicted on read");
-
-        set_shared_cache_ttl(24);
     }
 
     #[test]

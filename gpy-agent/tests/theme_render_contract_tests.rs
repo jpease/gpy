@@ -150,9 +150,9 @@ fn color_theme(text_color: &str) -> String {
 /// The value `theme export` hands the shells for `variable`.
 fn exported_value(env: &CliTestEnv, variable: &str) -> String {
     let result = env
-        .run_gpy_agent(&["theme", "export", "--format", "bash"])
+        .run_gpy_agent(&["theme", "export", "--shell", "bash"])
         .expect("run theme export");
-    result.assert_success("gpy-agent theme export --format bash");
+    result.assert_success("gpy-agent theme export --shell bash");
     let prefix = format!("{variable}=\"");
     result
         .stdout

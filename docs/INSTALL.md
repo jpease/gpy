@@ -200,14 +200,20 @@ files are covered in [Verifying Your Download](#verifying-your-download).
 
 ### Environment Variables
 
-Customize the installation behavior:
+The installers take no options other than `--help`; an unknown argument exits 2
+before anything is installed. Configure them with these variables (pipe the
+one-line installer to `sh`; run `install.sh` from an extracted archive with
+`bash install.sh`, since it needs bash). With an unsupported shell (anything but
+fish, zsh or bash, or no `$SHELL`) they install the binaries only, edit no shell
+files, and ask you to re-run with `GPY_SHELL=fish`, `zsh` or `bash`.
 
 - **`GPY_SHELL`**: Override shell detection
   ```bash
   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | GPY_SHELL=fish sh
   ```
 
-- **`GPY_VERSION`**: Install a specific release with whichever copy of the
+- **`GPY_VERSION`** (one-line installer only; `install.sh` installs the archive
+  it came from): Install a specific release with whichever copy of the
   installer you ran. The release must publish `gpy-shell-files.tar.gz` (see
   above); the release's own installer URL is the simpler way to pin.
   ```bash
@@ -582,7 +588,7 @@ cat ~/.cache/gpy/agent.log
 ```
 
 Common issues:
-- **Socket permission errors**: Delete the socket `gpy status` reports (`Socket Path: ...`, normally `$XDG_RUNTIME_DIR/gpy/gpy.sock`, else `~/.cache/gpy/gpy.sock`) and retry
+- **Socket permission errors**: Delete the socket `gpy status` reports (`socket: ...`, normally `$XDG_RUNTIME_DIR/gpy/gpy.sock`, else `~/.cache/gpy/gpy.sock`) and retry
 - **Socket already in use**: Another agent instance is running, check with `gpy-agent status`
 
 ### Prompt not updating
@@ -594,8 +600,7 @@ Common issues:
 
 2. Restart the agent:
    ```bash
-   gpy-agent stop
-   gpy-agent start
+   gpy-agent restart
    ```
 
 3. Verify shell files are sourced:

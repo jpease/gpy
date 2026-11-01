@@ -23,6 +23,7 @@ mod registry;
 mod watch_set;
 
 pub use coordinator::{DelayedEventScheduler, EventCallback, PendingCallback, WatchCoordinator};
+pub(crate) use registry::RepoFilter;
 pub use registry::WatchRegistry;
 
 /// Quiet window before a burst of file events flushes, in milliseconds.
@@ -201,6 +202,10 @@ fn path_contains_git_subdir(path: &Path, subdir_components: &[&str]) -> bool {
     })
 }
 
+/// `.git` subdirectories whose events never change repository state. `.git/info/`
+/// stays unfiltered: `info/exclude` is git-significant.
+const GIT_NOISE_SUBDIRS: &[&[&str]] = &[&["objects"], &["logs"], &["hooks"], &["refs", "tags"]];
+
 fn filter_ignored(path: &Path) -> Option<()> {
     // Match file names, not path substrings (`foo.socket.rs` must pass).
     if path.file_name() == Some(OsStr::new("gpy-agent.log")) {
@@ -210,11 +215,9 @@ fn filter_ignored(path: &Path) -> Option<()> {
         return None;
     }
 
-    // `.git/info/` stays unfiltered: `info/exclude` is git-significant.
-    if path_contains_git_subdir(path, &["objects"])
-        || path_contains_git_subdir(path, &["logs"])
-        || path_contains_git_subdir(path, &["hooks"])
-        || path_contains_git_subdir(path, &["refs", "tags"])
+    if GIT_NOISE_SUBDIRS
+        .iter()
+        .any(|subdir| path_contains_git_subdir(path, subdir))
     {
         return None;
     }

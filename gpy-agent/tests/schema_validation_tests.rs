@@ -218,6 +218,7 @@ fn test_response_roundtrip() {
             watched_repos: 5,
             registered_clients: 3,
             cache_entries: 12,
+            pid: Some(4321),
         },
         Response::Error {
             message: "Test error".to_owned(),
@@ -694,6 +695,7 @@ mod schema_files {
                     watched_repos: 1,
                     registered_clients: 2,
                     cache_entries: 3,
+                    pid: Some(4321),
                 }),
             ),
         ];
@@ -703,6 +705,20 @@ mod schema_files {
                 "response.json rejects {label}: {reply}"
             );
         }
+        let mut bad_status = replies
+            .iter()
+            .find(|(label, _)| *label == "status")
+            .map(|(_, reply)| reply.clone())
+            .unwrap();
+        bad_status
+            .get_mut("AgentStatus")
+            .and_then(Value::as_object_mut)
+            .expect("status reply has an AgentStatus object")
+            .insert("pid".to_owned(), Value::String("x".to_owned()));
+        assert!(
+            !validate(&schema, &schema, &bad_status),
+            "response.json accepts a non-integer pid: {bad_status}"
+        );
     }
 
     #[test]

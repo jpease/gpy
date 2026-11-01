@@ -4,7 +4,11 @@
 # segment names via `gpy __complete <kind>`. The installers append this file to
 # the generated completions as `completions/gpy.fish`. Design notes:
 # docs/dev/completions.md.
-function __gpy_complete_cached --description 'Cache gpy __complete <kind> per session'
+function __gpy_complete_cache_clear --on-event fish_preexec --description 'Drop cached gpy __complete results before each command'
+    set -e __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
+end
+
+function __gpy_complete_cached --description 'Cache gpy __complete <kind> until the next command'
     set -l kind $argv[1]
     set -l cache_var __gpy_complete_cache_$kind
     if not set -q $cache_var

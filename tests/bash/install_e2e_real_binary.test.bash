@@ -67,7 +67,7 @@ cp "$USER_PROMPT" "$SHELL_E2E_ROOT/fish_prompt.orig"
 
 agent_pid() { lsof -t -- "$GPY_AGENT_SOCKET_PATH" 2>/dev/null | head -n 1; }
 installed_agent_responding() {
-    "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -q 'Running and Responding'
+    "$HOME/.local/bin/gpy-agent" status >/dev/null 2>&1
 }
 
 echo "--- install ---"
@@ -103,10 +103,10 @@ if shell_e2e_poll 5 installed_agent_responding; then
 else
     fail "the installed agent does not respond: $("$HOME/.local/bin/gpy-agent" status 2>&1)"
 fi
-if "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -qF "Socket Path: $GPY_AGENT_SOCKET_PATH"; then
+if "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -qF "socket: $GPY_AGENT_SOCKET_PATH"; then
     pass "the agent bound the sandboxed socket"
 else
-    fail "the agent did not report the sandboxed socket: $("$HOME/.local/bin/gpy-agent" status 2>&1 | grep 'Socket')"
+    fail "the agent did not report the sandboxed socket: $("$HOME/.local/bin/gpy-agent" status 2>&1 | grep 'socket')"
 fi
 first_pid="$(agent_pid)"
 [ -n "$first_pid" ] || fail "no process holds the agent socket"
@@ -181,7 +181,7 @@ if grep -q '"op":"shutdown"' "$SHELL_E2E_ROOT/old-agent.requests" 2>/dev/null; t
 else
     fail "the old agent never received a shutdown request"
 fi
-if "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -q "^Agent Version: $binary_version\$"; then
+if "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -q "^version: $binary_version\$"; then
     pass "the upgraded agent reports the binary's version ($binary_version)"
 else
     fail "the upgraded agent does not report version $binary_version"

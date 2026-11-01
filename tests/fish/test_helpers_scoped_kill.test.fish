@@ -41,7 +41,7 @@ function start_decoy_agent
     end
 
     for i in (seq 1 20)
-        if gpy-agent status 2>&1 | grep -q "Running and Responding"
+        if gpy-agent status >/dev/null 2>&1
             set -g __decoy_pid (lsof -t "$__decoy_socket" 2>/dev/null | head -n 1)
             test -n "$__decoy_pid"; and return 0
         end
@@ -57,7 +57,7 @@ end
 
 function decoy_responding
     set -lx GPY_AGENT_SOCKET_PATH $__decoy_socket
-    gpy-agent status 2>&1 | grep -q "Running and Responding"
+    gpy-agent status >/dev/null 2>&1
 end
 
 function stop_decoy_agent

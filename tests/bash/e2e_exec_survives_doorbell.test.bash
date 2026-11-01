@@ -31,7 +31,7 @@ printf 'echo "EXEC_STARTED=$$"\nwhile [ ! -e "%s" ]; do sleep 0.05; done\nsource
 off="$(shell_e2e_size)"
 shell_e2e_send "exec bash --noprofile --rcfile '$exec_rc' -i\r"
 shell_e2e_wait_for "EXEC_STARTED=$client_pid" 10 "$off" >/dev/null || { fail "the exec'd bash never started"; shell_e2e_dump_transcript; exit 1; }
-counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 1'; }
+counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'registered_clients: 1'; }
 shell_e2e_poll 5 counted || fail "the PID is not registered across exec; the notification cannot reach it"
 
 signals_before="$(grep -c 'to reload via SIGURG' "$GPY_DEBUG_LOG" 2>/dev/null || true)"

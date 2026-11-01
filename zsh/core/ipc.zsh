@@ -326,7 +326,7 @@ function __gpy_check_protocol_version() {
     fi
 
     if [[ "$protocol_version" != "$GPY_EXPECTED_PROTOCOL_VERSION" ]]; then
-        print -r -- "gpy: WARNING: agent protocol version $protocol_version does not match expected $GPY_EXPECTED_PROTOCOL_VERSION; restart the agent (gpy-agent stop && gpy-agent start)" >&2
+        print -r -- "gpy: WARNING: agent protocol version $protocol_version does not match expected $GPY_EXPECTED_PROTOCOL_VERSION; restart the agent (gpy-agent restart)" >&2
         return 1
     fi
 
@@ -476,6 +476,31 @@ function __gpy_read_instant_cache() {
     while [[ "$__gpy_ric_text" == *$'\n' ]]; do __gpy_ric_text="${__gpy_ric_text%$'\n'}"; done
     printf -v "$4" '%s' "$__gpy_ric_text"
     return "$__gpy_ric_status"
+}
+
+# Tail of the agent's git-background file for dialect extension $1 into
+# variable $2. MUST match the agent's `CacheKind::GitBg` name.
+function __gpy_git_bg_file_tail() {
+    printf -v "$2" '%s' "git_bg.none.$1"
+}
+
+# Background the git pill was drawn with, for the segment after it, into
+# variable $1: the colour the agent recorded, else the clean colour. Agent-free
+# renders (git segment status GPY_SEG_STATUS_ONESHOT) never read the file: it may
+# be days old. No subshell: `read` in this shell with the per-prompt cwd memo.
+function __gpy_git_segment_bg() {
+    local __gpy_gsb_key_path __gpy_gsb_dir __gpy_gsb_key __gpy_gsb_tail __gpy_gsb_bg=""
+    if [[ "${__gpy_git_seg_status:-0}" != "$GPY_SEG_STATUS_ONESHOT" ]] &&
+        __gpy_instant_cache_key_path git "$PWD" __gpy_gsb_key_path &&
+        __gpy_instant_cache_dir __gpy_gsb_dir; then
+        __gpy_path_to_cache_key "$__gpy_gsb_key_path" __gpy_gsb_key
+        __gpy_chunk_cache_key __gpy_gsb_key
+        __gpy_git_bg_file_tail zsh __gpy_gsb_tail
+        # The file has no trailing newline, so `read -d ''` returns 1 yet fills the variable.
+        [[ -f "$__gpy_gsb_dir/$__gpy_gsb_key.$__gpy_gsb_tail" ]] &&
+            IFS= read -r -d '' __gpy_gsb_bg <"$__gpy_gsb_dir/$__gpy_gsb_key.$__gpy_gsb_tail"
+    fi
+    printf -v "$1" '%s' "${__gpy_gsb_bg:-${__color_git_clean_bg:-}}"
 }
 
 # Shared is_last/is_first/prev_bg JSON tail into variable $1. Absent flags are

@@ -1,7 +1,8 @@
 # GPY default color palette
-# Identity-maps the standard ANSI names used in prompt format templates.
+# Maps the standard ANSI names to themselves, plus two 256-colour accent roles
+# (`orange`, `brown`) used by palette-aware themes.
 name = "default"
-description = "GPY default palette (standard ANSI names)"
+description = "GPY default palette (standard ANSI names plus orange and brown)"
 
 [colors]
 # Standard ANSI names (identity) — keeps any standard token in a format working.

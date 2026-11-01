@@ -171,9 +171,9 @@ else
 fi
 
 echo "--- the installed agent answers ---"
-agent_responding() { "$AGENT_BIN" status 2>/dev/null | grep -q 'Running and Responding'; }
+agent_responding() { "$AGENT_BIN" status >/dev/null 2>&1; }
 if poll 10 agent_responding; then
-    pass "gpy-agent status: Running and Responding"
+    pass "gpy-agent status: running"
 else
     fail "the installed agent does not respond: $("$AGENT_BIN" status 2>&1 | head -n 3)"
 fi

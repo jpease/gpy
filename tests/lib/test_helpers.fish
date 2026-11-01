@@ -372,7 +372,7 @@ end
 
 # Predicate for poll_until: true when the agent reports >=1 registered client.
 function __gpy_agent_has_registered_client
-    gpy-agent status 2>/dev/null | grep -qE 'Registered Clients: [1-9]'
+    gpy-agent status 2>/dev/null | grep -qE 'registered_clients: [1-9]'
 end
 
 # Wait for agent to become responsive
@@ -387,9 +387,9 @@ function wait_for_agent
     poll_until $timeout_seconds __gpy_agent_responding
 end
 
-# Predicate for poll_until: true when the agent reports "Running and Responding".
+# Predicate for poll_until: true when `gpy-agent status` exits 0.
 function __gpy_agent_responding
-    gpy-agent status 2>&1 | grep -q "Running and Responding"
+    gpy-agent status >/dev/null 2>&1
 end
 
 # Poll until a predicate succeeds, or a timeout elapses.

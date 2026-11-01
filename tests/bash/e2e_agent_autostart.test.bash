@@ -116,11 +116,11 @@ else
     fail "the shell did not exit within 5 s"
 fi
 # The EXIT trap sends `unregister`; status drops the client.
-unregistered() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 0'; }
+unregistered() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'registered_clients: 0'; }
 if shell_e2e_poll 5 unregistered; then
     pass "exit unregistered the client"
 else
-    fail "the agent still counts a registered client after exit: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep 'Registered Clients')"
+    fail "the agent still counts a registered client after exit: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep 'registered_clients')"
 fi
 tail_text="$(shell_e2e_transcript "$off5")"
 case "$tail_text" in

@@ -1,6 +1,6 @@
 //! Configuration file loading, parsing, and comment-preserving saving.
 
-use super::{Config, schema, validation};
+use super::{Config, GitIconSet, schema, validation};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -169,7 +169,9 @@ fn flatten_table(
 /// `language.icons.` are never unknown.
 #[must_use]
 pub fn unknown_config_keys(raw: &toml::Table) -> Vec<String> {
-    let Ok(known) = config_leaves(&Config::default()) else {
+    let mut defaults = Config::default();
+    defaults.git.icons = defaults.git.icons.resolved(GitIconSet::Unicode);
+    let Ok(known) = config_leaves(&defaults) else {
         return Vec::new();
     };
     let mut set = BTreeMap::new();

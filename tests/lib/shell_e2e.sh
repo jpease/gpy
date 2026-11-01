@@ -291,7 +291,7 @@ shell_e2e_init() {
 
 # The agent's report line for a live daemon.
 shell_e2e_agent_responding() {
-    "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Running and Responding'
+    "$SHELL_E2E_AGENT_BIN" status >/dev/null 2>&1
 }
 
 # The full quality gate runs these suites while `cargo build --release` and

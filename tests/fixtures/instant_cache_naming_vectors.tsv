@@ -14,6 +14,9 @@
 #   token<TAB>prev_bg<TAB>expected            __gpy_prev_bg_token
 #   suffix<TAB>base<TAB>is_last<TAB>is_first<TAB>expected
 #                                              __gpy_cache_variant_suffix
+#   bgfile<TAB>ext<TAB>expected               __gpy_git_bg_file_tail OUT_VAR
+#                                              (the git pill's background file
+#                                              tail: `git_bg.none.{ext}`)
 #   status<TAB>code<TAB>stale<TAB>variant      __gpy_cache_status_stale /
 #                                              __gpy_cache_status_variant
 #                                              (yes|no each)
@@ -50,6 +53,10 @@ suffix	git	true	true	git_first_last
 suffix	lang	true	true	lang_first_last
 suffix	lang	false	false	lang
 suffix	lang	TRUE	1	lang
+
+bgfile	ansi	git_bg.none.ansi
+bgfile	bash	git_bg.none.bash
+bgfile	zsh	git_bg.none.zsh
 
 status	0	no	no
 status	1	no	no

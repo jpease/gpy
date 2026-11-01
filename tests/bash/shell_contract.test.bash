@@ -85,7 +85,7 @@ write_config() {
 exports_match_config() {
     local export_dir="$1/cache/gpy" sh want have
     for sh in fish bash zsh; do
-        want="$("$REAL_AGENT" theme export --format "$sh" 2>/dev/null | grep '__enabled_segments')"
+        want="$("$REAL_AGENT" theme export --shell "$sh" 2>/dev/null | grep '__enabled_segments')"
         have="$(grep '__enabled_segments' "$export_dir/theme-export.$sh" 2>/dev/null)"
         [[ -n "$want" && "$want" == "$have" ]] || return 1
     done

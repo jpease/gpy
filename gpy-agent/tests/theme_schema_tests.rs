@@ -142,7 +142,7 @@ show_seconds = true
     write_config(&xdg_config, "[ui]\ntheme = \"export-test\"\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-        .args(["theme", "export", "--format", "fish"])
+        .args(["theme", "export", "--shell", "fish"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
@@ -300,6 +300,10 @@ fn default_preset_recommends_builtin_defaults() {
         "default preset should recommend truncate_to_repo off for clean round-trip"
     );
     assert_eq!(recommended.show_icons, Some(true));
+    assert_eq!(
+        recommended.language_detection,
+        Some(gpy_agent::config::types::DetectionMode::Markers)
+    );
 
     let text =
         loader::load_theme_from_path(Path::new("text.toml")).expect("text theme should load");
@@ -417,15 +421,20 @@ fn theme_use_force_preserves_explicit_user_preferences() {
     );
 }
 
-#[test]
-fn theme_use_force_applies_recommended_detection_mode() {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let xdg_config = temp_dir.path().join("config");
-    write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
+/// Writes the `contentpref` test theme: the stock theme recommending `content`.
+fn write_contentpref_theme(xdg_config: &Path) {
+    write_theme(
+        xdg_config,
+        "contentpref",
+        "extends = \"default\"\n\n[ui.recommended]\nlanguage_detection = \"content\"\n",
+    );
+}
 
+/// Runs `gpy theme use <theme> --force` and returns stdout.
+fn theme_use_force(xdg_config: &Path, theme: &str) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .args(["theme", "use", "starship", "--force"])
-        .env("XDG_CONFIG_HOME", &xdg_config)
+        .args(["theme", "use", theme, "--force"])
+        .env("XDG_CONFIG_HOME", xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("run gpy theme use --force");
@@ -434,19 +443,32 @@ fn theme_use_force_applies_recommended_detection_mode() {
         "theme use --force should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(
-        stdout.contains("language detection (markers)"),
-        "applying the starship preset should report the markers detection mode: {stdout}"
-    );
+    String::from_utf8(output.stdout).expect("utf8 stdout")
+}
 
+fn written_detection_mode(xdg_config: &Path) -> gpy_agent::config::types::DetectionMode {
     let written = fs::read_to_string(xdg_config.join("gpy").join("config.toml"))
         .expect("read updated config");
     let config: gpy_agent::config::Config = toml::from_str(&written).expect("parse config");
+    config.language.detection_mode
+}
+
+#[test]
+fn theme_use_force_applies_recommended_detection_mode() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let xdg_config = temp_dir.path().join("config");
+    write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
+    write_contentpref_theme(&xdg_config);
+
+    let stdout = theme_use_force(&xdg_config, "contentpref");
+    assert!(
+        stdout.contains("language detection (content)"),
+        "applying the contentpref theme should report the content detection mode: {stdout}"
+    );
     assert_eq!(
-        config.language.detection_mode,
-        gpy_agent::config::types::DetectionMode::Markers,
-        "--force should apply the starship preset's recommended markers detection mode"
+        written_detection_mode(&xdg_config),
+        gpy_agent::config::types::DetectionMode::Content,
+        "--force should apply the theme's recommended content detection mode"
     );
 }
 
@@ -454,38 +476,44 @@ fn theme_use_force_applies_recommended_detection_mode() {
 fn theme_use_force_preserves_explicit_detection_mode() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let xdg_config = temp_dir.path().join("config");
-    // Text theme has no recommendation, so the user's `markers` differs from it
-    // and must survive forcing default.
+    // Text theme has no recommendation, so the user's `hybrid` is user-owned
+    // and must survive forcing a theme that recommends `content`.
     write_config(
         &xdg_config,
-        "[ui]\ntheme = \"text\"\n\n[language]\ndetection_mode = \"markers\"\n",
+        "[ui]\ntheme = \"text\"\n\n[language]\ndetection_mode = \"hybrid\"\n",
     );
+    write_contentpref_theme(&xdg_config);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .args(["theme", "use", "default", "--force"])
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run gpy theme use --force");
-    assert!(
-        output.status.success(),
-        "theme use --force should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let stdout = theme_use_force(&xdg_config, "contentpref");
     assert!(
         stdout.contains("Preserved your explicit settings")
-            && stdout.contains("language detection (markers)"),
+            && stdout.contains("language detection (hybrid)"),
         "--force should preserve the user's explicit detection mode: {stdout}"
     );
-
-    let written = fs::read_to_string(xdg_config.join("gpy").join("config.toml"))
-        .expect("read updated config");
-    let config: gpy_agent::config::Config = toml::from_str(&written).expect("parse config");
     assert_eq!(
-        config.language.detection_mode,
+        written_detection_mode(&xdg_config),
+        gpy_agent::config::types::DetectionMode::Hybrid,
+        "--force must preserve the user's explicit hybrid detection mode"
+    );
+}
+
+#[test]
+fn stock_preset_round_trips_detection_mode() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let xdg_config = temp_dir.path().join("config");
+    write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
+    write_contentpref_theme(&xdg_config);
+
+    theme_use_force(&xdg_config, "contentpref");
+    let stdout = theme_use_force(&xdg_config, "default");
+    assert!(
+        stdout.contains("language detection (markers)"),
+        "the stock theme should restore the markers detection mode: {stdout}"
+    );
+    assert_eq!(
+        written_detection_mode(&xdg_config),
         gpy_agent::config::types::DetectionMode::Markers,
-        "--force must preserve the user's explicit markers detection mode"
+        "the content value came from the outgoing theme, so the stock theme replaces it"
     );
 }
 
@@ -577,7 +605,7 @@ fn two_line_export_follows_each_theme() {
     let export = |theme: &str| -> String {
         write_config(&xdg_config, &format!("[ui]\ntheme = \"{theme}\"\n"));
         let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-            .args(["theme", "export", "--format", "fish"])
+            .args(["theme", "export", "--shell", "fish"])
             .env("XDG_CONFIG_HOME", &xdg_config)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()

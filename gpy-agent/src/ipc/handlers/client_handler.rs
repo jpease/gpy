@@ -144,6 +144,7 @@ impl ClientHandler {
             watched_repos,
             registered_clients,
             cache_entries,
+            pid: Some(std::process::id()),
         }
     }
 

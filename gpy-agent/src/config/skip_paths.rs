@@ -137,7 +137,8 @@ impl GitSettings {
     }
 
     /// Whether `git.skip_paths` skips `path` (pass a canonical path).
-    fn is_path_skipped(&self, path: &Path) -> bool {
+    #[must_use]
+    pub(crate) fn is_path_skipped(&self, path: &Path) -> bool {
         if self.skip_paths.is_empty() {
             return false;
         }

@@ -122,7 +122,7 @@ pub fn reload_agent_and_notify() {
     use crate::agent::lifecycle::ConfigReload;
 
     let outcome = tokio::runtime::Runtime::new()
-        .map_err(|e| Error::process("runtime", e.to_string()))
+        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))
         .and_then(|runtime| {
             runtime.block_on(crate::agent::lifecycle::send_config_reload_command())
         });

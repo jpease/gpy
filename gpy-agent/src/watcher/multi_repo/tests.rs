@@ -15,7 +15,7 @@ impl WorktreeWatch {
 }
 
 /// Fails a watch of every path for which it returns `Some(err)`.
-type WatchFault = Arc<dyn Fn(&Path) -> Option<Error> + Send + Sync>;
+pub(super) type WatchFault = Arc<dyn Fn(&Path) -> Option<Error> + Send + Sync>;
 
 /// Registrations with owner counts, and the armed OS watches.
 type HeldWatches = (
@@ -24,7 +24,7 @@ type HeldWatches = (
 );
 
 /// A real coordinator that logs every unwatch and fails the watches `fault` rejects.
-struct RecordingTarget {
+pub(super) struct RecordingTarget {
     inner: WatchCoordinator,
     fault: WatchFault,
     unwatched: Vec<PathBuf>,
@@ -62,7 +62,7 @@ impl WatchTarget for RecordingTarget {
 }
 
 /// A watcher over `registry` whose coordinator is wrapped in a [`RecordingTarget`].
-fn recording_watcher(
+pub(super) fn recording_watcher(
     watch_registry: Arc<WatchRegistry>,
     fault: WatchFault,
 ) -> MultiRepoWatcher<RecordingTarget> {
@@ -116,7 +116,7 @@ fn silent_watcher(registry: Option<Arc<WatchRegistry>>) -> MultiRepoWatcher {
         .unwrap()
 }
 
-fn no_fault() -> WatchFault {
+pub(super) fn no_fault() -> WatchFault {
     Arc::new(|_path: &Path| None)
 }
 
@@ -131,7 +131,7 @@ fn parse_commondir_pointer_table() {
         ("   \n", None),
     ];
     for (input, expected) in cases {
-        let actual = super::gitdir::parse_commondir_pointer(git_dir, input);
+        let actual = crate::git::parse_commondir_pointer(git_dir, input);
         assert_eq!(actual, expected.map(PathBuf::from), "input: {input:?}");
     }
 }
@@ -486,7 +486,7 @@ fn recreated_gitdir_rearms_watch_on_reregister() {
 }
 
 /// Effective worktree flag for `root`; one statement so the guard drops at once.
-fn tracked_worktree<T>(watcher: &MultiRepoWatcher<T>, root: &Path) -> bool {
+pub(super) fn tracked_worktree<T>(watcher: &MultiRepoWatcher<T>, root: &Path) -> bool {
     watcher
         .watched_repos
         .lock()
@@ -509,7 +509,7 @@ fn tracked_clients<T>(watcher: &MultiRepoWatcher<T>, root: &Path) -> HashSet<u32
 }
 
 /// A private registry with `worktree_enabled` applied.
-fn test_registry(worktree_enabled: bool) -> Arc<WatchRegistry> {
+pub(super) fn test_registry(worktree_enabled: bool) -> Arc<WatchRegistry> {
     let registry = Arc::new(WatchRegistry::new());
     registry.set_worktree_enabled(worktree_enabled);
     registry

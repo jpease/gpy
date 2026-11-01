@@ -2,7 +2,7 @@
 //! clear of unrefreshable entries, and one repository's git caches.
 
 use super::key::{CACHE_KEY_CHUNK_CHARS, cache_key_path, split_key_path};
-use super::name::{CacheKind, parse_cache_file_name};
+use super::name::parse_cache_file_name;
 use crate::debug_log;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
@@ -129,7 +129,7 @@ pub(super) fn remove_git_files(cache_dir: &Path, key: &str) {
         if file_name
             .to_str()
             .and_then(parse_cache_file_name)
-            .is_some_and(|name| name.kind == CacheKind::Git && name.key == last_chunk)
+            .is_some_and(|name| name.kind.is_git() && name.key == last_chunk)
             && let Err(e) = std::fs::remove_file(entry.path())
         {
             debug_log!(

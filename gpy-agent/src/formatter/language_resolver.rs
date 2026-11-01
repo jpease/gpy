@@ -3,6 +3,7 @@
 //! the language segment draws.
 
 use crate::config::Config;
+use crate::config::defaults::DEFAULT_LANGUAGE_ICONS;
 use crate::config::types::LanguageDisplay;
 use crate::formatter::SegmentPosition;
 use crate::formatter::chrome::SegmentChrome;
@@ -64,8 +65,9 @@ impl<'a> LanguageResolver<'a> {
         }
     }
 
-    /// `$symbol`: the theme symbol when icons are on, else the configured icon or
-    /// the name; an empty icon leaves it unresolved.
+    /// `$symbol`: with icons on, the theme symbol, else the `[language.icons]`
+    /// entry, else the built-in icon, else the name; with icons off, the name.
+    /// An explicitly empty configured icon leaves it unresolved.
     fn symbol(&self) -> Option<String> {
         let name = self.lang.name.as_str();
         let icons_on =
@@ -83,7 +85,13 @@ impl<'a> LanguageResolver<'a> {
             .icons
             .icons
             .get(icon_key)
-            .map_or(name, |icon| icon.as_str());
+            .map(crate::config::types::Icon::as_str)
+            .or_else(|| {
+                DEFAULT_LANGUAGE_ICONS
+                    .iter()
+                    .find_map(|(key, glyph)| (*key == icon_key).then_some(*glyph))
+            })
+            .unwrap_or(name);
         (!display.is_empty()).then(|| display.to_owned())
     }
 }
@@ -378,6 +386,44 @@ mod tests {
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert!(resolver.resolve("symbol").is_some());
+    }
+
+    fn symbol_of(name: &str, config: &Config) -> Option<String> {
+        let li = LanguageInfo {
+            name: name.to_owned(),
+            version: None,
+            color: ColorSpec::new("#dea584").unwrap(),
+        };
+        let theme = ThemeConfig::default();
+        LanguageResolver::new(
+            &li,
+            config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        )
+        .resolve("symbol")
+    }
+
+    #[test]
+    fn builtin_icon_used_when_neither_theme_nor_config_sets_one() {
+        let config = Config::default();
+        assert_eq!(symbol_of("Rust", &config), Some("\u{f1617}".to_owned()));
+    }
+
+    #[test]
+    fn config_icon_beats_builtin() {
+        let mut config = Config::default();
+        config.language.icons.icons.insert(
+            "rust".to_owned(),
+            crate::config::types::Icon::new("R").unwrap(),
+        );
+        assert_eq!(symbol_of("Rust", &config), Some("R".to_owned()));
+    }
+
+    #[test]
+    fn language_without_builtin_icon_shows_name() {
+        let config = Config::default();
+        assert_eq!(symbol_of("Zig", &config), Some("Zig".to_owned()));
     }
 
     #[test]

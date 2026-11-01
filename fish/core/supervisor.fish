@@ -210,7 +210,7 @@ function __gpy_agent_restart --description 'Restart the agent process'
     end
 
     if test -n "$agent_binary"
-        "$agent_binary" start 2>/dev/null
+        "$agent_binary" start >/dev/null 2>&1
 
         if __gpy_wait_for_socket "$socket_path"
             return 0

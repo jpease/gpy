@@ -1,23 +1,14 @@
 //! Maps git repository state to Starship-exact template variables
 //! (`git_branch`/`git_status`) so imported Starship `format` strings work verbatim.
 
-use crate::config::{Config, GitIconSet};
+use crate::config::defaults::BRANCH_GLYPH;
+use crate::config::{Config, GitIconKind};
 use crate::formatter::chrome::SegmentChrome;
 use crate::formatter::separator::Glyphs;
 use crate::formatter::{SegmentPosition, truncate_branch};
 use crate::git::RepositoryStatus;
 use crate::template::VariableResolver;
 use crate::theme::{GitState, GitTextElement, ThemeConfig};
-
-/// Nerd Font alternates, used for `icon_set = "nerd_font"` when the `[git.icons]` value
-/// is still the Unicode default; an explicit override always wins.
-const NERD_FONT_DETACHED: &str = "\u{f126}";
-// Unicode defaults mirrored for that comparison.
-const UNICODE_DETACHED: &str = "➦";
-const NERD_FONT_IN_PROGRESS: &str = "\u{f021}";
-const UNICODE_IN_PROGRESS: &str = "↻";
-const NERD_FONT_STASH: &str = "\u{f187}";
-const UNICODE_STASH: &str = "≡";
 
 /// Resolves Starship-exact git variable names from repository state.
 pub struct GitResolver<'a> {
@@ -62,30 +53,14 @@ impl<'a> GitResolver<'a> {
             return None;
         }
         if self.status.detached {
-            let icon = self.icon_set_glyph(
-                self.config.git.icons.detached.as_str(),
-                UNICODE_DETACHED,
-                NERD_FONT_DETACHED,
-            );
-            return Some(icon.to_owned());
+            return Some(self.glyph(GitIconKind::Detached).to_owned());
         }
-        // U+E0A0 (powerline branch).
-        Some("\u{e0a0}".to_owned())
+        Some(BRANCH_GLYPH.to_owned())
     }
 
-    /// Glyph for a stash/detached/in-progress icon: the configured value, or the Nerd
-    /// Font alternate when still at the Unicode default under `icon_set = "nerd_font"`.
-    fn icon_set_glyph<'b>(
-        &self,
-        configured: &'b str,
-        unicode_default: &str,
-        nerd_font_alt: &'static str,
-    ) -> &'b str {
-        if configured == unicode_default && self.config.git.icon_set == GitIconSet::NerdFont {
-            nerd_font_alt
-        } else {
-            configured
-        }
+    /// The `[git.icons]` icon for `kind`, else the default for `git.icon_set`.
+    fn glyph(&self, kind: GitIconKind) -> &str {
+        self.config.git.icons.glyph(kind, self.config.git.icon_set)
     }
 
     /// In-progress-operation indicator (e.g. `↻ REBASING 3/5`); `None` unless [`GitState::InProgress`].
@@ -95,12 +70,7 @@ impl<'a> GitResolver<'a> {
         }
         let mut text = String::new();
         if self.config.ui.show_icons {
-            let icon = self.icon_set_glyph(
-                self.config.git.icons.in_progress.as_str(),
-                UNICODE_IN_PROGRESS,
-                NERD_FONT_IN_PROGRESS,
-            );
-            text.push_str(icon);
+            text.push_str(self.glyph(GitIconKind::InProgress));
             text.push(' ');
         }
         text.push_str(&self.status.state.as_str().to_uppercase());
@@ -129,22 +99,16 @@ impl<'a> GitResolver<'a> {
             .git
             .stash_icon
             .as_deref()
-            .unwrap_or_else(|| {
-                self.icon_set_glyph(
-                    self.config.git.icons.stash.as_str(),
-                    UNICODE_STASH,
-                    NERD_FONT_STASH,
-                )
-            });
+            .unwrap_or_else(|| self.glyph(GitIconKind::Stash));
         let mut text = icon.to_owned();
         text.push_str(&self.status.stash_count.to_string());
         Some(text)
     }
 
     /// Composed dirty/staged/untracked indicators, or `None` when clean.
-    /// Theme `[segments.git]` overrides win over `config.git.icons`.
+    /// Per icon, a theme `[segments.git]` `*_icon` wins over `[git.icons]`,
+    /// which wins over the built-in default for `git.icon_set`.
     fn status_text(&self) -> Option<String> {
-        let icons = &self.config.git.icons;
         let git_theme = &self.theme.segments.git;
         let show_counts = git_theme.show_counts();
 
@@ -153,22 +117,22 @@ impl<'a> GitResolver<'a> {
             (
                 self.status.staged,
                 git_theme.staged_icon.as_deref(),
-                icons.staged.as_str(),
+                self.glyph(GitIconKind::Staged),
             ),
             (
                 self.status.unstaged,
                 git_theme.unstaged_icon.as_deref(),
-                icons.unstaged.as_str(),
+                self.glyph(GitIconKind::Unstaged),
             ),
             (
                 self.status.untracked,
                 git_theme.untracked_icon.as_deref(),
-                icons.untracked.as_str(),
+                self.glyph(GitIconKind::Untracked),
             ),
             (
                 self.status.conflicts,
                 git_theme.conflicts_icon.as_deref(),
-                icons.conflicts.as_str(),
+                self.glyph(GitIconKind::Conflicts),
             ),
         ];
 
@@ -187,10 +151,17 @@ impl<'a> GitResolver<'a> {
     /// Ahead/behind indicator (e.g. `↑2↓1`), or `None`.
     fn ahead_behind(&self) -> Option<String> {
         let mut text = String::new();
-        let icons = &self.config.git.icons;
         for (count, capped, icon) in [
-            (self.status.ahead, self.status.ahead_capped, &icons.ahead),
-            (self.status.behind, self.status.behind_capped, &icons.behind),
+            (
+                self.status.ahead,
+                self.status.ahead_capped,
+                self.glyph(GitIconKind::Ahead),
+            ),
+            (
+                self.status.behind,
+                self.status.behind_capped,
+                self.glyph(GitIconKind::Behind),
+            ),
         ] {
             if count > 0 {
                 let suffix = if capped { "+" } else { "" };
@@ -299,7 +270,14 @@ mod tests {
             resolver.resolve("ahead_behind"),
             Some(format!(
                 "{}2+{}100+",
-                config.git.icons.ahead, config.git.icons.behind
+                config
+                    .git
+                    .icons
+                    .glyph(crate::config::GitIconKind::Ahead, config.git.icon_set),
+                config
+                    .git
+                    .icons
+                    .glyph(crate::config::GitIconKind::Behind, config.git.icon_set),
             ))
         );
     }
@@ -701,6 +679,41 @@ mod tests {
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("symbol"), Some("\u{f126}".to_owned()));
+    }
+
+    #[test]
+    fn explicit_icon_equal_to_unicode_default_wins_under_nerd_font() {
+        let mut config = Config::default();
+        config.git.icon_set = crate::config::GitIconSet::NerdFont;
+        config.git.icons.stash = Some(crate::config::types::Icon::new("≡").expect("icon"));
+        let theme = ThemeConfig::default();
+        let mut st = status();
+        st.stash_count = 2;
+        let resolver = GitResolver::new(
+            &st,
+            GitState::Clean,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        assert_eq!(resolver.resolve("stash"), Some("≡2".to_owned()));
+    }
+
+    #[test]
+    fn unset_icon_uses_icon_set_default() {
+        let mut config = Config::default();
+        config.git.icon_set = crate::config::GitIconSet::NerdFont;
+        let theme = ThemeConfig::default();
+        let mut st = status();
+        st.stash_count = 2;
+        let resolver = GitResolver::new(
+            &st,
+            GitState::Clean,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        assert_eq!(resolver.resolve("stash"), Some("\u{f187}2".to_owned()));
     }
 
     #[test]

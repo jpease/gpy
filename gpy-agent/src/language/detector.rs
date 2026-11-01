@@ -566,4 +566,23 @@ mod tests {
         assert_eq!(detected_names(&["Makefile", "main.go"]), vec!["go"]);
         assert_eq!(detected_names(&["Makefile", "index.js"]), vec!["node"]);
     }
+
+    #[test]
+    fn default_config_ranks_by_markers_not_file_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "").unwrap();
+        let scripts = tmp.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        for index in 0_i32..50_i32 {
+            std::fs::write(scripts.join(format!("tool{index}.py")), "print()\n").unwrap();
+        }
+
+        let mode = crate::config::Config::default().language.detection_mode;
+        let names: Vec<String> = Detector::detect_directory_bounded(tmp.path(), mode)
+            .into_iter()
+            .map(|language| language.name)
+            .collect();
+
+        assert_eq!(names, vec!["rust"]);
+    }
 }

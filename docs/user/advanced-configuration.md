@@ -32,7 +32,7 @@ enabled = true
 # Enable/disable version detection for languages. Default: true
 show_versions = true
 
-# Cache TTL for language versions in hours. Default: 24
+# Cache TTL for language version, mise and virtualenv lookups in hours. Default: 24
 cache_ttl_hours = 24
 
 # List of languages to detect (empty means all). Example: ["rust", "python"]
@@ -48,7 +48,9 @@ display = "icon"
 filter = "all"
 
 # Minimum confidence score (0.0-1.0) for a language to be displayed. Default: 0.1
-# Languages with a confidence below this threshold will be hidden.
+# Languages with a confidence below this threshold will be hidden. Applies to
+# detection_mode "content" and "hybrid" only (default "markers" gives every
+# language confidence 1.0).
 confidence_threshold = 0.1
 
 [ui]
@@ -220,16 +222,17 @@ icon_set = "unicode"    # or "nerd_font"
 stash_enabled = true     # default; set false to skip `git stash list` entirely
 ```
 
-- `icon_set`: selects the glyph set for the stash (Unicode `≡` / Nerd Font
+- `icon_set`: selects the default glyphs for the stash (Unicode `≡` / Nerd Font
   `nf-fa-archive`), detached-HEAD (Unicode `➦` / Nerd Font `nf-fa-code_fork`),
-  and in-progress (Unicode `↻` / Nerd Font `nf-fa-refresh`) indicators. An
-  explicit override under `[git.icons]` (below) always wins regardless of
-  `icon_set`.
+  and in-progress (Unicode `↻` / Nerd Font `nf-fa-refresh`) indicators. The
+  branch glyph and the powerline caps follow `ui.show_icons` and need a
+  patched font in either set. An explicit override under `[git.icons]`
+  (below) wins over the `icon_set` default.
 - `stash_enabled`: when `false`, the agent skips the `git stash list`
   subprocess call entirely and `$stash` always renders empty — use this on
   very large repos where the extra call is undesirable.
 
-To override an individual glyph directly (independent of `icon_set`):
+To override an individual glyph directly (independent of `icon_set`). A theme's own `*_icon` wins over these; icon precedence is described in the [Configuration Reference](configuration-reference.md#giticons):
 
 ```toml
 [git.icons]

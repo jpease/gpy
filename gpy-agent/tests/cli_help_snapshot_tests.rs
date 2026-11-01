@@ -237,3 +237,64 @@ fn theme_new_and_save_help_offer_a_full_copy() {
         );
     }
 }
+
+/// The `Exit status:` paragraph of a help text: that line and the lines
+/// directly after it.
+fn exit_status_paragraph(help: &str) -> String {
+    help.lines()
+        .skip_while(|line| !line.starts_with("Exit status:"))
+        .take_while(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every lifecycle command lists its exit codes in `--help`, and `gpy status`
+/// and `gpy-agent status` list the same ones.
+#[test]
+fn lifecycle_help_lists_exit_codes() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    for args in [
+        &["start"][..],
+        &["stop"][..],
+        &["restart"][..],
+        &["status"][..],
+        &["doctor"][..],
+    ] {
+        let help = help_of(&env, args);
+        assert!(
+            help.lines().any(|line| line.starts_with("Exit status:")),
+            "`gpy {} --help` lists exit codes:\n{help}",
+            args.join(" ")
+        );
+    }
+
+    let agent_help = |args: &[&str]| {
+        let mut full = args.to_vec();
+        full.push("--help");
+        let result = env.run_gpy_agent(&full).expect("spawn gpy-agent");
+        result.assert_success(&format!("gpy-agent {} --help", args.join(" ")));
+        result.stdout
+    };
+    for args in [
+        &["start"][..],
+        &["stop"][..],
+        &["restart"][..],
+        &["status"][..],
+        &["config", "reload"][..],
+        &["oneshot"][..],
+        &["theme", "export"][..],
+    ] {
+        let help = agent_help(args);
+        assert!(
+            help.lines().any(|line| line.starts_with("Exit status:")),
+            "`gpy-agent {} --help` lists exit codes:\n{help}",
+            args.join(" ")
+        );
+    }
+
+    assert_eq!(
+        exit_status_paragraph(&help_of(&env, &["status"])),
+        exit_status_paragraph(&agent_help(&["status"])),
+        "`gpy status` and `gpy-agent status` document the same codes"
+    );
+}

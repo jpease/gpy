@@ -136,13 +136,13 @@ function _stop_running_agent
     end
 
     # `gpy-agent stop` already polls until the agent stops responding.
-    set -l socket_path (gpy-agent status 2>/dev/null | string match -rg '^Socket Path: (.*)$')
+    set -l socket_path (gpy-agent status 2>/dev/null | string match -rg '^socket: (.*)$')
 
     gpy-agent stop 2>/dev/null
 
     # Escalate only against the PID bound to our own socket, never by process
     # name: that would kill a dogfooding daemon or test agents on gpy-test-*.sock.
-    if test -n "$socket_path"; and gpy-agent status 2>/dev/null | string match -q '*Running and Responding*'
+    if test -n "$socket_path"; and gpy-agent status >/dev/null 2>&1
         if command -q lsof
             set -l socket_pid (lsof -t -- "$socket_path" 2>/dev/null)
             if test -n "$socket_pid"

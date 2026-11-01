@@ -9,7 +9,13 @@ use std::process::ExitCode;
 
 /// GPY - Modern prompt CLI for Bash, Fish, and Zsh
 #[derive(Parser, Debug)]
-#[command(name = "gpy", version = VERSION, about, long_about = None)]
+#[command(
+    name = "gpy",
+    version = VERSION,
+    about,
+    long_about = None,
+    after_help = commands::exit_codes::GPY_SUMMARY_HELP
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -19,15 +25,19 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Start the background agent
+    #[command(after_help = commands::exit_codes::START_HELP)]
     Start,
 
     /// Stop the background agent
+    #[command(after_help = commands::exit_codes::STOP_HELP)]
     Stop,
 
     /// Restart the background agent
+    #[command(after_help = commands::exit_codes::RESTART_HELP)]
     Restart,
 
     /// Show agent status and diagnostics
+    #[command(after_help = commands::exit_codes::STATUS_HELP)]
     Status,
 
     /// Manage themes
@@ -75,6 +85,7 @@ enum Commands {
     },
 
     /// Run health checks and diagnostics
+    #[command(after_help = commands::exit_codes::DOCTOR_HELP)]
     Doctor,
 
     /// Debugging tools
@@ -509,17 +520,18 @@ fn main() -> ExitCode {
     gpy_agent::error::report(run(cli.command))
 }
 
-/// Dispatch the parsed command. Only `status` has a non-zero success-path
-/// exit code (1 when no agent is running).
+/// Dispatch the parsed command. The lifecycle commands return `gpy-agent`'s
+/// exit code (see `commands::exit_codes`); every other command returns 0 or
+/// an error.
 ///
 /// # Errors
 /// Returns the subcommand's error for [`main`] to report.
 fn run(command: Commands) -> Result<ExitCode> {
     match command {
-        Commands::Start => commands::lifecycle::start()?,
-        Commands::Stop => commands::lifecycle::stop()?,
-        Commands::Restart => commands::lifecycle::restart()?,
-        Commands::Status => return commands::lifecycle::status(),
+        Commands::Start => return commands::lifecycle::start(),
+        Commands::Stop => return commands::lifecycle::stop(),
+        Commands::Restart => return commands::lifecycle::restart(),
+        Commands::Status => return Ok(commands::lifecycle::status()),
         Commands::Theme { action } => run_theme(action)?,
         Commands::Palette { action } => run_palette(action)?,
         Commands::Plugin { action } => match action {

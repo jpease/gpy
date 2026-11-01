@@ -11,6 +11,9 @@ to the code in `src/`.
   `#[path = "common/<file>.rs"] mod <file>;`. `integration_harness.rs` and
   `pty.rs` use their siblings, so they are reachable only through
   `mod common;`.
+  - `agent_sandbox.rs` — `AgentSandbox`: a `CliTestEnv` plus a private socket
+    for a real daemon, stopped on drop; `pids_matching`, `DaemonReaper`
+    (Unix-only).
   - `cli_harness.rs` — `CliTestEnv`: runs the `gpy`/`gpy-agent` binaries
     against an isolated HOME/XDG tree.
   - `child_guard.rs` — drop guards that terminate spawned processes on every

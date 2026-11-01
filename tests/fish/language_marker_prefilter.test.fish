@@ -37,7 +37,7 @@ mkdir "$tmp/plain"
 assert_detect "unset export defers (returns 0)" 0 "$tmp/plain"
 
 env HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/cfg" XDG_CACHE_HOME="$tmp/cache" \
-    XDG_RUNTIME_DIR="$tmp/run" "$agent_bin" theme export --format fish >"$tmp/export.fish" 2>/dev/null
+    XDG_RUNTIME_DIR="$tmp/run" "$agent_bin" theme export --shell fish >"$tmp/export.fish" 2>/dev/null
 source "$tmp/export.fish"
 
 if not set -q __gpy_lang_marker_files[1]

@@ -156,7 +156,7 @@ else
 fi
 
 # --- registration and agreement ---------------------------------------------
-two_clients() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 2'; }
+two_clients() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'registered_clients: 2'; }
 if shell_e2e_poll 5 two_clients; then
     pass "the agent reports two registered clients"
 else

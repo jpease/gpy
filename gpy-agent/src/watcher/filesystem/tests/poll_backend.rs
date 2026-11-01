@@ -1,4 +1,6 @@
+use super::super::backend::{SplitPollWatcher, routes_to_gitdir};
 use super::*;
+use notify::Watcher;
 
 /// A real worktree write is delivered well before reconcile whatever the
 /// native backend's health (falling back to `PollWatcher` if `FSEvents` is silent).
@@ -101,7 +103,8 @@ fn poll_fallback_detects_same_second_same_size_rewrite() {
             .expect("pin mtime");
     };
 
-    let ref_file = poll.root.join("branch-ref");
+    let ref_file = poll.root.join(".git/refs/heads/main");
+    std::fs::create_dir_all(ref_file.parent().expect("refs dir")).expect("create refs dir");
     pin(&ref_file, b"1111111111111111111111111111111111111111\n");
     poll.watcher.watch(&poll.root).expect("watch repo");
 
@@ -491,5 +494,76 @@ fn poll_watch_targets_never_prunes_inside_git_dir() {
     assert!(
         targets.contains(&repo.join(".git").join("objects").join("pack")),
         "a .gitignore rule must never prune a directory under .git, got: {targets:?}"
+    );
+}
+
+/// Git metadata outside the `objects` store is polled with content comparison;
+/// the worktree and object packs are not.
+#[test]
+fn split_poll_routes_gitdir_paths_to_content_comparison() {
+    let registry = test_registry(true, HashSet::new());
+    let root = Path::new("/work/repo");
+    let separate_gitdir = Path::new("/gitdirs/repo-store");
+    let common_dir = Path::new("/mirrors/foo.git");
+    registry.register_external_gitdir(separate_gitdir, root);
+    registry.register_common_gitdir(common_dir, root);
+
+    for path in [
+        root.join(".git/HEAD"),
+        root.join(".git/refs/heads/main"),
+        separate_gitdir.to_path_buf(),
+        separate_gitdir.join("refs"),
+        common_dir.to_path_buf(),
+        common_dir.join("refs"),
+    ] {
+        assert!(
+            routes_to_gitdir(&path, &registry),
+            "{} must be compared by content",
+            path.display()
+        );
+    }
+    for path in [
+        root.join("src/main.rs"),
+        root.to_path_buf(),
+        root.join(".git/objects/pack"),
+        root.join(".git/modules/sub/objects/pack"),
+        common_dir.join("objects/ab"),
+        separate_gitdir.join("objects"),
+    ] {
+        assert!(
+            !routes_to_gitdir(&path, &registry),
+            "{} must not be compared by content",
+            path.display()
+        );
+    }
+}
+
+/// After the registry forgets a common dir not named `.git`, `unwatch` still
+/// releases its path from whichever poller took it.
+#[test]
+fn split_poll_unwatch_releases_a_common_dir_after_unregister() {
+    let registry = test_registry(true, HashSet::new());
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let root = std::fs::canonicalize(tmp.path()).expect("canonicalize root");
+    let common_dir = root.join("foo.git");
+    let refs = common_dir.join("refs");
+    std::fs::create_dir_all(&refs).expect("refs dir");
+    registry.register_common_gitdir(&common_dir, &root);
+
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    let mut watcher =
+        SplitPollWatcher::new_split(&event_tx, Duration::from_millis(100), Arc::clone(&registry))
+            .expect("split poll watcher");
+    watcher
+        .watch(&refs, notify::RecursiveMode::Recursive)
+        .expect("watch refs");
+
+    registry.unregister_common_gitdir(&common_dir, &root);
+    watcher.unwatch(&refs).expect("unwatch after unregister");
+
+    std::fs::write(refs.join("main"), b"new\n").expect("write ref");
+    assert!(
+        event_rx.recv_timeout(Duration::from_millis(600)).is_err(),
+        "a released path must produce no events"
     );
 }

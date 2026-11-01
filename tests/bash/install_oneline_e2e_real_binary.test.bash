@@ -154,7 +154,7 @@ run_shell() {
             ;;
     esac
 
-    responding() { "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -q 'Running and Responding'; }
+    responding() { "$HOME/.local/bin/gpy-agent" status >/dev/null 2>&1; }
     if shell_e2e_poll 5 responding; then
         pass "$shell: the installed agent is running and responding"
     else

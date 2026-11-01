@@ -27,7 +27,7 @@ set -lx MISE_DISABLE 1
 set -lx XDG_CONFIG_HOME $temp_root
 set -lx HOME $temp_root
 
-set -l export_output ($agent_bin theme export --format fish | string collect)
+set -l export_output ($agent_bin theme export --shell fish | string collect)
 if test $status -ne 0
     fail "Failed to run gpy-agent theme export"
     echo $export_output

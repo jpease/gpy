@@ -68,7 +68,7 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
                 // The server sends formatted output, not a `Response`; only check it is JSON.
                 let _json: serde_json::Value = serde_json::from_slice(line).map_err(|e| {
                     let line_str = String::from_utf8_lossy(line);
-                    crate::Error::json(format!(
+                    crate::Error::ipc(format!(
                         "Failed to deserialize response: {e}. Raw: {line_str}"
                     ))
                 })?;

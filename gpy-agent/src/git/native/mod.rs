@@ -21,8 +21,13 @@ pub mod parser;
 
 use parser::{BranchHead, V2ParseResult};
 
-/// Repos whose `core.untrackedCache` was checked within the shared cache TTL.
-static UNTRACKED_CACHE_CHECKED: TtlMap<PathBuf, ()> = TtlMap::new(NATIVE_GIT_CONFIG_CACHE_CAPACITY);
+/// How long a repository's `core.untrackedCache` check is trusted. Fixed, not
+/// tied to `language.cache_ttl_hours`.
+const UNTRACKED_CACHE_RECHECK: Duration = Duration::from_hours(24);
+
+/// Repos whose `core.untrackedCache` was checked within [`UNTRACKED_CACHE_RECHECK`].
+static UNTRACKED_CACHE_CHECKED: TtlMap<PathBuf, ()> =
+    TtlMap::with_ttl(NATIVE_GIT_CONFIG_CACHE_CAPACITY, UNTRACKED_CACHE_RECHECK);
 
 /// Per-process switch for the untracked-cache setup; see
 /// [`NativeGitBackend::disable_untracked_cache_setup`].
@@ -402,18 +407,15 @@ impl NativeGitBackend {
                 let stash_handle =
                     s.spawn(|| Self::get_stash_count(repo_root, stash_enabled, deadline));
 
-                let status_v2_result = status_v2_handle.join().map_err(|panic| {
-                    Error::process(
-                        "git_status_v2",
-                        format!("status worker panicked: {panic:?}"),
-                    )
-                });
-                let state_result = state_handle.join().map_err(|panic| {
-                    Error::process("git_state", format!("state worker panicked: {panic:?}"))
-                });
-                let stash_result = stash_handle.join().map_err(|panic| {
-                    Error::process("git_stash", format!("stash worker panicked: {panic:?}"))
-                });
+                let status_v2_result = status_v2_handle
+                    .join()
+                    .map_err(|panic| Error::git(format!("status worker panicked: {panic:?}")));
+                let state_result = state_handle
+                    .join()
+                    .map_err(|panic| Error::git(format!("state worker panicked: {panic:?}")));
+                let stash_result = stash_handle
+                    .join()
+                    .map_err(|panic| Error::git(format!("stash worker panicked: {panic:?}")));
 
                 (status_v2_result, state_result, stash_result)
             });
@@ -657,5 +659,7 @@ mod tests;
 mod branch_head_tests;
 #[cfg(test)]
 mod pathspec_tests;
+#[cfg(test)]
+mod ttl_tests;
 #[cfg(test)]
 mod untracked_cache_tests;

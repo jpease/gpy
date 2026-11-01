@@ -31,9 +31,9 @@ mkdir "$tmp/plain"
 check "unset export defers (returns 0)" 0 "$(detect_in "$tmp/plain")"
 
 export_output="$(HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/cfg" XDG_CACHE_HOME="$tmp/cache" \
-    XDG_RUNTIME_DIR="$tmp/run" "$AGENT_BIN" theme export --format bash 2>/dev/null)"
+    XDG_RUNTIME_DIR="$tmp/run" "$AGENT_BIN" theme export --shell bash 2>/dev/null)"
 if [[ -z "$export_output" ]]; then
-    echo "FAIL: theme export --format bash produced no output"
+    echo "FAIL: theme export --shell bash produced no output"
     exit 1
 fi
 eval "$export_output"

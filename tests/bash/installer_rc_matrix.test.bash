@@ -18,10 +18,10 @@
 #   row INSTALLER SHELL LAYOUT EXPECT
 #     INSTALLER  oneline (install-oneline.sh, fake curl) | install.sh (staged
 #                release payload, fish only)
-#     SHELL      fish | zsh | bash
+#     SHELL      fish | zsh | bash | nushell (unsupported: binaries only)
 #     LAYOUT     a `layout_<name>` function below; it sets HOME and
 #                XDG_CONFIG_HOME
-#     EXPECT     ok | refuse
+#     EXPECT     ok | refuse | binaries-only
 #
 #
 # Paths are never interpolated into `-c` code: they travel as arguments or
@@ -282,7 +282,16 @@ row() {
     esac
     rc=$?
 
-    if [ "$expect" = refuse ]; then
+    if [ "$expect" = binaries-only ]; then
+        if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi
+        if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
+        # `gpy-agent start` itself creates $XDG_CONFIG_HOME/gpy/themes; only shell files count.
+        leftovers="$(find "$XDG_CONFIG_HOME" -iname '*gpy*' ! -path "$XDG_CONFIG_HOME/gpy" ! -path "$XDG_CONFIG_HOME/gpy/themes" 2>/dev/null)"
+        if [ -z "$leftovers" ]; then pass "$name: no shell tree created"; else fail "$name: shell files created: $leftovers"; fi
+        if [ -x "$HOME/.local/bin/gpy-agent" ] && [ -x "$HOME/.local/bin/gpy" ]; then pass "$name: both binaries installed"; else fail "$name: a binary is missing"; fi
+        if grep -q 'GPY_SHELL=fish, zsh or bash' "$SB/install.log"; then pass "$name: output names GPY_SHELL=fish, zsh or bash"; else fail "$name: no GPY_SHELL hint"; fi
+        if grep -q 'NOT set up' "$SB/install.log"; then pass "$name: summary says shell integration was not set up"; else fail "$name: no 'NOT set up' summary"; fi
+    elif [ "$expect" = refuse ]; then
         if [ "$rc" -ne 0 ]; then pass "$name: installer refused (exit $rc)"; else fail "$name: installer exited 0 on an unsupported path"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
         leftovers="$(find "$XDG_CONFIG_HOME" "$HOME/.local" -iname '*gpy*' 2>/dev/null)"
@@ -356,5 +365,9 @@ row oneline bash backtick refuse
 row oneline fish backslash refuse
 row install.sh fish dollar refuse
 row install.sh bash backtick refuse
+
+# An unsupported shell installs the binaries only
+row oneline nushell plain binaries-only
+row install.sh nushell plain binaries-only
 
 test_finish "installer rc matrix"

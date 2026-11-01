@@ -95,7 +95,7 @@ function __gpy_source_theme_export
     set -e __gpy_theme_export_mtime
     set -l agent_binary (__gpy_resolve_agent_binary)
     if test -n "$agent_binary"
-        "$agent_binary" theme export --format fish 2>/dev/null | source
+        "$agent_binary" theme export --shell fish 2>/dev/null | source
         return $status
     end
 

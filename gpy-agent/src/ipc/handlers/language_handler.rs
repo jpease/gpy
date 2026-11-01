@@ -187,11 +187,19 @@ impl LanguageHandler {
         (job, started)
     }
 
-    /// Start a background re-detection for a non-git cache hit older than
-    /// [`LANGUAGE_REFRESH_INTERVAL`]; non-git directories aren't watched.
+    /// Start a background re-detection for a cache hit older than
+    /// [`LANGUAGE_REFRESH_INTERVAL`] in a directory the watcher does not cover:
+    /// outside a git repository, or in one under a `git.skip_paths` entry.
     /// Never awaited.
     fn revalidate_stale_hit(&self, repo_root: &Path, in_git_repo: bool, age: Duration) {
-        if !in_git_repo && age >= LANGUAGE_REFRESH_INTERVAL {
+        let unwatched = !in_git_repo
+            || self
+                .render
+                .config_manager
+                .get()
+                .git
+                .is_path_skipped(repo_root);
+        if unwatched && age >= LANGUAGE_REFRESH_INTERVAL {
             drop(self.language_detection_job(repo_root));
         }
     }
@@ -650,6 +658,41 @@ mod tests {
         assert!(
             detected_rust,
             "stale non-git hit must re-detect in the background"
+        );
+    }
+
+    /// A stale hit in a git repository under `git.skip_paths` is unwatched, so it
+    /// re-detects in the background like a non-git directory.
+    #[test]
+    fn skipped_git_repository_revalidates_after_refresh_interval() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        let root = std::fs::canonicalize(&repo_dir).expect("canonicalize");
+        let mut config = Config::default();
+        config.git.skip_paths = vec![root.to_string_lossy().into_owned()];
+        let (handler, _registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
+        write_rust_project(&root);
+        seed_stale_empty_entry(&handler, &root);
+
+        handler
+            .handle(&language_detect_request(&root))
+            .expect("stale hit request");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let detected_rust = loop {
+            let found = handler
+                .language_cache
+                .get(&root)
+                .is_some_and(|langs| langs.iter().any(|l| l.name == "rust"));
+            if found || std::time::Instant::now() >= deadline {
+                break found;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(
+            detected_rust,
+            "a stale hit in a skipped git repository must re-detect in the background"
         );
     }
 

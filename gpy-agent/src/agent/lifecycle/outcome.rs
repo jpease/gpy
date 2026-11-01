@@ -5,10 +5,6 @@
 use super::AgentStatusInfo;
 use crate::ipc::protocol::PROTOCOL_VERSION;
 
-/// The progress line `gpy-agent start` prints on stderr before forking.
-/// `gpy restart` filters this exact line from its own normalized output.
-pub const START_PROGRESS_LINE: &str = "Starting GPY Agent in background...";
-
 /// What one `status` query found.
 #[derive(Debug)]
 pub enum StatusProbe {
@@ -121,8 +117,6 @@ pub enum StartNotice {
         /// The newer agent's version.
         running: String,
     },
-    /// The daemon is about to be forked.
-    Starting,
 }
 
 #[cfg(test)]

@@ -486,6 +486,30 @@ function __gpy_cache_variant_suffix --argument-names base is_last is_first --des
     printf '%s' $suffix
 end
 
+# Tail of the agent's git-background file for dialect extension `ext`. MUST
+# match the agent's `CacheKind::GitBg` name.
+function __gpy_git_bg_file_tail --argument-names ext --description 'Instant-cache tail of the git background file'
+    printf '%s' git_bg.none.$ext
+end
+
+# Background the git pill was drawn with, for the segment after it: the colour
+# the agent recorded for the repository at `root`, else the clean colour.
+function __gpy_git_segment_bg --argument-names root --description 'Background colour the git segment leaves for the next chevron'
+    set -l cache_dir (__gpy_instant_cache_dir)
+    set -l key_path (__gpy_instant_cache_key_path git "$root")
+    if test -n "$cache_dir"; and test -n "$key_path"
+        set -l cache_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key $key_path))
+        set -l bg_file "$cache_dir/$cache_key."(__gpy_git_bg_file_tail ansi)
+        set -l bg
+        test -f "$bg_file"; and set bg (__gpy_read_file "$bg_file")
+        if test -n "$bg"
+            printf '%s' $bg
+            return 0
+        end
+    end
+    printf '%s' $__color_git_clean_bg
+end
+
 # Path an instant-cache entry is keyed by: the git root, or for lang outside
 # git, the canonical cwd as the agent keys it.
 function __gpy_instant_cache_key_path --argument-names suffix cwd --description 'Path an instant-cache entry is keyed by'
@@ -703,7 +727,7 @@ function __gpy_check_protocol_version --description 'Check and warn on protocol 
         echo "Expected protocol version: $EXPECTED_PROTOCOL_VERSION" >&2
         echo "" >&2
         echo "This may cause compatibility issues. Recommended actions:" >&2
-        echo "  1. Restart the agent: gpy-agent stop && gpy-agent start" >&2
+        echo "  1. Restart the agent: gpy-agent restart" >&2
         echo "  2. If issues persist, update gpy and re-run: gpy setup" >&2
         echo "" >&2
         echo "Fallback: Use oneshot mode if IPC fails:" >&2
