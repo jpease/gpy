@@ -162,7 +162,7 @@ fn fish_setup_links_the_prompt_and_backs_up_an_existing_one() {
         .filter(|entry| entry.file_name().to_string_lossy().contains(".backup."))
         .collect();
     assert_eq!(backups.len(), 1, "only the foreign prompt is backed up");
-    // The uninstallers restore only `.backup.YYYYMMDD_HHMMSS`.
+    // `gpy uninstall` restores only `.backup.YYYYMMDD_HHMMSS`.
     let name = backups
         .first()
         .unwrap()

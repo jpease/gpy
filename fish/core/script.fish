@@ -137,34 +137,7 @@ function __gpy_g_render --argument-names tok is_last is_first
     set -l label " $text"
     test -n "$icon"; and set label " $icon $text"
 
-    set -l has_open 0
-    set -l open_icon ""
-    set -l open_fg ""
-    set -l open_bg ""
-    set v __gpy_segment_{$tok}_open_icon
-    if set -q $v
-        set has_open 1
-        set open_icon "$$v"
-        set v __gpy_segment_{$tok}_open_icon_color
-        set open_fg "$$v"
-        set v __gpy_segment_{$tok}_open_bg_color
-        set open_bg "$$v"
-    end
-    set -l has_close 0
-    set -l close_icon ""
-    set -l close_fg ""
-    set -l close_bg ""
-    set v __gpy_segment_{$tok}_close_icon
-    if set -q $v
-        set has_close 1
-        set close_icon "$$v"
-        set v __gpy_segment_{$tok}_close_icon_color
-        set close_fg "$$v"
-        set v __gpy_segment_{$tok}_close_bg_color
-        set close_bg "$$v"
-    end
-
-    __gpy_section_pill "$bg" "$fg" "$label" "$is_last" $has_open "$open_icon" "$open_fg" "$open_bg" $has_close "$close_icon" "$close_fg" "$close_bg" 1
+    __gpy_section_pill "$bg" "$fg" "$label" "$is_last" __gpy_segment_$tok
     set -g __gpy_last_segment_bg $bg
 end
 

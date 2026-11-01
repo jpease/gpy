@@ -155,8 +155,8 @@ Enter
 Sleep 1s
 
 # ── Beat 2.5: configurable segments -------------------------------------
-# `gpy lang versions` toggles the version pill on the language segment;
-# `gpy config set ui.directory.display` swaps how the directory segment
+# `gpy config set language.show_versions` toggles the version pill on the
+# language segment; `gpy config set ui.directory.display` swaps how the directory segment
 # renders a deep path. Both are plain, scriptable CLI commands rather than
 # theme edits, so this beat stays outside the theme/palette import beats
 # that follow. Dips into rust-app/src for a path deep enough that
@@ -172,10 +172,10 @@ Sleep 900ms
 Type "cd rust-app/src"
 Enter
 Sleep 1s
-Type "gpy lang versions off"
+Type "gpy config set language.show_versions false"
 Enter
 Sleep 1.5s
-Type "gpy lang versions on"
+Type "gpy config set language.show_versions true"
 Enter
 Sleep 1.5s
 Type "gpy config set ui.directory.display truncated"

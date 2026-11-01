@@ -25,7 +25,7 @@ gpy theme use <name>         # Switch to a theme
 gpy theme show               # Show current theme
 gpy theme new <name> [--from <base>] [--full]  # Create a theme that extends <base> (default: default)
 gpy theme save [name] [--full]  # Save the active theme as a theme file that extends it
-gpy theme validate [target]  # Validate active theme, name, or file path
+gpy theme validate [name-or-path]  # Validate active theme, name, or file path
 gpy theme diff <name>        # Compare your copy of a builtin theme with the builtin
 gpy theme reset <name>       # Move your copy of a builtin theme to .bak
 gpy theme migrate <name>     # Rewrite keys removed by breaking changes (backs up first)
@@ -35,24 +35,23 @@ gpy theme rebase <name> [--onto <base>] [--write] [--unset-missing]  # Turn a mo
 gpy palette list                 # List available palettes
 gpy palette use <name>           # Switch to a palette
 gpy palette show                 # Show current palette
-gpy palette validate [target]    # Validate active palette, name, or file path
+gpy palette validate [name-or-path]  # Validate active palette, name, or file path
 gpy palette import <file>        # Import a base16/base24 scheme as a palette
 
 # Plugin management
 gpy plugin list                              # List discovered plugins
 gpy plugin new <id> [--segment <segment>]    # Create plugin scaffold
-gpy plugin validate <path-or-id>             # Validate plugin files and manifest
+gpy plugin install <dir> [--force]           # Copy a plugin into your plugins directory
+gpy plugin remove <id>                       # Back up a user plugin and disable its segments
+gpy plugin validate <id-or-path>             # Validate plugin files and manifest
 
 # Segment management
 gpy enable <segment>         # Enable a segment
 gpy disable <segment>        # Disable a segment
 gpy segments                 # List all segments
 
-# Language configuration
-gpy lang versions on|off     # Toggle version display
-
 # Configuration
-gpy config show [section]    # Show configuration
+gpy config show [section]    # Show configuration (sections: agent, git, language, ui, plugin)
 gpy config list [filter]     # List config keys, optionally by prefix
 gpy config get <key>         # Get a config value
 gpy config set <key> <value> # Set a config value
@@ -66,6 +65,7 @@ gpy completions <shell>      # Generate shell completions
 # Install
 gpy setup [--shell <shell>]  # Wire GPY into Fish, Zsh or Bash
 gpy setup --redetect-icons   # Re-run Nerd Font detection for ui.show_icons
+gpy uninstall [--yes] [--purge-config]  # Remove GPY's integration, rc blocks, cache and binaries
 ```
 
 ---
@@ -311,7 +311,7 @@ agent rejected the config or did not answer, one more line follows:
 ```
 
 Every command that edits `config.toml` (`theme use`, `palette use`,
-`enable`, `disable`, `lang versions`, `config set`) ends the same way: silent
+`enable`, `disable`, `config set`) ends the same way: silent
 on a confirmed reload or with no agent, one warning otherwise. Switching
 *themes* currently prints the warning even with a live agent on macOS, because the switch re-arms
 its theme-file watcher for longer than the CLI waits; the reload still
@@ -319,13 +319,13 @@ happens a few seconds later.
 
 ---
 
-#### `gpy theme import <path>`
+#### `gpy theme import <file>`
 
 Import a `starship.toml` into a matching GPY palette and prompt theme pair.
 The migration guide is in [Migrating from Starship](migrating-from-starship.md).
 
 **Arguments:**
-- `<path>` - Path to the source `starship.toml`
+- `<file>` - Path to the source `starship.toml`
 
 **Options:**
 - `--name <name>` - Base name for the emitted palette and theme (default:
@@ -449,7 +449,7 @@ Activate with: gpy theme use mytheme
 
 ---
 
-#### `gpy theme validate [target]`
+#### `gpy theme validate [name-or-path]`
 
 Validate a theme and print actionable diagnostics.
 
@@ -501,10 +501,10 @@ gpy theme validate ~/.config/gpy/themes/mytheme.toml
 
 Show how your copy of a builtin theme differs from the builtin that ships with this version of GPY.
 
-A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. The output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. The command always exits 0 when `<name>` is a builtin; it says so when there is no copy to compare or the copy is identical. Any other `<name>` is an error, because only the builtin themes (`default`, `text`, `starship`) have an upstream version.
+A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. For a full copy the output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. For an overlay (a user theme with `extends`) it lists the keys whose effective value the overlay changes. The command exits 0 when `<name>` is a builtin or an overlay; it says so when there is no copy to compare or the copy is identical.
 
 **Arguments:**
-- `<name>` - Builtin theme name
+- `<name>` - Theme with a user file: your copy of a builtin, or one of your overlay themes (see `gpy theme list`)
 
 **Example:**
 ```bash
@@ -517,10 +517,10 @@ gpy theme diff starship
 
 Move your copy of a builtin theme aside so the builtin takes over again.
 
-The file `~/.config/gpy/themes/<name>.toml` is renamed to `<name>.toml.bak`; an existing backup is never overwritten, so later resets use `.bak.1`, `.bak.2`, and so on. When `<name>` is the active theme the running agent is reloaded. `reset` refuses a `<name>` that is not a builtin theme, and fails when there is no copy to reset.
+The file `~/.config/gpy/themes/<name>.toml` is renamed to `<name>.toml.bak`; an existing backup is never overwritten, so later resets use `.bak.1`, `.bak.2`, and so on. When `<name>` is the active theme the running agent is reloaded. `reset` fails when there is no user file to move.
 
 **Arguments:**
-- `<name>` - Builtin theme name
+- `<name>` - Theme with a user file: your copy of a builtin, or one of your overlay themes (see `gpy theme list`)
 
 **Example:**
 ```bash
@@ -545,7 +545,7 @@ Rules are grouped by the release that removed the keys. The 0.7 rules (the `user
 - `show_always` and `trim_at` move to `config.toml` `[plugin.username]` / `[plugin.hostname]`. A value already set there is kept.
 - `icon` of `[segments.hostname]` is renamed `ssh_icon` unless `ssh_icon` is already set.
 
-Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. Unlike `diff` and `reset`, `migrate` accepts any theme file in the themes directory, including overlays and copies made with `gpy theme new --full`.
+Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. `migrate` accepts any theme file in the themes directory: an overlay, a full copy made with `gpy theme new --full`, or a theme of your own.
 
 **Arguments:**
 - `<name>` - Name of a theme file in the themes directory
@@ -669,7 +669,7 @@ default
 
 ---
 
-#### `gpy palette validate [target]`
+#### `gpy palette validate [name-or-path]`
 
 Validate a palette and print actionable diagnostics.
 
@@ -794,6 +794,8 @@ List all available segments and their current status.
 
 Shows which segments the prompt will actually render (`x`) and which it won't ( ). `git` and `language` show `x` only when they are listed in `ui.enabled_segments` **and** their feature flag is on; every other segment shows `x` when it is listed. `gpy config wizard` starts its segment checkboxes from the same rule.
 
+Each row also names the segment's owner: `gpy-core` for the built-in segments, or the plugin id with `(bundled)` or `(user)` for a plugin's segments. `default` marks a segment that a fresh config enables (`ui.enabled_segments` by default).
+
 **Example:**
 ```bash
 gpy segments
@@ -804,38 +806,14 @@ gpy segments
 Prompt Segments:
 ================
 
-[x] clock
-[x] duration
-[x] language
-[x] directory
-[x] git
-[ ] status
-[ ] username
-[ ] hostname
-```
-
----
-
-### Language Configuration
-
-#### `gpy lang versions <on|off>`
-
-Toggle language version display in the prompt.
-
-When enabled, the language segment shows version numbers (e.g., `Rust 1.90`). When disabled, only the language name or icon is shown.
-
-**Arguments:**
-- `on` - Enable version display
-- `off` - Disable version display
-
-**Example:**
-```bash
-gpy lang versions on
-```
-
-**Output:**
-```
-Language versions enabled
+[x] clock     gpy-core            default
+[x] duration  gpy-core            default
+[x] language  gpy-core            default
+[x] directory gpy-core            default
+[x] git       gpy-core            default
+[ ] status    gpy-core
+[ ] username  username (bundled)
+[ ] hostname  hostname (bundled)
 ```
 
 ---
@@ -846,7 +824,7 @@ Language versions enabled
 
 Display configuration values.
 
-Without a section argument, shows all configuration. With a section argument, shows only that section. Every field is printed, including the `[git.icons]` and `[language.icons]` tables; the output is valid TOML (section headings are comments).
+Without a section argument, shows all configuration. With a section argument, shows only that section; any other value is a usage error (exit `2`) that lists the valid sections. Every field is printed, including the `[git.icons]` and `[language.icons]` tables; the output is valid TOML (section headings are comments).
 
 **Valid Sections:**
 - `agent` - Agent process settings
@@ -898,7 +876,7 @@ untracked = "?"
 
 List every configuration key with its access mode and description.
 
-After the core keys it lists the `plugin.<segment>.<key>` overrides that installed script plugin segments accept (`ttl_secs`, `timeout_ms` and each declared setting, with its type, constraints and default).
+After the core keys it lists the `language.icons.<lang>` family (one row for the settable `[language.icons]` entries, e.g. `language.icons.rust`) and the `plugin.<segment>.<key>` overrides that installed script plugin segments accept (`ttl_secs`, `timeout_ms` and each declared setting, with its type, constraints and default).
 
 With a filter argument, lists only keys that start with it. The filter is a plain prefix, so `git.icons` matches every `git.icons.*` key. A filter that matches nothing prints a notice and still exits 0. Use `gpy config get <key>` to read a value and `gpy config set <key> <value>` to change it; the [configuration reference](configuration-reference.md) documents what each key accepts.
 
@@ -1201,6 +1179,13 @@ cache_root=/home/user/.cache/gpy
 ...
 ```
 
+With `--format json` the list-valued `config_candidates` is a JSON array of
+strings (`[]` when there are none); `--format kv` joins it with `|`:
+
+```json
+"config_candidates": ["/home/user/.config/gpy/config.toml"],
+```
+
 ---
 
 #### `gpy debug prompt`
@@ -1243,7 +1228,51 @@ If `--segment` is omitted, GPY uses the plugin id as the segment id.
 gpy plugin new demo-tools --segment demo_status
 ```
 
-#### `gpy plugin validate <path-or-id>`
+**Output:**
+```
+Created plugin scaffold
+   plugin: demo-tools
+   root: /home/user/.config/gpy/plugins/demo-tools
+   manifest: /home/user/.config/gpy/plugins/demo-tools/plugin.toml
+   segment manifest: /home/user/.config/gpy/plugins/demo-tools/segments/demo_status.toml
+   script: /home/user/.config/gpy/plugins/demo-tools/bin/demo_status.sh
+
+Next steps:
+   1. Edit the generated files
+   2. Keep bin/demo_status.sh and its directories owned by you and not writable by group or others; GPY skips a script segment that fails this check (`gpy plugin validate` says why).
+   3. Run `gpy plugin validate /home/user/.config/gpy/plugins/demo-tools`
+   4. Run `gpy enable demo_status`
+```
+
+#### `gpy plugin install <dir> [--force]`
+
+Copy the plugin in `<dir>` (it holds `plugin.toml`) into `~/.config/gpy/plugins/`.
+
+The source is checked for content and layout only: a source tree with a
+symlink, device, FIFO or socket is refused, and the files its manifests name
+must exist. The copy gets modes the script trust check accepts (directories
+0755, files 0644, or 0755 when the source file is owner-executable; never
+group or other writable), then is loaded to confirm it works; a copy that does
+not load is removed. Plugin code never runs.
+
+`--force` replaces an installed user plugin with the same id (the old
+directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
+needed to shadow a bundled plugin. Backups and staging live outside
+`plugins/` because discovery would load them as plugins.
+
+**Output:**
+```
+Installed plugin demo-tools 0.1.0 into /home/user/.config/gpy/plugins/demo-tools
+Enable its segments: gpy enable demo_status
+```
+
+#### `gpy plugin remove <id>`
+
+Move the user plugin `<id>` to `~/.config/gpy/plugins.bak/<id>.<timestamp>` and
+remove its segments from `ui.enabled_segments`. Plugins that ship with GPY are
+refused (disable their segments with `gpy disable`).
+
+#### `gpy plugin validate <id-or-path>`
 
 Validate a plugin manifest and filesystem layout.
 
@@ -1335,6 +1364,22 @@ installing or removing a Nerd Font. `GPY_NERD_FONT` answers the question
 without a prompt (see the environment table), as does `--non-interactive`,
 which takes the detected default.
 
+### Uninstall
+
+```bash
+gpy uninstall [--yes] [--purge-config]
+```
+
+Removes what `gpy setup` and the installers create: the shell scripts and
+completions, the GPY block in your rc files (restored byte for byte), the fish
+prompt link (restoring your previous prompt), the cache and runtime files, and
+the running agent. `~/.config/gpy` is kept unless you pass `--purge-config`.
+The binaries are deleted only when this `gpy` lives in `~/.local/bin`, where the
+installers put it; otherwise remove them with the tool that installed them
+(`brew uninstall gpy` for Homebrew). It asks `Uninstall GPY? [y/N]`; with no
+terminal to answer, it removes nothing and exits `1` unless you pass `--yes`.
+See [Uninstallation](../INSTALL.md#uninstallation).
+
 ### Shell Completion
 
 Tab-completion for the `gpy` CLI is installed automatically by the standard installers: the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up fish. Completions are regenerated with every install or upgrade, so they stay in sync with your binary.
@@ -1377,7 +1422,7 @@ gpy disable language
 gpy theme use default
 gpy enable git
 gpy enable language
-gpy lang versions on
+gpy config set language.show_versions true
 ```
 
 ### Theme Customization
@@ -1490,15 +1535,21 @@ GPY reads the following environment variables:
 
 ### Fish-only switches
 
-These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY_SHOW_STATUS` is read on every render; the segment switches are read once, when the integration loads.
+These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY_SHOW_STATUS` is read on every render.
 
 | Switch | Effect |
 |---|---|
 | `GPY_SHOW_STATUS` | `0` hides the standalone `✔`/`✖` exit-status indicator printed before the prompt symbol. Default `1`. The indicator is never shown while the prompt symbol itself is rendered by the agent (it is already coloured by the exit status), so this matters mainly when the agent is unavailable. |
-| `GPY_SHOW_LANGUAGES` | `0` replaces the enabled-segment list with `clock duration directory git` at startup, overriding `enabled_segments` from `config.toml`. Prefer editing `enabled_segments`. |
-| `GPY_MINIMAL_SEGMENTS` | Any value (even empty) renders only the `directory` segment. A debugging and test hook; it takes precedence over `GPY_SHOW_LANGUAGES`. |
-| `GPY_TEST_SEGMENTS` | A space-separated segment list that replaces `enabled_segments`, for tests (`GPY_MINIMAL_SEGMENTS` wins when both are set). |
-| `prompt-reload` | A function, not a variable: reloads the theme and config into the running shell, mainly for debugging or when the agent is disabled. |
+
+### Shell commands
+
+Functions the integration defines in Fish, Bash and Zsh (not executables).
+
+| Command | Effect |
+|---|---|
+| `gpy-prompt-reload` | Re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file, which a stopped agent leaves stale), so it works whether the agent is running, disabled or stopped. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. An invalid `config.toml` applies the built-in defaults, shows the agent's `Warning: [Config loading] …` line and returns 0. In Fish, `prompt-reload` is its deprecated former name. |
+
+Fish also has `gpy-prompt-debug` (`validate`, `benchmark`, `cache`, `vars`; `prompt-debug` is its deprecated former name). In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug commands.
 
 ---
 
@@ -1512,12 +1563,13 @@ These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY
 | `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | as `start` |
 | `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – |
 | `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – |
+| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), or a path or rc file could not be handled | usage error | – | – | – |
 | `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – |
 
 `stop` never exits `6`: a disabled agent that is not running is already in the
 requested state, and one that is still running must be stoppable. `2` is the
 argument parser's usage error: an unknown subcommand, a missing argument, or a
-value outside the allowed set (for example `gpy lang versions maybe`, which
+value outside the allowed set (for example `gpy config show nosuch`, which
 lists the possible values). Every one of these commands lists its codes in
 `--help`.
 

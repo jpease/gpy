@@ -5,14 +5,14 @@
 use super::exit_codes::{DISABLED, NOT_RUNNING, STATUS_UNKNOWN};
 use super::output::warn_stderr;
 use crate::agent::lifecycle::{
-    AgentStatusInfo, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, probe_status,
-    protocol_mismatch, send_shutdown_command, socket_is_stale, start_background_agent,
-    wait_for_agent_shutdown,
+    AgentClient, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, protocol_mismatch,
+    start_background_agent,
 };
 use crate::config::schema;
-use crate::paths::{get_socket_path, set_socket_override};
+use crate::ipc::AgentStatus;
+use crate::paths::SocketPath;
 use crate::{Error, Result, VERSION};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 /// What `gpy-agent status` found.
@@ -40,18 +40,6 @@ impl StatusOutcome {
     }
 }
 
-/// Record `--socket`, made absolute against the current directory so a
-/// forked daemon (which runs in `/`) binds the path the user meant.
-///
-/// # Errors
-/// Returns an error if the current directory cannot be read.
-pub fn apply_socket_override(socket: Option<PathBuf>) -> Result<()> {
-    if let Some(given) = socket {
-        set_socket_override(&given)?;
-    }
-    Ok(())
-}
-
 /// The `state` value and outcome for one probe of an existing socket.
 #[must_use]
 pub const fn state_and_exit(probe: &StatusProbe) -> (&'static str, StatusOutcome) {
@@ -66,7 +54,7 @@ pub const fn state_and_exit(probe: &StatusProbe) -> (&'static str, StatusOutcome
 }
 
 /// The status the agent reported, when the probe got an answer.
-const fn answered(probe: Option<&StatusProbe>) -> Option<&AgentStatusInfo> {
+const fn answered(probe: Option<&StatusProbe>) -> Option<&AgentStatus> {
     match probe {
         Some(StatusProbe::Answered(status)) => Some(status),
         Some(
@@ -111,11 +99,12 @@ struct StatusReport {
 ///
 /// # Errors
 /// Returns an error if the socket path cannot be determined.
-fn status_report(socket: Option<PathBuf>) -> Result<StatusReport> {
-    apply_socket_override(socket)?;
-    let socket_path = get_socket_path()?;
+fn status_report(socket: Option<&Path>) -> Result<StatusReport> {
+    let resolved = SocketPath::resolve(socket)?;
+    let client = AgentClient::new(&resolved)?;
+    let socket_path = resolved.path();
     // No socket file is "not running" on every platform, without a probe.
-    let probe = socket_path.exists().then(|| probe_status(&socket_path));
+    let probe = socket_path.exists().then(|| client.probe_status());
     let (state, outcome) = probe
         .as_ref()
         .map_or(("not-running", StatusOutcome::NotRunning), state_and_exit);
@@ -150,11 +139,11 @@ fn status_report(socket: Option<PathBuf>) -> Result<StatusReport> {
 /// that cannot be determined prints one `Error:` line and returns
 /// [`STATUS_UNKNOWN`].
 #[must_use]
-pub fn status(socket: Option<PathBuf>) -> ExitCode {
+pub fn status(socket: Option<&Path>) -> ExitCode {
     match status_report(socket) {
         Ok(report) => {
             for (key, value) in &report.lines {
-                println!("{key}: {value}");
+                super::output::plain(format_args!("{key}: {value}"));
             }
             if let Some(mismatch) = report.mismatch {
                 warn_stderr(format!(
@@ -174,7 +163,7 @@ pub fn status(socket: Option<PathBuf>) -> ExitCode {
 /// Print `line` on stdout unless `quiet`.
 fn say(quiet: bool, line: impl std::fmt::Display) {
     if !quiet {
-        println!("{line}");
+        super::output::plain(line);
     }
 }
 
@@ -205,19 +194,15 @@ fn notice_text(notice: &StartNotice, socket: &str) -> Option<String> {
 /// # Errors
 /// Returns an error if the agent cannot be started or its socket's owner
 /// cannot be verified.
-pub fn start(socket: Option<PathBuf>, quiet: bool) -> Result<ExitCode> {
-    apply_socket_override(socket)?;
-    start_agent(quiet)
+pub fn start(socket: Option<&Path>, quiet: bool) -> Result<ExitCode> {
+    start_agent(&SocketPath::resolve(socket)?, quiet)
 }
 
-/// [`start`] after the socket override was applied.
-fn start_agent(quiet: bool) -> Result<ExitCode> {
-    let socket = get_socket_path().map_or_else(
-        |_| "the agent socket".to_owned(),
-        |path| path.display().to_string(),
-    );
-    let outcome = start_background_agent(|notice| {
-        if !quiet && let Some(text) = notice_text(&notice, &socket) {
+/// [`start`] on a resolved socket.
+fn start_agent(socket: &SocketPath, quiet: bool) -> Result<ExitCode> {
+    let socket_text = socket.path().display().to_string();
+    let outcome = start_background_agent(socket, |notice| {
+        if !quiet && let Some(text) = notice_text(&notice, &socket_text) {
             eprintln!("{text}");
         }
     })?;
@@ -236,7 +221,7 @@ fn start_agent(quiet: bool) -> Result<ExitCode> {
         ),
         StartOutcome::Unverifiable => {
             return Err(Error::agent(format!(
-                "could not verify whether the GPY agent at {socket} is running; its socket was left alone"
+                "could not verify whether the GPY agent at {socket_text} is running; its socket was left alone"
             )));
         }
         StartOutcome::Disabled => return Ok(ExitCode::from(DISABLED)),
@@ -261,16 +246,19 @@ fn did_not_stop(pid: Option<u32>, socket_path: &Path) -> Error {
 ///
 /// # Errors
 /// Returns an error if the agent is still answering or cannot be reached.
-fn stop_agent(quiet: bool) -> Result<()> {
-    let socket_path = get_socket_path()?;
+fn stop_agent(socket: &SocketPath, quiet: bool) -> Result<()> {
+    let socket_path = socket.path();
     if !socket_path.exists() {
         say(quiet, "Agent not running.");
         return Ok(());
     }
 
+    // One client, so one runtime, for the whole stop. It is current-thread
+    // and dropped on return, so `restart` forks with none alive.
+    let client = AgentClient::new(socket)?;
     // Learn the PID before the shutdown so the outcome can name it; any
     // answer but a status skips the lookup.
-    let pid = match probe_status(&socket_path) {
+    let pid = match client.probe_status() {
         StatusProbe::Answered(status) => status.pid,
         StatusProbe::Busy
         | StatusProbe::NotListening(_)
@@ -278,15 +266,8 @@ fn stop_agent(quiet: bool) -> Result<()> {
         | StatusProbe::Failed(_) => None,
     };
 
-    // A current-thread runtime spawns no worker threads: once any thread has
-    // existed, the forked daemon's first Objective-C use aborts on macOS, and
-    // `restart` forks after this runs.
-    let shutdown = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(send_shutdown_command());
-    match shutdown {
-        Ok(()) if wait_for_agent_shutdown(&socket_path) => {
+    match client.shutdown() {
+        Ok(()) if client.wait_for_shutdown() => {
             say(
                 quiet,
                 pid.map_or_else(
@@ -296,11 +277,11 @@ fn stop_agent(quiet: bool) -> Result<()> {
             );
             Ok(())
         }
-        Ok(()) => Err(did_not_stop(pid, &socket_path)),
+        Ok(()) => Err(did_not_stop(pid, socket_path)),
         // Only a refused connection proves the socket is stale; an
         // accepted-but-silent one is a live agent.
-        Err(_) if socket_is_stale(&socket_path) => {
-            std::fs::remove_file(&socket_path).or_else(|remove_err| {
+        Err(_) if client.socket_is_stale() => {
+            std::fs::remove_file(socket_path).or_else(|remove_err| {
                 if remove_err.kind() == std::io::ErrorKind::NotFound {
                     Ok(())
                 } else {
@@ -318,7 +299,7 @@ fn stop_agent(quiet: bool) -> Result<()> {
         }
         Err(cause) => {
             crate::debug_log!("agent", "Shutdown request failed: {cause}");
-            Err(did_not_stop(pid, &socket_path))
+            Err(did_not_stop(pid, socket_path))
         }
     }
 }
@@ -327,9 +308,8 @@ fn stop_agent(quiet: bool) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the agent is still answering or cannot be reached.
-pub fn stop(socket: Option<PathBuf>, quiet: bool) -> Result<ExitCode> {
-    apply_socket_override(socket)?;
-    stop_agent(quiet)?;
+pub fn stop(socket: Option<&Path>, quiet: bool) -> Result<ExitCode> {
+    stop_agent(&SocketPath::resolve(socket)?, quiet)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -339,16 +319,16 @@ pub fn stop(socket: Option<PathBuf>, quiet: bool) -> Result<ExitCode> {
 ///
 /// # Errors
 /// Returns the start's error.
-pub fn restart(socket: Option<PathBuf>, quiet: bool) -> Result<ExitCode> {
-    apply_socket_override(socket)?;
-    if let Err(err) = stop_agent(quiet)
+pub fn restart(socket: Option<&Path>, quiet: bool) -> Result<ExitCode> {
+    let resolved = SocketPath::resolve(socket)?;
+    if let Err(err) = stop_agent(&resolved, quiet)
         && !quiet
     {
         warn_stderr(crate::error::user_message(&err));
     }
     // `stop_agent` dropped its runtime and client state and spawned no
     // threads: nothing is live across the fork in `start`.
-    start_agent(quiet)
+    start_agent(&resolved, quiet)
 }
 
 #[cfg(test)]

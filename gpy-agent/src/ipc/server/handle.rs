@@ -14,9 +14,7 @@ use crate::debug_log;
 use crate::ipc::Response;
 use crate::ipc::{
     ClientDirectory,
-    handlers::{
-        ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
-    },
+    handlers::{ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, RenderDeps},
 };
 use crate::palette::PaletteCache;
 use crate::security::{GuardSettings, RateLimiter};
@@ -151,7 +149,7 @@ pub struct EndpointHandle {
     /// evicting or forking between our fork and bind, and a bind failure is
     /// reported through it.
     #[cfg(unix)]
-    startup: Option<crate::agent::lifecycle::start::StartupHandoff>,
+    startup: Option<crate::agent::lifecycle::StartupHandoff>,
     /// Ownership check period ([`SOCKET_OWNERSHIP_CHECK`]; tests shorten it).
     #[cfg(unix)]
     socket_ownership_check: Duration,
@@ -173,14 +171,36 @@ pub struct EndpointHandle {
     pub(crate) handler_registry: Arc<HandlerRegistry>,
 }
 
-/// Content hash of a live-update response for the repaint throttle, or `None`
-/// if serialization fails. Payloads carry no timestamps, so equal state coalesces.
+/// `io::Write` that feeds a hasher, so a payload is hashed as it serializes, with no buffer.
+#[cfg(unix)]
+struct HashWriter<'a>(&'a mut std::collections::hash_map::DefaultHasher);
+
+#[cfg(unix)]
+impl std::io::Write for HashWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        use std::hash::Hasher;
+        self.0.write(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Content hash of a live-update response's JSON payload for the repaint
+/// throttle. `None` for any other variant or if serialization fails. Payloads
+/// carry no timestamps, so equal state coalesces.
 #[cfg(unix)]
 fn content_token(response: &Response) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
-    let bytes = serde_json::to_vec(response).ok()?;
+    use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
+    let mut sink = HashWriter(&mut hasher);
+    match response {
+        Response::RepositoryStatus(status) => serde_json::to_writer(&mut sink, status).ok()?,
+        Response::Language { languages } => serde_json::to_writer(&mut sink, languages).ok()?,
+        _ => return None,
+    }
     Some(hasher.finish())
 }
 
@@ -251,12 +271,10 @@ impl EndpointHandle {
             Arc::clone(&deps.git_cache),
             deps.watcher_slot,
         ));
-        let misc_handler = Arc::new(MiscHandler::new());
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
             client_handler,
-            misc_handler,
         ));
 
         Self {
@@ -289,7 +307,7 @@ impl EndpointHandle {
     #[cfg(unix)]
     pub(crate) fn hold_startup_until_bound(
         &mut self,
-        startup: crate::agent::lifecycle::start::StartupHandoff,
+        startup: crate::agent::lifecycle::StartupHandoff,
     ) {
         self.startup = Some(startup);
     }

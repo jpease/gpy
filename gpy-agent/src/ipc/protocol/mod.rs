@@ -1,12 +1,11 @@
 //! JSON IPC protocol between shells and the agent.
 
-use super::{Format, Message, Response, Segment};
+use super::wire::Op;
+use super::{Format, Message, Segment};
 use crate::security::SafePath;
 use crate::{Error, Result};
 use serde::Deserialize;
-
-/// Wire payload for a client-initiated config reload; shared so send sites cannot diverge.
-pub const CONFIG_RELOAD_JSON: &str = r#"{"op":"config_reload"}"#;
+use std::str::FromStr;
 
 /// Longest accepted `prev_bg` color.
 const MAX_PREV_BG_LEN: usize = 64;
@@ -72,30 +71,6 @@ fn parse_request(data: &[u8]) -> Result<ShellIpcMessage> {
         crate::debug_log!("protocol", "Failed to deserialize IPC message: {e}");
         Error::ipc("Failed to deserialize message: invalid format".to_owned())
     })
-}
-
-/// Serialize a response to JSON bytes.
-///
-/// # Errors
-/// Returns an error if serialization fails.
-pub fn serialize_response(resp: &Response) -> Result<Vec<u8>> {
-    let mut buffer = Vec::with_capacity(512);
-    serde_json::to_writer(&mut buffer, resp)?;
-
-    validate_message_size(&buffer)?;
-    Ok(buffer)
-}
-
-/// Deserialize JSON bytes into a response.
-///
-/// # Errors
-/// Returns an error on invalid UTF-8, oversize data, or bad JSON.
-pub fn deserialize_response(data: &[u8]) -> Result<Response> {
-    validate_message_size(data)?;
-    let json = std::str::from_utf8(data)
-        .map_err(|e| Error::ipc(format!("Invalid UTF-8 in response: {e}")))?;
-    serde_json::from_str(json)
-        .map_err(|e| Error::ipc(format!("Failed to deserialize response: {e}")))
 }
 
 /// Validate the message size limit.
@@ -226,45 +201,45 @@ impl ShellIpcMessage {
         };
         let cwd = self.cwd.as_deref().unwrap_or(".");
 
-        match self.op.as_str() {
-            "git" => Ok(Message::RepositoryStatus {
+        match Op::from_str(&self.op)? {
+            Op::Git => Ok(Message::RepositoryStatus {
                 path: safe_path(cwd, "path")?,
                 segment,
             }),
-            "lang" => Ok(Message::LanguageDetect {
+            Op::Lang => Ok(Message::LanguageDetect {
                 path: safe_path(cwd, "path")?,
                 segment,
                 virtual_env: self.virtual_env.map(validate_virtual_env).transpose()?,
             }),
-            "directory" => Ok(Message::DirectoryRequest {
+            Op::Directory => Ok(Message::DirectoryRequest {
                 path: safe_path(cwd, "path")?,
                 display_path: self.cwd.unwrap_or_else(|| ".".to_owned()),
                 segment,
             }),
-            "clock" => Ok(Message::ClockRequest {
+            Op::Clock => Ok(Message::ClockRequest {
                 // Unknown shell falls back to Fish, whose render is a no-op, rather
                 // than leaking another shell's prompt escapes as literal text.
                 shell: parse_shell(self.shell.as_deref()).unwrap_or(crate::shell::Shell::Fish),
                 segment,
             }),
-            "duration" => Ok(Message::DurationRequest {
+            Op::Duration => Ok(Message::DurationRequest {
                 duration_ms: self.duration_ms,
                 segment,
             }),
-            "character" => Ok(Message::CharacterRequest {
+            Op::Character => Ok(Message::CharacterRequest {
                 success: self.success,
                 segment,
             }),
             // Not "status": that op is the agent health check.
-            "exit_status" => Ok(Message::ExitStatusRequest {
+            Op::ExitStatus => Ok(Message::ExitStatusRequest {
                 success: self.success,
                 segment,
             }),
-            "ping" => Ok(Message::Ping),
-            "status" => Ok(Message::Status),
-            "shutdown" => Ok(Message::Shutdown),
-            "config_reload" => Ok(Message::ConfigReload),
-            "register" => {
+            Op::Ping => Ok(Message::Ping),
+            Op::Status => Ok(Message::Status),
+            Op::Shutdown => Ok(Message::Shutdown),
+            Op::ConfigReload => Ok(Message::ConfigReload),
+            Op::Register => {
                 let pid = self
                     .pid
                     .ok_or_else(|| Error::invalid("register missing pid".to_owned()))?;
@@ -281,7 +256,7 @@ impl ShellIpcMessage {
                     shell_version: self.shell_version,
                 })
             }
-            "unregister" => {
+            Op::Unregister => {
                 let pid = self
                     .pid
                     .ok_or_else(|| Error::invalid("unregister missing pid".to_owned()))?;
@@ -289,7 +264,7 @@ impl ShellIpcMessage {
                     pid: client_pid(pid)?,
                 })
             }
-            "workspace" => {
+            Op::Workspace => {
                 let pid = self
                     .pid
                     .ok_or_else(|| Error::invalid("Workspace update missing pid".to_owned()))?;
@@ -302,10 +277,6 @@ impl ShellIpcMessage {
                     cwd: safe_path(workspace_cwd, "workspace path")?,
                 })
             }
-            _ => Err(Error::invalid(format!(
-                "Unknown shell operation: {}",
-                self.op
-            ))),
         }
     }
 }

@@ -286,7 +286,6 @@ jobs:
             package-out/gpy-release.zip
             package-out/gpy-shell-files.tar.gz
             package-out/install-oneline.sh
-            package-out/uninstall.sh
             package-out/gpy-sbom.cdx.json
             package-out/SHA256SUMS
             package-out/*.sha256
@@ -375,7 +374,6 @@ jobs:
             dist/gpy-release.zip
             dist/gpy-shell-files.tar.gz
             dist/install-oneline.sh
-            dist/uninstall.sh
             dist/gpy-sbom.cdx.json
             dist/gpy-release/bin/*
             !dist/gpy-release/bin/*.sha256
@@ -400,7 +398,6 @@ jobs:
             dist/gpy-release.zip
             dist/gpy-shell-files.tar.gz
             dist/install-oneline.sh
-            dist/uninstall.sh
             dist/gpy-sbom.cdx.json
             dist/SHA256SUMS
             dist/*.sha256

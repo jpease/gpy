@@ -48,10 +48,9 @@ esac
 
 # Shaped like scripts/package-release.sh output.
 PKG="$SHELL_E2E_ROOT/pkg"
-mkdir -p "$PKG/bin" "$PKG/scripts"
+mkdir -p "$PKG/bin"
 cp -R "$ROOT/fish" "$PKG/fish"
 cp "$ROOT/install.sh" "$PKG/install.sh"
-cp "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
 cp "$SHELL_E2E_AGENT_BIN" "$PKG/bin/$AGENT_ASSET"
 cp "$GPY_CLI" "$PKG/bin/$CLI_ASSET"
 for asset in "$AGENT_ASSET" "$CLI_ASSET"; do
@@ -190,12 +189,12 @@ fi
 echo "--- uninstall ---"
 SUPERVISOR_PIDFILE="$XDG_RUNTIME_DIR/gpy/supervisor.pid"
 supervisor_pid="$(cat "$SUPERVISOR_PIDFILE" 2>/dev/null || true)"
-printf '\n' | sh "$PKG/scripts/uninstall.sh" --purge-config >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
+"$HOME/.local/bin/gpy" uninstall --yes --purge-config >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then
-    pass "uninstall.sh exited 0"
+    pass "gpy uninstall exited 0"
 else
-    fail "uninstall.sh exited $rc"
+    fail "gpy uninstall exited $rc"
     cat "$SHELL_E2E_ROOT/uninstall.log"
 fi
 

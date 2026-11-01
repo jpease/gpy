@@ -3,7 +3,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Fallbacks the three shells use when the theme export has not run agree:
 #   - the duration threshold is 100 ms (the exported theme default) everywhere;
-#   - `__gpy_home` accepts the same usernames when HOME is empty.
+#   - `__gpy_home` accepts the same usernames when HOME is empty;
+#   - with no theme export, `__enabled_segments` is the list in
+#     tests/fixtures/default_segments.txt (the Rust test
+#     default_segments_fixture_matches pins that file to the agent's default),
+#     and an export that sets it empty stays empty.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -122,4 +126,63 @@ check "zsh: an absolute HOME needs no username" "ok" "$home_set"
 home_set="$(probe_fish "-" "/somewhere")"
 check "fish: an absolute HOME needs no username" "ok" "$home_set"
 
-test_finish "duration threshold and __gpy_home fallbacks agree across shells"
+echo "--- fallback segment list ---"
+# No theme export has loaded: empty cache dir, sandbox HOME, and a PATH without
+# gpy-agent (the shells run by absolute path). shell_e2e_init is not used, since
+# it puts the built binary on PATH.
+seg_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-seg-fallback.XXXXXX")"
+trap 'rm -rf "$seg_tmp"' EXIT
+mkdir -p "$seg_tmp/home" "$seg_tmp/cache/gpy" "$seg_tmp/cfg" "$seg_tmp/run"
+fish_bin="$(command -v fish)"
+zsh_bin="$(command -v zsh)"
+bash_bin="$(command -v bash)"
+want_segments="$(grep -v -e '^#' -e '^[[:space:]]*$' "$ROOT/tests/fixtures/default_segments.txt" | tr ' ' '\n')"
+
+run_sandboxed() {
+    env -i PATH="/usr/bin:/bin" HOME="$seg_tmp/home" TERM=dumb \
+        XDG_CONFIG_HOME="$seg_tmp/cfg" XDG_CACHE_HOME="$seg_tmp/cache" \
+        XDG_RUNTIME_DIR="$seg_tmp/run" TMPDIR="$seg_tmp" \
+        GPY_AGENT_SUPERVISOR_ENABLED=0 ROOT="$ROOT" "$@" 2>/dev/null
+}
+fish_segments() {
+    # shellcheck disable=SC2016 # the fish program is single-quoted on purpose.
+    run_sandboxed "$fish_bin" --no-config -c '
+        source $ROOT/fish/core/init.fish
+        printf "%s\n" $__enabled_segments
+        functions -q segment_clock_detect segment_directory_detect; and echo FUNCS_LOADED
+    '
+}
+bash_segments() {
+    # shellcheck disable=SC2016 # $ROOT expands in the child.
+    run_sandboxed "$bash_bin" --noprofile --norc -c '
+        source "$ROOT/bash/gpy.bash"
+        # shellcheck disable=SC2086
+        printf "%s\n" $__enabled_segments
+    '
+}
+zsh_segments() {
+    # shellcheck disable=SC2016 # $ROOT expands in the child.
+    run_sandboxed "$zsh_bin" -f -c '
+        source "$ROOT/zsh/gpy.zsh"
+        print -l -- $__enabled_segments
+        __gpy_render_prompt 0 >/dev/null
+        print -r -- "after-render=${#__enabled_segments}"
+    ' | grep -v '^$'
+}
+
+check "fish: no export uses the fixture's segment list, with its segment functions loaded" "$want_segments
+FUNCS_LOADED" "$(fish_segments)"
+check "bash: no export uses the fixture's segment list" "$want_segments" "$(bash_segments)"
+check "zsh: no export uses the fixture's segment list" "$want_segments
+after-render=5" "$(zsh_segments)"
+
+# An export that sets the list empty stays empty (the sentinel line is the
+# export's first line).
+printf '%s\n' 'set -g __gpy_export_version 1' 'set -g __enabled_segments' >"$seg_tmp/cache/gpy/theme-export.fish"
+printf '%s\n' '__gpy_export_version="1"' '__enabled_segments=""' >"$seg_tmp/cache/gpy/theme-export.bash"
+printf '%s\n' 'typeset -g __gpy_export_version="1"' 'typeset -g -a __enabled_segments=()' >"$seg_tmp/cache/gpy/theme-export.zsh"
+check "fish: an export with an empty list stays empty" "" "$(fish_segments)"
+check "bash: an export with an empty list stays empty" "" "$(bash_segments)"
+check "zsh: an export with an empty list stays empty, also after a render" "after-render=0" "$(zsh_segments)"
+
+test_finish "duration threshold, __gpy_home and fallback segment list agree across shells"

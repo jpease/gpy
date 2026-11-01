@@ -5,16 +5,22 @@ function __gpy_validate_installation
 
     echo "Validating GPY installation..."
 
-    # Install dir is derived from this file's own location, not ~/.config.
+    # Install dir is the one init.fish loaded from, not ~/.config.
     set -l install_dir $__gpy_core_dir/..
 
-    set -l core_files flags.fish defaults.fish constants.fish util.fish renderer.fish init.fish ipc.fish
-    for file in $core_files
-        set -l path $install_dir/core/$file
-        if test -f $path
-            echo "✓ Core file: $file"
+    # Every file init.fish and conf.d/gpy_init.fish need: the files init.fish
+    # sources directly, the list it sources the rest from, the script segment
+    # runner, and the loader.
+    set -l needed core/flags.fish core/util.fish core/defaults.fish core/init.fish
+    for file in $__gpy_core_files
+        set -a needed core/$file
+    end
+    set -a needed core/g_runner.bash conf.d/gpy_init.fish
+    for file in $needed
+        if test -f $install_dir/$file
+            echo "✓ File: $file"
         else
-            echo "✗ Missing core file: $file"
+            echo "✗ Missing file: $file"
             set errors (math $errors + 1)
         end
     end
@@ -81,12 +87,12 @@ function __gpy_benchmark_segments
 
             set -l end (__gpy_get_time_ms)
             set -l duration (math $end - $start)
-            echo "  $segment: {$duration}ms"
+            echo "  $segment: "$duration"ms"
         end
     end
 end
 
-function prompt-debug --description 'GPY debug helpers' --argument-names action
+function gpy-prompt-debug --description 'GPY debug helpers' --argument-names action
     switch $action
         case validate
             __gpy_validate_installation
@@ -107,49 +113,8 @@ function prompt-debug --description 'GPY debug helpers' --argument-names action
             echo "    Language cache TTL: $GPY_LANGUAGE_CACHE_TTL_SECONDS"
             echo "    Duration threshold: $__duration_threshold_ms"
         case ""
-            echo "Usage: prompt-debug [validate|benchmark|cache|vars]"
+            echo "Usage: gpy-prompt-debug [validate|benchmark|cache|vars]"
         case '*'
             echo "Unknown debug action: $action"
     end
-end
-
-# Emit resolved paths as `key=value` in the agent's key order; diffed against
-# `gpy debug paths --format kv` by tests/fish/path_parity.test.fish.
-function __gpy_debug_paths --description 'Dump every GPY path resolved from the environment'
-    set -l runtime_root (__gpy_runtime_root)
-    test -n "$runtime_root"; or set runtime_root '<unresolved>'
-
-    set -l socket (__gpy_ipc_endpoint)
-    test -n "$socket"; or set socket '<unresolved>'
-
-    set -l registry (__gpy_shell_registry_dir)
-    test -n "$registry"; or set registry '<unresolved>'
-
-    set -l instant_dir (__gpy_instant_cache_dir)
-    set -l cache_root '<unresolved>'
-    if test -n "$instant_dir"
-        set cache_root (path dirname -- "$instant_dir")
-    else
-        set instant_dir '<unresolved>'
-    end
-
-    set -l theme_export (__gpy_theme_export_cache_path)
-    test -n "$theme_export"; or set theme_export '<unresolved>'
-
-    set -l config_path (__gpy_locate_config_path)
-    test -n "$config_path"; or set config_path '<unresolved>'
-
-    set -l candidates (string join '|' (__gpy_user_config_candidates))
-    test -n "$candidates"; or set candidates '<unresolved>'
-
-    echo "runtime_root=$runtime_root"
-    echo "socket=$socket"
-    echo "shell_registry_dir=$registry"
-    echo "cache_root=$cache_root"
-    echo "instant_prompts_dir=$instant_dir"
-    echo "theme_export_file=$theme_export"
-    echo "config_path=$config_path"
-    echo "config_candidates=$candidates"
-    # Fish never locates theme files; the agent delivers a rendered export.
-    echo "theme_dir=<unimplemented>"
 end

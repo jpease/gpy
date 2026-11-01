@@ -35,8 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#1121).
 - The Zsh integration keeps a `TRAPURG` function or `trap ... URG` defined
   before it loads and runs it after its own handler (#1122).
-- `scripts/uninstall.sh` keeps `~/.config/gpy` by default; `--purge-config`
-  deletes it (#1118).
 - The theme-export cache directory every shell sources is created owner-only
   (`0700`) (#1123).
 - `install-dev.fish` warns about `gpy`/`gpy-agent` copies that shadow the
@@ -58,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   equals the Unicode default (#1163).
 - Dynamic completions pick up themes, palettes and segments created earlier
   in the same shell session (#1158).
+- Fish, Bash and Zsh show the same default segments when the theme export
+  cannot load, and Fish draws them instead of an empty prompt. Zsh no longer
+  replaces an empty `ui.enabled_segments` with `directory git` (#1152).
+- Fish shows why GPY failed to load (for example Fish older than 3.6, or a
+  broken core file) instead of a generic message; `prompt-debug benchmark`
+  prints durations without braces; `prompt-debug validate` checks every core
+  file (#1153).
 - `gpy-agent start` errors no longer present internal steps as a failed
   command (#1128).
 
@@ -67,9 +72,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nc -U`) (#1175).
 - `gpy theme save --yes` skips the overwrite confirmation (#1177).
 - `gpy-agent restart` (#1173).
+- Bash and Zsh have `gpy-prompt-reload`, which re-reads `config.toml` into the
+  running shell (#1180).
+- `gpy uninstall` removes GPY's shell integration, rc blocks, cache, runtime
+  files and (for the installers' `~/.local/bin`) its binaries; it keeps
+  `~/.config/gpy` unless you pass `--purge-config`, and tells Homebrew users to
+  run `brew uninstall gpy` (#1126, #1118).
+- `gpy plugin install <dir>` and `gpy plugin remove <id>` (removal disables the
+  plugin's segments and keeps a backup under `~/.config/gpy/plugins.bak/`)
+  (#1178).
+- `gpy-agent config reload --socket <path>`, matching `start`, `stop` and
+  `status` (#1131).
 
 ### Changed
 
+- SECURITY.md keeps the reporting policy and the user-facing trust statement;
+  the design and hardening record moved to `docs/dev/security-model.md` (#1187).
 - GPY no longer writes `core.untrackedCache = true` into repositories'
   `.git/config`. The agent only adds the untracked cache to the index, and
   `gpy-agent oneshot` leaves the repository untouched. Remove an earlier
@@ -104,12 +122,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `oneshot status` is now `oneshot exit-status` and `theme export --format`
   is `--shell`; the old spellings still work with a stderr warning.
   `--benchmark-mode` is hidden from help (#1174).
+- **Breaking:** `GPY_SHOW_LANGUAGES`, `GPY_MINIMAL_SEGMENTS` and
+  `GPY_TEST_SEGMENTS` (Fish only) are deprecated and print a warning; use
+  `gpy enable`/`gpy disable` instead (#1152).
+- **Breaking:** `prompt-reload` and `prompt-debug` (Fish) are renamed
+  `gpy-prompt-reload` and `gpy-prompt-debug`; the old names are deprecated
+  and print a notice. `gpy-prompt-reload` always asks `gpy-agent` for a fresh
+  theme export (#1153).
 - **Breaking:** `install.sh` and `install-oneline.sh` reject unknown
   arguments with exit 2; use `GPY_SHELL`, `GPY_VERSION` (one-line installer)
   and `GPY_NERD_FONT`. For an unsupported shell they install the binaries
   only, and both binaries are verified before either is replaced (#1125).
 - **Breaking (library):** `Error::json` is removed and `Error::Json` wraps a
   `serde_json::Error`; `GitIcons` fields are `Option<Icon>` (#1128, #1163).
+- **Breaking (library):** `ipc::protocol::{serialize_response,
+  deserialize_response, CONFIG_RELOAD_JSON}`, `ipc::decode_wire_reply` and
+  `agent::lifecycle::AgentStatusInfo` are removed; `Response` no longer
+  implements `Serialize`/`Deserialize`, and `Response::AgentStatus` holds an
+  `ipc::AgentStatus`. Use `ipc::wire` (#1129).
+- **Breaking (library):** `ipc::handlers::RequestHandler`,
+  `ipc::handlers::MiscHandler` and `HandlerError::UnexpectedMessage` are
+  removed; `HandlerRegistry::new` takes the concrete handlers (#1130).
+
+### Removed
+
+- **Breaking:** `scripts/uninstall.sh` and the `uninstall.sh` release asset;
+  use `gpy uninstall`. Unlike the script, `gpy uninstall` does not accept a
+  piped Enter as confirmation; use `--yes` in scripts. Fish prompt backups
+  named `.gpy-backup.<stamp>` or `.backup-<stamp>` (from releases before
+  `gpy setup`) are no longer restored automatically; rename the one you want
+  to `fish_prompt.fish` (#1126).
+- **Breaking:** `gpy lang versions on|off` is deprecated and prints a warning;
+  use `gpy config set language.show_versions true|false` instead (#1176).
+- **Breaking:** `gpy config show <section>` with an unknown section is now a
+  usage error (exit 2, listing the valid sections) instead of exit 1 (#1176).
+- `gpy theme import` takes `<FILE>`; `gpy --help` gains a getting-started
+  paragraph (#1176).
+- **Breaking:** `gpy debug paths --format json` emits `config_candidates` as a
+  JSON array (was one `|`-joined string); scripts that split the string on `|`
+  should read the array (`--format kv` is unchanged) (#1179).
+- `gpy segments` shows each segment's plugin and whether it is on by default;
+  `gpy config list` lists `language.icons.<lang>`; `gpy plugin new` names the
+  ownership/permission rule (#1179).
+- **Breaking (library):** `agent::lifecycle::start` is no longer public; use
+  the `agent::lifecycle` re-exports (`start_background_agent`) (#1136).
+- **Breaking (library):** `paths::{SOCKET_OVERRIDE, set_socket_override,
+  get_socket_path, resolve_socket_path, socket_override,
+  socket_is_overridden}` are replaced by `paths::SocketPath`; `Agent::new` and
+  the `agent::lifecycle` functions take a `&SocketPath` (#1131).
+- **Breaking (library):** `agent::lifecycle::{ping_agent_blocking,
+  send_shutdown_command, send_config_reload_command, query_agent_status,
+  socket_is_stale, probe_status, wait_for_agent_shutdown}` are replaced by the
+  synchronous `agent::lifecycle::AgentClient`, which owns one runtime per
+  operation; `inspect_socket` takes a `&AgentClient` (#1132).
 
 ## [0.8.0] - 2026-10-29
 
@@ -130,7 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy doctor` lists every user theme that shadows a builtin, validates
   it, and warns (without failing) with recovery commands when an inactive
   one does not load (#1086).
-- ADR-0012 (Proposed): theme overlays that extend a builtin so customised
+- ADR-0012 (Accepted): theme overlays that extend a builtin so customised
   themes keep receiving upstream changes (#1091).
 
 ### Changed

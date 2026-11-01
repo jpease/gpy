@@ -13,8 +13,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::fs::canonicalize(std::env::args().nth(1).unwrap_or_else(|| ".".to_owned()))?;
     let cwd = dir.to_str().ok_or("directory path is not UTF-8")?;
 
-    let socket_path = gpy_agent::paths::get_socket_path()?;
-    let stream = UnixStream::connect(&socket_path).await.map_err(|e| {
+    let socket = gpy_agent::paths::SocketPath::resolve(None)?;
+    let socket_path = socket.path();
+    let stream = UnixStream::connect(socket_path).await.map_err(|e| {
         format!(
             "cannot connect to {}: {e} (is `gpy-agent start` running?)",
             socket_path.display()

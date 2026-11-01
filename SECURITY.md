@@ -7,6 +7,7 @@ GPY is a personal project with one release line. Security fixes land on the late
 | Version | Supported |
 | ------- | --------- |
 | 0.8.x   | Yes       |
+
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues.**
@@ -49,44 +50,22 @@ they ask not to be.
 
 ## Trust Boundaries
 
-GPY is three cooperating pieces: a shell integration written for Fish, Bash and
-Zsh; a long-running local agent (`gpy-agent`); and a Unix domain socket between
-them.
+GPY is three cooperating pieces: a shell integration for Fish, Bash and Zsh; a
+long-running local agent (`gpy-agent`); and a Unix domain socket between them.
+The full detail is in [the security model](docs/dev/security-model.md).
 
-**Your shell trusts the agent completely.** Every new shell runs the agent's
-theme export as shell code. Bash and Zsh do it with `eval "$(gpy-agent theme
-export ...)"` (`bash/core/init.bash`, `zsh/core/init.zsh`). Fish pipes the same
-output into `source`, or sources the theme-export cache file the agent wrote
-under `~/.cache/gpy/` (`fish/core/init.fish`). Prompt content returned over the
-socket reaches the prompt the same way. This is what a prompt generator is —
-something has to emit shell code — but it puts the agent binary on the same
-footing as your shell startup files.
-
-Anyone who can replace `gpy-agent` on your
-`PATH`, or write to the theme-export cache, gets arbitrary code execution in
-every shell you open from then on. Three things stand in the way, and only
-these three:
-
-- The installers verify every downloaded binary (and, for the one-line
-  installer, the shell-script archive) against its published SHA-256 and abort
-  on a mismatch or a missing checksum. The digests ship in the same release,
-  so this catches corruption, not a compromised release. See
-  [Release Integrity and Supply Chain](#release-integrity-and-supply-chain).
-- Both the cache directory and the install directory are ordinary user-owned
-  paths. Anything already running as you can write to them.
-- Nothing else. There is no signature check at load time and no integrity check
-  on the cache file.
-
-**Plugin segment files run as you.** Third-party plugins ship Fish scripts
-(`segments/<name>.fish`) that `fish/core/init.fish` sources, with your full user
-privileges, when the segment is enabled. Only the Fish theme export carries
-their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source these
-`.fish` files. Installing a plugin means trusting its code like a shell startup
-file.
-
-**Script segments run as you, in all three shells.** Bash, Zsh and Fish
-execute script plugins (`entry_type = "script"`) as you, once per command; see
-[Script Segment Trust Model](#script-segment-trust-model).
+- Your shell evaluates the agent's theme export at every start, so whoever can
+  replace `gpy-agent` or the export cache runs code in every shell you open.
+- Fish `.fish` plugin segments are sourced into your shell, as you, with full
+  privileges; Bash and Zsh never source them.
+- Script segments run as you in all three shells (see below).
+- The agent listens on a Unix socket only, not on the network, and trusts whoever
+  can open that socket; the socket and its runtime directory are private to you.
+- IPC guards: a maximum message size, a connection rate limit (a connection over
+  it is closed without a reply), and PID and path validation. A PID is not
+  authentication.
+- Downloaded release artifacts are trusted only after verification (see
+  [Release Integrity and Supply Chain](#release-integrity-and-supply-chain)).
 
 **Prompt data is escaped for the shell that draws it.** Bash and Zsh paste the
 agent's prompt output into `PS1`/`PROMPT`, and both shells expand prompt
@@ -95,7 +74,7 @@ virtualenv names, hostnames, usernames and theme literals are untrusted text —
 a cloned repository or an unpacked archive chooses them — so the agent escapes
 every character the shell would expand in them (`\`, `$` and backticks for
 Bash; those plus `%` for Zsh) through the `bash-prompt` and `zsh-prompt` output
-formats (`gpy-agent/src/formatter/style_encoder.rs`). The instant-prompt
+formats. The instant-prompt
 cache keeps a separate file per format. The integrations pin the prompt options
 that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
 `prompt_percent` and `no_prompt_bang` in Zsh. The clock's live-time token
@@ -107,47 +86,8 @@ can emit escape sequences (script segment output is sanitized by the shells;
 see [Script Segment Trust Model](#script-segment-trust-model) for its gaps);
 theme template text keeps only newline, and
 `gpy theme validate` rejects themes whose templates contain any other control
-character (`gpy-agent/src/template/eval.rs`).
-
-**The agent trusts whoever can open its socket.** The socket is chmod'ed to
-`0600` immediately after bind. That mode does not stop anyone who can write the
-socket's directory from replacing the socket, so the directory is checked for
-every socket path, the default `$XDG_RUNTIME_DIR/gpy` (or its cache, home or
-`/tmp/gpy` fallback) and an explicit `GPY_AGENT_SOCKET_PATH` or `--socket`
-alike. The agent refuses to use a directory that is a symlink, is not a
-directory, or is owned by another user, so a socket directly in `/tmp` is
-refused. A directory owned by you that is group- or world-writable is treated
-by where the path came from: GPY's own default runtime directory is set to
-`0700` and checked again before use, while the directory of an explicit socket
-path is refused, never chmod'ed (`chmod 700` it, or choose a private
-directory). `gpy-agent start` applies the check before it creates the start
-lock, removes a stale socket or pings a running agent there, and the daemon
-applies it again immediately before bind (`secure_socket_dir` in
-`gpy-agent/src/ipc/server/handle.rs`). Only the directory itself is checked,
-not its parents. The owner-only socket in that directory is the access
-control. There is no handshake and no peer-credential check: any process
-running as you can talk to the agent, which is the same authority it already
-has to read your files and rewrite your shell config.
-
-Requests carry a PID. `validate_pid` (`gpy-agent/src/security.rs`) checks that
-the PID is well-formed and that the process is alive via `kill(pid, 0)`; it does
-not authenticate the caller, and a local process may claim any live PID. Treat
-it as a liveness and hygiene check, not as an authentication mechanism.
-
-**The Zsh integration does not trust `/tmp`.** Zsh memoizes prompt segments
-through relay files kept in a private directory created by `mktemp -d` — mode
-0700, unpredictable name — instead of a predictable `$$`-based path under a
-world-writable `/tmp`. A local attacker can then neither guess the path nor
-pre-create a file whose contents would be read back into `$PROMPT`, which would
-be a terminal-escape and prompt-injection vector. If `mktemp` is unavailable the
-memoization disables itself and every prompt does a full IPC round trip
-(`zsh/core/init.zsh`). Script segments add no files: their cache stays in
-shell variables, with no `/tmp` path and no PID-keyed state (see
-[Script Segment Trust Model](#script-segment-trust-model)).
-
-**Downloaded release artifacts are trusted only after verification.** What the
-installers enforce, and how to check a download by hand, is in
-[Release Integrity and Supply Chain](#release-integrity-and-supply-chain).
+character. A lone non-UTF-8 byte `0x80`–`0x9F` is not stripped, and text a script writes to
+`/dev/tty` is not sanitized.
 
 ## Script Segment Trust Model
 
@@ -163,38 +103,17 @@ it protects the shell and the terminal from the script's output and from the
 manifest's names. The design record is
 [ADR-0011 Addendum: Script Segment Security](docs/dev/adr/adr-0011-addendum-script-segment-security.md).
 
-*Which file runs (containment and ownership).* `gpy theme export` re-resolves
-`command` and `require_command` on every export (`ScriptPath::resolve` and
-`check_owned_and_not_shared` in `gpy-agent/src/plugin/script.rs`). Each must be
-a relative path without `..`, canonicalize (all symlinks resolved) to a regular
-file inside the canonical plugin root, and sit at a UTF-8 path without control
-characters. The script, and every directory from it up to the plugin root,
-must be owned by you or by root and must not be group- or world-writable.
-On macOS the same applies to extended ACLs, for the script, its directories
-and every ancestor: an allow entry for another principal granting write,
-append, delete, delete-child, write-security or change-owner is refused
-(deny entries are ignored; `chmod -N` removes an ACL).
-Every canonical ancestor of the plugin root, up to `/`, must also be unable
-to let another user replace the root: owned by you or root and not group- or
-world-writable, or writable only with the sticky bit set (as in `/tmp`) and
-owned by you or root, or group-writable (not world-writable) through your own
-user-private group (named like you, no other member), as `$HOME` is with
-umask 002 on user-private-group systems. Renaming or replacing a directory needs write
-permission on its parent, not on the directory itself, so without the
-ancestor rule another user with write access to a parent could swap the root
-after export. A segment failing any check is not exported, so no shell runs
-it. The export writes the canonical absolute path, and the shells run exactly
-that path without resolving it again. Re-resolving at run time would add no
-protection: after export, replacing the script or a directory on its path
-needs write access to a file or directory (or its parent) that the rules have
-just shown only you (or root) can change. Anyone able to do that already
-runs code as you, which is outside this design (see "No defence against a
-compromised account" below). These rules are what keep other local users out:
-without them, a user who could write the plugin directory or its parent could
-run code as you on every command. The interpreter is `/bin/sh` by an absolute
-path the agent resolves at export time (on macOS, the target of
-`/private/var/select/sh` when it passes the same ownership and mode checks),
-never a bare `sh` looked up on `PATH`.
+The script must resolve to a file inside the plugin root and be owned by you
+or root. It must not be writable by other users, and the same applies to its
+directories and to the plugin root's ancestors (ACLs included on macOS; the
+exact ancestor rules are in the
+[design record](docs/dev/security-model.md#script-segment-mechanism)). A run
+gets the script's `timeout_ms` (at most 500 ms), and its process group is killed
+when the deadline passes or the script exits. With Bash 3.2 (stock macOS; Fish
+and Zsh use a Bash child, and `/bin/bash` is 3.2 when no Bash 4 is installed),
+Ctrl-C during a slow script returns to the prompt only when the script's timeout
+expires, and the group is still killed. The plugin-author view is in
+[plugins.md](docs/dev/plugins.md#trust).
 
 *What the script gets.* A clean environment, not the shell's: `PATH` without
 empty, `.` or other relative entries, `HOME`, `USER`, `LOGNAME`, `LANG`,
@@ -224,25 +143,6 @@ names (segment tokens, `env` and `require_env` names) are checked against
 `^[A-Za-z_][A-Za-z0-9_]*$`-style patterns before any indirection, so a name
 such as `a[$(cmd)]` never executes; `require_files`, `require_folders` and
 `require_extensions` names with glob characters are matched literally.
-
-*Time and processes.* Triggers run in a fixed order: `require_env`, then the
-`require_files`/`require_folders`/`require_extensions` scan, then the cache,
-then `require_command`. `require_command` and the script run in one process
-group under the script's `timeout_ms` deadline (at most 500 ms); all due
-segments of one prompt start together, so one prompt waits at most 500 ms
-plus the grace, and at most 40 segments run per prompt. On timeout or Ctrl-C
-the group gets TERM, CONT,
-then KILL after a 50 ms grace; members left behind after a normal exit are
-killed the same way, and the runner never waits for a grandchild that holds
-the output pipe open. The scan runs in a child with a 30 ms deadline and is
-killed with SIGKILL when it overruns; it walks up through physical parents.
-Two consecutive scan timeouts, or two consecutive run timeouts or over-cap
-outputs (separate counters), disable the segment for that shell. Bash runs
-the runner in a subshell of itself; Fish and Zsh run it in a Bash child, the
-first Bash 4 or later found once at shell start, else `/bin/bash`. Without
-any Bash, script segments are disabled. With Bash 3.2 (stock macOS) Ctrl-C
-during a slow script returns to the prompt only when the script's timeout
-expires, and the group is still killed.
 
 *No files.* The cache and the once-per-command guard live in shell variables,
 keyed by the segment's fixed key plus the current values of its declared
@@ -274,85 +174,22 @@ not controls and pass. A script run in `$PWD` may run repository-local tools
 - **No code signing.** Binaries are not signed or notarized on any platform; see
   [Code signing: not done, deliberately](#code-signing-not-done-deliberately).
 
-## Hardening
-
-### IPC
-
-- **Unix domain sockets** — local only, no network listener
-- **Socket mode `0600`** in a directory the agent refuses to use when it is a
-  symlink or owned by another user; when it is yours but group- or
-  world-writable, the default runtime directory is set to `0700` and an
-  explicit socket path's directory is refused
-- **Path validation** to prevent directory traversal
-- **Message content validated against the protocol schema**
-  (`gpy-agent/src/ipc/protocol/mod.rs`, `gpy-agent/schemas/`)
-- **Connection rate limiting** to prevent abuse; an over-limit connection is
-  closed without a reply, and `gpy-agent start` treats that as a busy agent,
-  not a wedged one
-- **Message size limits** to prevent DoS
-- **Operation timeouts** so a slow or hostile request cannot pin the agent
-
-### File System Access
+## File System Access
 
 - **Repositories are read, never written.** GPY reads git state and language
   metadata from your working tree and puts nothing back into it. A script
   segment that declares `pwd` is the exception: it runs in the repository, and
   tools it calls (such as `git`) may write index and lock files there. The file
-  watcher's liveness probe does write a sentinel file, but into a private
-  directory under the system temp dir, outside every watched repository
-  (`gpy-agent/src/watcher/filesystem/mod.rs`).
+  watcher's liveness probe writes a sentinel file only into a private directory
+  under the system temp dir, outside every watched repository.
 - **GPY writes to its own paths only**: the instant-prompt and theme-export
   caches under `~/.cache/gpy/`, its runtime directory, and `config.toml` plus
   theme and palette files under `~/.config/gpy/` (touched by `gpy theme`,
   `gpy palette`, `gpy plugin` and config edits). A debug log is appended to only
   when debug logging is switched on.
-- **Path sanitization** — paths are validated before access.
-- **No elevated privileges** — the agent runs as the invoking user and never
+- **Path sanitization**: paths are validated before access.
+- **No elevated privileges**: the agent runs as the invoking user and never
   asks for more.
-
-### Subprocesses
-
-- Commands are built as argument vectors through `std::process::Command`, so
-  repository, branch and path names are passed as arguments and never spliced
-  into a shell string.
-- Python version detection reads a project-local `.venv`/`venv` only through
-  its `pyvenv.cfg`. A venv's interpreter is run to read its version only for
-  the environment your shell activated and forwarded (`VIRTUAL_ENV`, or a
-  non-base conda env); a project venv without a usable `pyvenv.cfg` version
-  shows no version.
-
-### Dependencies
-
-- `cargo audit` and `cargo deny` run in the local quality gate, not only in CI
-- Minimal direct dependency footprint
-- The current warning set is whatever `cargo audit` prints against
-  `gpy-agent/Cargo.lock` — that is the source of truth, not a count copied into
-  this file. Any suppressed ID would be listed with its rationale in
-  `gpy-agent/deny.toml`.
-
-For the per-advisory assessment and audit history, see [Security Audit Notes](docs/dev/security-audit.md).
-
-### CI and repository policy
-
-- **Workflow permissions:** every workflow declares a read-only top-level
-  `permissions: contents: read`. Only the release's `create-release` job widens
-  it (`contents: write` to publish, `id-token: write` and `attestations: write`
-  for build provenance), and `actions/checkout` uses
-  `persist-credentials: false` everywhere because no job pushes.
-- **Pinned actions:** every `uses:` is a full 40-character commit SHA with a
-  `# vX.Y.Z` comment. Dependabot (`.github/dependabot.yml`) opens weekly
-  GitHub Actions update PRs; Cargo version-update PRs are deliberately not
-  enabled, since `cargo audit` and `cargo deny` already gate every push.
-- **Secret scanning:** GitHub secret scanning with push protection is enabled
-  on the repository and is the authoritative control. Contributors who
-  have `gitleaks` installed also get it run on staged changes by the
-  repository's pre-commit hook (`.pre-commit-config.yaml`). A separate
-  Gitleaks CI job is deliberately not
-  added: it would duplicate push protection, add one more pinned action or
-  binary download to maintain, and only report after a secret is already in a
-  pushed branch.
-- **Untrusted input:** workflow `run:` steps never interpolate `${{ ... }}`
-  expressions from event data; values are passed through `env:`.
 
 ## Release Integrity and Supply Chain
 
@@ -362,7 +199,6 @@ For the per-advisory assessment and audit history, see [Security Audit Notes](do
 |----------|---------|
 | `install-oneline.sh` | The one-line installer, with the release tag built in. Published as an asset of each release, never fetched from a branch |
 | `gpy-shell-files.tar.gz` | The Fish, Zsh and Bash scripts the installer puts in your config directory |
-| `uninstall.sh` | The uninstaller (every shell) |
 | `<asset>.sha256` | SHA-256 digest beside each binary, archive and script |
 | `SHA256SUMS` | Aggregate manifest covering every downloadable file |
 | `gpy-sbom.cdx.json` | CycloneDX SBOM of the Rust dependency graph the binaries were built from |

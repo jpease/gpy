@@ -1,6 +1,9 @@
-//! Agent startup: diagnostics, timers, and shutdown signal handlers.
+//! Agent startup: diagnostics, the start announcement to tracked shells,
+//! timers, and shutdown signal handlers.
 
 use crate::debug_log;
+#[cfg(unix)]
+use crate::ipc::registry::{announce_start_in, default_shell_dir};
 use crate::{Error, Result};
 use std::future::Future;
 use std::path::Path;
@@ -17,6 +20,22 @@ pub(super) fn startup_checks(socket_path: &Path) {
     debug_log!("agent", "GPY Agent starting...");
     debug_log!("agent", "Socket path: {}", socket_path.display());
     debug_log!("agent", "Starting IPC server...");
+}
+
+/// Announce a started agent to every alive tracked shell: warm the
+/// theme-export cache, then let the shell-tracking protocol raise `.reload`
+/// if the export changed (config edited while no agent ran) and
+/// `.reregister`. Lives here, not in `ipc::registry`, so the registry
+/// depends on neither `theme` nor `cache`. Call once the socket accepts.
+#[cfg(unix)]
+pub(super) fn announce_start_to_tracked_shells(
+    theme_manager: &crate::theme::ThemeManager,
+    config: &crate::config::Config,
+    palette: &crate::template::Palette,
+) {
+    announce_start_in(&default_shell_dir(), || {
+        crate::cache::write_theme_export_cache(theme_manager, config, palette)
+    });
 }
 
 /// Creates a clock timer that ticks every second.
@@ -52,7 +71,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
             _ = sigterm.recv() => {}
         }
 
-        println!("Received shutdown signal, shutting down gracefully...");
+        debug_log!("agent", "Received shutdown signal");
         Ok::<(), Error>(())
     })
 }
@@ -64,7 +83,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
         signal::ctrl_c()
             .await
             .map_err(|e| Error::agent(format!("cannot install the signal handler: {e}")))?;
-        println!("Received shutdown signal, shutting down gracefully...");
+        debug_log!("agent", "Received shutdown signal");
         Ok::<(), Error>(())
     })
 }

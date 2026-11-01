@@ -14,7 +14,7 @@ use common::child_guard::{AgentStopGuard, KillOnDrop};
 use common::cli_harness::CliTestEnv;
 use common::git;
 use common::wait::wait_until;
-use gpy_agent::ipc::Response;
+use gpy_agent::ipc::{Response, wire};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -137,13 +137,9 @@ impl Daemon {
     /// `(watched_repos, git cache entries)` from the agent's status report.
     fn watched_and_cached(&self) -> (usize, usize) {
         let status = self.request(&serde_json::json!({ "op": "status" }));
-        match serde_json::from_value(status.clone()) {
-            Ok(Response::AgentStatus {
-                watched_repos,
-                cache_entries,
-                ..
-            }) => (watched_repos, cache_entries),
-            _ => panic!("unexpected status response: {status}"),
+        match wire::decode_control_reply(&status.to_string()) {
+            Ok(Response::AgentStatus(report)) => (report.watched_repos, report.cache_entries),
+            other => panic!("unexpected status response: {other:?}"),
         }
     }
 

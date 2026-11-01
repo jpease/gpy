@@ -70,8 +70,22 @@ fi
 # only when it is absent. The script segment list is unset first, so a list
 # left from an earlier load or the parent environment never outlives an
 # export that fails to load; __gpy_g_sync then takes what this load set.
+# `fresh` (gpy-prompt-reload) never reads the cache file, which may be stale:
+# it asks the agent, and only a successful export replaces the running state.
+# Its stderr is kept, so an invalid config.toml shows the agent's warning.
 __gpy_load_theme() {
-    local cache_path rc=1
+    local cache_path rc=1 out
+    if [[ "${1:-}" == fresh ]]; then
+        # `eval "$(cmd)"` succeeds even when cmd fails, so fetch first.
+        command -v gpy-agent &>/dev/null || return 1
+        out="$(gpy-agent theme export --shell bash)" || return 1
+        [[ -n "$out" ]] || return 1
+        __gpy_g_clear_styles
+        unset __gpy_script_segments
+        eval "$out"
+        __gpy_g_sync
+        return 0
+    fi
     __gpy_g_clear_styles
     unset __gpy_script_segments
     cache_path="$(__gpy_theme_export_cache_path)"

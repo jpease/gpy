@@ -33,8 +33,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # The release layout package-release.sh produces for the native asset: the
-# archive (bin/<asset> plus its .sha256 sidecar, the three shell trees, the
-# installer and uninstaller), the stamped install-oneline.sh and
+# archive (bin/<asset> plus its .sha256 sidecar, the three shell trees and the
+# installer), the stamped install-oneline.sh and
 # gpy-shell-files.tar.gz.
 ARG GPY_RELEASE_VERSION
 COPY install.sh /opt/gpy-release/install.sh
@@ -42,7 +42,6 @@ COPY install-oneline.sh /opt/build/install-oneline.sh
 COPY fish /opt/gpy-release/fish
 COPY zsh /opt/gpy-release/zsh
 COPY bash /opt/gpy-release/bash
-COPY scripts/uninstall.sh /opt/gpy-release/scripts/
 COPY --from=builder /src/gpy-agent/target/release/gpy-agent /opt/build/gpy-agent
 COPY --from=builder /src/gpy-agent/target/release/gpy /opt/build/gpy
 RUN set -eu; \

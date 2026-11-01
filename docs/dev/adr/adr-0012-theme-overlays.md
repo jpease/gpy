@@ -4,6 +4,8 @@
 
 Accepted (2026-10-27). The maintainer approved all six decisions at the end of this document as written, and chose overlays as the writers' default from the start (no opt-in release). The ADR alters the structure of the theme file schema, which needs explicit maintainer approval ([ADR-0011](adr-0011-plugin-shell-coverage.md) Decision item 9 lists it). Implementation is tracked as separate work items (the follow-ups at the end).
 
+Code references (`path:line`) are to commit `58e0984`.
+
 ## Context
 
 A theme name resolves to one file and nothing else is merged. `ThemeManager::resolve_path` (`gpy-agent/src/theme/manager.rs:626-647`) returns `<config>/themes/<name>.toml` when that joined path exists, else the winning plugin or builtin entry from `discover_available_themes` (`manager.rs:535-545`). Precedence is user > plugin > builtin (`config/discovery.rs:21-29`). Ties go to the later candidate (`discovery.rs:88-96`), and plugins are inserted sorted by id (`plugin/registry.rs:303-304`), so among plugins the lexically greatest id wins. `config::loader::load_theme_from_path` (`config/loader.rs:336-370`) reads that file, or the embedded builtin with the same stem. `theme::parse` (`theme/parse.rs:8-39`) parses the string, requires `[segments]` and `[ui]` and deserializes the whole `ThemeConfig`. On failure it re-parses the string for spans and runs #1084's per-key check on plugin tables (`parse.rs:41-52`, `theme/locate.rs`).

@@ -34,7 +34,7 @@ pub fn names(kind: CompleteKind) -> Vec<String> {
 /// Print one candidate name per line for `kind`.
 pub fn run(kind: CompleteKind) {
     for name in names(kind) {
-        println!("{name}");
+        super::output::plain(name);
     }
 }
 

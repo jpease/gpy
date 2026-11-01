@@ -1,227 +1,86 @@
 #!/usr/bin/env fish
-# Test segment override toggles (GPY_MINIMAL_SEGMENTS and GPY_TEST_SEGMENTS)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The segment list overrides init.fish still honours:
+#   - __gpy_test_segments (non-exported test hook) replaces the list;
+#   - GPY_SHOW_LANGUAGES=0, GPY_MINIMAL_SEGMENTS and GPY_TEST_SEGMENTS are
+#     deprecated: each still applies and warns once at the first prompt.
+# Every case runs in a fresh Fish in a sandbox whose gpy-agent is a stub that
+# records its calls and fails, so no export loads and the fallback list is used.
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-echo "Testing segment override toggles..."
+set -g t_fish (command -s fish)
+set -g t_sandbox (mktemp -d)
+test_track_dir $t_sandbox
+mkdir -p $t_sandbox/home $t_sandbox/cache $t_sandbox/config $t_sandbox/run $t_sandbox/bin
+set -g t_calls $t_sandbox/agent-calls.log
+printf '%s\n' '#!/bin/sh' 'echo "$*" >>"$STUB_AGENT_LOG"' 'exit 1' >$t_sandbox/bin/gpy-agent
+chmod +x $t_sandbox/bin/gpy-agent
 
-# Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache.
-set -gx XDG_CACHE_HOME (mktemp -d)
-
-# Source modules needed
-source fish/core/ipc.fish
-
-function test_minimal_segments_loads_only_directory
-    echo "Test 1: GPY_MINIMAL_SEGMENTS loads only directory"
-
-    # Clean state
-    set -e __enabled_segments
-    set -e GPY_TEST_SEGMENTS
-    set -e GPY_SHOW_LANGUAGES
-
-    # Set GPY_MINIMAL_SEGMENTS to enable minimal mode BEFORE sourcing
-    set -gx GPY_MINIMAL_SEGMENTS 1
-
-    # Source core/ipc.fish and core/util.fish to get dependencies
-    # but mock the side-effect functions before sourcing init.fish
-    function __gpy_load_theme
-        # No-op - avoid calling gpy-agent
-    end
-
-    function __gpy_load_default_config
-        # Set the default segments (mimics what the real function does)
-        set -g __enabled_segments clock duration language directory git
-    end
-
-    function __gpy_load_segments
-        # No-op - we don't want to actually source segment files
-    end
-
-    # Source the real init.fish to test the actual production logic
-    # This will execute the segment selection code and apply the override
-    source fish/core/init.fish
-
-    # Verify only directory segment is enabled
-    if test (count $__enabled_segments) -eq 1
-        pass "Minimal segments contains only 1 segment"
-    else
-        fail "Expected 1 segment, got "(count $__enabled_segments)
-        return 1
-    end
-
-    if test "$__enabled_segments[1]" = directory
-        pass "First segment is directory"
-    else
-        fail "Expected directory, got $__enabled_segments[1]"
-        return 1
-    end
-
-    # Clean up
-    set -e GPY_MINIMAL_SEGMENTS
+# Source GPY in a fresh Fish and print `segments=<list>`, then fire the first
+# prompt twice and print what reached stderr. $argv[1] runs before init.fish;
+# the rest are extra environment entries.
+function run_case --argument-names pre_code
+    set -l extra
+    set -q argv[2]; and set extra $argv[2..-1]
+    command env -i HOME=$t_sandbox/home XDG_CONFIG_HOME=$t_sandbox/config XDG_CACHE_HOME=$t_sandbox/cache \
+        XDG_RUNTIME_DIR=$t_sandbox/run TMPDIR=$t_sandbox PATH=$t_sandbox/bin:/usr/bin:/bin TERM=dumb \
+        GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_AUTOSTART_MAX_ATTEMPTS=0 \
+        GPY_AGENT_SOCKET_PATH=$t_sandbox/run/gpy.sock STUB_AGENT_LOG=$t_calls GPY_T_ROOT=$__gpy_root \
+        $extra $t_fish --no-config -c "$pre_code
+source \$GPY_T_ROOT/fish/core/init.fish
+echo segments=(string join , \$__enabled_segments)
+emit fish_prompt
+emit fish_prompt" 2>&1
 end
 
-function test_gpy_test_segments_splits_correctly
-    echo ""
-    echo "Test 2: GPY_TEST_SEGMENTS splits correctly"
-
-    # Clean state
-    set -e __enabled_segments
-    set -e GPY_MINIMAL_SEGMENTS
-    set -e GPY_SHOW_LANGUAGES
-
-    # Set custom segment list BEFORE sourcing
-    set -gx GPY_TEST_SEGMENTS "clock git"
-
-    # Mock functions that would cause side effects
-    function __gpy_load_theme
-        # No-op
-    end
-
-    function __gpy_load_default_config
-        set -g __enabled_segments clock duration language directory git
-    end
-
-    function __gpy_load_segments
-        # No-op
-    end
-
-    # Source the real init.fish
-    source fish/core/init.fish
-
-    # Verify segments match GPY_TEST_SEGMENTS
-    if test (count $__enabled_segments) -eq 2
-        pass "Test segments count is 2"
-    else
-        fail "Expected 2 segments, got "(count $__enabled_segments)
-        return 1
-    end
-
-    if test "$__enabled_segments[1]" = clock
-        pass "First segment is clock"
-    else
-        fail "Expected clock, got $__enabled_segments[1]"
-        return 1
-    end
-
-    if test "$__enabled_segments[2]" = git
-        pass "Second segment is git"
-    else
-        fail "Expected git, got $__enabled_segments[2]"
-        return 1
-    end
-
-    # Clean up
-    set -e GPY_TEST_SEGMENTS
+function warnings_in
+    string match '*is deprecated; use gpy enable or gpy disable instead' -- $argv
 end
 
-function test_gpy_show_languages_zero_removes_language
-    echo ""
-    echo "Test 3: GPY_SHOW_LANGUAGES=0 removes language"
+set -l default_list clock,duration,language,directory,git
 
-    # Clean state
-    set -e __enabled_segments
-    set -e GPY_MINIMAL_SEGMENTS
-    set -e GPY_TEST_SEGMENTS
-
-    # Set GPY_SHOW_LANGUAGES to 0 BEFORE sourcing
-    set -gx GPY_SHOW_LANGUAGES 0
-
-    # Mock functions
-    function __gpy_load_theme
-        # No-op
-    end
-
-    function __gpy_load_default_config
-        set -g __enabled_segments clock duration language directory git
-    end
-
-    function __gpy_load_segments
-        # No-op
-    end
-
-    # Source the real init.fish
-    source fish/core/init.fish
-
-    # Verify language is not in the list
-    if test (count $__enabled_segments) -eq 4
-        pass "GPY_SHOW_LANGUAGES=0 results in 4 segments"
-    else
-        fail "Expected 4 segments, got "(count $__enabled_segments)
-        return 1
-    end
-
-    if string match -q language $__enabled_segments
-        fail "Language segment should not be present"
-        return 1
-    else
-        pass "Language not in segments"
-    end
-
-    # Clean up
-    set -e GPY_SHOW_LANGUAGES
+echo "--- fallback list, no switch ---"
+set -l out (run_case "")
+check "no export: the fallback list is used" segments=$default_list "$out[1]"
+check "no deprecation warning without a switch" 0 (count (warnings_in $out))
+if grep -q 'theme export' $t_calls
+    pass "the stub gpy-agent was asked for the export (and failed)"
+else
+    fail "the stub gpy-agent was never asked for a theme export"
 end
 
-function test_minimal_overrides_show_languages
-    echo ""
-    echo "Test 4: GPY_MINIMAL_SEGMENTS overrides GPY_SHOW_LANGUAGES"
+echo "--- __gpy_test_segments ---"
+set out (run_case "set -g __gpy_test_segments clock git")
+check "__gpy_test_segments replaces the list" segments=clock,git "$out[1]"
+check "__gpy_test_segments does not warn" 0 (count (warnings_in $out))
 
-    # Clean state
-    set -e __enabled_segments
-    set -e GPY_TEST_SEGMENTS
+echo "--- deprecated switches ---"
+set out (run_case "" GPY_MINIMAL_SEGMENTS=1)
+check "GPY_MINIMAL_SEGMENTS still forces directory" segments=directory "$out[1]"
+check "GPY_MINIMAL_SEGMENTS warns once across two prompts" \
+    "gpy: GPY_MINIMAL_SEGMENTS is deprecated; use gpy enable or gpy disable instead" (warnings_in $out)
 
-    # Set both GPY_SHOW_LANGUAGES and GPY_MINIMAL_SEGMENTS BEFORE sourcing
-    set -gx GPY_SHOW_LANGUAGES 0
-    set -gx GPY_MINIMAL_SEGMENTS 1
+set out (run_case "" GPY_MINIMAL_SEGMENTS=)
+check "an empty GPY_MINIMAL_SEGMENTS still forces directory" segments=directory "$out[1]"
+check "an empty GPY_MINIMAL_SEGMENTS warns once" 1 (count (warnings_in $out))
 
-    # Mock functions
-    function __gpy_load_theme
-        # No-op
-    end
+set out (run_case "" "GPY_TEST_SEGMENTS=clock git")
+check "GPY_TEST_SEGMENTS still replaces the list" segments=clock,git "$out[1]"
+check "GPY_TEST_SEGMENTS warns once across two prompts" \
+    "gpy: GPY_TEST_SEGMENTS is deprecated; use gpy enable or gpy disable instead" (warnings_in $out)
 
-    function __gpy_load_default_config
-        set -g __enabled_segments clock duration language directory git
-    end
+set out (run_case "" GPY_SHOW_LANGUAGES=0)
+check "GPY_SHOW_LANGUAGES=0 still drops language" segments=clock,duration,directory,git "$out[1]"
+check "GPY_SHOW_LANGUAGES=0 warns once across two prompts" \
+    "gpy: GPY_SHOW_LANGUAGES is deprecated; use gpy enable or gpy disable instead" (warnings_in $out)
 
-    function __gpy_load_segments
-        # No-op
-    end
+set out (run_case "" GPY_SHOW_LANGUAGES=1)
+check "GPY_SHOW_LANGUAGES=1 changes nothing" segments=$default_list "$out[1]"
+check "GPY_SHOW_LANGUAGES=1 does not warn" 0 (count (warnings_in $out))
 
-    # Source the real init.fish
-    source fish/core/init.fish
+set out (run_case "" GPY_SHOW_LANGUAGES=0 GPY_MINIMAL_SEGMENTS=1)
+check "GPY_MINIMAL_SEGMENTS wins over GPY_SHOW_LANGUAGES" segments=directory "$out[1]"
+check "each deprecated name present warns once" 2 (count (warnings_in $out))
 
-    # Verify GPY_MINIMAL_SEGMENTS takes precedence
-    if test (count $__enabled_segments) -eq 1
-        pass "Minimal overrides SHOW_LANGUAGES (1 segment)"
-    else
-        fail "Expected 1 segment, got "(count $__enabled_segments)
-        return 1
-    end
-
-    if test "$__enabled_segments[1]" = directory
-        pass "Only directory segment present"
-    else
-        fail "Expected directory, got $__enabled_segments[1]"
-        return 1
-    end
-
-    # Clean up
-    set -e GPY_SHOW_LANGUAGES
-    set -e GPY_MINIMAL_SEGMENTS
-end
-
-# Run all tests
-test_minimal_segments_loads_only_directory
-or exit 1
-
-test_gpy_test_segments_splits_correctly
-or exit 1
-
-test_gpy_show_languages_zero_removes_language
-or exit 1
-
-test_minimal_overrides_show_languages
-or exit 1
-
-echo ""
 test_finish "segment toggle tests"

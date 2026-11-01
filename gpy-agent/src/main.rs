@@ -13,7 +13,7 @@ use gpy_agent::{
     commands::{agent_report, exit_codes},
     shell::Shell,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// Help for every `--socket`: one meaning, one description.
@@ -279,13 +279,12 @@ fn handle_oneshot_command(command: OneshotCommands) -> Result<()> {
 /// # Errors
 /// Returns an error if the agent rejected the config (it keeps its previous
 /// one) or did not answer, or the socket path or async runtime is unavailable.
-fn reload_config(socket: Option<PathBuf>) -> Result<()> {
-    use gpy_agent::agent::lifecycle::{ConfigReload, send_config_reload_command};
-    use gpy_agent::paths::get_socket_path;
+fn reload_config(socket: Option<&Path>) -> Result<()> {
+    use gpy_agent::agent::lifecycle::{AgentClient, ConfigReload};
+    use gpy_agent::paths::SocketPath;
 
-    agent_report::apply_socket_override(socket)?;
-    let socket_path = get_socket_path()?;
-    match tokio::runtime::Runtime::new()?.block_on(send_config_reload_command()) {
+    let resolved = SocketPath::resolve(socket)?;
+    match AgentClient::new(&resolved)?.reload_config() {
         Ok(ConfigReload::Applied) => println!("Running agent reloaded its configuration."),
         Ok(ConfigReload::NotRunning) => {
             println!("Agent is not running; configuration changes will apply on next start.");
@@ -298,7 +297,7 @@ fn reload_config(socket: Option<PathBuf>) -> Result<()> {
         Err(e) => {
             return Err(gpy_agent::Error::agent(format!(
                 "agent at {} did not answer the config reload request ({e})",
-                socket_path.display()
+                resolved.path().display()
             )));
         }
     }
@@ -322,10 +321,12 @@ fn main() -> ExitCode {
 /// Returns the command's error.
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
-        Commands::Start { socket, quiet } => return agent_report::start(socket, quiet),
-        Commands::Stop { socket, quiet } => return agent_report::stop(socket, quiet),
-        Commands::Restart { socket, quiet } => return agent_report::restart(socket, quiet),
-        Commands::Status { socket } => return Ok(agent_report::status(socket)),
+        Commands::Start { socket, quiet } => return agent_report::start(socket.as_deref(), quiet),
+        Commands::Stop { socket, quiet } => return agent_report::stop(socket.as_deref(), quiet),
+        Commands::Restart { socket, quiet } => {
+            return agent_report::restart(socket.as_deref(), quiet);
+        }
+        Commands::Status { socket } => return Ok(agent_report::status(socket.as_deref())),
         Commands::Theme {
             command: ThemeCommands::Export { shell, format },
         } => export_theme(format.map_or(shell, |deprecated| {
@@ -335,7 +336,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Oneshot { command } => handle_oneshot_command(command)?,
         Commands::Config {
             command: ConfigCommands::Reload { socket },
-        } => reload_config(socket)?,
+        } => reload_config(socket.as_deref())?,
     }
     Ok(ExitCode::SUCCESS)
 }

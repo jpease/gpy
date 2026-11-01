@@ -370,9 +370,7 @@ main() {
     echo "Agent status:  gpy-agent status"
     echo "Agent logs:    tail -f $CACHE_HOME/gpy/agent.log"
     echo "Documentation: https://github.com/jpease/gpy"
-    # Download-then-run, not `curl | sh`: the uninstaller reads confirmation from stdin.
-    UNINSTALL_URL="https://github.com/$REPO/releases/download/$VERSION"
-    echo "Uninstall:     curl -fsSL $UNINSTALL_URL/uninstall.sh -o /tmp/gpy-uninstall.sh && GPY_SHELL=$CURRENT_SHELL sh /tmp/gpy-uninstall.sh"
+    echo "Uninstall:     $INSTALL_DIR/gpy uninstall"
 }
 
 main "$@"

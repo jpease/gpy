@@ -17,6 +17,7 @@
 use super::fixtures::TempSocket;
 use super::git::{TestRepo, git_output};
 use gpy_agent::config::Config;
+use gpy_agent::ipc::wire::{self, Op};
 use gpy_agent::ipc::{Message, Response, Segment};
 use gpy_agent::security::SafePath;
 use std::fs;
@@ -83,10 +84,10 @@ impl Default for TestConfig {
 /// Encode a request as one `{"op":…}` JSON line; panics on variants the harness never sends.
 fn op_line(msg: &Message) -> String {
     let value = match msg {
-        Message::Ping => serde_json::json!({"op": "ping"}),
-        Message::Status => serde_json::json!({"op": "status"}),
+        Message::Ping => serde_json::json!({"op": Op::Ping.as_str()}),
+        Message::Status => serde_json::json!({"op": Op::Status.as_str()}),
         Message::RepositoryStatus { path, segment } => serde_json::json!({
-            "op": "git", "cwd": path.as_str(), "format": segment.format,
+            "op": Op::Git.as_str(), "cwd": path.as_str(), "format": segment.format,
             "is_last": segment.is_last, "is_first": segment.is_first, "prev_bg": segment.prev_bg,
         }),
         Message::LanguageDetect {
@@ -94,7 +95,7 @@ fn op_line(msg: &Message) -> String {
             segment,
             virtual_env,
         } => serde_json::json!({
-            "op": "lang", "cwd": path.as_str(), "format": segment.format,
+            "op": Op::Lang.as_str(), "cwd": path.as_str(), "format": segment.format,
             "is_last": segment.is_last, "is_first": segment.is_first, "prev_bg": segment.prev_bg,
             "virtual_env": virtual_env,
         }),
@@ -104,11 +105,11 @@ fn op_line(msg: &Message) -> String {
             shell,
             shell_version,
         } => serde_json::json!({
-            "op": "register", "pid": pid.get(), "cwd": cwd.as_ref().and_then(SafePath::as_str),
+            "op": Op::Register.as_str(), "pid": pid.get(), "cwd": cwd.as_ref().and_then(SafePath::as_str),
             "shell": shell, "shell_version": shell_version,
         }),
         Message::UnregisterClient { pid } => {
-            serde_json::json!({"op": "unregister", "pid": pid.get()})
+            serde_json::json!({"op": Op::Unregister.as_str(), "pid": pid.get()})
         }
         other => panic!("op_line: no op encoding for {other:?}"),
     };
@@ -185,22 +186,8 @@ impl IntegrationTestServer {
         let response_str = std::str::from_utf8(response_buf)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        if let Ok(resp) = serde_json::from_str::<Response>(response_str) {
+        if let Ok(resp) = wire::decode_control_reply(response_str) {
             return Ok(resp);
-        }
-
-        if response_str.contains(r#""status":"ok""#) {
-            return Ok(Response::Ack);
-        }
-
-        if response_str.contains(r#""error":"#) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(response_str) {
-                if let Some(msg) = val.get("error").and_then(|v| v.as_str()) {
-                    return Ok(Response::Error {
-                        message: msg.to_owned(),
-                    });
-                }
-            }
         }
 
         if response_str.contains(r#""branch":"#) && response_str.contains(r#""ahead":"#) {
@@ -268,15 +255,10 @@ impl IntegrationTestServer {
             }
         }
 
-        serde_json::from_str(response_str).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Failed to deserialize response: {}. Body: {}",
-                    e, response_str
-                ),
-            )
-        })
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Unrecognized response body: {response_str}"),
+        ))
     }
 
     async fn wait_until_ready(socket_path: &Path) -> io::Result<()> {

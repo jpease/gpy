@@ -43,7 +43,7 @@ set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
 set -gx GPY_GIT_ENABLED 1
 set -gx GPY_LANGUAGE_ENABLED 1
 # Load the real git, language and status segments.
-set -gx GPY_TEST_SEGMENTS "directory git language status"
+set -g __gpy_test_segments directory git language status
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish

@@ -79,32 +79,7 @@ mod tests {
     }
 
     fn test_state(config: Config) -> WizardState {
-        WizardState::from_parts(
-            config,
-            vec![
-                "default".to_owned(),
-                "starship".to_owned(),
-                "text".to_owned(),
-            ],
-            vec![
-                "catppuccin-frappe".to_owned(),
-                "catppuccin-latte".to_owned(),
-                "catppuccin-macchiato".to_owned(),
-                "catppuccin-mocha".to_owned(),
-                "default".to_owned(),
-                "gruvbox-dark-medium".to_owned(),
-                "nord".to_owned(),
-                "starship".to_owned(),
-            ],
-            vec![
-                "clock".to_owned(),
-                "duration".to_owned(),
-                "language".to_owned(),
-                "directory".to_owned(),
-                "git".to_owned(),
-                "status".to_owned(),
-            ],
-        )
+        crate::commands::wizard::state::builtin_state(config)
     }
 
     #[test]

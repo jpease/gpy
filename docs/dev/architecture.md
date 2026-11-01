@@ -375,9 +375,11 @@ error.rs (foundation)
   │   └── version.rs (version detection trait)
   │
   ├── ipc/
-  │   ├── protocol.rs (JSON serialization)
-  │   ├── server.rs (request dispatcher)
-  │   └── registry.rs (Fish PID tracking)
+  │   ├── protocol/ (request parsing, PROTOCOL_VERSION)
+  │   ├── wire.rs (op names, JSON reply encoding)
+  │   ├── server/ (connections; HandlerRegistry::route in handlers/ maps each op to a typed handler method)
+  │   ├── single_flight.rs (coalesces duplicate concurrent jobs)
+  │   └── registry/ (client directory; shell_tracking.rs: tracking files, flag files, SIGURG doorbell)
   │
   └── watcher/
       ├── filesystem.rs (notify integration)
@@ -645,8 +647,8 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 
 ### Transport Layer
 
-**Socket Location** (`paths::resolve_socket_path`, `paths::runtime_root_for`):
-- Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
+**Socket Location** (`paths::SocketPath`, `paths::runtime_root_for`):
+- Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`/`config reload`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
 - Default: `<runtime root>/gpy.sock`, where the runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy` and `/tmp/gpy`; relative `XDG_*` values are ignored
 - There is no `config.toml` key. Fish, Bash and Zsh resolve the same path in `__gpy_ipc_endpoint`; `gpy debug paths` prints it
 - Only `gpy-agent start` creates the default runtime directory (`agent::lifecycle::ensure_runtime_dir`); other commands only resolve the path
@@ -662,7 +664,7 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 **Security**:
 - The socket is chmod'ed to `0600` right after bind
 - The socket's directory is trusted only if it is a real directory (not a symlink) owned by the user. An owned group- or world-writable directory is set to `0700` when it is the default runtime root and refused when it comes from `--socket` or `$GPY_AGENT_SOCKET_PATH`. `gpy-agent start` checks before it touches the directory, and the daemon checks again immediately before bind (`secure_socket_dir` in `ipc/server/socket_dir.rs`)
-- No handshake or peer-credential check: any process running as the user can connect. See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the full trust policy
+- No handshake or peer-credential check: any process running as the user can connect. See [security-model.md](security-model.md) for the full trust policy
 
 ### Operations
 
@@ -698,7 +700,7 @@ A cached git status costs one IPC round trip (`tests/performance-baselines.json`
 
 ### Security Considerations
 
-See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the trust boundaries, threat model and defenses.
+See [security-model.md](security-model.md) for the trust boundaries, threat model and defenses.
 
 ---
 
@@ -757,7 +759,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 
 ## Security Model
 
-See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the trust boundaries, threat model and defenses.
+See [security-model.md](security-model.md) for the trust boundaries, threat model and defenses.
 
 ---
 

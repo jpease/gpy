@@ -336,12 +336,7 @@ enum Answer {
 }
 
 fn confirm(prompt: &str) -> Result<Answer> {
-    use std::io::Write;
-
-    print!("{prompt}");
-    std::io::stdout()
-        .flush()
-        .map_err(|e| Error::config(format!("failed to write prompt: {e}")))?;
+    output::prompt(prompt).map_err(|e| Error::config(format!("failed to write prompt: {e}")))?;
 
     let mut answer = String::new();
     let read = std::io::stdin()

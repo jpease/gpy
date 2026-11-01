@@ -1523,7 +1523,7 @@ fn documented_command_paths(doc: &str) -> Vec<String> {
 
 /// Every `gpy <words>` command that `docs/user/cli-reference.md` mentions must
 /// exist: `gpy <words> --help` must not print clap's `unrecognized subcommand`
-/// marker. Argument tails (`lang versions maybe`) never produce that marker,
+/// marker. Argument tails (`config show nosuch`) never produce that marker,
 /// so documented invalid examples and placeholders do not trip the guard. See
 /// [`documented_command_paths`] for the extraction rule. The reverse direction
 /// (CLI commands missing from the docs) and `gpy-agent` are out of scope.
@@ -1545,7 +1545,7 @@ fn documented_cli_commands_exist() {
         !paths.is_empty(),
         "no commands extracted from cli-reference.md"
     );
-    for anchor in ["config show", "plugin list", "lang versions"] {
+    for anchor in ["config show", "plugin list", "theme use"] {
         assert!(
             paths.iter().any(|path| path == anchor),
             "extraction lost the anchor `{anchor}`; got {paths:?}"
@@ -1567,54 +1567,6 @@ fn documented_cli_commands_exist() {
     assert!(
         missing.is_empty(),
         "cli-reference.md documents commands the CLI does not have: {missing:?}"
-    );
-}
-
-/// `gpy config list` prints exactly the keys in `CONFIG_KEYS`, with a matching
-/// footer, and a prefix filter narrows the list.
-#[test]
-fn config_list_matches_registry() {
-    let key_line =
-        regex::Regex::new(r"^   (\S+) \[(?:read-write|read-only )\]$").expect("valid regex");
-    let env = CliTestEnv::new().expect("failed to create CLI test env");
-
-    let all = env.run_gpy(&["config", "list"]).expect("spawn gpy");
-    all.assert_success("gpy config list");
-    let listed: std::collections::BTreeSet<&str> = all
-        .stdout
-        .lines()
-        .filter_map(|line| key_line.captures(line)?.get(1).map(|m| m.as_str()))
-        .collect();
-    let registered: std::collections::BTreeSet<&str> = gpy_agent::config::metadata::CONFIG_KEYS
-        .iter()
-        .map(|meta| meta.key)
-        .collect();
-    assert_eq!(listed, registered, "listed keys differ from CONFIG_KEYS");
-
-    let footer = format!("Total: {} keys", registered.len());
-    assert!(
-        all.stdout.lines().any(|line| line == footer),
-        "missing footer `{footer}` in:\n{}",
-        all.stdout
-    );
-
-    let filtered = env
-        .run_gpy(&["config", "list", "git.icons"])
-        .expect("spawn gpy");
-    filtered.assert_success("gpy config list git.icons");
-    let keys: Vec<&str> = filtered
-        .stdout
-        .lines()
-        .filter_map(|line| key_line.captures(line)?.get(1).map(|m| m.as_str()))
-        .collect();
-    assert!(
-        !keys.is_empty(),
-        "filter matched nothing:\n{}",
-        filtered.stdout
-    );
-    assert!(
-        keys.iter().all(|key| key.starts_with("git.icons.")),
-        "filter leaked other keys: {keys:?}"
     );
 }
 

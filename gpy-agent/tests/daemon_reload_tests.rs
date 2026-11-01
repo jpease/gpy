@@ -13,7 +13,7 @@ use common::child_guard::AgentStopGuard;
 use common::cli_harness::CliTestEnv;
 use common::sigurg::SigurgCounter;
 use common::wait::wait_until;
-use gpy_agent::ipc::protocol::CONFIG_RELOAD_JSON;
+use gpy_agent::ipc::wire::Op;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -106,7 +106,7 @@ impl Daemon {
 
     /// Send `config_reload` and return whether the daemon acknowledged it.
     fn reload(&self) -> bool {
-        self.request(CONFIG_RELOAD_JSON)
+        self.request(&Op::ConfigReload.bare_request())
             .contains(r#""status":"ok""#)
     }
 

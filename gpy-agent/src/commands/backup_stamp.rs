@@ -1,7 +1,7 @@
 //! The `YYYYMMDD_HHMMSS` suffix of backup file names.
 
 /// `YYYYMMDD_HHMMSS` (UTC) for `epoch_secs`, the suffix the installers write
-/// and `scripts/uninstall.*` restore. Civil-from-days after Howard Hinnant.
+/// and `gpy uninstall` restores. Civil-from-days after Howard Hinnant.
 #[allow(
     clippy::arithmetic_side_effects,
     reason = "days is at most u64::MAX / 86_400, so no step overflows, and each subtraction is non-negative by the civil-from-days algorithm"

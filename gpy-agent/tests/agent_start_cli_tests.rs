@@ -1,5 +1,5 @@
-//! `gpy-agent start`, `status` and `theme export` against fake and real
-//! agents. Socket-dependent, so Unix-only.
+//! `gpy-agent start`, `status`, `theme export` and `config reload` against fake
+//! and real agents. Socket-dependent, so Unix-only.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
 #![allow(clippy::expect_used, reason = "test code may panic on failure")]
@@ -102,5 +102,51 @@ fn start_prints_one_progress_line_and_leaves_an_answering_daemon() {
     assert!(
         sandbox.wait_until_socket_gone(),
         "the stopped daemon must remove its socket"
+    );
+}
+
+/// `config reload --socket` reaches the agent on that socket even when
+/// `GPY_AGENT_SOCKET_PATH` points elsewhere: the flag beats the environment.
+#[test]
+fn config_reload_honors_the_socket_flag() {
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let elsewhere = sandbox.socket_path.with_file_name("elsewhere.sock");
+
+    let reloaded = sandbox
+        .env
+        .run_gpy_agent_with_env(
+            &["config", "reload", "--socket", &socket],
+            &[("GPY_AGENT_SOCKET_PATH", elsewhere.as_os_str())],
+        )
+        .expect("spawn gpy-agent config reload");
+
+    reloaded.assert_success("gpy-agent config reload --socket");
+    assert!(
+        reloaded.stdout.contains("reloaded its configuration"),
+        "the agent on the flag's socket must have reloaded: {reloaded:?}"
+    );
+}
+
+/// Nothing listens on the `--socket` path, with no `GPY_AGENT_SOCKET_PATH` set:
+/// the reload reports "not running" rather than failing.
+#[test]
+fn config_reload_reports_not_running_when_the_flag_socket_is_empty() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+
+    let reloaded = sandbox
+        .env
+        .run_gpy_agent_with_env(
+            &["config", "reload", "--socket", &socket],
+            &[("GPY_AGENT_SOCKET_PATH", "")],
+        )
+        .expect("spawn gpy-agent config reload");
+
+    reloaded.assert_success("gpy-agent config reload --socket with no agent");
+    assert!(
+        reloaded.stdout.contains("Agent is not running"),
+        "{reloaded:?}"
     );
 }

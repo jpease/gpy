@@ -129,21 +129,55 @@ function gpy_section_append --argument-names bg fg content
 end
 
 function gpy_section_standalone --argument-names bg fg content is_last
-    __gpy_section_pill "$bg" "$fg" "$content" "$is_last" 0 "" "" "" 0 "" "" ""
+    __gpy_section_pill "$bg" "$fg" "$content" "$is_last"
 end
 
-# gpy_section_standalone with optional per-segment caps (a theme's
-# `[segments.<id>.open]`/`.close]`): when has_open/has_close is 1, that cap's
-# icon replaces the position's delimiter, and a non-empty colour replaces the
-# delimiter colour. default_close_bg 1 (plugin pills) draws a last segment's
-# theme close cap on the terminal default background.
-function __gpy_section_pill --argument-names bg fg content is_last has_open open_icon open_fg open_bg has_close close_icon close_fg close_bg default_close_bg
+# gpy_section_standalone with optional per-segment caps. caps_prefix names a
+# script segment's export variables (`__gpy_segment_<tok>`, a theme's
+# `[segments.<id>.open]`/`.close]`): when `<prefix>_open_icon` is set, that
+# icon replaces the position's start delimiter, and a non-empty
+# `<prefix>_open_icon_color`/`_open_bg_color` replaces its colours; the
+# `_close_*` variables do the same for the end delimiter. A caps_prefix (plugin
+# pills) also draws a last segment's theme close cap on the terminal default
+# background.
+function __gpy_section_pill --argument-names bg fg content is_last caps_prefix
     set -l start_delim
     set -l end_delim
     set -l start_fg
     set -l start_bg
     set -l end_fg
     set -l end_bg
+
+    set -l default_close_bg 0
+    set -l has_open 0
+    set -l open_icon ""
+    set -l open_fg ""
+    set -l open_bg ""
+    set -l has_close 0
+    set -l close_icon ""
+    set -l close_fg ""
+    set -l close_bg ""
+    if test -n "$caps_prefix"
+        set default_close_bg 1
+        set -l v {$caps_prefix}_open_icon
+        if set -q $v
+            set has_open 1
+            set open_icon "$$v"
+            set v {$caps_prefix}_open_icon_color
+            set open_fg "$$v"
+            set v {$caps_prefix}_open_bg_color
+            set open_bg "$$v"
+        end
+        set v {$caps_prefix}_close_icon
+        if set -q $v
+            set has_close 1
+            set close_icon "$$v"
+            set v {$caps_prefix}_close_icon_color
+            set close_fg "$$v"
+            set v {$caps_prefix}_close_bg_color
+            set close_bg "$$v"
+        end
+    end
 
     # Map `transparent` before match_bg/match_text borrow it: set_color rejects it.
     test "$bg" = transparent; and set bg ""

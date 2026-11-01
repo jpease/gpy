@@ -225,7 +225,7 @@ echo ""
 echo "Scenario E: conf.d/gpy_init.fish fallback-mode branch"
 
 # core/init.fish exists but fails to source, so gpy_init.fish takes the
-# "using fallback mode" branch and falls through to end-of-file. This is the
+# "GPY failed to load" branch and falls through to end-of-file. This is the
 # realistic broken-install case: fish_prompt.fish is definitely installed here
 # (only the source failed), so the autoloaded prompt runs uninitialized.
 set -l scenario_e_home (mktemp -d)
@@ -241,7 +241,7 @@ set -l scenario_e_out (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_hom
      2>$scenario_e_err | string collect)
 set -l scenario_e_status $status
 
-if grep -q 'using fallback mode' $scenario_e_err
+if grep -q 'gpy\[init\]: GPY failed to load; using the fallback prompt' $scenario_e_err
     pass "fallback-mode path preserved its load-failure warning"
 else
     fail "fallback-mode path lost its load-failure warning: "(cat $scenario_e_err | string collect)

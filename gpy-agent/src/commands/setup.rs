@@ -3,7 +3,7 @@
 //! Lays files out exactly as `install-oneline.sh` does (Fish:
 //! `$XDG_CONFIG_HOME/fish/gpy`; Zsh/Bash: `$XDG_CONFIG_HOME/gpy/<shell>`) so
 //! both installers share one uninstall path. The `gpy-init` marker lines (see
-//! `rc_block`) are the contract `scripts/uninstall.*` remove by. Every step
+//! `rc_block`) are the contract `gpy uninstall` removes by. Every step
 //! is idempotent.
 
 use super::rc_block::{BlockChange, append_block, ensure_block, has_block};
@@ -23,7 +23,7 @@ const RC_BLOCK_HEADER: &str = "GPY shell integration";
 /// so `gpy doctor` can spot a tree an upgrade left behind.
 pub(super) const VERSION_STAMP: &str = ".gpy-version";
 /// Every shell `gpy setup` can install.
-const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
+pub(super) const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -75,7 +75,7 @@ impl Environment {
     }
 
     /// `$XDG_CONFIG_HOME`, or `$HOME/.config`; fails without an absolute home.
-    fn config_home(&self) -> Result<PathBuf> {
+    pub(super) fn config_home(&self) -> Result<PathBuf> {
         let home = self.home.as_deref();
         if home.is_none() {
             return Err(Error::invalid(
@@ -90,7 +90,7 @@ impl Environment {
     }
 
     /// The home directory.
-    fn home(&self) -> Result<&Path> {
+    pub(super) fn home(&self) -> Result<&Path> {
         self.home
             .as_deref()
             .ok_or_else(|| Error::invalid("cannot find your home directory"))
@@ -128,18 +128,33 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
         env.login_shell.as_deref(),
     )?;
     let source_root = find_source_root(options.from.as_deref(), &env, shell)?;
-    println!("Setting up GPY for {shell} from {}", source_root.display());
+    crate::commands::output::plain(format_args!(
+        "Setting up GPY for {shell} from {}",
+        source_root.display()
+    ));
 
     let outcome = install(shell, &source_root, &env, &completions)?;
 
-    println!("Installed {shell} files to {}", outcome.shell_dir.display());
+    crate::commands::output::plain(format_args!(
+        "Installed {shell} files to {}",
+        outcome.shell_dir.display()
+    ));
     if let Some(dir) = &outcome.plugins_dir {
-        println!("Installed bundled plugins to {}", dir.display());
+        crate::commands::output::plain(format_args!(
+            "Installed bundled plugins to {}",
+            dir.display()
+        ));
     }
     if outcome.rc_block_added {
-        println!("Added GPY initialization to {}", outcome.rc_file.display());
+        crate::commands::output::plain(format_args!(
+            "Added GPY initialization to {}",
+            outcome.rc_file.display()
+        ));
     } else {
-        println!("GPY already configured in {}", outcome.rc_file.display());
+        crate::commands::output::plain(format_args!(
+            "GPY already configured in {}",
+            outcome.rc_file.display()
+        ));
     }
     refresh_other_shells(shell, &source_root, &env, &completions);
     if options.from.is_some() || env.share_dir.is_some() {
@@ -201,10 +216,10 @@ fn keep_shell_trees(source_root: &Path, env: &Environment) {
         Ok(())
     };
     match copy() {
-        Ok(()) => println!(
+        Ok(()) => crate::commands::output::plain(format_args!(
             "Kept the shell scripts in {} for later `gpy setup` runs",
             target.display()
-        ),
+        )),
         Err(err) => crate::commands::output::warn(format_args!(
             "Could not keep the shell scripts in {} ({}); a later `gpy setup` will need --from",
             target.display(),
@@ -234,10 +249,10 @@ fn refresh_other_shells(
             continue;
         }
         match install_files(shell, source_root, &config_home, completions) {
-            Ok(dir) => println!(
+            Ok(dir) => crate::commands::output::plain(format_args!(
                 "Refreshed {shell} files in {} (set up earlier)",
                 dir.display()
-            ),
+            )),
             Err(err) => crate::commands::output::warn(format_args!(
                 "Could not refresh the {shell} files in {} ({}); run `gpy setup --shell {shell}`",
                 shell_dir.display(),
@@ -476,10 +491,10 @@ fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
                 super::backup_stamp::backup_stamp(now)
             ));
             fs::rename(target, &backup)?;
-            println!(
+            crate::commands::output::plain(format_args!(
                 "Moved your existing fish_prompt to {}",
                 PathBuf::from(backup).display()
-            );
+            ));
         }
     }
     std::os::unix::fs::symlink(source, target)?;
@@ -487,9 +502,9 @@ fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
 }
 
 /// A regular-file copy of GPY's own prompt: both segment-dispatch lines every
-/// GPY prompt shipped with (the `scripts/uninstall.*` rule).
+/// GPY prompt shipped with (the rule `gpy uninstall` removes a copy by).
 #[cfg(unix)]
-fn is_gpy_prompt_copy(path: &Path) -> bool {
+pub(super) fn is_gpy_prompt_copy(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|text| {
         text.lines()
             .any(|l| l.trim_ascii() == "for segment in $__enabled_segments")
@@ -552,14 +567,17 @@ fn ensure_and_report(
         Ok(BlockChange::Added) => Ok(true),
         Ok(BlockChange::Unchanged) => Ok(false),
         Ok(BlockChange::Upgraded) => {
-            println!("Updated the GPY block in {} {upgraded_note}", rc.display());
+            crate::commands::output::plain(format_args!(
+                "Updated the GPY block in {} {upgraded_note}",
+                rc.display()
+            ));
             Ok(false)
         }
         Ok(BlockChange::KeptEdited) => {
-            println!(
+            crate::commands::output::plain(format_args!(
                 "GPY block in {} differs from the current text; left unchanged. See docs/INSTALL.md#gpy-setup",
                 rc.display()
-            );
+            ));
             Ok(false)
         }
         Err(err) if had_block => {
@@ -612,7 +630,10 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     if !loads_bashrc
         && ensure_block(&login, BASH_LOGIN_HEADER, BASH_LOGIN_LOADER, &[])? == BlockChange::Added
     {
-        println!("Added ~/.bashrc loader to {}", login.display());
+        crate::commands::output::plain(format_args!(
+            "Added ~/.bashrc loader to {}",
+            login.display()
+        ));
     }
     Ok((rc, added))
 }
@@ -677,16 +698,18 @@ fn is_stock_macos_bash(shell: Shell, login_shell: Option<&str>, macos: bool) -> 
 }
 
 fn print_next_steps(shell: Shell, rc_file: &Path, login_shell: Option<&str>) {
-    println!();
-    println!(
+    crate::commands::output::blank();
+    crate::commands::output::plain(format_args!(
         "Next: restart your shell with `exec {shell}`, or `source {}`.",
         rc_file.display()
-    );
-    println!("Check the result any time with `gpy doctor`.");
+    ));
+    crate::commands::output::plain("Check the result any time with `gpy doctor`.");
     if is_stock_macos_bash(shell, login_shell, cfg!(target_os = "macos")) {
-        println!();
-        println!("Note: your login shell is macOS's /bin/bash, version 3.2 (2007).");
-        println!("GPY works best on Bash 5: `brew install bash`.");
+        crate::commands::output::blank();
+        crate::commands::output::plain(
+            "Note: your login shell is macOS's /bin/bash, version 3.2 (2007).",
+        );
+        crate::commands::output::plain("GPY works best on Bash 5: `brew install bash`.");
     }
 }
 

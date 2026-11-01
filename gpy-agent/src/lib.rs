@@ -7,7 +7,6 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![expect(clippy::print_stdout, reason = "CLI tool needs stdout output")]
 #![expect(clippy::print_stderr, reason = "error reporting to stderr")]
 
 /// The main agent process logic and lifecycle management.

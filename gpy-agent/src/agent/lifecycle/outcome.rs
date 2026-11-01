@@ -2,14 +2,14 @@
 //! (and the Windows build of the CLI) can match on them without the Unix
 //! client.
 
-use super::AgentStatusInfo;
+use crate::ipc::AgentStatus;
 use crate::ipc::protocol::PROTOCOL_VERSION;
 
 /// What one `status` query found.
 #[derive(Debug)]
 pub enum StatusProbe {
     /// The agent answered with its status.
-    Answered(AgentStatusInfo),
+    Answered(AgentStatus),
     /// The agent closed or reset the connection without replying: it is
     /// running its accept loop but shedding load.
     Busy,

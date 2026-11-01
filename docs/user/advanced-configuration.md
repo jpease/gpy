@@ -277,8 +277,8 @@ Each prompt render will use oneshot mode, which is slower but requires no backgr
 The IPC guards (message size, connection rate limit, PID and path
 validation) are fixed in the agent and are not configurable from
 `config.toml`; there is no `[security]` section. Their current values are
-64 KiB per message and 1000 connections per second by default, and they are
-covered in [SECURITY.md](../../SECURITY.md).
+64 KiB per message and 1000 connections per second by default, and
+[SECURITY.md](../../SECURITY.md#trust-boundaries) summarises what they protect against.
 
 ---
 
@@ -396,7 +396,7 @@ The agent will automatically reload the theme configuration.
 
 The agent socket location follows this priority (the first that applies wins):
 
-1. `--socket <path>` on `gpy-agent start`, `stop` and `status`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset); every shell and command must see the same value
+1. `--socket <path>` on `gpy-agent start`, `stop`, `status` and `config reload`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset); every shell and command must see the same value
 2. `$XDG_RUNTIME_DIR/gpy/gpy.sock` (if XDG_RUNTIME_DIR is set to an absolute path)
 3. `$XDG_CACHE_HOME/gpy/gpy.sock` (if XDG_CACHE_HOME is set to an absolute path)
 4. `~/.cache/gpy/gpy.sock`

@@ -1,8 +1,12 @@
 //! Command implementations for the GPY CLI.
 
+#![warn(
+    clippy::print_stdout,
+    reason = "command output goes through `commands::output`"
+)]
+
 /// What the `gpy-agent` lifecycle commands print and return.
 pub mod agent_report;
-#[cfg(unix)]
 mod backup_stamp;
 /// Hidden `gpy __complete <kind>` command used by shell completion glue.
 pub mod complete;
@@ -21,8 +25,6 @@ mod doctor_themes;
 pub mod exit_codes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
-/// Language configuration commands.
-pub mod lang;
 /// Agent lifecycle management (start/stop/restart).
 pub mod lifecycle;
 /// Pass/fail/warn markers for CLI status lines.
@@ -31,6 +33,8 @@ pub mod output;
 pub mod palette;
 /// Plugin discovery and validation commands.
 pub mod plugin;
+/// `gpy plugin install` and `gpy plugin remove`.
+pub mod plugin_install;
 /// Theme files shipped in a plugin's `themes/` directory, for `gpy plugin validate`.
 mod plugin_themes;
 /// The `gpy-init` rc-file block shared by the setup steps.
@@ -63,6 +67,8 @@ pub mod theme_rebase;
 pub mod theme_write;
 /// Unified line diff for `gpy theme diff`.
 mod unified_diff;
+/// `gpy uninstall` — remove what `gpy setup` and the installers create.
+pub mod uninstall;
 /// Shared utility functions for commands.
 pub mod utils;
 /// Shared resolve/validate/report plumbing for theme and palette validation.

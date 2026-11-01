@@ -7,42 +7,13 @@ pub mod handlers;
 pub mod protocol;
 pub mod registry;
 pub mod server;
+pub(crate) mod single_flight;
 #[cfg(unix)]
 pub(crate) mod socket_identity;
+pub mod wire;
 
 pub use crate::formatter::Format;
 
-/// Wire form of [`Response::Ack`] as rendered by the JSON formatter.
-///
-/// Not serde's `"Ack"`; shell clients match on this shape, so fixtures modelling a live agent must send it.
-pub const ACK_WIRE_JSON: &str = r#"{"status":"ok"}"#;
-
-/// Decode a socket reply into a [`Response`].
-///
-/// Accepts native serde encoding plus the formatter's [`ACK_WIRE_JSON`] and `{"error":"..."}`.
-///
-/// # Errors
-///
-/// Returns an error when the text is neither encoding.
-pub fn decode_wire_reply(text: &str) -> crate::Result<Response> {
-    let body = text.trim_end_matches(['\n', '\r']);
-    if let Ok(response) = serde_json::from_str::<Response>(body) {
-        return Ok(response);
-    }
-    let value = serde_json::from_str::<serde_json::Value>(body)
-        .map_err(|e| crate::Error::ipc(format!("Failed to parse agent response: {e}")))?;
-    if value.get("status").and_then(serde_json::Value::as_str) == Some("ok") {
-        return Ok(Response::Ack);
-    }
-    if let Some(message) = value.get("error").and_then(serde_json::Value::as_str) {
-        return Ok(Response::Error {
-            message: message.to_owned(),
-        });
-    }
-    Err(crate::Error::ipc(format!(
-        "Failed to parse agent response: not a Response: {body}"
-    )))
-}
 pub use client_pid::ClientPid;
 pub use registry::ClientDirectory;
 
@@ -210,8 +181,8 @@ impl Message {
     }
 }
 
-/// IPC response types
-#[derive(Debug, Serialize, Deserialize)]
+/// Replies the agent sends; [`wire::encode_json`] is their JSON form.
+#[derive(Debug, PartialEq)]
 pub enum Response {
     /// Git status information
     RepositoryStatus(crate::git::RepositoryStatus),
@@ -258,21 +229,7 @@ pub enum Response {
     Ack,
 
     /// Agent status information (for debugging)
-    AgentStatus {
-        /// Agent version (e.g., "0.1.0")
-        version: String,
-        /// Protocol version (e.g., 1)
-        protocol_version: u8,
-        /// Number of watched repositories
-        watched_repos: usize,
-        /// Number of registered clients
-        registered_clients: usize,
-        /// Number of cache entries
-        cache_entries: usize,
-        /// Process ID of the answering agent; absent from older agents.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pid: Option<u32>,
-    },
+    AgentStatus(AgentStatus),
 
     /// Error response
     Error {
@@ -281,8 +238,26 @@ pub enum Response {
     },
 }
 
+/// Status payload of the `status` reply, shared by the agent and the CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentStatus {
+    /// Agent version (e.g., "0.1.0")
+    pub version: String,
+    /// The answering agent's [`protocol::PROTOCOL_VERSION`].
+    pub protocol_version: u8,
+    /// Number of watched repositories
+    pub watched_repos: usize,
+    /// Number of registered clients
+    pub registered_clients: usize,
+    /// Number of cache entries
+    pub cache_entries: usize,
+    /// Process ID of the answering agent; absent from older agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
 /// Individual language information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageInfo {
     /// Language name (e.g., `Rust`, `JavaScript`)
     pub name: String,

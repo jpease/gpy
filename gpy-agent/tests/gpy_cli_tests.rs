@@ -120,6 +120,26 @@ fn test_segments_list() {
         output.contains("directory"),
         "Output should list directory segment"
     );
+    let line_of = |name: &str| {
+        output
+            .lines()
+            .find(|line| {
+                line.get(4..)
+                    .and_then(|rest| rest.split_whitespace().next())
+                    == Some(name)
+            })
+            .unwrap_or_else(|| panic!("no `{name}` line in:\n{output}"))
+    };
+    let clock = line_of("clock");
+    assert!(
+        clock.contains("gpy-core") && clock.contains("default"),
+        "a default builtin names its owner and says default: {clock}"
+    );
+    let status = line_of("status");
+    assert!(
+        status.contains("gpy-core") && !status.contains("default"),
+        "a non-default builtin names its owner only: {status}"
+    );
 }
 
 #[test]
@@ -1007,11 +1027,21 @@ enabled_segments = ["language", "directory", "git"]
         .run_gpy(&["lang", "versions", "on"])
         .expect("Failed to run gpy lang versions on");
     output.assert_success("gpy lang versions on");
-    let stdout = output.stdout;
-    assert!(
-        stdout.contains("Language versions enabled"),
-        "Should confirm versions enabled"
+    assert_eq!(
+        output
+            .stderr
+            .lines()
+            .filter(|line| line.starts_with("warn: 'gpy lang versions' is deprecated; use "))
+            .count(),
+        1_usize,
+        "exactly one deprecation line on stderr: {}",
+        output.stderr
     );
+    let shown = env
+        .run_gpy(&["config", "get", "language.show_versions"])
+        .expect("Failed to run gpy config get");
+    shown.assert_success("gpy config get language.show_versions");
+    assert_eq!(shown.stdout.trim(), "true");
 
     let updated_config = fs::read_to_string(&config_path).expect("Failed to read updated config");
     assert!(

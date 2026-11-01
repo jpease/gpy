@@ -1,8 +1,10 @@
-# ADR-0001: Hybrid Rust/Fish Architecture
+# ADR-0001: Hybrid Rust Agent and Shell Integration Architecture
 
 ## Status
 
 Accepted (2024-10)
+
+Written for Fish; the same split applies to Zsh and Bash ([ADR-0011](adr-0011-plugin-shell-coverage.md)).
 
 ## Context
 

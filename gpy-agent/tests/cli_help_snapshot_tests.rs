@@ -25,11 +25,11 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["palette", "import"],
     &["plugin"],
     &["plugin", "new"],
+    &["plugin", "install"],
+    &["plugin", "remove"],
     &["enable"],
     &["disable"],
     &["segments"],
-    &["lang"],
-    &["lang", "versions"],
     &["config"],
     &["config", "list"],
     &["config", "set"],
@@ -37,6 +37,7 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["debug"],
     &["debug", "paths"],
     &["completions"],
+    &["uninstall"],
 ];
 
 /// Subcommands that only exist for tests or shell glue and are marked
@@ -136,6 +137,73 @@ fn gpy_command_tree_lists_public_commands_and_hides_internal_ones() {
     }
 }
 
+/// `gpy lang` is deprecated and hidden: not listed, but still runnable.
+#[test]
+fn deprecated_lang_group_is_hidden_but_still_runs() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let top = help_of(&env, &[]);
+    assert!(
+        !listed_commands(&top).iter().any(|name| name == "lang"),
+        "`lang` must not be listed in gpy --help:\n{top}"
+    );
+
+    let result = env.run_gpy(&["lang", "versions", "on"]).expect("spawn gpy");
+    result.assert_success("gpy lang versions on");
+}
+
+/// clap does not wrap help, so a long about makes one long `Commands:` line.
+#[test]
+fn command_abouts_fit_one_line() {
+    const MAX_COLUMNS: usize = 100;
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    for group in [
+        &[][..],
+        &["theme"],
+        &["palette"],
+        &["plugin"],
+        &["config"],
+        &["debug"],
+    ] {
+        let help = help_of(&env, group);
+        for line in help
+            .lines()
+            .skip_while(|line| *line != "Commands:")
+            .skip(1)
+            .take_while(|line| !line.is_empty())
+        {
+            assert!(
+                line.chars().count() <= MAX_COLUMNS,
+                "gpy {} --help: `Commands:` line over {MAX_COLUMNS} columns: {line}",
+                group.join(" ")
+            );
+        }
+    }
+}
+
+/// The valid `config show` sections come from `ConfigSection`, not help prose:
+/// every variant clap knows must appear in the rendered `Possible values:` list.
+#[test]
+fn config_show_help_lists_the_sections() {
+    use clap::ValueEnum;
+    use gpy_agent::commands::config::ConfigSection;
+
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let help = help_of(&env, &["config", "show"]);
+    let variants = ConfigSection::value_variants();
+    assert!(!variants.is_empty(), "ConfigSection has no variants");
+    for variant in variants {
+        let name = variant
+            .to_possible_value()
+            .expect("ConfigSection variants are not skipped")
+            .get_name()
+            .to_owned();
+        assert!(
+            help.contains(&format!("- {name}:")),
+            "{name} missing:\n{help}"
+        );
+    }
+}
+
 #[test]
 fn gpy_agent_top_level_help() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
@@ -200,6 +268,12 @@ fn debug_paths_json_shape() {
     ] {
         assert!(object.contains_key(key), "missing key {key}: {redacted}");
     }
+    assert!(
+        object["config_candidates"]
+            .as_array()
+            .is_some_and(|list| list.iter().all(serde_json::Value::is_string)),
+        "config_candidates must be an array of strings: {redacted}"
+    );
 
     with_settings!({description => "gpy debug paths --format json (root redacted)"}, {
         assert_snapshot!("gpy_debug_paths_json", redacted);

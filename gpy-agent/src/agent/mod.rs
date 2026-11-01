@@ -15,10 +15,13 @@ pub mod startup;
 use crate::debug_log;
 use crate::env_config::{env_flag, env_u64_positive};
 use crate::git::cache::GitStatusCache;
+#[cfg(unix)]
+use crate::ipc::registry::{ShellRenudger, renudge_unregistered_shells};
 use crate::ipc::{
     ClientDirectory,
     server::{EndpointDeps, EndpointHandle},
 };
+use crate::paths::SocketPath;
 use crate::sync_ext::MutexExt;
 use crate::theme::ThemeManager;
 use crate::watcher::WatcherConfig;
@@ -38,6 +41,19 @@ fn watcher_disabled_by_env() -> bool {
 
 /// Default reconcile interval; above the git-status cache TTL so scans see fresh state.
 const RECONCILE_INTERVAL_SECS: u64 = 45;
+
+/// Connect attempts the start announcement makes before announcing anyway;
+/// with [`ANNOUNCE_CONNECT_POLL`], a 5 s wait for the socket to accept.
+#[cfg(unix)]
+const ANNOUNCE_CONNECT_ATTEMPTS: u32 = 100;
+
+/// Pause between the start announcement's connect attempts.
+#[cfg(unix)]
+const ANNOUNCE_CONNECT_POLL: Duration = Duration::from_millis(50);
+
+/// Longest shutdown waits for the IPC server task to stop, so a stuck
+/// connection handler cannot keep the agent from exiting.
+const SERVER_STOP_WAIT_MAX: Duration = Duration::from_secs(5);
 
 /// Resolve the reconcile interval from `GPY_RECONCILE_INTERVAL_SECS`, else
 /// [`RECONCILE_INTERVAL_SECS`]. For setups where `FSEvents` never arrive.
@@ -242,12 +258,11 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Create a new agent instance.
+    /// Create a new agent instance that will listen on `socket`.
     ///
     /// # Errors
     /// Returns an error if the IPC server or file watcher cannot be initialized.
-    ///
-    pub fn new() -> Result<Self> {
+    pub fn new(socket: SocketPath) -> Result<Self> {
         let watcher_config = WatcherConfig::from_env();
         let client_registry = ClientDirectory::new().shared();
         client_registry.set_throttle_ms(watcher_config.throttle_ms());
@@ -299,11 +314,13 @@ impl Agent {
 
         Self::init_watcher(&initial_config, watcher_config, &ctx, &watcher_slot);
 
-        crate::agent::lifecycle::ensure_runtime_dir()?;
+        crate::agent::lifecycle::ensure_runtime_dir(&socket)?;
+        #[cfg(unix)]
+        let socket_dir_repair = crate::agent::lifecycle::socket_dir_repair(&socket);
         let server = EndpointHandle::new(EndpointDeps {
-            socket_path: crate::paths::get_socket_path()?,
+            socket_path: socket.into_path(),
             #[cfg(unix)]
-            socket_dir_repair: crate::agent::lifecycle::socket_dir_repair(),
+            socket_dir_repair,
             security_config: crate::security::GuardSettings::default(),
             watcher_slot: Arc::clone(&watcher_slot),
             client_registry: Arc::clone(&ctx.registry),
@@ -469,13 +486,13 @@ impl Agent {
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 {
-                    for _ in 0..100_u32 {
+                    for _ in 0..ANNOUNCE_CONNECT_ATTEMPTS {
                         if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
                             break;
                         }
-                        std::thread::sleep(Duration::from_millis(50));
+                        std::thread::sleep(ANNOUNCE_CONNECT_POLL);
                     }
-                    lifecycle::start::announce_start_to_tracked_shells(
+                    startup::announce_start_to_tracked_shells(
                         &theme_manager_for_export,
                         &config_for_export,
                         &palette_for_export,
@@ -500,9 +517,9 @@ impl Agent {
         let watcher_for_pruning = Arc::clone(&watcher);
         let mut clock_timer = startup::create_clock_timer();
         let mut pruning_timer = startup::create_pruning_timer();
-        // Bounded per-PID re-nudge budget; see `lifecycle::start::ShellRenudger`.
+        // Bounded per-PID re-nudge budget; see [`ShellRenudger`].
         #[cfg(unix)]
-        let mut shell_renudger = lifecycle::start::ShellRenudger::default();
+        let mut shell_renudger = ShellRenudger::default();
         // Reconcile catches mutations the OS watcher dropped and signals only on
         // a real diff. Skip the immediate first tick: no clients yet.
         let mut reconcile_timer =
@@ -542,7 +559,7 @@ impl Agent {
                     }
                     // Ends the accept loop, which unlinks the socket if it is still ours.
                     let _ = shutdown_tx.send(());
-                    match tokio::time::timeout(Duration::from_secs(5), &mut server_task).await {
+                    match tokio::time::timeout(SERVER_STOP_WAIT_MAX, &mut server_task).await {
                         Ok(Ok(Err(e))) => {
                             debug_log!("agent", "IPC server stopped with error: {e}");
                         }
@@ -550,14 +567,18 @@ impl Agent {
                             debug_log!("agent", "IPC server task failed: {e}");
                         }
                         Err(_) => {
-                            debug_log!("agent", "IPC server did not stop within 5s");
+                            debug_log!(
+                                "agent",
+                                "IPC server did not stop within {}s",
+                                SERVER_STOP_WAIT_MAX.as_secs()
+                            );
                         }
                         Ok(Ok(Ok(()))) => {}
                     }
                     stop_watchers(&watcher, &ctx);
                     shutdown_result?;
 
-                    println!("GPY Agent stopped.");
+                    debug_log!("agent", "Agent stopped");
 
                     return Ok(());
                 }
@@ -572,10 +593,7 @@ impl Agent {
                     // Re-nudge live tracked shells missing from the registry
                     // (e.g. their circuit breaker was backing off at restart).
                     #[cfg(unix)]
-                    lifecycle::start::renudge_unregistered_shells(
-                        &mut shell_renudger,
-                        &registry_for_pruning,
-                    );
+                    renudge_unregistered_shells(&mut shell_renudger, &registry_for_pruning);
                 }
                 _ = reconcile_timer.tick(), if ctx.config_manager.get().agent.live_updates => {
                     let reconcile_config = ctx.config_manager.get();

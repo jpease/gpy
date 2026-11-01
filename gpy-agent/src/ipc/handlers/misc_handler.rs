@@ -2,73 +2,51 @@
 //! (directory, clock, duration, character, exit status); the agent echoes it
 //! back, plus a writability `stat` for directories.
 
-use super::{HandlerError, RequestHandler};
-use crate::ipc::{Message, Response};
+use crate::ipc::Response;
 
-/// Handler for echo-like segment requests that carry their own response data.
-pub struct MiscHandler;
-
-impl MiscHandler {
-    /// Create a new `MiscHandler`.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
+/// Directory segment: the client's logical `display_path`, plus whether the
+/// canonical `path` is read-only.
+#[must_use]
+pub fn directory(path: &crate::security::SafePath, display_path: &str) -> Response {
+    let canonical = path.to_string();
+    let read_only = crate::fs_util::directory_is_read_only(std::path::Path::new(&canonical));
+    Response::Directory {
+        cwd: display_path.to_owned(),
+        read_only,
     }
 }
 
-impl Default for MiscHandler {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Clock segment: echoes the shell whose live-time token the render embeds.
+#[must_use]
+pub const fn clock(shell: crate::shell::Shell) -> Response {
+    Response::Clock { shell }
 }
 
-impl RequestHandler for MiscHandler {
-    fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
-        match message {
-            Message::DirectoryRequest {
-                path, display_path, ..
-            } => {
-                let canonical = path.to_string();
-                let read_only =
-                    crate::fs_util::directory_is_read_only(std::path::Path::new(&canonical));
-                Ok(Response::Directory {
-                    cwd: display_path.clone(),
-                    read_only,
-                })
-            }
-            Message::ClockRequest { shell, .. } => Ok(Response::Clock { shell: *shell }),
-            Message::DurationRequest { duration_ms, .. } => Ok(Response::Duration {
-                duration_ms: *duration_ms,
-            }),
-            Message::CharacterRequest { success, .. } => {
-                Ok(Response::Character { success: *success })
-            }
-            Message::ExitStatusRequest { success, .. } => {
-                Ok(Response::ExitStatus { success: *success })
-            }
-            _ => Err(HandlerError::UnexpectedMessage {
-                handler: "MiscHandler",
-                qualifier: "unsupported",
-                message: format!("{message:?}"),
-            }),
-        }
-    }
+/// Duration segment: echoes the elapsed milliseconds.
+#[must_use]
+pub const fn duration(duration_ms: u64) -> Response {
+    Response::Duration { duration_ms }
+}
+
+/// Character segment: echoes whether the last command succeeded.
+#[must_use]
+pub const fn character(success: bool) -> Response {
+    Response::Character { success }
+}
+
+/// Exit-status segment: echoes whether the last command succeeded.
+#[must_use]
+pub const fn exit_status(success: bool) -> Response {
+    Response::ExitStatus { success }
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::ipc::Segment;
 
     #[test]
     fn handles_duration_request() {
-        let handler = MiscHandler::new();
-        let msg = Message::DurationRequest {
-            duration_ms: 65_000,
-            segment: Segment::default(),
-        };
-        let response = handler.handle(&msg).expect("handling must succeed");
+        let response = duration(65_000);
         match response {
             Response::Duration { duration_ms } => assert_eq!(duration_ms, 65_000),
             other => panic!("expected Response::Duration, got {other:?}"),
@@ -77,15 +55,7 @@ mod tests {
 
     #[test]
     fn handles_character_request() {
-        let handler = MiscHandler::new();
-        let msg = Message::CharacterRequest {
-            success: false,
-            segment: Segment {
-                is_last: true,
-                ..Segment::default()
-            },
-        };
-        let response = handler.handle(&msg).expect("handling must succeed");
+        let response = character(false);
         match response {
             Response::Character { success } => assert!(!success),
             other => panic!("expected Response::Character, got {other:?}"),
@@ -101,14 +71,8 @@ mod tests {
             .to_str()
             .expect("temp dir path must be valid UTF-8")
             .to_owned();
-        let handler = MiscHandler::new();
         let path = crate::security::SafePath::new(&requested).expect("valid path");
-        let msg = Message::DirectoryRequest {
-            path,
-            display_path: requested.clone(),
-            segment: Segment::default(),
-        };
-        let response = handler.handle(&msg).expect("handling must succeed");
+        let response = directory(&path, &requested);
         match response {
             Response::Directory { cwd, .. } => {
                 assert_eq!(cwd, requested, "expected cwd to echo the requested path");
@@ -130,9 +94,12 @@ mod tests {
             format!(r#"{{"op":"directory","cwd":"{link_str}","format":"json"}}"#).as_bytes(),
         )
         .expect("directory request must parse");
-        let response = MiscHandler::new()
-            .handle(&msg)
-            .expect("handling must succeed");
+        let response = match msg {
+            crate::ipc::Message::DirectoryRequest {
+                path, display_path, ..
+            } => directory(&path, &display_path),
+            other => panic!("expected DirectoryRequest, got {other:?}"),
+        };
         match response {
             Response::Directory { cwd, .. } => assert_eq!(
                 cwd, link_str,
@@ -140,12 +107,5 @@ mod tests {
             ),
             other => panic!("expected Response::Directory, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn rejects_unsupported_message() {
-        let handler = MiscHandler::new();
-        let response = handler.handle(&Message::Ping);
-        assert!(response.is_err(), "MiscHandler must reject Message::Ping");
     }
 }

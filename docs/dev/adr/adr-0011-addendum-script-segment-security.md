@@ -4,6 +4,8 @@
 
 Accepted (2026-10-27). This is the security design for the G script segments of [ADR-0011](adr-0011-plugin-shell-coverage.md). It supersedes ADR-0011 Decision item 5 ("Trust model and hardening") where the two differ, and details item 9 ("Approval boundaries"). The maintainer accepted it as written; the implementation landed in jpease/gpy#57 (#997).
 
+Code references (`path:line`) are to commit `58bc79d`.
+
 ## Context
 
 A review of the proof of concept behind ADR-0011 found defects that break promises [SECURITY.md](../../../SECURITY.md) already makes. This addendum is not part of SECURITY.md because SECURITY.md describes shipped behaviour to users and to people reporting vulnerabilities. With the adapters (#997) the [user-facing statement](#securitymd-when-the-adapters-ship) moved into SECURITY.md, section "Script Segment Trust Model".

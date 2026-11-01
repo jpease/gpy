@@ -67,9 +67,9 @@ function segment_stubc_render --argument-names is_last is_first
 end
 
 # Force fish_prompt to render exactly these three stub segments, in order:
-# first, middle, last. init.fish applies GPY_TEST_SEGMENTS as an override to
+# first, middle, last. init.fish applies __gpy_test_segments as an override to
 # __enabled_segments before loading segments (fish/core/init.fish).
-set -gx GPY_TEST_SEGMENTS "stuba stubb stubc"
+set -g __gpy_test_segments stuba stubb stubc
 
 source fish/core/init.fish
 # fish_prompt lives in an autoloaded function file, not init.fish -- source it

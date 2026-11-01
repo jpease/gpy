@@ -588,5 +588,30 @@ fn initial_enabled_segments(config: &Config, available: &[String]) -> BTreeSet<S
         .collect()
 }
 
+/// Test fixture: a state over the builtin themes, palettes and segments, so no
+/// test spells those lists out. Themes and palettes are sorted, as discovery
+/// returns them; segments keep `BUILTIN_ORDER`.
+#[cfg(test)]
+pub(crate) fn builtin_state(config: Config) -> WizardState {
+    use crate::palette::manager::BUILTIN_PALETTES;
+    use crate::plugin::BUILTIN_ORDER;
+    use crate::theme::manager::BUILTIN_THEMES;
+
+    let sorted_names = |builtins: &[(&str, &str)]| {
+        let mut names: Vec<String> = builtins.iter().map(|&(name, _)| name.to_owned()).collect();
+        names.sort();
+        names
+    };
+    WizardState::from_parts(
+        config,
+        sorted_names(BUILTIN_THEMES),
+        sorted_names(BUILTIN_PALETTES),
+        BUILTIN_ORDER
+            .iter()
+            .map(|segment| segment.as_str().to_owned())
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests;

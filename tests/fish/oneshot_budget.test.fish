@@ -79,7 +79,7 @@ function segment_osc_render --argument-names is_last is_first
 end
 
 set -g repo $tmp/repo
-set -gx GPY_TEST_SEGMENTS "osa osb osc"
+set -g __gpy_test_segments osa osb osc
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish
 

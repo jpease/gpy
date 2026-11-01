@@ -316,20 +316,7 @@ mod tests {
     use std::fmt::Write as _;
 
     fn test_state() -> WizardState {
-        let names = |list: &[&str]| list.iter().map(|&name| name.to_owned()).collect();
-        WizardState::from_parts(
-            Config::default(),
-            names(&["default", "starship", "text"]),
-            names(&["default", "nord"]),
-            names(&[
-                "clock",
-                "duration",
-                "language",
-                "directory",
-                "git",
-                "status",
-            ]),
-        )
+        super::super::state::builtin_state(Config::default())
     }
 
     /// Focus Segments with the cursor on `segment`.

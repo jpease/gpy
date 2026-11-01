@@ -455,7 +455,7 @@ mod tests {
     use super::*;
     use crate::ipc::fixtures::default_render_deps;
     use crate::ipc::handlers::{
-        ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
+        ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, RenderDeps,
     };
     use crate::ipc::registry::ClientDirectory;
     use std::sync::Mutex;
@@ -480,13 +480,11 @@ mod tests {
             Arc::clone(&git_cache),
             Arc::clone(&watcher),
         ));
-        let misc_handler = Arc::new(MiscHandler::new());
 
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
             client_handler,
-            misc_handler,
         ));
 
         (handler_registry, render, language_cache)

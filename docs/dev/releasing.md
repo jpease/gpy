@@ -55,6 +55,9 @@ Everything below runs on `main`, with a clean tree.
    wrong date. Leave an empty `## [Unreleased]` heading above it for the next
    cycle, and add a `[X.Y.Z]: https://github.com/jpease/gpy/releases/tag/vX.Y.Z`
    link reference at the bottom.
+   Each bullet says what changed for the user in at most 400 bytes; link the
+   issue or ADR for how. A **Breaking:** bullet keeps its migration step even if
+   longer.
 
    ```sh
    grep -n 'YYYY-MM-DD' CHANGELOG.md   # must print nothing before tagging

@@ -341,7 +341,7 @@ It:
 
 1. Copies the shell's files to the location the curl installer uses (Fish:
    `~/.config/fish/gpy/`; Zsh and Bash: `~/.config/gpy/<shell>/`), so the two
-   installers are interchangeable and `scripts/uninstall.*` removes either.
+   installers are interchangeable and `gpy uninstall` removes either.
 2. Writes the `gpy` tab completions, generated from the binary you run.
 3. Adds one `# >>> gpy-init >>>` block to your rc file (`config.fish`,
    `${ZDOTDIR:-~}/.zshrc`, or `~/.bashrc` plus a login-shell loader), only if
@@ -452,7 +452,7 @@ cp -r /tmp/gpy/fish/* ~/.config/fish/gpy/
 # Add to config.fish. Source conf.d/gpy_init.fish, the same fail-safe
 # entry point the installers use (it checks the layout before loading and
 # disables GPY cleanly when something is missing); the marker lines are
-# what scripts/uninstall.sh removes.
+# what `gpy uninstall` removes.
 echo '
 # >>> gpy-init >>>
 # GPY shell integration
@@ -471,7 +471,7 @@ ln -sf ~/.config/fish/gpy/functions/fish_prompt.fish ~/.config/fish/functions/fi
 mkdir -p ~/.config/gpy/zsh
 cp -r /tmp/gpy/zsh/* ~/.config/gpy/zsh/
 
-# Add to .zshrc (the marker lines are what scripts/uninstall.sh removes)
+# Add to .zshrc (the marker lines are what `gpy uninstall` removes)
 printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
 ```
 
@@ -480,7 +480,7 @@ printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.config/gpy/zsh/
 mkdir -p ~/.config/gpy/bash
 cp -r /tmp/gpy/bash/* ~/.config/gpy/bash/
 
-# Add to .bashrc (the marker lines are what scripts/uninstall.sh removes)
+# Add to .bashrc (the marker lines are what `gpy uninstall` removes)
 cat >> ~/.bashrc <<'EOF'
 
 # >>> gpy-init >>>
@@ -644,50 +644,53 @@ bash --version
 
 ## Uninstallation
 
-Run the uninstall script (`sh scripts/uninstall.sh`); it removes the Fish, Zsh and Bash integration alike.
-Uninstallation is **global for the current user's install**: the script stops
-the agent and supervisor processes, removes the binaries and their upgrade backups
-from `~/.local/bin`, removes all shell integration files and completions (Fish,
+Run `gpy uninstall`; it removes the Fish, Zsh and Bash integration alike.
+Uninstallation is **global for the current user's install**: it stops the agent and
+supervisor processes, removes all shell integration files and completions (Fish,
 Zsh, Bash), cleans the `gpy-init` block from all supported startup files
 (`~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile`, `${ZDOTDIR:-~}/.zshrc`, `~/.zshrc`, and `~/.config/fish/config.fish`), and
-removes the cache and runtime directories. Your configuration directory
-(`~/.config/gpy`: `config.toml`, themes, palettes, plugins) is kept unless you
-pass `--purge-config`; it is removed only when nothing but GPY's own files were in it.
-It asks for confirmation first
-and removes nothing unless it gets it: with no terminal to answer (stdin closed or
-at end of input) it exits non-zero, so pass `--yes` to uninstall from a script.
-Startup files are restored byte-for-byte (startup files the installer created are removed).
+removes the cache and runtime directories. Startup files are restored
+byte-for-byte (a startup file `gpy setup` created is removed once it is empty).
+Your configuration directory (`~/.config/gpy`: `config.toml`, themes, palettes,
+plugins) is kept unless you pass `--purge-config`; without it, the directory is removed
+only when nothing is left in it.
+
+It asks for confirmation first and removes nothing unless it gets it: with no
+terminal to answer (stdin closed or at end of input) it exits 1, so pass `--yes`
+to uninstall from a script. A piped Enter is not a confirmation.
 
 ```bash
-# From a release archive or a clone of the repository
-sh scripts/uninstall.sh                     # POSIX shell entry point (uninstalls globally)
-sh scripts/uninstall.sh --yes               # no prompt (scripts, CI, no terminal)
-sh scripts/uninstall.sh --yes --purge-config  # also delete ~/.config/gpy (config, themes, palettes, plugins)
-
-# Installed with the one-liner and no local copy? Download the script from the
-# release. Piping it straight into a shell would feed the confirmation prompt
-# the script itself:
-curl -fsSL https://github.com/jpease/gpy/releases/latest/download/uninstall.sh -o /tmp/gpy-uninstall.sh
-sh /tmp/gpy-uninstall.sh
+gpy uninstall                    # asks first; keeps ~/.config/gpy
+gpy uninstall --yes              # no prompt (scripts, CI, no terminal)
+gpy uninstall --yes --purge-config  # also delete ~/.config/gpy (config, themes, palettes, plugins)
 ```
+
+The binaries are removed only when the `gpy` you run lives in `~/.local/bin`, the one
+directory the installers write (it also removes their `*.backup.*` copies and
+`~/.local/share/gpy`). Anywhere else, the binaries and the `share/gpy` beside them
+belong to whatever installed them, and `gpy uninstall` leaves them alone and says so.
+
+**Homebrew:** run `gpy uninstall` first, then `brew uninstall gpy`. `gpy uninstall`
+cleans your home directory (shell integration, rc blocks, cache); Homebrew removes
+`$(brew --prefix)/bin/gpy` and its `share/gpy`.
+
+Releases up to 0.8.0 have no `gpy uninstall`: upgrade first, or run the `uninstall.sh` attached to the release you installed (`https://github.com/jpease/gpy/releases/download/<tag>/uninstall.sh`); `releases/latest` no longer publishes it.
 
 ### Fish Prompt Restoration
 
-If your `fish_prompt.fish` is an unrelated custom prompt or symlink, the uninstaller
-preserves it byte-for-byte and leaves all backups untouched. The uninstaller removes
+If your `fish_prompt.fish` is an unrelated custom prompt or symlink, `gpy uninstall`
+preserves it byte-for-byte and leaves all backups untouched. It removes
 only GPY's prompt symlink or a regular-file copy of GPY's own prompt (one that runs
 GPY's `for segment in $__enabled_segments` dispatch); a prompt that merely mentions
 GPY is yours and stays.
 
 When the prompt destination is absent (or becomes absent after removing the GPY
-symlink/implementation), the uninstaller restores the newest backup by comparing the
-timestamp suffix (`YYYYMMDD_HHMMSS`) across all accepted naming conventions:
-- `fish_prompt.fish.backup.<stamp>` (from `install.sh`, `install-oneline.sh`, `gpy setup` and `install-dev.fish`)
-- `fish_prompt.fish.gpy-backup.<stamp>` (from `install.sh` in releases before `gpy setup`)
-- `fish_prompt.fish.backup-YYYYMMDD-HHMMSS` (legacy, from earlier `install-dev.fish` runs)
-
-If timestamps are equal, `.gpy-backup.` is preferred deterministically. Older backups
-remain untouched.
+symlink/implementation), `gpy uninstall` restores the newest
+`fish_prompt.fish.backup.<stamp>` (`YYYYMMDD_HHMMSS`, written by `install.sh`,
+`install-oneline.sh`, `gpy setup` and `install-dev.fish`). Older backups remain
+untouched. Backups from older releases, named `fish_prompt.fish.gpy-backup.<stamp>`
+or `fish_prompt.fish.backup-<stamp>`, are not restored automatically; rename the one
+you want to `fish_prompt.fish`.
 
 Every installer moves an existing prompt that is not GPY's own link aside with `mv`,
 so a symlinked prompt (stow, yadm, chezmoi) stays a symlink to the same dotfile and is
@@ -696,14 +699,14 @@ restored.
 
 ### Manual Removal Checklist
 
-To remove GPY manually instead, this is everything the uninstaller touches:
+To remove GPY manually instead, this is everything `gpy uninstall` touches:
 
 ```bash
 gpy-agent stop
 rm -f ~/.local/bin/gpy-agent ~/.local/bin/gpy ~/.local/bin/gpy-agent.backup.* ~/.local/bin/gpy.backup.*
 rm -rf ~/.config/fish/gpy ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish
 rm -rf ~/.config/gpy/bash ~/.config/gpy/zsh ~/.config/gpy/bundled-plugins   # Zsh/Bash integrations and completions
-# rm -rf ~/.config/gpy  # also deletes your config, themes, palettes and plugins
+# rm -rf ~/.config/gpy  # your config, themes, palettes and plugins are kept unless you delete them
 rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-~/.cache}/gpy"          # cache; socket, shells/
 # Remove the "# >>> gpy-init >>>" ... "# <<< gpy-init <<<" block from
 # ~/.config/fish/config.fish, ${ZDOTDIR:-~}/.zshrc, ~/.zshrc, ~/.bashrc, ~/.bash_profile, ~/.bash_login, and ~/.profile
