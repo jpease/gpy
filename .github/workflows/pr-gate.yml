@@ -117,7 +117,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The quiet-host acceptance of ADR-0011 Spike 2 (p99 within T + 80 ms).
+      # The quiet-host acceptance of the script-segment deadline (p99 within T + 80 ms).
       # The shell gate runs the same test with only the hang bound enforced.
       # Advisory, like the two steps below it.
       - name: Install shells for the strict deadline test

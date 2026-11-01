@@ -11,7 +11,7 @@ const BUILTIN_STARSHIP: &str = include_str!(concat!(
 ));
 
 /// The current starship theme with the keys 0.6 accepted on `username` and
-/// `hostname` (removed by #1003) put back, as an old `gpy theme save` left it.
+/// `hostname` (since removed) put back, as an old `gpy theme save` left it.
 fn stale_starship_copy() -> String {
     let stale = BUILTIN_STARSHIP
         .replacen(

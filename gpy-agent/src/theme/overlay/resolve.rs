@@ -1,4 +1,4 @@
-//! Resolving theme names to chain links (ADR-0012 section 3).
+//! Resolving theme names to chain links (ADR-0012).
 //!
 //! An `extends` names a theme, never a path, and is resolved only through
 //! theme discovery: the user themes directory, plugin `themes/` directories

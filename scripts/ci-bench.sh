@@ -394,7 +394,7 @@ scenario_memory() {
 # renders the one built-in segment, `directory`, in every config, so the
 # paired differences isolate the plugin work.
 #
-# Method (spike #1006 harness `bench`): every round visits every config in
+# Method: every round visits every config in
 # rotated order and takes G_PER_ROUND samples of each; a sample is a fresh
 # shell that sources the integration, draws the first prompt, then G_ITERS
 # more. Per prompt = (median of G_ITERS-prompt samples - median of 0-prompt

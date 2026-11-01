@@ -1,5 +1,5 @@
-//! Warnings `gpy theme validate` gives for a theme file's `unset` key
-//! (ADR-0012 sections 1 and 2). Neither is a load error: both files load.
+//! Warnings `gpy theme validate` gives for a theme file's `unset` key. The
+//! warnings are not load errors: the file still loads.
 
 use super::resolve::{Candidates, OwnName, link_for_path};
 use super::{ChainFile, ChainLink, merge, read_chain};

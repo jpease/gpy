@@ -3,7 +3,7 @@
 # shellcheck disable=SC2034  # read discards fields into unused names on purpose
 # shellcheck disable=SC2209  # s=exit assigns the word exit, not a command
 # g_runner.bash - Runner for script (G) segments: runs the scripts and the
-# trigger scan under deadlines (ADR-0011 item 6, spike #1006 P2 and P5).
+# trigger scan under deadlines (ADR-0011).
 #
 # Bash 3.2 code only. Bash sources this file and calls both entry points
 # inside `$( )`, so the interactive shell keeps its `$!`, jobs, traps, options

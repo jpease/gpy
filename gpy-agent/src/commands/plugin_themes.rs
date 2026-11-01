@@ -1,5 +1,5 @@
-//! `gpy plugin validate` for the theme files in a plugin's `themes/` directory
-//! (ADR-0012 section 3): each loads, merged and validated like `gpy theme
+//! `gpy plugin validate` for the theme files in a plugin's `themes/` directory.
+//! Each loads, merged and validated like `gpy theme
 //! validate <file>`, and a plugin overlay may extend only a builtin theme.
 
 use super::output;

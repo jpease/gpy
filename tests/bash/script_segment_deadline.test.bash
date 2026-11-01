@@ -2,8 +2,8 @@
 # tests/bash/script_segment_deadline.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The script (G) segment deadline in every shell's real adapter (ADR-0011
-# item 6): a due prompt whose batch holds a hung script, one that ignores
+# The script (G) segment deadline in every shell's real adapter: a due prompt
+# whose batch holds a hung script, one that ignores
 # TERM and keeps its stdout, and a fast one, all with timeout_ms T, never
 # draws before T (the scripts really ran), the fast segment still shows, both
 # hung ones are hidden, and no script process survives. A latency test, not a
@@ -19,8 +19,8 @@
 # the 50 ms grace + 100 ms of it, and 25 ms of the grace seen between the two.
 #
 # Two latency bounds. Strict: p99 (nearest rank over RUNS due prompts per
-# shell) within T + 50 ms grace + 30 ms, the quiet-host acceptance of
-# ADR-0011 Spike 2. Hang: every prompt within T + 500 ms, which only a missed
+# shell) within T + 50 ms grace + 30 ms, the quiet-host acceptance bound.
+# Hang: every prompt within T + 500 ms, which only a missed
 # deadline breaks. GPY_STRICT_DEADLINE=1 enforces both; 0 enforces the hang
 # bound and only reports strict. The default is 1, or 0 under CI: shared
 # runners (macOS above all) are too noisy for strict. The advisory

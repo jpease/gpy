@@ -1,4 +1,4 @@
-//! Writes the wizard's theme edits (ADR-0012 section 5, "Writers"): only the
+//! Writes the wizard's theme edits (ADR-0012): only the
 //! keys whose effective value changed, compared as the theme reads them
 //! (through the field or its defaulting accessor), never as serialized
 //! fields, so a key toggled twice writes nothing.

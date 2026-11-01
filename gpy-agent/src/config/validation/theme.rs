@@ -105,7 +105,7 @@ mod tests {
         );
     }
 
-    /// Every `_`-joined name ambiguity from #1011: the error quotes both fields.
+    /// Every `_`-joined name ambiguity is rejected: the error quotes both fields.
     #[test]
     fn plugin_sections_whose_variables_collide_are_rejected() {
         for (sections, first, second) in [
@@ -140,7 +140,7 @@ mod tests {
         }
     }
 
-    /// #1067: a plugin segment must not overwrite a built-in export; the error
+    /// A plugin segment must not overwrite a built-in export; the error
     /// names the plugin field and the built-in variable.
     #[test]
     fn plugin_sections_exporting_builtin_variables_are_rejected() {

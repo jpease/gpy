@@ -1,4 +1,4 @@
-//! `gpy theme new` and `gpy theme save` (ADR-0012 section 5, "Writers").
+//! `gpy theme new` and `gpy theme save` (ADR-0012).
 //!
 //! Both write an overlay by default, `extends = "<base>"` and nothing else,
 //! so the new theme keeps receiving every change to its base. With `--full`

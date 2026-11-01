@@ -152,7 +152,7 @@ pub enum EntryType {
     /// The plugin provides `segments/<name>.fish` files sourced at prompt init (Fish only).
     File,
     /// The plugin provides `segments/<name>.toml` script segment manifests, each
-    /// naming a POSIX `sh` script that every shell runs (ADR-0011 option G).
+    /// naming a POSIX `sh` script that every shell runs.
     Script,
     /// Reserved custom-command runtime; parsed for diagnostics but not loadable.
     Command,

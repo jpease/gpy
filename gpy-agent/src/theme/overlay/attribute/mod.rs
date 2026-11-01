@@ -1,4 +1,4 @@
-//! Error attribution for an overlay chain (ADR-0012 section 2).
+//! Error attribution for an overlay chain (ADR-0012).
 //!
 //! Runs only after a check on the merged table failed, so a successful load
 //! pays nothing for it. Three steps:
