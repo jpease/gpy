@@ -187,7 +187,7 @@ mod tests {
 
         let facts = gather(dir.path(), &config, &theme).expect("gather should not error");
 
-        assert!(facts.languages.is_empty());
+        assert_eq!(facts.languages, Vec::new());
     }
 
     #[test]

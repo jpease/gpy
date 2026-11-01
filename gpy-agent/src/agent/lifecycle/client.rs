@@ -3,6 +3,7 @@
 
 use super::outcome::StatusProbe;
 use crate::ipc::Response;
+use crate::ipc::wire::{Op, decode_control_reply};
 use crate::{Error, Result};
 use std::io::ErrorKind;
 use std::path::Path;
@@ -65,11 +66,12 @@ pub(super) fn ping_agent_outcome(socket_path: &Path) -> Result<PingOutcome> {
         };
         // The reply is a `Response` decoded as such: a substring check would
         // match any error message containing "ok". The daemon renders `Ack`
-        // through the JSON formatter (`ipc::ACK_WIRE_JSON`), which the decoder
-        // accepts alongside serde's own encoding.
+        // through `ipc::wire::encode_json` (`ipc::wire::ACK_WIRE_JSON`), which
+        // `ipc::wire::decode_control_reply` decodes.
         // A read timeout is the wedged signature: the runtime accepted the
         // connection into its backlog but never served it.
-        tokio::time::timeout(PING_REPLY_TIMEOUT, exchange(stream, r#"{"op":"ping"}"#))
+        let ping = Op::Ping.bare_request();
+        tokio::time::timeout(PING_REPLY_TIMEOUT, exchange(stream, &ping))
             .await
             .map_or_else(|_| Ok(PingOutcome::AcceptedNoReply), classify_exchange)
     })
@@ -159,7 +161,7 @@ async fn exchange(
     if reply.is_empty() {
         return Err(ExchangeError::Closed);
     }
-    crate::ipc::decode_wire_reply(&String::from_utf8_lossy(&reply)).map_err(ExchangeError::Reply)
+    decode_control_reply(&String::from_utf8_lossy(&reply)).map_err(ExchangeError::Reply)
 }
 
 /// Why [`request`] failed, keeping the stage so callers can tell a refused
@@ -272,7 +274,8 @@ pub fn probe_status(socket_path: &Path) -> StatusProbe {
             )));
         }
     };
-    status_probe_from(runtime.block_on(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET)))
+    let status_request = Op::Status.bare_request();
+    status_probe_from(runtime.block_on(request(socket_path, &status_request, REQUEST_BUDGET)))
 }
 
 #[cfg(test)]

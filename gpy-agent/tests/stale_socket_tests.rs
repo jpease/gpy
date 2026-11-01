@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 fn fixture_ack_matches_the_daemon_wire_form() {
     assert_eq!(
         ACK_WIRE_FORM,
-        format!("{}\n", gpy_agent::ipc::ACK_WIRE_JSON).as_bytes()
+        format!("{}\n", gpy_agent::ipc::wire::ACK_WIRE_JSON).as_bytes()
     );
 }
 

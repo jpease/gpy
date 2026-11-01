@@ -1,8 +1,6 @@
-//! Documented JSON examples round-trip and match the protocol schemas.
+//! Documented JSON requests parse and the daemon's replies match the protocol schemas.
 
 #![allow(clippy::unwrap_used)]
-
-use gpy_agent::ipc::Response;
 
 #[test]
 fn test_msg_deserialize_repository_status_fish() {
@@ -111,130 +109,6 @@ fn test_msg_deserialize_simple_ops_fish() {
 }
 
 #[test]
-fn test_response_deserialize_repository_status() {
-    let cases: &[(&str, &str)] = &[
-        (
-            r#"{"RepositoryStatus":{"branch":"main","ahead":2,"behind":0,"ahead_capped":false,"behind_capped":false,"staged":3,"unstaged":1,"untracked":2,"conflicts":0,"state":"clean"}}"#,
-            "RepositoryStatus (with changes)",
-        ),
-        (
-            r#"{"RepositoryStatus":{"branch":"feature/new-feature","ahead":0,"behind":0,"ahead_capped":false,"behind_capped":false,"staged":0,"unstaged":0,"untracked":0,"conflicts":0,"state":"clean"}}"#,
-            "RepositoryStatus (clean)",
-        ),
-        (
-            r#"{"RepositoryStatus":{"branch":"feature/complex-merge","ahead":0,"behind":0,"ahead_capped":false,"behind_capped":false,"staged":0,"unstaged":2,"untracked":0,"conflicts":1,"state":"rebasing"}}"#,
-            "RepositoryStatus (rebase)",
-        ),
-    ];
-    for (json, label) in cases {
-        let result: Result<Response, _> = serde_json::from_str(json);
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize {label}: {:?}",
-            result.err()
-        );
-    }
-}
-
-#[test]
-fn test_response_deserialize_language() {
-    let cases: &[(&str, &str)] = &[
-        (
-            r##"{"Language":{"languages":[{"name":"Rust","version":"1.70.0","color":"#dea584"}]}}"##,
-            "Language (single)",
-        ),
-        (
-            r##"{"Language":{"languages":[{"name":"JavaScript","version":"20.10.0","color":"#f1e05a"},{"name":"TypeScript","version":"5.3.3","color":"#3178c6"}]}}"##,
-            "Language (multiple)",
-        ),
-        (r#"{"Language":{"languages":[]}}"#, "Language (none)"),
-    ];
-    for (json, label) in cases {
-        let result: Result<Response, _> = serde_json::from_str(json);
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize {label}: {:?}",
-            result.err()
-        );
-    }
-}
-
-#[test]
-fn test_response_deserialize_simple_variants() {
-    let cases: &[(&str, &str)] = &[
-        (r#""Ack""#, "Ack"),
-        (
-            r#"{"AgentStatus":{"version":"0.1.0","protocol_version":1,"watched_repos":5,"registered_clients":3,"cache_entries":12}}"#,
-            "AgentStatus",
-        ),
-        (
-            r#"{"Error":{"message":"Failed to detect language: directory not found"}}"#,
-            "Error (generic)",
-        ),
-        (
-            r#"{"Error":{"message":"IPC connection failed: socket timeout"}}"#,
-            "Error (IPC)",
-        ),
-    ];
-    for (json, label) in cases {
-        let result: Result<Response, _> = serde_json::from_str(json);
-        assert!(
-            result.is_ok(),
-            "Failed to deserialize {label}: {:?}",
-            result.err()
-        );
-    }
-}
-
-#[test]
-fn test_response_roundtrip() {
-    let responses = vec![
-        Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
-            branch: "main".to_owned(),
-            ahead: 2,
-            behind: 0,
-            ahead_capped: false,
-            behind_capped: false,
-            staged: 3,
-            unstaged: 1,
-            untracked: 2,
-            conflicts: 0,
-            state: gpy_agent::git::RepositoryState::Clean,
-            stash_count: 0,
-            detached: false,
-            rebase_progress: None,
-        }),
-        Response::Language {
-            languages: vec![gpy_agent::ipc::LanguageInfo {
-                name: "Rust".to_owned(),
-                version: Some("1.70.0".to_owned()),
-                color: gpy_agent::config::types::ColorSpec::new("#dea584").unwrap(),
-            }],
-        },
-        Response::Ack,
-        Response::AgentStatus {
-            version: "0.1.0".to_owned(),
-            protocol_version: 1,
-            watched_repos: 5,
-            registered_clients: 3,
-            cache_entries: 12,
-            pid: Some(4321),
-        },
-        Response::Error {
-            message: "Test error".to_owned(),
-        },
-    ];
-
-    for resp in responses {
-        let json = serde_json::to_string(&resp).expect("Failed to serialize response");
-        let deserialized: Response =
-            serde_json::from_str(&json).expect("Failed to deserialize response");
-        let json2 = serde_json::to_string(&deserialized).expect("Failed to re-serialize response");
-        assert_eq!(json, json2, "Roundtrip mismatch for response: {resp:?}");
-    }
-}
-
-#[test]
 fn test_protocol_validation_catches_errors() {
     use gpy_agent::ipc::protocol::deserialize_message;
 
@@ -271,7 +145,8 @@ mod schema_files {
     use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
     use gpy_agent::git::{RepositoryState, RepositoryStatus};
     use gpy_agent::ipc::protocol::deserialize_message;
-    use gpy_agent::ipc::{LanguageInfo, Response};
+    use gpy_agent::ipc::wire::Op;
+    use gpy_agent::ipc::{AgentStatus, LanguageInfo, Response};
     use gpy_agent::theme::ThemeConfig;
     use serde_json::Value;
     use std::collections::BTreeSet;
@@ -281,12 +156,6 @@ mod schema_files {
         let path = format!("{}/schemas/{name}", env!("CARGO_MANIFEST_DIR"));
         let text = std::fs::read_to_string(&path).unwrap();
         serde_json::from_str(&text).unwrap()
-    }
-
-    /// Source of `ipc/protocol/mod.rs`, where the op table lives.
-    fn protocol_source() -> String {
-        let path = format!("{}/src/ipc/protocol/mod.rs", env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(path).unwrap()
     }
 
     fn one_of(schema: &Value) -> &Vec<Value> {
@@ -376,24 +245,9 @@ mod schema_files {
         }
     }
 
-    /// Ops accepted by `ShellIpcMessage::into_message`, parsed from the
-    /// `"op" =>` arms of its dispatch table so no hand-kept list can drift.
+    /// Ops accepted by `ShellIpcMessage::into_message`: every [`Op`].
     fn ops_from_code() -> BTreeSet<String> {
-        let source = protocol_source();
-        let table = source
-            .split("match self.op.as_str() {")
-            .nth(1)
-            .unwrap()
-            .split("_ => Err(Error::invalid(format!(\"Unknown shell operation")
-            .next()
-            .unwrap();
-        let ops: BTreeSet<String> = regex::Regex::new(r#"(?m)^\s{12}"([a-z_]+)" =>"#)
-            .unwrap()
-            .captures_iter(table)
-            .map(|c| c[1].to_owned())
-            .collect();
-        assert!(ops.len() >= 14, "op table parse found only {ops:?}");
-        ops
+        Op::ALL.iter().map(|op| op.as_str().to_owned()).collect()
     }
 
     #[test]
@@ -689,14 +543,14 @@ mod schema_files {
             ),
             (
                 "status",
-                render_json(&Response::AgentStatus {
+                render_json(&Response::AgentStatus(AgentStatus {
                     version: "1.0.0".to_owned(),
                     protocol_version: 2,
                     watched_repos: 1,
                     registered_clients: 2,
                     cache_entries: 3,
                     pid: Some(4321),
-                }),
+                })),
             ),
         ];
         for (label, reply) in &replies {

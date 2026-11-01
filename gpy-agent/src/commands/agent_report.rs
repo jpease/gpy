@@ -5,11 +5,11 @@
 use super::exit_codes::{DISABLED, NOT_RUNNING, STATUS_UNKNOWN};
 use super::output::warn_stderr;
 use crate::agent::lifecycle::{
-    AgentStatusInfo, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, probe_status,
-    protocol_mismatch, send_shutdown_command, socket_is_stale, start_background_agent,
-    wait_for_agent_shutdown,
+    ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, probe_status, protocol_mismatch,
+    send_shutdown_command, socket_is_stale, start_background_agent, wait_for_agent_shutdown,
 };
 use crate::config::schema;
+use crate::ipc::AgentStatus;
 use crate::paths::{get_socket_path, set_socket_override};
 use crate::{Error, Result, VERSION};
 use std::path::{Path, PathBuf};
@@ -66,7 +66,7 @@ pub const fn state_and_exit(probe: &StatusProbe) -> (&'static str, StatusOutcome
 }
 
 /// The status the agent reported, when the probe got an answer.
-const fn answered(probe: Option<&StatusProbe>) -> Option<&AgentStatusInfo> {
+const fn answered(probe: Option<&StatusProbe>) -> Option<&AgentStatus> {
     match probe {
         Some(StatusProbe::Answered(status)) => Some(status),
         Some(

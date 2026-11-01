@@ -587,7 +587,7 @@ mod tests {
         )
         .expect("a disabled segment never probes");
 
-        assert!(info.is_empty());
+        assert_eq!(info, Vec::new());
     }
 
     #[test]

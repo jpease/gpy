@@ -138,14 +138,14 @@ impl ClientHandler {
         let registered_clients = self.render.client_registry.len();
         let cache_entries = self.git_cache.len();
 
-        Response::AgentStatus {
+        Response::AgentStatus(crate::ipc::AgentStatus {
             version: crate::VERSION.to_owned(),
             protocol_version: crate::ipc::protocol::PROTOCOL_VERSION,
             watched_repos,
             registered_clients,
             cache_entries,
             pid: Some(std::process::id()),
-        }
+        })
     }
 
     /// Handle configuration reload request.

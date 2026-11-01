@@ -173,14 +173,36 @@ pub struct EndpointHandle {
     pub(crate) handler_registry: Arc<HandlerRegistry>,
 }
 
-/// Content hash of a live-update response for the repaint throttle, or `None`
-/// if serialization fails. Payloads carry no timestamps, so equal state coalesces.
+/// `io::Write` that feeds a hasher, so a payload is hashed as it serializes, with no buffer.
+#[cfg(unix)]
+struct HashWriter<'a>(&'a mut std::collections::hash_map::DefaultHasher);
+
+#[cfg(unix)]
+impl std::io::Write for HashWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        use std::hash::Hasher;
+        self.0.write(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Content hash of a live-update response's JSON payload for the repaint
+/// throttle. `None` for any other variant or if serialization fails. Payloads
+/// carry no timestamps, so equal state coalesces.
 #[cfg(unix)]
 fn content_token(response: &Response) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
-    let bytes = serde_json::to_vec(response).ok()?;
+    use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
+    let mut sink = HashWriter(&mut hasher);
+    match response {
+        Response::RepositoryStatus(status) => serde_json::to_writer(&mut sink, status).ok()?,
+        Response::Language { languages } => serde_json::to_writer(&mut sink, languages).ok()?,
+        _ => return None,
+    }
     Some(hasher.finish())
 }
 

@@ -4,11 +4,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use gpy_agent::config::types::ColorSpec;
-use gpy_agent::ipc::protocol::{
-    deserialize_message, deserialize_response, serialize_response, validate_message_size,
-};
-use gpy_agent::ipc::{Format, LanguageInfo, Message, Response};
+use gpy_agent::ipc::protocol::{deserialize_message, validate_message_size};
+use gpy_agent::ipc::{Format, Message};
 use gpy_agent::security::SafePath;
 
 #[test]
@@ -30,126 +27,6 @@ fn lang_request_carries_virtual_env() {
             assert_eq!(virtual_env.as_deref(), Some("/proj/.venv"));
         }
         other => panic!("expected LanguageDetect, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_response_serialization_git_status() {
-    let response = Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
-        branch: "main".to_owned(),
-        ahead: 2,
-        behind: 1,
-        ahead_capped: false,
-        behind_capped: false,
-        staged: 3,
-        unstaged: 4,
-        untracked: 5,
-        conflicts: 0,
-        state: gpy_agent::git::RepositoryState::Clean,
-        stash_count: 0,
-        detached: false,
-        rebase_progress: None,
-    });
-
-    let serialized = serialize_response(&response).expect("serialize_response failed");
-    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
-
-    match deserialized {
-        Response::RepositoryStatus(s) => {
-            assert_eq!(s.branch, "main");
-            assert_eq!(s.ahead, 2);
-            assert_eq!(s.behind, 1);
-            assert!(!s.ahead_capped);
-            assert!(!s.behind_capped);
-            assert_eq!(s.staged, 3);
-            assert_eq!(s.unstaged, 4);
-            assert_eq!(s.untracked, 5);
-            assert_eq!(s.conflicts, 0);
-            assert_eq!(s.state, gpy_agent::git::RepositoryState::Clean);
-        }
-        _ => assert!(
-            matches!(deserialized, Response::RepositoryStatus { .. }),
-            "Wrong response type deserialized"
-        ),
-    }
-}
-
-#[test]
-fn test_response_serialization_language() {
-    let response = Response::Language {
-        languages: vec![
-            LanguageInfo {
-                name: "Rust".to_owned(),
-                version: Some("1.70.0".to_owned()),
-                color: ColorSpec::new("#ff0000").unwrap(),
-            },
-            LanguageInfo {
-                name: "Node".to_owned(),
-                version: Some("18.16.1".to_owned()),
-                color: ColorSpec::new("#00ff00").unwrap(),
-            },
-        ],
-    };
-
-    let serialized = serialize_response(&response).expect("serialize_response failed");
-    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
-
-    match deserialized {
-        Response::Language { languages } => {
-            assert_eq!(languages.len(), 2);
-            if let Some(language) = languages.first() {
-                assert_eq!(language.name, "Rust");
-                assert_eq!(language.version, Some("1.70.0".to_owned()));
-                assert_eq!(language.color, ColorSpec::new("#ff0000").unwrap());
-            }
-            if let Some(language) = languages.get(1) {
-                assert_eq!(language.name, "Node");
-                assert_eq!(language.version, Some("18.16.1".to_owned()));
-                assert_eq!(language.color, ColorSpec::new("#00ff00").unwrap());
-            }
-        }
-        _ => assert!(
-            matches!(deserialized, Response::Language { .. }),
-            "Wrong response type deserialized"
-        ),
-    }
-}
-
-#[test]
-fn test_response_serialization_ack() {
-    let response = Response::Ack;
-
-    let serialized = serialize_response(&response).expect("serialize_response failed");
-    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
-
-    match deserialized {
-        Response::Ack => {
-            // Success - correct response type
-        }
-        _ => assert!(
-            matches!(deserialized, Response::Ack),
-            "Wrong response type deserialized"
-        ),
-    }
-}
-
-#[test]
-fn test_response_serialization_error() {
-    let response = Response::Error {
-        message: "Test error".to_owned(),
-    };
-
-    let serialized = serialize_response(&response).expect("serialize_response failed");
-    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
-
-    match deserialized {
-        Response::Error { message } => {
-            assert_eq!(message, "Test error");
-        }
-        _ => assert!(
-            matches!(deserialized, Response::Error { .. }),
-            "Wrong response type deserialized"
-        ),
     }
 }
 

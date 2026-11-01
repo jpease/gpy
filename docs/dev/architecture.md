@@ -375,7 +375,8 @@ error.rs (foundation)
   │   └── version.rs (version detection trait)
   │
   ├── ipc/
-  │   ├── protocol.rs (JSON serialization)
+  │   ├── protocol/ (request parsing, PROTOCOL_VERSION)
+  │   ├── wire.rs (op names, JSON reply encoding)
   │   ├── server.rs (request dispatcher)
   │   └── registry.rs (Fish PID tracking)
   │

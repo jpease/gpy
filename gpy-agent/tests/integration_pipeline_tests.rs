@@ -14,7 +14,7 @@ use common::fixtures::TempSocket;
 use common::git::TestRepo;
 use common::integration_harness::{GitChange, GitStatus, IntegrationTestServer, TestConfig};
 use common::skip::skip_test;
-use gpy_agent::ipc::{ClientPid, Message, Response, Segment};
+use gpy_agent::ipc::{AgentStatus, ClientPid, Message, Response, Segment};
 use gpy_agent::security::SafePath;
 use std::time::Duration;
 
@@ -103,9 +103,9 @@ async fn test_client_registration_flow() {
     let status_response = server.agent_status().await.expect("Status request failed");
 
     match status_response {
-        Response::AgentStatus {
+        Response::AgentStatus(AgentStatus {
             registered_clients, ..
-        } => {
+        }) => {
             assert!(
                 registered_clients >= 1,
                 "Should have at least 1 registered client"
