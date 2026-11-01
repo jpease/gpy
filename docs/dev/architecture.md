@@ -377,7 +377,7 @@ error.rs (foundation)
   ├── ipc/
   │   ├── protocol.rs (JSON serialization)
   │   ├── server.rs (request dispatcher)
-  │   └── registry.rs (Fish PID tracking)
+  │   └── registry/ (client directory; shell_tracking.rs: tracking files, flag files, SIGURG doorbell)
   │
   └── watcher/
       ├── filesystem.rs (notify integration)

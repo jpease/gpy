@@ -1,7 +1,8 @@
-//! Blocking-free building blocks for talking to a running agent from the CLI:
-//! one request/reply exchange, the liveness ping, and the typed status probe.
+//! Talking to a running agent from the CLI: one request/reply exchange, the
+//! liveness ping, and the typed shutdown, config reload and status requests.
 
 use super::outcome::StatusProbe;
+use super::{AgentStatusInfo, ConfigReload};
 use crate::ipc::Response;
 use crate::{Error, Result};
 use std::io::ErrorKind;
@@ -16,7 +17,7 @@ const PING_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Budget for one request/reply exchange with the agent (shutdown, status,
 /// config reload): the agent answers in microseconds unless wedged.
-pub(super) const REQUEST_BUDGET: Duration = Duration::from_secs(2);
+const REQUEST_BUDGET: Duration = Duration::from_secs(2);
 
 /// Connect within the ping's connect budget; `None` when nothing accepted.
 async fn ping_connect(socket_path: &Path) -> Option<tokio::net::UnixStream> {
@@ -98,7 +99,7 @@ pub(super) fn classify_exchange(
     result: std::result::Result<Response, ExchangeError>,
 ) -> Result<PingOutcome> {
     match result {
-        Ok(response) if super::is_ack(&response) => Ok(PingOutcome::Answered),
+        Ok(response) if is_ack(&response) => Ok(PingOutcome::Answered),
         Err(failure) if closed_unanswered(&failure) => Ok(PingOutcome::ClosedUnanswered),
         Err(ExchangeError::Send(e)) => Err(Error::ipc(format!("ping write failed: {e}"))),
         Ok(_) | Err(_) => Ok(PingOutcome::AcceptedNoReply),
@@ -240,7 +241,7 @@ pub(super) fn status_probe_from(
     result: std::result::Result<Response, RequestFailure>,
 ) -> StatusProbe {
     match result {
-        Ok(response) => match super::agent_status_from(response) {
+        Ok(response) => match agent_status_from(response) {
             Ok(status) => StatusProbe::Answered(status),
             Err(e) => StatusProbe::NoReply(e),
         },
@@ -275,14 +276,159 @@ pub fn probe_status(socket_path: &Path) -> StatusProbe {
     status_probe_from(runtime.block_on(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET)))
 }
 
+/// Blocking ping: whether the agent answered.
+///
+/// # Errors
+/// Returns an error if runtime creation or ping operations fail.
+pub fn ping_agent_blocking(socket_path: &Path) -> Result<bool> {
+    Ok(matches!(
+        ping_agent_outcome(socket_path)?,
+        PingOutcome::Answered
+    ))
+}
+
+/// Whether `response` is an acknowledgement. Decides on the decoded value, since
+/// a substring check would match an `Error` whose message contains "ok".
+#[must_use]
+const fn is_ack(response: &Response) -> bool {
+    matches!(response, Response::Ack)
+}
+
+/// Send shutdown command to agent.
+///
+/// # Errors
+/// Returns an error if the exchange fails or times out, or the reply is not an ack.
+pub async fn send_shutdown_command() -> Result<()> {
+    // Bounded so a wedged agent cannot hang `gpy-agent stop`.
+    let socket_path = crate::paths::get_socket_path()?;
+    let response = request(&socket_path, r#"{"op":"shutdown"}"#, REQUEST_BUDGET).await?;
+
+    if is_ack(&response) {
+        Ok(())
+    } else {
+        crate::debug_log!("agent", "Unexpected shutdown response: {response:?}");
+        Err(Error::ipc(format!(
+            "agent at {} sent an unexpected reply to the shutdown request",
+            socket_path.display()
+        )))
+    }
+}
+
+/// Ask the running agent to reload its configuration.
+///
+/// # Errors
+/// Returns an error if the socket path cannot be computed, or a listening
+/// agent does not answer the request (timeout, closed connection, or a reply
+/// that is neither an ack nor an error).
+pub async fn send_config_reload_command() -> Result<ConfigReload> {
+    let socket_path = crate::paths::get_socket_path()?;
+    if !socket_path.exists() {
+        return Ok(ConfigReload::NotRunning);
+    }
+
+    match request(
+        &socket_path,
+        crate::ipc::protocol::CONFIG_RELOAD_JSON,
+        REQUEST_BUDGET,
+    )
+    .await
+    {
+        Ok(Response::Ack) => Ok(ConfigReload::Applied),
+        Ok(Response::Error { message }) => {
+            Ok(ConfigReload::Rejected(message.trim_end().to_owned()))
+        }
+        Ok(other) => {
+            crate::debug_log!("agent", "Unexpected config reload response: {other:?}");
+            Err(Error::ipc(format!(
+                "agent at {} sent an unexpected reply to the config reload request",
+                socket_path.display()
+            )))
+        }
+        Err(_) if socket_is_stale(&socket_path) => Ok(ConfigReload::NotRunning),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Whether nothing is listening on `socket_path` (connection refused or file
+/// gone); an accepted connection means a live agent.
+#[must_use]
+pub fn socket_is_stale(socket_path: &Path) -> bool {
+    match std::os::unix::net::UnixStream::connect(socket_path) {
+        Ok(_) => false,
+        Err(e) => matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound),
+    }
+}
+
+/// Query the running agent for its status via IPC.
+///
+/// # Errors
+/// Returns an error if the socket connection fails or the response is not an
+/// agent status.
+pub async fn query_agent_status() -> Result<AgentStatusInfo> {
+    query_status_at(&crate::paths::get_socket_path()?).await
+}
+
+/// [`query_agent_status`] against an explicit socket.
+async fn query_status_at(socket_path: &Path) -> Result<AgentStatusInfo> {
+    agent_status_from(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET).await?)
+}
+
+/// Query the agent's status on a private runtime.
+///
+/// # Errors
+/// Returns an error if the runtime cannot be built or the query fails.
+pub(super) fn status_blocking(socket_path: &Path) -> Result<AgentStatusInfo> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::agent(format!("cannot create the async runtime: {e}")))?;
+    runtime.block_on(query_status_at(socket_path))
+}
+
+/// The status carried by an agent's reply.
+///
+/// # Errors
+/// Returns an error if `response` is anything but an `AgentStatus`.
+fn agent_status_from(response: Response) -> Result<AgentStatusInfo> {
+    match response {
+        Response::AgentStatus {
+            version,
+            protocol_version,
+            watched_repos,
+            registered_clients,
+            cache_entries,
+            pid,
+        } => Ok(AgentStatusInfo {
+            version,
+            protocol_version,
+            watched_repos,
+            registered_clients,
+            cache_entries,
+            pid,
+        }),
+        other => {
+            crate::debug_log!("agent", "Expected an AgentStatus response, got: {other:?}");
+            Err(Error::ipc(
+                "the agent sent an unexpected reply to the status request",
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ExchangeError, PingOutcome, RequestFailure, classify_exchange, closed_unanswered,
-        status_probe_from,
+        ExchangeError, PingOutcome, RequestFailure, classify_exchange, closed_unanswered, is_ack,
+        ping_agent_blocking, query_status_at, request, status_probe_from,
     };
     use crate::agent::lifecycle::outcome::StatusProbe;
-    use std::io::{Error as IoError, ErrorKind};
+    use crate::ipc::Response;
+    use std::io::{Error as IoError, ErrorKind, Read, Write};
+    use std::time::Duration;
+
+    /// The daemon's wire `Response::Ack`, pinned by
+    /// `ack_wire_form_is_what_the_json_formatter_emits`.
+    const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
 
     #[test]
     fn a_connection_reset_read_is_closed_unanswered() {
@@ -373,5 +519,222 @@ mod tests {
             )))),
             StatusProbe::NoReply(_)
         ));
+    }
+
+    /// An agent that answers and immediately closes is alive.
+    #[test]
+    fn a_reply_then_close_is_still_a_live_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("terse.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(ACK_WIRE_FORM);
+            drop(stream);
+        });
+
+        let alive = ping_agent_blocking(&socket_path);
+        server.join().expect("join fake server thread");
+
+        assert!(
+            matches!(alive, Ok(true)),
+            "an agent that replied and closed is alive; got {alive:?}"
+        );
+    }
+
+    /// Pins the fixtures to the daemon's real JSON-formatted `Ack` reply.
+    #[test]
+    fn ack_wire_form_is_what_the_json_formatter_emits() {
+        use crate::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
+
+        let config = crate::config::Config::default();
+        let theme = crate::theme::ThemeConfig::default();
+        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let rendered = create_formatter(Format::Json)
+            .render(&Response::Ack, &ctx)
+            .expect("Ack renders");
+
+        assert_eq!(rendered, crate::ipc::ACK_WIRE_JSON);
+        assert_eq!(
+            ACK_WIRE_FORM,
+            format!("{rendered}\n").as_bytes(),
+            "the test fixtures must send exactly what the daemon sends"
+        );
+    }
+
+    /// Serde's own `"Ack"` encoding also decodes as an acknowledgement.
+    #[test]
+    fn a_native_ack_over_the_wire_is_an_acknowledgement() {
+        let response = request_against(b"\"Ack\"\n").expect("native Ack decodes");
+        assert!(is_ack(&response), "got {response:?}");
+    }
+
+    /// A formatter error whose message contains "ok" is not an acknowledgement.
+    #[test]
+    fn a_formatter_error_reply_over_the_wire_is_not_an_acknowledgement() {
+        let response = request_against(b"{\"error\":\"config not ok: parse failed\"}\n")
+            .expect("a formatter Error reply decodes as a Response");
+        assert!(
+            matches!(&response, Response::Error { message } if message == "config not ok: parse failed"),
+            "got {response:?}"
+        );
+        assert!(!is_ack(&response));
+    }
+
+    /// A serde `Error` reply containing "ok" is not an acknowledgement.
+    #[test]
+    fn an_error_reply_containing_ok_is_not_an_acknowledgement() {
+        let failure = Response::Error {
+            message: "something not ok here".to_owned(),
+        };
+        let wire = serde_json::to_string(&failure).expect("Error response serializes");
+
+        assert!(
+            wire.contains("ok"),
+            "premise: a substring check would match this reply ({wire})"
+        );
+        assert!(
+            !is_ack(&failure),
+            "an Error reply is never an acknowledgement, whatever its message says"
+        );
+        assert!(is_ack(&Response::Ack));
+    }
+
+    /// Run one `request()` exchange against a fake agent replying with `reply`.
+    ///
+    /// # Errors
+    /// Whatever `request()` reported.
+    fn request_against(reply: &'static [u8]) -> crate::Result<Response> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let socket_path = tmp.path().join("reply.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(reply);
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let outcome = runtime
+            .block_on(request(
+                &socket_path,
+                r#"{"op":"config_reload"}"#,
+                Duration::from_secs(2),
+            ))
+            .map_err(crate::Error::from);
+        server.join().expect("join fake server thread");
+
+        outcome
+    }
+
+    /// A wire `Error` reply to `config_reload` mentioning "ok" is not a reload.
+    #[test]
+    fn a_failure_reply_over_the_wire_is_not_an_acknowledgement() {
+        let outcome =
+            request_against(b"{\"Error\":{\"message\":\"config not ok: parse failed\"}}\n");
+
+        let response = outcome.expect("a well-formed Error reply still decodes as a Response");
+        assert!(
+            !is_ack(&response),
+            "a decoded Error reply must not be treated as an acknowledgement, got {response:?}"
+        );
+    }
+
+    /// The daemon's real `Ack` is recognized.
+    #[test]
+    fn an_ack_over_the_wire_is_an_acknowledgement() {
+        let response = request_against(ACK_WIRE_FORM).expect("Ack decodes as a Response");
+        assert!(is_ack(&response), "got {response:?}");
+    }
+
+    /// A reply that is not a `Response` is an error.
+    #[test]
+    fn an_undecodable_reply_is_an_error() {
+        let outcome = request_against(b"{\"op\":\"pong\"}\n");
+        assert!(
+            outcome.is_err(),
+            "a reply that is not a Response must not decode, got {outcome:?}"
+        );
+    }
+
+    /// Run `query_status_at` against a fake agent that sends `reply`.
+    ///
+    /// # Errors
+    /// Whatever the query reported.
+    fn query_status_against(reply: Vec<u8>) -> crate::Result<super::AgentStatusInfo> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let socket_path = tmp.path().join("status.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(&reply);
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let outcome = runtime.block_on(query_status_at(&socket_path));
+        server.join().expect("join fake server thread");
+
+        outcome
+    }
+
+    /// A status line is parsed whole, however many reads it arrives in.
+    #[test]
+    fn a_status_reply_larger_than_one_read_buffer_parses() {
+        let status = Response::AgentStatus {
+            version: "9".repeat(16 * 1024),
+            protocol_version: 3_u8,
+            watched_repos: 5_usize,
+            registered_clients: 2_usize,
+            cache_entries: 12_usize,
+            pid: Some(4321_u32),
+        };
+        let mut reply = serde_json::to_vec(&status).expect("AgentStatus serializes");
+        reply.push(b'\n');
+        assert!(reply.len() > 4096, "premise: the reply exceeds 4 KiB");
+
+        let info = query_status_against(reply).expect("a long status line parses");
+        assert_eq!(info.version.len(), 16 * 1024);
+        assert_eq!(info.protocol_version, 3_u8);
+        assert_eq!(info.watched_repos, 5_usize);
+        assert_eq!(info.registered_clients, 2_usize);
+        assert_eq!(info.cache_entries, 12_usize);
+        assert_eq!(info.pid, Some(4321_u32));
+    }
+
+    /// A partial status payload is an error, not a defaulted status.
+    #[test]
+    fn a_malformed_agent_status_is_an_error_not_a_zeroed_status() {
+        assert!(
+            query_status_against(b"{\"AgentStatus\":{\"version\":\"9.9.9\"}}\n".to_vec()).is_err(),
+            "a status payload missing required fields must not be reported as a status"
+        );
+        assert!(
+            query_status_against(b"\"Ack\"\n".to_vec()).is_err(),
+            "a non-status Response must not be reported as a status"
+        );
+        assert!(query_status_against(b"not json\n".to_vec()).is_err());
     }
 }
