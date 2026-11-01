@@ -1,10 +1,10 @@
 id = "username"
 name = "Username"
-version = "0.6.0"
+version = "0.7.1"
 api_version = "v1"
 entry_type = "script"
 provided_segments = ["username"]
 description = "The login name, shown as root, under sudo or over SSH (bundled with GPY)"
 
 [compatibility_constraints]
-min_gpy_version = "0.6.0"
+min_gpy_version = "0.7.1"

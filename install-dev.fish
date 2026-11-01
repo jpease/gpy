@@ -445,10 +445,3 @@ if test $files_only -eq 1
 else if test $clean_sync -eq 1
     echo "Tip: Used --clean for a pristine sync"
 end
-
-set -e files_only
-set -e no_build
-set -e clean_sync
-set -e show_help
-set -e allow_shadow
-set -e gpy_dev_fish_dir
