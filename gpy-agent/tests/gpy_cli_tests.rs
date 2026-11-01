@@ -1007,11 +1007,21 @@ enabled_segments = ["language", "directory", "git"]
         .run_gpy(&["lang", "versions", "on"])
         .expect("Failed to run gpy lang versions on");
     output.assert_success("gpy lang versions on");
-    let stdout = output.stdout;
-    assert!(
-        stdout.contains("Language versions enabled"),
-        "Should confirm versions enabled"
+    assert_eq!(
+        output
+            .stderr
+            .lines()
+            .filter(|line| line.starts_with("warn: 'gpy lang versions' is deprecated; use "))
+            .count(),
+        1_usize,
+        "exactly one deprecation line on stderr: {}",
+        output.stderr
     );
+    let shown = env
+        .run_gpy(&["config", "get", "language.show_versions"])
+        .expect("Failed to run gpy config get");
+    shown.assert_success("gpy config get language.show_versions");
+    assert_eq!(shown.stdout.trim(), "true");
 
     let updated_config = fs::read_to_string(&config_path).expect("Failed to read updated config");
     assert!(

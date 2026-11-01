@@ -8,34 +8,8 @@
 use super::*;
 use crate::config::types::{PaletteName, ThemeName};
 
-/// Fixed discovery lists (clean-environment builtins) so tests don't depend on disk.
-const FIXED_THEMES: [&str; 3] = ["default", "starship", "text"];
-const FIXED_PALETTES: [&str; 8] = [
-    "catppuccin-frappe",
-    "catppuccin-latte",
-    "catppuccin-macchiato",
-    "catppuccin-mocha",
-    "default",
-    "gruvbox-dark-medium",
-    "nord",
-    "starship",
-];
-const FIXED_SEGMENTS: [&str; 6] = [
-    "clock",
-    "duration",
-    "language",
-    "directory",
-    "git",
-    "status",
-];
-
 fn test_state(config: Config) -> WizardState {
-    WizardState::from_parts(
-        config,
-        FIXED_THEMES.iter().map(|&s| s.to_owned()).collect(),
-        FIXED_PALETTES.iter().map(|&s| s.to_owned()).collect(),
-        FIXED_SEGMENTS.iter().map(|&s| s.to_owned()).collect(),
-    )
+    builtin_state(config)
 }
 
 /// Avoids two bool params (`max-fn-params-bools`).

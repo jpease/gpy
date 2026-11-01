@@ -25,7 +25,7 @@ gpy theme use <name>         # Switch to a theme
 gpy theme show               # Show current theme
 gpy theme new <name> [--from <base>] [--full]  # Create a theme that extends <base> (default: default)
 gpy theme save [name] [--full]  # Save the active theme as a theme file that extends it
-gpy theme validate [target]  # Validate active theme, name, or file path
+gpy theme validate [name-or-path]  # Validate active theme, name, or file path
 gpy theme diff <name>        # Compare your copy of a builtin theme with the builtin
 gpy theme reset <name>       # Move your copy of a builtin theme to .bak
 gpy theme migrate <name>     # Rewrite keys removed by breaking changes (backs up first)
@@ -35,24 +35,21 @@ gpy theme rebase <name> [--onto <base>] [--write] [--unset-missing]  # Turn a mo
 gpy palette list                 # List available palettes
 gpy palette use <name>           # Switch to a palette
 gpy palette show                 # Show current palette
-gpy palette validate [target]    # Validate active palette, name, or file path
+gpy palette validate [name-or-path]  # Validate active palette, name, or file path
 gpy palette import <file>        # Import a base16/base24 scheme as a palette
 
 # Plugin management
 gpy plugin list                              # List discovered plugins
 gpy plugin new <id> [--segment <segment>]    # Create plugin scaffold
-gpy plugin validate <path-or-id>             # Validate plugin files and manifest
+gpy plugin validate <id-or-path>             # Validate plugin files and manifest
 
 # Segment management
 gpy enable <segment>         # Enable a segment
 gpy disable <segment>        # Disable a segment
 gpy segments                 # List all segments
 
-# Language configuration
-gpy lang versions on|off     # Toggle version display
-
 # Configuration
-gpy config show [section]    # Show configuration
+gpy config show [section]    # Show configuration (sections: agent, git, language, ui, plugin)
 gpy config list [filter]     # List config keys, optionally by prefix
 gpy config get <key>         # Get a config value
 gpy config set <key> <value> # Set a config value
@@ -311,7 +308,7 @@ agent rejected the config or did not answer, one more line follows:
 ```
 
 Every command that edits `config.toml` (`theme use`, `palette use`,
-`enable`, `disable`, `lang versions`, `config set`) ends the same way: silent
+`enable`, `disable`, `config set`) ends the same way: silent
 on a confirmed reload or with no agent, one warning otherwise. Switching
 *themes* currently prints the warning even with a live agent on macOS, because the switch re-arms
 its theme-file watcher for longer than the CLI waits; the reload still
@@ -319,13 +316,13 @@ happens a few seconds later.
 
 ---
 
-#### `gpy theme import <path>`
+#### `gpy theme import <file>`
 
 Import a `starship.toml` into a matching GPY palette and prompt theme pair.
 The migration guide is in [Migrating from Starship](migrating-from-starship.md).
 
 **Arguments:**
-- `<path>` - Path to the source `starship.toml`
+- `<file>` - Path to the source `starship.toml`
 
 **Options:**
 - `--name <name>` - Base name for the emitted palette and theme (default:
@@ -449,7 +446,7 @@ Activate with: gpy theme use mytheme
 
 ---
 
-#### `gpy theme validate [target]`
+#### `gpy theme validate [name-or-path]`
 
 Validate a theme and print actionable diagnostics.
 
@@ -501,10 +498,10 @@ gpy theme validate ~/.config/gpy/themes/mytheme.toml
 
 Show how your copy of a builtin theme differs from the builtin that ships with this version of GPY.
 
-A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. The output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. The command always exits 0 when `<name>` is a builtin; it says so when there is no copy to compare or the copy is identical. Any other `<name>` is an error, because only the builtin themes (`default`, `text`, `starship`) have an upstream version.
+A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. For a full copy the output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. For an overlay (a user theme with `extends`) it lists the keys whose effective value the overlay changes. The command exits 0 when `<name>` is a builtin or an overlay; it says so when there is no copy to compare or the copy is identical.
 
 **Arguments:**
-- `<name>` - Builtin theme name
+- `<name>` - Theme with a user file: your copy of a builtin, or one of your overlay themes (see `gpy theme list`)
 
 **Example:**
 ```bash
@@ -517,10 +514,10 @@ gpy theme diff starship
 
 Move your copy of a builtin theme aside so the builtin takes over again.
 
-The file `~/.config/gpy/themes/<name>.toml` is renamed to `<name>.toml.bak`; an existing backup is never overwritten, so later resets use `.bak.1`, `.bak.2`, and so on. When `<name>` is the active theme the running agent is reloaded. `reset` refuses a `<name>` that is not a builtin theme, and fails when there is no copy to reset.
+The file `~/.config/gpy/themes/<name>.toml` is renamed to `<name>.toml.bak`; an existing backup is never overwritten, so later resets use `.bak.1`, `.bak.2`, and so on. When `<name>` is the active theme the running agent is reloaded. `reset` fails when there is no user file to move.
 
 **Arguments:**
-- `<name>` - Builtin theme name
+- `<name>` - Theme with a user file: your copy of a builtin, or one of your overlay themes (see `gpy theme list`)
 
 **Example:**
 ```bash
@@ -545,7 +542,7 @@ Rules are grouped by the release that removed the keys. The 0.7 rules (the `user
 - `show_always` and `trim_at` move to `config.toml` `[plugin.username]` / `[plugin.hostname]`. A value already set there is kept.
 - `icon` of `[segments.hostname]` is renamed `ssh_icon` unless `ssh_icon` is already set.
 
-Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. Unlike `diff` and `reset`, `migrate` accepts any theme file in the themes directory, including overlays and copies made with `gpy theme new --full`.
+Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. `migrate` accepts any theme file in the themes directory: an overlay, a full copy made with `gpy theme new --full`, or a theme of your own.
 
 **Arguments:**
 - `<name>` - Name of a theme file in the themes directory
@@ -669,7 +666,7 @@ default
 
 ---
 
-#### `gpy palette validate [target]`
+#### `gpy palette validate [name-or-path]`
 
 Validate a palette and print actionable diagnostics.
 
@@ -816,37 +813,13 @@ Prompt Segments:
 
 ---
 
-### Language Configuration
-
-#### `gpy lang versions <on|off>`
-
-Toggle language version display in the prompt.
-
-When enabled, the language segment shows version numbers (e.g., `Rust 1.90`). When disabled, only the language name or icon is shown.
-
-**Arguments:**
-- `on` - Enable version display
-- `off` - Disable version display
-
-**Example:**
-```bash
-gpy lang versions on
-```
-
-**Output:**
-```
-Language versions enabled
-```
-
----
-
 ### Configuration Management
 
 #### `gpy config show [section]`
 
 Display configuration values.
 
-Without a section argument, shows all configuration. With a section argument, shows only that section. Every field is printed, including the `[git.icons]` and `[language.icons]` tables; the output is valid TOML (section headings are comments).
+Without a section argument, shows all configuration. With a section argument, shows only that section; any other value is a usage error (exit `2`) that lists the valid sections. Every field is printed, including the `[git.icons]` and `[language.icons]` tables; the output is valid TOML (section headings are comments).
 
 **Valid Sections:**
 - `agent` - Agent process settings
@@ -1243,7 +1216,7 @@ If `--segment` is omitted, GPY uses the plugin id as the segment id.
 gpy plugin new demo-tools --segment demo_status
 ```
 
-#### `gpy plugin validate <path-or-id>`
+#### `gpy plugin validate <id-or-path>`
 
 Validate a plugin manifest and filesystem layout.
 
@@ -1377,7 +1350,7 @@ gpy disable language
 gpy theme use default
 gpy enable git
 gpy enable language
-gpy lang versions on
+gpy config set language.show_versions true
 ```
 
 ### Theme Customization
@@ -1517,7 +1490,7 @@ These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY
 `stop` never exits `6`: a disabled agent that is not running is already in the
 requested state, and one that is still running must be stoppable. `2` is the
 argument parser's usage error: an unknown subcommand, a missing argument, or a
-value outside the allowed set (for example `gpy lang versions maybe`, which
+value outside the allowed set (for example `gpy config show nosuch`, which
 lists the possible values). Every one of these commands lists its codes in
 `--help`.
 

@@ -10,39 +10,65 @@ use std::process::Command;
 /// Contents of a config file freshly created by `gpy config open`.
 const NEW_CONFIG_HEADER: &str = "# GPY configuration\n# Every key is optional; omitted keys use built-in defaults.\n# See docs/user/configuration-reference.md for all available settings.\n";
 
+/// A `[section]` of the config file that `gpy config show` can print.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ConfigSection {
+    /// Agent settings.
+    Agent,
+    /// Git settings.
+    Git,
+    /// Language settings.
+    Language,
+    /// Prompt UI settings.
+    Ui,
+    /// Plugin segment overrides.
+    Plugin,
+}
+
+impl ConfigSection {
+    /// The top-level TOML key of this section.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Git => "git",
+            Self::Language => "language",
+            Self::Ui => "ui",
+            Self::Plugin => "plugin",
+        }
+    }
+
+    /// The heading shown above this section.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Agent => "Agent",
+            Self::Git => "Git",
+            Self::Language => "Language",
+            Self::Ui => "UI",
+            Self::Plugin => "Plugin segment overrides",
+        }
+    }
+}
+
 /// Show one config section, or all sections.
 ///
 /// # Errors
-/// Returns an error if the section is invalid or the config cannot be loaded.
-pub fn show(section: Option<&str>) -> Result<()> {
-    const SECTIONS: [(&str, &str); 5] = [
-        ("agent", "Agent"),
-        ("git", "Git"),
-        ("language", "Language"),
-        ("ui", "UI"),
-        ("plugin", "Plugin segment overrides"),
-    ];
+/// Returns an error if the config cannot be loaded or rendered.
+pub fn show(section: Option<ConfigSection>) -> Result<()> {
+    use clap::ValueEnum;
+
     let config = read_config()?;
 
     match section {
-        Some(name) => {
-            let (key, title) = SECTIONS
-                .iter()
-                .find(|(key, _)| *key == name)
-                .ok_or_else(|| {
-                    Error::config(format!(
-                        "invalid section '{name}'; valid sections: agent, git, language, ui, plugin"
-                    ))
-                })?;
-            show_section(&config, key, title)?;
-        }
+        Some(only) => show_section(&config, only.key(), only.title())?,
         None => {
             // Reuse the parsed config rather than re-reading per section.
-            for (index, (key, title)) in SECTIONS.iter().enumerate() {
+            for (index, each) in ConfigSection::value_variants().iter().enumerate() {
                 if index > 0 {
                     println!();
                 }
-                show_section(&config, key, title)?;
+                show_section(&config, each.key(), each.title())?;
             }
         }
     }

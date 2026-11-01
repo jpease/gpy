@@ -110,6 +110,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, and both binaries are verified before either is replaced (#1125).
 - **Breaking (library):** `Error::json` is removed and `Error::Json` wraps a
   `serde_json::Error`; `GitIcons` fields are `Option<Icon>` (#1128, #1163).
+- **Breaking:** `gpy lang versions on|off` is deprecated and prints a warning;
+  use `gpy config set language.show_versions true|false` instead (#1176).
+- **Breaking:** `gpy config show <section>` with an unknown section is now a
+  usage error (exit 2, listing the valid sections) instead of exit 1 (#1176).
+- `gpy theme import` takes `<FILE>`; `gpy --help` gains a getting-started
+  paragraph (#1176).
 
 ## [0.8.0] - 2026-10-29
 

@@ -1523,7 +1523,7 @@ fn documented_command_paths(doc: &str) -> Vec<String> {
 
 /// Every `gpy <words>` command that `docs/user/cli-reference.md` mentions must
 /// exist: `gpy <words> --help` must not print clap's `unrecognized subcommand`
-/// marker. Argument tails (`lang versions maybe`) never produce that marker,
+/// marker. Argument tails (`config show nosuch`) never produce that marker,
 /// so documented invalid examples and placeholders do not trip the guard. See
 /// [`documented_command_paths`] for the extraction rule. The reverse direction
 /// (CLI commands missing from the docs) and `gpy-agent` are out of scope.
@@ -1545,7 +1545,7 @@ fn documented_cli_commands_exist() {
         !paths.is_empty(),
         "no commands extracted from cli-reference.md"
     );
-    for anchor in ["config show", "plugin list", "lang versions"] {
+    for anchor in ["config show", "plugin list", "theme use"] {
         assert!(
             paths.iter().any(|path| path == anchor),
             "extraction lost the anchor `{anchor}`; got {paths:?}"
