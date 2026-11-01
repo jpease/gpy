@@ -526,7 +526,7 @@ pub fn list() {
                 diagnostic.message
             ));
         }
-        output::plain("\nHint: run `gpy plugin validate <path-or-id>` for a specific plugin.");
+        output::plain("\nHint: run `gpy plugin validate <ID_OR_PATH>` for a specific plugin.");
     }
 
     if has_user_plugin {
