@@ -29,8 +29,8 @@ else
         echo "gpy[init]: core files not found at $gpy_install_dir - GPY disabled" >&2
         set -g __gpy_load_failed 1
         set gpy_needs_prompt_defaults 1
-    else if not source "$gpy_install_dir/core/init.fish" 2>/dev/null
-        echo "gpy[init]: failed to load GPY safely - using fallback mode" >&2
+    else if not source "$gpy_install_dir/core/init.fish"
+        echo "gpy[init]: GPY failed to load; using the fallback prompt" >&2
         set -g __gpy_load_failed 1
         set gpy_needs_prompt_defaults 1
     end

@@ -1,27 +1,27 @@
 # gpy.zsh - Entry point for Zsh integration
 
 0=${(%):-%N}
-GPY_ROOT=${0%/*}
+__gpy_zsh_root=${0%/*}
 
 # Check every core file before sourcing any, so a partial install prints one
 # diagnostic instead of half-loading the prompt on every shell.
 for __gpy_core_file in constants renderer ipc signals supervisor script init; do
-    if [[ ! -f "$GPY_ROOT/core/$__gpy_core_file.zsh" ]]; then
-        print -r -- "gpy[init]: core files not found at $GPY_ROOT - GPY disabled" >&2
-        unset __gpy_core_file
+    if [[ ! -f "$__gpy_zsh_root/core/$__gpy_core_file.zsh" ]]; then
+        print -r -- "gpy[init]: core files not found at $__gpy_zsh_root - GPY disabled" >&2
+        unset __gpy_core_file __gpy_zsh_root
         return 0
     fi
 done
 unset __gpy_core_file
 
-source "$GPY_ROOT/core/constants.zsh"
-source "$GPY_ROOT/core/renderer.zsh"
-source "$GPY_ROOT/core/ipc.zsh"
-source "$GPY_ROOT/core/signals.zsh"
-source "$GPY_ROOT/core/supervisor.zsh"
-source "$GPY_ROOT/core/script.zsh"
+source "$__gpy_zsh_root/core/constants.zsh"
+source "$__gpy_zsh_root/core/renderer.zsh"
+source "$__gpy_zsh_root/core/ipc.zsh"
+source "$__gpy_zsh_root/core/signals.zsh"
+source "$__gpy_zsh_root/core/supervisor.zsh"
+source "$__gpy_zsh_root/core/script.zsh"
 
-source "$GPY_ROOT/core/init.zsh"
+source "$__gpy_zsh_root/core/init.zsh"
 
 # Load theme from agent (overrides defaults in constants.zsh); script.zsh
 # cleared the `__gpy_script_*` names it reads first.
@@ -32,22 +32,22 @@ __gpy_g_reload
 # enabled = false disables restarts, not this start.
 __gpy_agent_enabled && __gpy_start_agent
 
-for segment in "$GPY_ROOT"/segments/*.zsh; do
-    source "$segment"
+for __gpy_seg_file in "$__gpy_zsh_root"/segments/*.zsh; do
+    source "$__gpy_seg_file"
 done
 
 # `_gpy` (generated, optional) and `_gpy-dynamic` (dynamic values) are
 # best-effort. Our rc block runs after the user's compinit, so fpath alone
 # would never take effect; autoload + compdef explicitly instead.
-if [[ -d "$GPY_ROOT/completions" ]]; then
+if [[ -d "$__gpy_zsh_root/completions" ]]; then
     # -U: re-sourcing must not grow fpath.
     typeset -gU fpath
-    fpath=("$GPY_ROOT/completions" $fpath)
+    fpath=("$__gpy_zsh_root/completions" $fpath)
 
-    if [[ -f "$GPY_ROOT/completions/_gpy-dynamic" ]]; then
+    if [[ -f "$__gpy_zsh_root/completions/_gpy-dynamic" ]]; then
         autoload -Uz _gpy-dynamic
 
-        if [[ -f "$GPY_ROOT/completions/_gpy" ]]; then
+        if [[ -f "$__gpy_zsh_root/completions/_gpy" ]]; then
             autoload -Uz _gpy
         fi
 
@@ -56,3 +56,6 @@ if [[ -d "$GPY_ROOT/completions" ]]; then
         fi
     fi
 fi
+
+# Nothing reads these after loading; keep the shell's variable namespace clean.
+unset __gpy_zsh_root __gpy_seg_file

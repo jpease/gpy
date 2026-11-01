@@ -82,8 +82,20 @@ function __gpy_load_cache_relay() {
 }
 
 # Prefer the agent's cached theme-export file over forking `theme export`.
+# `fresh` (gpy-prompt-reload) never reads the cache file, which may be stale:
+# it asks the agent, and only a successful export replaces the running state.
+# Its stderr is kept, so an invalid config.toml shows the agent's warning.
 function __gpy_load_theme() {
-    local cache_path
+    local cache_path out
+    if [[ "${1:-}" == fresh ]]; then
+        # `eval "$(cmd)"` succeeds even when cmd fails, so fetch first.
+        command -v gpy-agent &>/dev/null || return 1
+        out="$(gpy-agent theme export --shell zsh)" || return 1
+        [[ -n "$out" ]] || return 1
+        __gpy_g_clear_styles
+        eval "$out"
+        return 0
+    fi
     __gpy_g_clear_styles
     cache_path=$(__gpy_theme_export_cache_path)
     if [[ -n "$cache_path" && -f "$cache_path" ]]; then
@@ -253,10 +265,6 @@ function __gpy_render_prompt() {
     # Per-render oneshot budget. Segment subshells can't write back, so they
     # signal via GPY_SEG_STATUS_ONESHOT and later subshells inherit this by fork.
     local __gpy_oneshot_used=0
-
-    if [[ ${#__enabled_segments} -eq 0 ]]; then
-        __enabled_segments=(directory git)
-    fi
 
     for seg in $__enabled_segments; do
         if __gpy_segment_would_render "$seg"; then

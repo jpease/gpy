@@ -8,10 +8,24 @@ __gpy_clear_render_memos() {
     __gpy_dir_cache_val=""
 }
 
-# Runs when the agent left a `<pid>.reload` flag.
+# Runs when the agent left a `<pid>.reload` flag (no argument: cache file
+# first), and from gpy-prompt-reload (`fresh`).
 __gpy_reload_config() {
-    __gpy_load_theme &>/dev/null
+    if [[ "${1:-}" == fresh ]]; then
+        __gpy_load_theme fresh || return 1
+    else
+        __gpy_load_theme &>/dev/null
+    fi
     __gpy_clear_render_memos
+}
+
+# Re-read config.toml into this shell; silent on success. Same name and
+# behaviour in Fish, Bash and Zsh.
+gpy-prompt-reload() {
+    __gpy_reload_config fresh || {
+        echo "gpy: theme reload failed; run gpy doctor" >&2
+        return 1
+    }
 }
 
 # The agent rings SIGURG and leaves `<pid>.reregister` or `<pid>.reload` next
@@ -62,11 +76,6 @@ __gpy_handle_exit() {
 }
 
 __gpy_setup_signals() {
-    # Drop a URG trap left by an older gpy in this shell.
-    if [[ "$(trap -p URG)" == *"__gpy_handle_doorbell"* ]]; then
-        trap - URG
-    fi
-
     local existing_exit
     existing_exit="$(trap -p EXIT)"
     if [[ -n "$existing_exit" && "$existing_exit" != *"__gpy_handle_exit"* ]]; then

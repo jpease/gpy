@@ -3,25 +3,27 @@
 set -l __prompt_dir (dirname (status --current-filename))
 set -g __gpy_core_dir $__prompt_dir
 
-source $__prompt_dir/flags.fish
+source $__prompt_dir/flags.fish; or return 1
 
 if not __gpy_agent_enabled; and not __gpy_supervisor_enabled
-    source $__prompt_dir/defaults.fish
+    source $__prompt_dir/defaults.fish; or return 1
     return 0
 end
 
 set -q GPY_AGENT_ENABLED; or set -gx GPY_AGENT_ENABLED 1
 set -q GPY_AGENT_SUPERVISOR_ENABLED; or set -gx GPY_AGENT_SUPERVISOR_ENABLED 1
 
-source $__prompt_dir/util.fish
+source $__prompt_dir/util.fish; or return 1
 
-# 3.6+ for `string escape --json`.
-set -l fish_version (string split '.' $FISH_VERSION)
+# 3.6+ for `string escape --json`. __gpy_test_fish_version is a non-exported
+# test hook: FISH_VERSION is read-only.
+set -l fish_version_text $FISH_VERSION
+set -q __gpy_test_fish_version; and set fish_version_text $__gpy_test_fish_version
+set -l fish_version (string split '.' $fish_version_text)
 set -l fish_major $fish_version[1]
 set -l fish_minor $fish_version[2]
 if test $fish_major -lt 3; or test $fish_major -eq 3 -a $fish_minor -lt 6
-    __gpy_log_error init "GPY requires Fish 3.6+ for modern features. Current version: $FISH_VERSION"
-    __gpy_log_error init "Please upgrade Fish: https://fishshell.com/"
+    echo "gpy: GPY needs Fish 3.6 or newer (this is $fish_version_text); see https://fishshell.com/" >&2
     return 1
 end
 
@@ -32,15 +34,28 @@ if test $fish_major -gt 4; or test $fish_major -eq 4 -a $fish_minor -ge 2
     set -g __gpy_fish_transient_capable 1
 end
 
-source $__prompt_dir/constants.fish
-source $__prompt_dir/renderer.fish
+set -g __gpy_core_files constants.fish renderer.fish ipc.fish supervisor.fish script.fish
+for file in $__gpy_core_files
+    source $__prompt_dir/$file; or return 1
+end
 
-source $__prompt_dir/ipc.fish
-source $__prompt_dir/supervisor.fish
-source $__prompt_dir/script.fish
+# GPY's autoloaded functions (gpy-prompt-debug, gpy-prompt-reload, ...). The
+# path is built lexically: `path resolve` follows symlinks, so an entry written
+# through a symlinked spelling (macOS /tmp, a dotfile-managed ~/.config/fish)
+# would never match and be appended a second time.
+set -l core $__gpy_core_dir
+string match -q '/*' -- $core; or set core $PWD/$core
+set -l functions_dir (path normalize $core/../functions)
+contains -- $functions_dir $fish_function_path; or set -a fish_function_path $functions_dir
+
+# The segments shown when no theme export loaded (no cache, agent missing or
+# failing). Keep equal to DEFAULT_ENABLED_SEGMENTS in
+# gpy-agent/src/config/defaults.rs; tests/fixtures/default_segments.txt pins
+# this copy, the Bash and Zsh ones and the agent's list to each other.
+# Segments that cannot render without the agent omit themselves.
+set -g __gpy_fallback_segments clock duration language directory git
 
 function __gpy_load_default_config
-    set -q __enabled_segments; or set -g __enabled_segments clock duration language directory git
     set -q __prompt_icons; or set -g __prompt_icons nerd
     set -q __prompt_theme; or set -g __prompt_theme default
 
@@ -75,31 +90,57 @@ end
 # Source the cached theme export (no fork), else spawn `gpy-agent theme export`.
 # The script segment list is erased first, so a failed export never leaves an
 # inherited or stale list; __gpy_g_sync adopts whatever the export assigned.
-function __gpy_apply_theme_export --description 'source the theme export cache or spawn the agent to produce it'
-    __gpy_g_clear_styles
-    set -e __gpy_script_segments
-    __gpy_source_theme_export
+# MODE `fresh` skips the cache file (it may be stale) and always asks the
+# agent; the export is fetched before any state is touched, so a failing agent
+# leaves the running theme alone.
+function __gpy_apply_theme_export --argument-names mode --description 'source the theme export cache or spawn the agent to produce it'
+    if test "$mode" != fresh
+        __gpy_g_clear_styles
+        set -e __gpy_script_segments
+    end
+    __gpy_source_theme_export $mode
     set -l export_status $status
+    if test "$mode" = fresh; and test $export_status -ne 0
+        return $export_status
+    end
     __gpy_g_sync
     return $export_status
 end
 
-function __gpy_source_theme_export
+function __gpy_source_theme_export --argument-names mode
     set -l cache_path (__gpy_theme_export_cache_path)
-    if test -n "$cache_path" -a -f "$cache_path"
+    set -l have_cache 0
+    test -n "$cache_path" -a -f "$cache_path"; and set have_cache 1
+
+    if test "$mode" != fresh; and test $have_cache -eq 1
         set -g __gpy_theme_export_mtime (__gpy_file_mtime "$cache_path")
         source "$cache_path"
         return $status
     end
 
-    set -e __gpy_theme_export_mtime
+    # A stale cache file must not be sourced by the next re-registration
+    # (__gpy_reload_if_theme_export_changed): record its mtime as seen.
+    if test "$mode" = fresh; and test $have_cache -eq 1
+        set -g __gpy_theme_export_mtime (__gpy_file_mtime "$cache_path")
+    else
+        set -e __gpy_theme_export_mtime
+    end
+
     set -l agent_binary (__gpy_resolve_agent_binary)
-    if test -n "$agent_binary"
-        "$agent_binary" theme export --shell fish 2>/dev/null | source
+    test -n "$agent_binary"; or return 1
+
+    if test "$mode" = fresh
+        set -l export_text ("$agent_binary" theme export --shell fish)
+        set -l export_status $status
+        test $export_status -eq 0; and set -q export_text[1]; or return 1
+        __gpy_g_clear_styles
+        set -e __gpy_script_segments
+        string join \n -- $export_text | source
         return $status
     end
 
-    return 1
+    "$agent_binary" theme export --shell fish 2>/dev/null | source
+    return $status
 end
 
 function __gpy_load_theme
@@ -169,14 +210,41 @@ end
 
 __gpy_load_theme >/dev/null
 
+# An export that set the list (even to nothing) wins; the fallback only fills
+# in when none did, and before the segment files load.
+set -q __enabled_segments; or set -g __enabled_segments $__gpy_fallback_segments
+
+# Test hook (non-exported, never set by the agent or the theme).
+if set -q __gpy_test_segments[1]
+    set -g __enabled_segments $__gpy_test_segments
+end
+
+# Deprecated Fish-only switches. They keep working for one minor release and
+# warn once per name at the first prompt.
+set -g __gpy_deprecated_switches
 if test "$GPY_SHOW_LANGUAGES" = 0
+    set -a __gpy_deprecated_switches GPY_SHOW_LANGUAGES
     set -g __enabled_segments clock duration directory git
 end
 
 if set -q GPY_MINIMAL_SEGMENTS
+    set -a __gpy_deprecated_switches GPY_MINIMAL_SEGMENTS
     set -g __enabled_segments directory
-else if set -q GPY_TEST_SEGMENTS
-    set -g __enabled_segments (string split ' ' $GPY_TEST_SEGMENTS)
+end
+
+if set -q GPY_TEST_SEGMENTS
+    set -a __gpy_deprecated_switches GPY_TEST_SEGMENTS
+    set -q GPY_MINIMAL_SEGMENTS; or set -g __enabled_segments (string split ' ' $GPY_TEST_SEGMENTS)
+end
+
+if set -q __gpy_deprecated_switches[1]
+    function __gpy_warn_deprecated --on-event fish_prompt
+        for name in $__gpy_deprecated_switches
+            echo "gpy: $name is deprecated; use gpy enable or gpy disable instead" >&2
+        end
+        set -e __gpy_deprecated_switches
+        functions -e __gpy_warn_deprecated
+    end
 end
 
 __gpy_load_segments $__enabled_segments
@@ -187,19 +255,11 @@ for segment in $__enabled_segments
     end
 end
 
-source $__prompt_dir/debug.fish
-
-function __gpy_reload_theme --description 'reload GPY theme from config (internal helper)'
-    set -l verbose (test (count $argv) -gt 0; and test "$argv[1]" = "1"; and echo 1; or echo 0)
-
-    if not __gpy_apply_theme_export
-        if __gpy_theme_export_binary_missing
-            test $verbose -eq 1; and echo "Error: gpy-agent command not found" >&2
-            return 1
-        end
-        test $verbose -eq 1; and echo "Error: failed to reload theme export" >&2
-        return 1
-    end
+# Reload the theme and config into the running shell. MODE `fresh` re-reads
+# config.toml through `gpy-agent theme export` instead of the cache file; any
+# other value is ignored.
+function __gpy_reload_theme --argument-names mode --description 'reload GPY theme from config (internal helper)'
+    __gpy_apply_theme_export $mode; or return 1
 
     # The export erases status icons the theme leaves unset; refill the
     # nerd/ascii fallbacks from the current __prompt_icons.
@@ -212,17 +272,7 @@ function __gpy_reload_theme --description 'reload GPY theme from config (interna
         commandline -f force-repaint 2>/dev/null
     end
 
-    test $verbose -eq 1; and echo "Theme reloaded successfully"
     return 0
-end
-
-function prompt-reload --description 'manually reload GPY theme and config (for debugging)'
-    if __gpy_reload_theme 1
-        echo "Note: For automatic hot-reload, ensure the agent is running with 'gpy-agent start'"
-    else
-        echo "Error: Failed to reload theme. Please ensure GPY is installed correctly."
-        return 1
-    end
 end
 
 set -g __gpy_config_initialized 1

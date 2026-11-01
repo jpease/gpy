@@ -28,7 +28,7 @@ mkdir -p $XDG_CONFIG_HOME/gpy
 # Supervisor disabled: full init path without spawning a daemon.
 set -gx GPY_AGENT_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
-set -gx GPY_TEST_SEGMENTS "agentx status"
+set -g __gpy_test_segments agentx status
 
 function segment_agentx_detect
     return 0

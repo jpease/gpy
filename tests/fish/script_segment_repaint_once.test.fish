@@ -53,9 +53,10 @@ end
 set -l dir $scratch/session
 set -l pidfile $scratch/pid
 env -i HOME=$home XDG_CACHE_HOME=$home/.cache XDG_CONFIG_HOME=$home/.config XDG_RUNTIME_DIR=$home/run \
-    PATH=(string join : -- $test_path) GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_TEST_SEGMENTS=demo \
+    PATH=(string join : -- $test_path) GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_T_SEGMENTS=demo \
     GPY_T_ROOT=$__gpy_root GPY_T_PIDFILE=$pidfile \
     python3 $pty start $dir -- (command -s fish) --no-config -i -C '
+        set -g __gpy_test_segments (string split " " -- "$GPY_T_SEGMENTS")
         source $GPY_T_ROOT/fish/core/init.fish
         source $GPY_T_ROOT/fish/functions/fish_prompt.fish
         echo $fish_pid >$GPY_T_PIDFILE

@@ -102,6 +102,7 @@ Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/
 
   The theme export (`gpy-agent theme export --shell fish`) re-exports these as `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` and `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` at shell start and on every config reload, so `config.toml` wins over a `set -gx` in your shell config. If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` in the environment fish starts with — `gpy_init.fish` skips loading entirely when *both* are `0` or `false` there.
 - **Abbreviations/completions**: shell completions are installed and regenerated automatically by the standard installers ([CLI Reference § Shell Completion](cli-reference.md#shell-completion)). If `gpy <TAB>` doesn't complete, confirm the `gpy` CLI binary itself is on `PATH` — completions require it.
+- **`gpy: GPY needs Fish 3.6 or newer (this is X)` / `gpy[init]: GPY failed to load; using the fallback prompt`**: Fish below 3.6 cannot run GPY (it needs `string escape --json`), so the load stops with the first message and you get a plain fallback prompt until Fish is upgraded. The second message means a file under `~/.config/fish/gpy/core/` failed to load; Fish's own error (with the file and line) is printed just above it. Re-run `gpy setup` to restore the files, then open a new shell. In a working shell, `gpy-prompt-debug validate` checks that every file GPY needs is installed.
 
 ---
 

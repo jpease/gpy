@@ -133,3 +133,24 @@ pub const DEFAULT_LANGUAGE_ICONS: &[(&str, &str)] = &[
     ("erlang", "\u{e7b1}"),
     ("fish", "\u{f023a}"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::DEFAULT_ENABLED_SEGMENTS;
+    use std::path::Path;
+
+    /// Each shell keeps a fallback list for when no theme export has loaded;
+    /// `tests/fixtures/default_segments.txt` pins them all to the agent's default.
+    #[test]
+    fn default_segments_fixture_matches() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/default_segments.txt");
+        let text = std::fs::read_to_string(&fixture)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+            .collect();
+        assert_eq!(lines, [DEFAULT_ENABLED_SEGMENTS.join(" ")]);
+    }
+}

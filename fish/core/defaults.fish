@@ -3,7 +3,8 @@
 # Safe prompt globals for disabled mode: fish_prompt.fish autoloads regardless
 # of init, so these keep it rendering without unset-variable diagnostics.
 # constants.fish is not sourced here; the ascii icon preference is honoured anyway.
-set -q __enabled_segments; or set -g __enabled_segments clock duration directory
+# No segment file is loaded in disabled mode, so the list stays empty.
+set -q __enabled_segments; or set -g __enabled_segments
 set -q __prompt_icons; or set -g __prompt_icons nerd
 set -q __prompt_theme; or set -g __prompt_theme default
 

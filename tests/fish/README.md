@@ -47,6 +47,11 @@ never an installed `gpy-agent`.
 - For unit-style tests set `GPY_AGENT_SUPERVISOR_ENABLED=0` and keep
   `GPY_AGENT_ENABLED=1`; setting both to `0` takes init.fish's
   completely-disabled early exit.
+- To render a chosen list of segments, `set -g __gpy_test_segments name ...`
+  before sourcing `fish/core/init.fish`; it replaces `__enabled_segments` after
+  the theme export loads. It is a plain (non-exported) variable. A test that
+  starts a new Fish through `env -i` passes the list in a test-only variable
+  (`GPY_T_SEGMENTS`) and sets `__gpy_test_segments` from it in the child.
 - Tests that drive an interactive `fish -i` use `tests/lib/pty_session.py`
   (`start`, `send`, `wait-for`, `size`, `stop`); `wait-for` only reads the
   transcript, so it can observe repaints that arrive with no keystroke.
