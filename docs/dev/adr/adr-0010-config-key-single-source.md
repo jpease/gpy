@@ -4,6 +4,8 @@
 
 Accepted (2026-10). Option A: keep the registry and its guards.
 
+Code references (`path:line`) are to commit `28f2477`.
+
 ## Context
 
 A config key is declared twice. The `Config` structs in `gpy-agent/src/config/mod.rs` hold the field, its serde default and a `///` doc comment. `CONFIG_KEYS` in `gpy-agent/src/config/metadata.rs` holds the dotted name, a `get` closure, an optional `set` closure that parses the CLI string through the field's validating newtype, and a one-line description for `gpy config list`. `gpy config get/set/list` read only the registry. `gpy config show` and the loader read only the structs.

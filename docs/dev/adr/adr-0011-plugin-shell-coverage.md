@@ -8,6 +8,8 @@ Amended (2026-10): G is a core feature that may also power one or two built-ins;
 
 Amended (2026-10): timeout, placement and scan measurements settled what Decision items 3, 5, 6, 7 and 8 left open, and the amendment rewrites items 3 and 5 to 10, the Measurements, Option G and Consequences to match. The runner is pure shell with the `/bin/sh` launcher skipped. Scripts get a clean environment, which the maintainer chose although it missed the measured cost bar (item 7). Output is sanitized once at the runner boundary, reversing item 5's earlier "escape and strip after every read, never once before a cache write". The cache is keyed on the declared inputs, `env` values and settings. The timeout, kill rules, circuit breaker and scan bound are decided; item 6 marks the parts that are not built or not measured. The earlier text claiming detect already runs in the parent shell was wrong for Zsh and is replaced. The [script segment security addendum](adr-0011-addendum-script-segment-security.md) supersedes item 5 where the two differ. The addendum is Accepted (2026-10-27).
 
+Code references (`path:line`) are to commit `3a632ad`.
+
 ## Context
 
 GPY is a cross-shell prompt, but community plugin segments render only in Fish. A plugin provides segments through `plugin.toml` and one Fish file per segment (`<plugin-root>/segments/<segment-id>.fish`) that defines `segment_<id>_detect` and `segment_<id>_render` and draws with the public `gpy_section_*` helpers: the `api_version = "v1"` contract in [Plugin Framework](../plugins.md#what-is-stable-in-v1).

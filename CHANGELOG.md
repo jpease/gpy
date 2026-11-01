@@ -132,7 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy doctor` lists every user theme that shadows a builtin, validates
   it, and warns (without failing) with recovery commands when an inactive
   one does not load (#1086).
-- ADR-0012 (Proposed): theme overlays that extend a builtin so customised
+- ADR-0012 (Accepted): theme overlays that extend a builtin so customised
   themes keep receiving upstream changes (#1091).
 
 ### Changed
