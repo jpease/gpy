@@ -73,6 +73,23 @@ fn rejected_repository_is_not_watched() {
 }
 
 #[test]
+fn unlisted_git_segment_rejects_every_repo() {
+    let (_temp, root) = repo_dir();
+    let mut config = crate::config::Config::default();
+    config
+        .ui
+        .enabled_segments
+        .retain(|segment| segment != "git");
+    let registry = test_registry(true);
+    registry.set_repo_filter(crate::agent::events::git_repo_filter(&config));
+    let watcher = recording_watcher(registry, no_fault());
+
+    watcher.attach_client(1, &root).expect("attach");
+
+    assert_eq!(watcher.watched_repo_count(), 0);
+}
+
+#[test]
 fn attaching_into_a_rejected_repository_detaches_the_previous_one() {
     let (_allowed_temp, allowed) = repo_dir();
     let (_rejected_temp, rejected) = repo_dir();

@@ -22,7 +22,6 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_AGENT_SOCKET_PATH="$TMP_ROOT/missing.sock"
 export XDG_CACHE_HOME="$TMP_ROOT/cache"
-export GPY_LANGUAGE_ENABLED=1
 
 source zsh/gpy.zsh
 # Agent-free sandbox config (above) keeps sourcing from starting a daemon; the
@@ -46,7 +45,7 @@ cd "$project" || exit 1
 
 # --- Language cold miss first: directory opens and closes the line ---
 __enabled_segments=(language directory)
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 check "language cold miss: directory is first and last" true \
     "$([[ "$PROMPT" == *"DIR[true|true]"* ]] && echo true || echo false)"
 refresh_logged() { [[ -s "$REFRESH_LOG" ]]; }
@@ -55,7 +54,7 @@ check "language cold miss still requests one refresh" lang "$(cat "$REFRESH_LOG"
 
 # --- Language cold miss in the middle: neighbours keep their positions ---
 __enabled_segments=(directory language stubz)
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 check "omitted middle segment: positions unchanged" true \
     "$([[ "$PROMPT" == *"DIR[|true]Z[true|]"* ]] && echo true || echo false)"
 
@@ -67,7 +66,7 @@ mkdir -p "$cache_dir"
 printf LANGNONE >"$cache_dir/$cache_key.lang.none.zsh"
 printf LANGWARM >"$cache_dir/$cache_key.lang_first.black.zsh"
 __enabled_segments=(language directory)
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 check "warm language cache: language first, directory last" true \
     "$([[ "$PROMPT" == *"LANGWARMDIR[true|]"* ]] && echo true || echo false)"
 

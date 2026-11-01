@@ -51,6 +51,53 @@ pub struct Config {
     >,
 }
 
+impl Config {
+    /// The single rule for whether segment `name` renders and whether the agent
+    /// does its work: it is listed in `ui.enabled_segments`. For `git` and
+    /// `language` the deprecated `git.enabled` / `language.enabled` flag, when
+    /// `false`, also removes the segment, so existing files render as before.
+    ///
+    /// Compares strings directly (no allocation, no `BuiltinSegment` parse)
+    /// because [`Self::git_enabled_for`] runs on every git request.
+    #[must_use]
+    pub fn segment_enabled(&self, name: &str) -> bool {
+        self.ui.enabled_segments.iter().any(|s| s == name)
+            && match name {
+                "git" => self.git.enabled,
+                "language" => self.language.enabled,
+                _ => true,
+            }
+    }
+
+    /// The segments that render, in `ui.enabled_segments` order; every entry
+    /// passes [`Self::segment_enabled`].
+    pub fn effective_segments(&self) -> impl Iterator<Item = &str> {
+        self.ui
+            .enabled_segments
+            .iter()
+            .map(String::as_str)
+            .filter(|name| self.segment_enabled(name))
+    }
+
+    /// Whether the agent has any background work to watch: `git` or `language`
+    /// renders ([`Self::segment_enabled`]).
+    #[must_use]
+    pub fn any_agent_segment_enabled(&self) -> bool {
+        self.segment_enabled("git") || self.segment_enabled("language")
+    }
+
+    /// Whether Git detection may run for the repository rooted at `root` (pass
+    /// its canonical root): `git` renders ([`Self::segment_enabled`]) and the
+    /// root is not at or under a `git.skip_paths` entry, so an entry inside a
+    /// repository does not skip it. Every Git status scan and Git cache
+    /// publication entry point, foreground or background, must check this
+    /// against the repository root.
+    #[must_use]
+    pub fn git_enabled_for(&self, root: &std::path::Path) -> bool {
+        self.segment_enabled("git") && !self.git.is_path_skipped(root)
+    }
+}
+
 /// Agent process configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -446,5 +493,61 @@ mod tests {
         let settings: crate::config::GitSettings =
             toml::from_str("icon_set = \"nerd_font\"\n").expect("parse");
         assert_eq!(settings.icon_set, crate::config::GitIconSet::NerdFont);
+    }
+
+    fn listing(segments: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.ui.enabled_segments = segments.iter().map(|s| (*s).to_owned()).collect();
+        config
+    }
+
+    #[test]
+    fn segment_enabled_requires_listing() {
+        let config = listing(&["directory"]);
+        assert!(config.segment_enabled("directory"));
+        assert!(!config.segment_enabled("git"), "flag true but unlisted");
+        assert!(!config.segment_enabled("language"));
+        assert!(!config.segment_enabled("clock"));
+    }
+
+    #[test]
+    fn deprecated_flag_false_removes_listed_segment() {
+        let mut config = listing(&["language", "directory", "git"]);
+        config.git.enabled = false;
+        config.language.enabled = false;
+        assert!(!config.segment_enabled("git"));
+        assert!(!config.segment_enabled("language"));
+        assert!(config.segment_enabled("directory"));
+    }
+
+    #[test]
+    fn effective_segments_keeps_order() {
+        let mut config = listing(&["git", "clock", "language", "directory"]);
+        config.language.enabled = false;
+        let effective: Vec<&str> = config.effective_segments().collect();
+        assert_eq!(effective, ["git", "clock", "directory"]);
+    }
+
+    #[test]
+    fn any_agent_segment_enabled_needs_git_or_language() {
+        assert!(!listing(&["clock", "directory"]).any_agent_segment_enabled());
+        assert!(listing(&["git"]).any_agent_segment_enabled());
+        assert!(listing(&["language"]).any_agent_segment_enabled());
+        let mut flags_off = listing(&["git", "language"]);
+        flags_off.git.enabled = false;
+        flags_off.language.enabled = false;
+        assert!(!flags_off.any_agent_segment_enabled());
+    }
+
+    #[test]
+    fn git_enabled_for_requires_listing_and_honours_skip_paths() {
+        let root = std::env::temp_dir().join("gpy-git-enabled-for-root");
+        let unlisted = listing(&["directory"]);
+        assert!(!unlisted.git_enabled_for(&root));
+
+        let mut listed = listing(&["git"]);
+        assert!(listed.git_enabled_for(&root));
+        listed.git.skip_paths = vec![root.to_string_lossy().into_owned()];
+        assert!(!listed.git_enabled_for(&root));
     }
 }

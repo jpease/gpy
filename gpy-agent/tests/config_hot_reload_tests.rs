@@ -203,8 +203,8 @@ fn test_theme_export_updates_enabled_segments_when_git_disabled() {
     );
 
     assert!(
-        fish_output.contains("set -gx GPY_GIT_ENABLED \"0\""),
-        "GPY_GIT_ENABLED should be 0 when git.enabled=false. Got: {fish_output}"
+        fish_output.contains("set -g __gpy_cfg_git_enabled \"0\""),
+        "__gpy_cfg_git_enabled should be 0 when git.enabled=false. Got: {fish_output}"
     );
 }
 
@@ -231,8 +231,8 @@ fn test_theme_export_includes_git_when_enabled() {
     );
 
     assert!(
-        fish_output.contains("set -gx GPY_GIT_ENABLED \"1\""),
-        "GPY_GIT_ENABLED should be 1 when git.enabled=true. Got: {fish_output}"
+        fish_output.contains("set -g __gpy_cfg_git_enabled \"1\""),
+        "__gpy_cfg_git_enabled should be 1 when git.enabled=true. Got: {fish_output}"
     );
 }
 
@@ -267,7 +267,7 @@ fn test_theme_export_updates_enabled_segments_when_language_disabled() {
         "Enabled segments should not include language when disabled. Got: {fish_output}"
     );
 
-    assert!(fish_output.contains("set -gx GPY_LANGUAGE_ENABLED \"0\""),);
+    assert!(fish_output.contains("set -g __gpy_cfg_language_enabled \"0\""),);
 }
 
 #[test]
@@ -298,12 +298,12 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
         "Both git and language should be removed when disabled. Got: {fish_output}"
     );
     assert!(
-        fish_output.contains("set -gx GPY_GIT_ENABLED \"0\""),
-        "GPY_GIT_ENABLED should be 0. Got: {fish_output}"
+        fish_output.contains("set -g __gpy_cfg_git_enabled \"0\""),
+        "__gpy_cfg_git_enabled should be 0. Got: {fish_output}"
     );
     assert!(
-        fish_output.contains("set -gx GPY_LANGUAGE_ENABLED \"0\""),
-        "GPY_LANGUAGE_ENABLED should be 0. Got: {fish_output}"
+        fish_output.contains("set -g __gpy_cfg_language_enabled \"0\""),
+        "__gpy_cfg_language_enabled should be 0. Got: {fish_output}"
     );
 }
 

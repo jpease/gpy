@@ -224,7 +224,7 @@ echo "PASS: __gpy_segment_bg status follows the exit status"
 echo "=== Testing Full Prompt ==="
 __enabled_segments=(status directory git clock duration language)
 __gpy_cmd_duration=0
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 if [[ -z "$PROMPT" ]]; then
     echo "FAIL: Full prompt empty"
     exit 1
@@ -263,7 +263,7 @@ if [[ -e "$__gpy_shell_flag_base.reload" ]]; then
     exit 1
 fi
 echo "PASS: doorbell consumes the reload flag"
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 if [[ "$PROMPT" == *"3.5s"* ]]; then
     echo "PASS: newly-enabled duration segment rendered after reload doorbell"
 else
@@ -345,7 +345,7 @@ echo "=== Testing Last Segment Context ==="
 function __gpy_segment_alpha() { printf 'alpha:%s|' "$1" }
 function __gpy_segment_beta() { printf 'beta:%s|' "$1" }
 __enabled_segments=(alpha beta)
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 if [[ "$PROMPT" != *"alpha:|"* || "$PROMPT" != *"beta:true|"* ]]; then
     echo "FAIL: Last segment context not passed correctly: $PROMPT"
     exit 1
@@ -494,11 +494,9 @@ unset gpy_test_reply
 echo "PASS: Status falls back to the local pill when the agent is unreachable or replies with an error"
 
 echo "=== Testing Character/Directory Render Memoization ==="
-# __gpy_request_character and __gpy_segment_directory both run inside the
-# `$(...)` subshell __gpy_render_prompt executes in, which forks a subshell --
-# an in-memory counter incremented inside a stub would not survive that
-# subshell, so record calls to a file instead (same technique the "Render
-# Loop prev_bg Threading" section above uses for the same reason).
+# The render runs in this shell, but each segment and the character request
+# still run in a `$(...)` subshell, where an in-memory counter incremented in
+# a stub would not survive, so record calls to a file instead.
 memo_tmp_dir=$(mktemp -d)
 memo_char_calls_file="$memo_tmp_dir/char_calls"
 memo_dir_calls_file="$memo_tmp_dir/dir_calls"
@@ -524,16 +522,13 @@ function __gpy_memo_call_count() {
     wc -c < "$1" 2>/dev/null | tr -d ' '
 }
 
-# Mirrors __gpy_precmd's exact render + relay-consumption sequence --
-# see the cache var declarations in zsh/core/init.zsh for why a cache-miss
-# write inside __gpy_render_prompt's subshell has to be relayed through a
-# file -- without its unrelated agent-registration/workspace-sync side
-# effects, so this isolates the memoization mechanism under test.
+# Mirrors __gpy_precmd's render step without its unrelated agent-registration
+# and workspace-sync side effects, so this isolates the memoization mechanism
+# under test. The memos are shell variables written by the in-shell render.
 function __gpy_memo_render() {
     local ret=$1
-    PROMPT=$(__gpy_render_prompt $ret)
-    __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
-    __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
+    __gpy_render_prompt $ret
+    PROMPT=$__gpy_render_out
 }
 
 function __gpy_memo_reset() {
@@ -543,7 +538,6 @@ function __gpy_memo_reset() {
     __gpy_char_cache_val=""
     __gpy_dir_cache_key=""
     __gpy_dir_cache_val=""
-    rm -f "$__gpy_char_cache_relay_path" "$__gpy_dir_cache_relay_path"
 }
 
 __enabled_segments=(directory)

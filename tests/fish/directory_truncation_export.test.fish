@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Test: Directory truncation export
-# Description: Ensures directory truncation follows GPY_UI_DIRECTORY_MAX_LENGTH exported by gpy-agent theme export.
+# Description: Ensures the theme export does not export the directory settings (GPY_UI_DIRECTORY_*) into the environment; the agent renders the directory from config.toml.
 # Prerequisites: gpy-agent binary built (cargo build --release or --debug)
 # Run with: fish tests/fish/directory_truncation_export.test.fish
 
@@ -37,14 +37,16 @@ end
 source fish/core/init.fish
 eval $export_output
 
-if test "$GPY_UI_DIRECTORY_MAX_LENGTH" != 6
-    fail "Expected GPY_UI_DIRECTORY_MAX_LENGTH to be 6 after theme export, got '$GPY_UI_DIRECTORY_MAX_LENGTH'"
+for name in GPY_UI_DIRECTORY_MAX_LENGTH GPY_UI_DIRECTORY_DISPLAY
+    if set -q $name
+        fail "The theme export must not set $name, got '$$name'"
+        exit 1
+    end
+end
+
+if string match -q '*GPY_UI_DIRECTORY*' -- "$export_output"
+    fail "The theme export must not mention GPY_UI_DIRECTORY_*"
     exit 1
 end
 
-if test "$GPY_UI_DIRECTORY_DISPLAY" != full
-    fail "Expected GPY_UI_DIRECTORY_DISPLAY to be full after theme export, got '$GPY_UI_DIRECTORY_DISPLAY'"
-    exit 1
-end
-
-test_finish "Theme export carries the directory truncation settings"
+test_finish "Theme export does not export the directory settings"

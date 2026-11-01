@@ -58,10 +58,10 @@ case "$text" in
     *"✱1"*) pass "the oneshot output shows the dirty tree" ;;
     *) fail "the oneshot output does not show the unstaged marker: '$text'" ;;
 esac
-if [ "$status" -eq "${GPY_SEG_STATUS_ONESHOT:-3}" ]; then
+if [ "$status" -eq "${__gpy_seg_status_oneshot:-3}" ]; then
     pass "the segment reported the oneshot budget claim (status $status)"
 else
-    fail "expected exit status GPY_SEG_STATUS_ONESHOT (${GPY_SEG_STATUS_ONESHOT:-3}), got $status"
+    fail "expected exit status __gpy_seg_status_oneshot (${__gpy_seg_status_oneshot:-3}), got $status"
 fi
 
 echo "--- (b) oneshot budget ---"
@@ -69,7 +69,7 @@ __gpy_oneshot_used=1
 out2="$(__gpy_segment_git "true" black "")"
 status2=$?
 text2="$(printf '%s' "$out2" | strip)"
-if [ "$status2" -ne "${GPY_SEG_STATUS_ONESHOT:-3}" ]; then
+if [ "$status2" -ne "${__gpy_seg_status_oneshot:-3}" ]; then
     pass "with the budget spent the segment does not fork oneshot again (status $status2)"
 else
     fail "the segment forked a second oneshot in one render"

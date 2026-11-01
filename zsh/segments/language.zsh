@@ -1,5 +1,5 @@
 function __gpy_segment_language_detect() {
-    [[ "${GPY_LANGUAGE_ENABLED:-1}" != "0" ]] || return 1
+    [[ "${__gpy_cfg_language_enabled-}" != "0" ]] || return 1
 
     # Ancestor walk via parameter expansion only; markers come from the agent's export.
     (( ${+__gpy_lang_marker_files} )) && (( ${#__gpy_lang_marker_files[@]} )) || return 0

@@ -39,9 +39,9 @@ for name in segment core GPY_BASH_ROOT GPY_ROOT __gpy_bash_root __gpy_zsh_root _
     fi
 done
 
-# Shell-managed names, plus the documented GPY_ tunables constants.bash seeds
-# and the oneshot status channel; every other added name starts with __.
-allowed=" BASH_REMATCH PIPESTATUS PROMPT_COMMAND GPY_EXPECTED_PROTOCOL_VERSION GPY_GIT_INSTANT_CACHE_TTL_SECONDS GPY_IPC_COLD_TIMEOUT_MS GPY_IPC_TIMEOUT_MS GPY_LANGUAGE_CACHE_TTL_SECONDS GPY_SEG_STATUS_ONESHOT "
+# Shell-managed names; every other added name starts with __ (GPY_ names are
+# the user's and are never assigned).
+allowed=" BASH_REMATCH PIPESTATUS PROMPT_COMMAND "
 unexpected=""
 for name in $(comm -13 "$tmp/before" "$tmp/after"); do
     case "$name" in __*) continue ;; esac

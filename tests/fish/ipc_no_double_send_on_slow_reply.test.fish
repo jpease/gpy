@@ -105,7 +105,7 @@ printf '%s\n' '#!/bin/sh' 'echo "oneshot $*" >> "$GPY_TEST_ONESHOT_LOG"' 'echo O
 chmod +x $tmp/bin/gpy-agent
 set -gx GPY_TEST_ONESHOT_LOG $oneshot_log
 set -gx XDG_CACHE_HOME $tmp/cache
-set -g GPY_AGENT_BINARY_PATH $tmp/bin/gpy-agent
+set -gx PATH $tmp/bin $real_path
 
 function run_request --argument-names socket
     : >$oneshot_log

@@ -74,6 +74,11 @@ fn is_absent(path: &Path) -> bool {
     path.symlink_metadata().is_err()
 }
 
+/// `~/.local/share/gpy/bash`, the Bash tree `gpy setup` installs.
+fn bash_dir(env: &CliTestEnv) -> PathBuf {
+    env.root().join(".local/share/gpy/bash")
+}
+
 fn functions_dir(env: &CliTestEnv) -> PathBuf {
     let dir = env.xdg_config_home().join("fish").join("functions");
     fs::create_dir_all(&dir).unwrap();
@@ -109,14 +114,14 @@ fn uninstall_restores_rc_files_byte_for_byte() {
     for gone in [
         ".profile",
         ".config/fish/config.fish",
-        ".config/fish/gpy",
+        ".local/share/gpy/fish",
         ".config/fish/functions/fish_prompt.fish",
         ".config/fish/conf.d/gpy_init.fish",
         ".config/fish/completions/gpy.fish",
         ".config/fish/completions/gpy-dynamic.fish",
-        ".config/gpy/zsh",
-        ".config/gpy/bash",
-        ".config/gpy/bundled-plugins",
+        ".local/share/gpy/zsh",
+        ".local/share/gpy/bash",
+        ".local/share/gpy/plugins",
     ] {
         assert!(is_absent(&home.join(gone)), "{gone} should be gone");
     }
@@ -162,7 +167,7 @@ fn uninstall_without_yes_and_without_a_terminal_removes_nothing() {
         result.stderr
     );
     assert_eq!(fs::read(&bashrc).unwrap(), before);
-    assert!(env.config_dir().join("bash").is_dir());
+    assert!(bash_dir(&env).is_dir());
 }
 
 #[test]
@@ -234,7 +239,7 @@ fn uninstall_keeps_an_unrelated_prompt_symlink() {
 fn uninstall_removes_gpy_prompt_symlink_and_restores_backup() {
     let env = CliTestEnv::new().unwrap();
     let functions = functions_dir(&env);
-    let own_dir = env.xdg_config_home().join("fish/gpy/functions");
+    let own_dir = env.root().join(".local/share/gpy/fish/functions");
     fs::create_dir_all(&own_dir).unwrap();
     fs::write(own_dir.join("fish_prompt.fish"), repo_prompt()).unwrap();
     symlink(
@@ -474,7 +479,59 @@ fn uninstall_reports_an_unreadable_rc_file_and_exits_1() {
         is_absent(&env.root().join(".bashrc")),
         "the other rc files are still cleaned"
     );
-    assert!(is_absent(&env.config_dir().join("bash")));
+    assert!(is_absent(&bash_dir(&env)));
+}
+
+#[test]
+fn uninstall_after_new_layout_keeps_the_fish_config_dir() {
+    let env = CliTestEnv::new().unwrap();
+    let fish = env.xdg_config_home().join("fish");
+    fs::create_dir_all(fish.join("conf.d")).unwrap();
+    fs::write(fish.join("config.fish"), "set -gx KEEP 1\n").unwrap();
+    fs::write(fish.join("conf.d/user.fish"), "set -gx USER_CONF 1\n").unwrap();
+    setup_shell(&env, "fish");
+    assert!(env.root().join(".local/share/gpy/fish").is_dir());
+
+    uninstall(&env, &["--yes"]).assert_success("gpy uninstall --yes");
+
+    assert_eq!(
+        fs::read(fish.join("config.fish")).unwrap(),
+        b"set -gx KEEP 1\n"
+    );
+    assert_eq!(
+        fs::read(fish.join("conf.d/user.fish")).unwrap(),
+        b"set -gx USER_CONF 1\n"
+    );
+    assert!(is_absent(&env.root().join(".local/share/gpy/fish")));
+}
+
+#[test]
+fn uninstall_removes_stamped_old_trees() {
+    let env = CliTestEnv::new().unwrap();
+    let config = env.xdg_config_home();
+    let old_fish = config.join("fish/gpy");
+    let old_zsh = config.join("gpy/zsh");
+    let old_bash = config.join("gpy/bash");
+    let old_plugins = config.join("gpy/bundled-plugins");
+    for dir in [&old_fish, &old_zsh, &old_bash, &old_plugins] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    fs::write(old_fish.join(".gpy-version"), "0.8.0\n").unwrap();
+    fs::write(old_zsh.join(".gpy-version"), "0.8.0\n").unwrap();
+    fs::write(old_bash.join("notes.txt"), "not stamped\n").unwrap();
+    fs::write(old_plugins.join("keep.txt"), "removed anyway\n").unwrap();
+    setup_shell(&env, "zsh");
+
+    uninstall(&env, &["--yes"]).assert_success("gpy uninstall --yes");
+
+    assert!(is_absent(&old_fish));
+    assert!(is_absent(&old_zsh));
+    assert!(is_absent(&old_plugins));
+    assert!(
+        old_bash.join("notes.txt").is_file(),
+        "an unstamped dir is not GPY's"
+    );
+    assert!(is_absent(&env.root().join(".local/share/gpy/zsh")));
 }
 
 /// `gpy uninstall` on a pty, answering the prompt with `answer`; returns the
@@ -488,6 +545,7 @@ fn uninstall_on_pty(env: &CliTestEnv, answer: &[u8]) -> u32 {
     cmd.cwd(env.root());
     cmd.env("HOME", env.root());
     cmd.env("XDG_CONFIG_HOME", env.xdg_config_home());
+    cmd.env("XDG_DATA_HOME", env.root().join(".local/share"));
     cmd.env("XDG_CACHE_HOME", env.xdg_cache_home());
     cmd.env("XDG_RUNTIME_DIR", env.xdg_runtime_dir());
     cmd.env("ZDOTDIR", "");
@@ -504,7 +562,7 @@ fn uninstall_on_pty(env: &CliTestEnv, answer: &[u8]) -> u32 {
 fn uninstall_asks_and_honours_the_answer() {
     let env = CliTestEnv::new().unwrap();
     setup_shell(&env, "bash");
-    let bash_dir = env.config_dir().join("bash");
+    let bash_dir = bash_dir(&env);
 
     assert_eq!(uninstall_on_pty(&env, b"n\n"), 1);
     assert!(bash_dir.is_dir(), "answering n must remove nothing");

@@ -10,7 +10,7 @@
 //! needed because expiry must happen even when events stop.
 //!
 //! Entries flush once quiet for the debounce window (default
-//! [`DEFAULT_DEBOUNCE_MS`], `GPY_DEBOUNCE_MS`) or once older than the max-delay
+//! [`crate::env_config::DEFAULT_DEBOUNCE_MS`], `GPY_DEBOUNCE_MS`) or once older than the max-delay
 //! cap ([`debouncer::DebounceEngine::default_max_delay`]), so sustained
 //! churn cannot starve flushes.
 
@@ -26,13 +26,9 @@ pub use coordinator::{DelayedEventScheduler, EventCallback, PendingCallback, Wat
 pub(crate) use registry::RepoFilter;
 pub use registry::WatchRegistry;
 
-/// Quiet window before a burst of file events flushes, in milliseconds.
-pub const DEFAULT_DEBOUNCE_MS: u64 = 100;
-
-/// Minimum gap between SIGURG prompt refreshes per repository, in milliseconds.
-pub const DEFAULT_THROTTLE_MS: u64 = 150;
-
-use crate::env_config::env_u64_positive;
+use crate::env_config::{
+    DEBOUNCE_MS, DEFAULT_DEBOUNCE_MS, DEFAULT_THROTTLE_MS, SIGURG_THROTTLE_MS,
+};
 use registry::is_git_significant_relative;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -373,10 +369,7 @@ impl WatcherConfig {
     /// Load watcher configuration from environment variables.
     #[must_use]
     pub fn from_env() -> Self {
-        let debounce = env_u64_positive("GPY_DEBOUNCE_MS").unwrap_or(DEFAULT_DEBOUNCE_MS);
-        let throttle = env_u64_positive("GPY_SIGURG_THROTTLE_MS").unwrap_or(DEFAULT_THROTTLE_MS);
-
-        Self::new(debounce, throttle)
+        Self::new(DEBOUNCE_MS.positive(), SIGURG_THROTTLE_MS.positive())
     }
 
     /// Debounce duration as a `Duration`.

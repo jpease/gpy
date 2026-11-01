@@ -119,8 +119,11 @@ enum Commands {
         /// Do not prompt about icons; use the detected default.
         #[arg(long)]
         non_interactive: bool,
+        /// Check the shell files and install path; change nothing.
+        #[arg(long)]
+        check: bool,
         /// Only re-run Nerd Font detection and overwrite `ui.show_icons`.
-        #[arg(long, conflicts_with_all = ["shell", "from"])]
+        #[arg(long, conflicts_with_all = ["shell", "from", "check"])]
         redetect_icons: bool,
     },
 
@@ -570,6 +573,7 @@ fn run_setup(
     shell: Option<gpy_agent::shell::Shell>,
     from: Option<std::path::PathBuf>,
     non_interactive: bool,
+    check: bool,
     redetect_icons: bool,
 ) -> Result<()> {
     if redetect_icons {
@@ -583,6 +587,7 @@ fn run_setup(
             shell,
             from,
             non_interactive,
+            check,
         },
         |target| {
             Ok(render_completions(match target {
@@ -676,8 +681,9 @@ fn run(command: Commands) -> Result<ExitCode> {
             shell,
             from,
             non_interactive,
+            check,
             redetect_icons,
-        } => run_setup(shell, from, non_interactive, redetect_icons)?,
+        } => run_setup(shell, from, non_interactive, check, redetect_icons)?,
         Commands::Uninstall { yes, purge_config } => {
             return commands::uninstall::run(&commands::uninstall::UninstallOptions {
                 yes,

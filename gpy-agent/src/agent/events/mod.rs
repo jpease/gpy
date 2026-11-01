@@ -79,7 +79,7 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
         FileEvent::Language { path } => {
             debug_log!("agent", "Language event for: {}", path.display());
 
-            if !config.agent.live_updates || !config.language.enabled {
+            if !config.agent.live_updates || !config.segment_enabled("language") {
                 return;
             }
 
@@ -325,7 +325,7 @@ pub(super) fn refresh_and_notify_if_changed(
 
 /// Per-repo-serialized [`refresh_and_notify_if_changed`]; production callers
 /// (watcher events, reconcile ticks) must use this, as it applies the
-/// [`GitSettings::is_enabled_for`](crate::config::GitSettings::is_enabled_for)
+/// [`Config::git_enabled_for`](crate::config::Config::git_enabled_for)
 /// gate. Follow-up passes force a full scan since the original hint is stale.
 pub(super) fn refresh_and_notify_coalesced(
     ctx: &AgentContext,
@@ -333,10 +333,10 @@ pub(super) fn refresh_and_notify_coalesced(
     config: &Config,
     paths_hint: Option<&[PathBuf]>,
 ) {
-    if !config.git.is_enabled_for(git_root) {
+    if !config.git_enabled_for(git_root) {
         debug_log!(
             "agent",
-            "Skipping git refresh for {} (git.enabled/git.skip_paths)",
+            "Skipping git refresh for {} (git unlisted or git.skip_paths)",
             git_root.display()
         );
         return;
@@ -548,7 +548,7 @@ fn schedule_language_refresh_from_git_status(
     config: &Config,
     status: &crate::git::RepositoryStatus,
 ) {
-    if !config.agent.live_updates || !config.language.enabled {
+    if !config.agent.live_updates || !config.segment_enabled("language") {
         return;
     }
 
@@ -684,7 +684,7 @@ fn sync_watcher_state(
 ) {
     let mut watcher_guard = watcher_slot.lock_or_recover();
 
-    if !new_config.agent.live_updates || !(new_config.git.enabled || new_config.language.enabled) {
+    if !new_config.agent.live_updates || !new_config.any_agent_segment_enabled() {
         if let Some(watcher) = watcher_guard.take() {
             watcher.stop();
         }
@@ -782,7 +782,7 @@ pub(super) fn handle_config_reload(
     };
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
-    refresh::apply_watch_settings(&ctx.watch_registry, &new_config.git);
+    refresh::apply_watch_settings(&ctx.watch_registry, new_config);
 
     let refresh_required =
         theme_changed || palette_changed || config_refresh_required(old_config, new_config);
@@ -845,7 +845,7 @@ pub(super) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool)
 
 /// Re-render instant-prompt caches for every registered repo from cached data
 /// with the new theme, so the post-reload repaint is warm and flicker-free.
-/// A repo that `git.enabled`/`git.skip_paths` excludes has its git caches
+/// A repo that an unlisted `git` or `git.skip_paths` excludes has its git caches
 /// deleted instead, so shells stop showing a segment nothing refreshes.
 ///
 /// Renders both the context-free fallback and the new theme's `prev_bg` token the
@@ -858,7 +858,7 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
     let git_prev_bg = theme.segments.directory.bg_color.as_str();
     // Repos `config` includes again may publish git caches once more.
     ctx.instant_cache
-        .release_git_suppression(|root| config.git.is_enabled_for(root));
+        .release_git_suppression(|root| config.git_enabled_for(root));
 
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
@@ -870,7 +870,7 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
             continue;
         }
         if let Some(root) = git_root.as_ref() {
-            if config.git.is_enabled_for(root) {
+            if config.git_enabled_for(root) {
                 if let Some(status) = ctx.cache.get(root) {
                     for prev_bg in [None, Some(git_prev_bg)] {
                         if let Err(e) = ctx
@@ -894,7 +894,7 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
             }
         }
 
-        if config.language.enabled && ctx.language_cache.get(&lang_root).is_some() {
+        if config.segment_enabled("language") && ctx.language_cache.get(&lang_root).is_some() {
             schedule_language_cache_regen(ctx, &lang_root, config);
         }
     }

@@ -39,7 +39,7 @@ printf '%s\n' \
     'exit 0' >"$stub_dir/gpy-agent"
 chmod +x "$stub_dir/gpy-agent"
 
-mkdir -p "$home_dir/.config/fish/gpy/core"
+mkdir -p "$home_dir/.local/share/gpy/fish/core"
 set -l driver "$home_dir/driver.fish"
 printf '%s\n' \
     "cd '$repo_root'" \
@@ -53,7 +53,7 @@ touch "$marker"
 # filesystems; wait out the marker's second so a probe file created during
 # the run is strictly newer.
 sleep 1
-set -l out (env -i HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_CACHE_HOME="$home_dir/.cache" \
+set -l out (env -i HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_DATA_HOME="$home_dir/.local/share" XDG_CACHE_HOME="$home_dir/.cache" \
     PATH="$stub_dir:$safe_path" fish --no-config $driver 2>&1)
 
 set -l last_start (string match -e 'start ' <$calls)[-1]

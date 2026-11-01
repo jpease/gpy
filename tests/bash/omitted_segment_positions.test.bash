@@ -16,7 +16,6 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # Supervisor off in a sandbox config: the theme export re-sets the flag.
 source "$ROOT/tests/lib/supervisor_off.bash" "$TMP_ROOT"
 export GPY_AGENT_SOCKET_PATH="$TMP_ROOT/missing.sock"
-export GPY_LANGUAGE_ENABLED=1
 
 source bash/gpy.bash
 # The cold-miss refresh is dispatched only with the agent enabled.

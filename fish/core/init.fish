@@ -10,9 +10,6 @@ if not __gpy_agent_enabled; and not __gpy_supervisor_enabled
     return 0
 end
 
-set -q GPY_AGENT_ENABLED; or set -gx GPY_AGENT_ENABLED 1
-set -q GPY_AGENT_SUPERVISOR_ENABLED; or set -gx GPY_AGENT_SUPERVISOR_ENABLED 1
-
 source $__prompt_dir/util.fish; or return 1
 
 # 3.6+ for `string escape --json`. __gpy_test_fish_version is a non-exported
@@ -112,15 +109,20 @@ function __gpy_source_theme_export --argument-names mode
     set -l have_cache 0
     test -n "$cache_path" -a -f "$cache_path"; and set have_cache 1
 
-    if test "$mode" != fresh; and test $have_cache -eq 1
+    # Only a file whose first line is the version sentinel is sourced: an older
+    # agent's file would `set -gx GPY_*`, which this shell reads as user input.
+    set -l first
+    test $have_cache -eq 1; and read first <"$cache_path"
+    if test "$mode" != fresh; and test "$first" = 'set -g __gpy_export_version "1"'
         set -g __gpy_theme_export_mtime (__gpy_file_mtime "$cache_path")
         source "$cache_path"
         return $status
     end
 
-    # A stale cache file must not be sourced by the next re-registration
-    # (__gpy_reload_if_theme_export_changed): record its mtime as seen.
-    if test "$mode" = fresh; and test $have_cache -eq 1
+    # A stale or sentinel-less cache file must not be sourced by the next
+    # re-registration (__gpy_reload_if_theme_export_changed): record its mtime
+    # as seen. With no file, erase the record.
+    if test $have_cache -eq 1
         set -g __gpy_theme_export_mtime (__gpy_file_mtime "$cache_path")
     else
         set -e __gpy_theme_export_mtime
@@ -153,6 +155,13 @@ function __gpy_load_theme
 
     __gpy_theme_export_binary_missing; and __gpy_log_error init "gpy-agent command not found - cannot load theme"
     return 1
+end
+
+# Load-time stderr is discarded by conf.d/gpy_init.fish, so the one-time flag
+# warnings run on the first prompt and the handler erases itself.
+function __gpy_warn_flag_values_once --on-event fish_prompt
+    functions -e __gpy_warn_flag_values_once
+    __gpy_warn_flag_values
 end
 
 # Variable `theme export` sets to a plugin segment's file. The token is the

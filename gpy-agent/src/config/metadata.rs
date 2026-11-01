@@ -142,7 +142,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             c.git.enabled = parse_bool_field(v, "git.enabled")?;
             Ok(())
         }),
-        description: "Enable git status detection",
+        description: "Deprecated: use `gpy disable git` / `gpy enable git` (ui.enabled_segments)",
     },
     ConfigKeyMeta {
         key: "git.show_upstream",
@@ -188,7 +188,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "git.skip_paths",
         get: |c| c.git.skip_paths.join(" "),
         set: None, // List-valued; read-only like ui.enabled_segments
-        description: "Paths where git detection is skipped",
+        description: "Paths where git detection is skipped (space-separated in `config get`)",
     },
     ConfigKeyMeta {
         key: "git.max_ahead_behind",
@@ -233,7 +233,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             c.language.enabled = parse_bool_field(v, "language.enabled")?;
             Ok(())
         }),
-        description: "Enable language detection",
+        description: "Deprecated: use `gpy disable language` / `gpy enable language` (ui.enabled_segments)",
     },
     ConfigKeyMeta {
         key: "language.show_versions",
@@ -248,7 +248,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.enabled_languages",
         get: |c| c.language.enabled_languages.join(" "),
         set: None, // List-valued; read-only like ui.enabled_segments
-        description: "Languages to detect (empty = all)",
+        description: "Languages to detect (empty = all; space-separated in `config get`)",
     },
     ConfigKeyMeta {
         key: "language.detection_mode",
@@ -413,7 +413,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "ui.enabled_segments",
         get: |c| c.ui.enabled_segments.join(" "),
         set: None, // List-valued: edited in config.toml or with `gpy enable`/`gpy disable`
-        description: "Enabled segments and their order (see `gpy enable`/`gpy disable`)",
+        description: "Enabled segments and their order (space-separated in `config get`; see `gpy enable`/`gpy disable`)",
     },
 ];
 
@@ -586,7 +586,7 @@ mod tests {
             (
                 "ui.enabled_segments",
                 "clock duration",
-                "Config key ui.enabled_segments is read-only",
+                "Config key ui.enabled_segments is read-only; use gpy enable <segment> / gpy disable <segment>",
             ),
             ("not.a.real.key", "1", "Unknown config key: not.a.real.key"),
         ];

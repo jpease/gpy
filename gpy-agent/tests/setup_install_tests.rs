@@ -3,11 +3,11 @@
 //! it was (#1104), and an install location that aliases or overlaps the
 //! source must be refused before anything is touched (#1103).
 //!
-//! Every test drives the real `gpy` binary against a disposable HOME, a
-//! copy of the repository's shell trees as the source, and a temporary
-//! prefix holding the binary (so the retained `share/gpy` copy lands there,
-//! not in the build directory). The working checkout is never an install or
-//! source location. Permission-based fixtures are skipped as root, which
+//! Every test drives the real `gpy` binary against a disposable HOME (whose
+//! `~/.local/share/gpy` is the data root), a copy of the repository's shell
+//! trees as the source, and a temporary prefix holding the binary (so the
+//! binary never sits in the build directory). The working checkout is never
+//! an install or source location. Permission-based fixtures are skipped as root, which
 //! bypasses file modes.
 
 #![cfg(unix)]
@@ -179,20 +179,21 @@ impl Fixture {
         self.home().join(".config")
     }
 
+    /// The data root `gpy setup` installs into.
+    fn data(&self) -> PathBuf {
+        self.home().join(".local/share/gpy")
+    }
+
     fn zsh_dir(&self) -> PathBuf {
-        self.config().join("gpy/zsh")
+        self.data().join("zsh")
     }
 
     fn bash_dir(&self) -> PathBuf {
-        self.config().join("gpy/bash")
+        self.data().join("bash")
     }
 
     fn fish_dir(&self) -> PathBuf {
-        self.config().join("fish/gpy")
-    }
-
-    fn share(&self) -> PathBuf {
-        self.prefix.path().join("share/gpy")
+        self.data().join("fish")
     }
 
     /// `gpy setup --non-interactive` in the isolated environment.
@@ -216,7 +217,7 @@ impl Fixture {
             .unwrap()
     }
 
-    /// Set `shell` up from the retained scripts beside the binary.
+    /// Set `shell` up from the data root, with no `--from`.
     fn bare_setup(&self, shell: &str) -> Output {
         self.cmd().args(["--shell", shell]).output().unwrap()
     }
@@ -303,7 +304,7 @@ const UNCOMMITTED: &str = "# uncommitted local change\n";
 fn zsh_install_dir_symlinked_to_the_source_tree_is_refused_with_every_source_byte_kept() {
     let fx = Fixture::new();
     bump_tree(&fx.source().join("zsh"), UNCOMMITTED);
-    fs::create_dir_all(fx.config().join("gpy")).unwrap();
+    fs::create_dir_all(fx.data()).unwrap();
     std::os::unix::fs::symlink(fx.source().join("zsh"), fx.zsh_dir()).unwrap();
     let before = snapshot(fx.source());
 
@@ -323,7 +324,7 @@ fn zsh_install_dir_symlinked_to_the_source_tree_is_refused_with_every_source_byt
 fn fish_install_dir_symlinked_to_the_source_tree_is_refused_with_every_source_byte_kept() {
     let fx = Fixture::new();
     bump_tree(&fx.source().join("fish"), UNCOMMITTED);
-    fs::create_dir_all(fx.config().join("fish")).unwrap();
+    fs::create_dir_all(fx.data()).unwrap();
     std::os::unix::fs::symlink(fx.source().join("fish"), fx.fish_dir()).unwrap();
     let before = snapshot(fx.source());
 
@@ -342,13 +343,13 @@ fn fish_install_dir_symlinked_to_the_source_tree_is_refused_with_every_source_by
 #[test]
 fn an_alias_through_a_symlinked_parent_and_a_symlinked_source_path_is_refused() {
     let fx = Fixture::new();
-    // The install dir is `~/.config/gpy/zsh`, reached through a symlinked
-    // `~/.config/gpy`, and `--from` is spelled through another symlink: no
-    // lexical match with the source tree anywhere.
+    // The install dir is `~/.local/share/gpy/zsh`, reached through a symlinked
+    // `~/.local/share/gpy`, and `--from` is spelled through another symlink:
+    // no lexical match with the source tree anywhere.
     let dotfiles = TempDir::new().unwrap();
     std::os::unix::fs::symlink(fx.source().join("zsh"), dotfiles.path().join("zsh")).unwrap();
-    fs::create_dir_all(fx.config()).unwrap();
-    std::os::unix::fs::symlink(dotfiles.path(), fx.config().join("gpy")).unwrap();
+    fs::create_dir_all(fx.data().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(dotfiles.path(), fx.data()).unwrap();
     let alias = TempDir::new().unwrap();
     let from = alias.path().join("checkout");
     std::os::unix::fs::symlink(fx.source(), &from).unwrap();
@@ -369,18 +370,18 @@ fn an_alias_through_a_symlinked_parent_and_a_symlinked_source_path_is_refused() 
 #[test]
 fn an_install_dir_inside_the_source_is_refused() {
     let fx = Fixture::new();
-    let config = fx.source().join("cfg");
+    let data_home = fx.source().join("data");
     let before = snapshot(fx.source());
 
     let output = fx
         .cmd()
         .args(["--shell", "zsh", "--from"])
         .arg(fx.source())
-        .env("XDG_CONFIG_HOME", &config)
+        .env("XDG_DATA_HOME", &data_home)
         .output()
         .unwrap();
 
-    assert_refused(&output, fx.source(), &config.join("gpy/zsh"));
+    assert_refused(&output, fx.source(), &data_home.join("gpy/zsh"));
     assert_eq!(
         snapshot(fx.source()),
         before,
@@ -413,7 +414,7 @@ fn a_source_inside_the_install_dir_is_refused() {
 }
 
 #[test]
-fn refreshing_an_other_shell_that_aliases_the_source_cannot_bypass_the_guard() {
+fn installing_an_other_shell_that_aliases_the_source_cannot_bypass_the_guard() {
     let fx = Fixture::new();
     assert_ok(&fx.setup("bash"));
     // Bash was set up earlier; its install dir now aliases the source tree.
@@ -426,7 +427,7 @@ fn refreshing_an_other_shell_that_aliases_the_source_cannot_bypass_the_guard() {
 
     assert_ok(&output);
     assert!(
-        stdout(&output).contains("Could not refresh the bash files"),
+        stdout(&output).contains("Could not install the bash files"),
         "{}",
         stdout(&output)
     );
@@ -451,18 +452,14 @@ fn a_bundled_plugins_symlink_is_refused_before_any_file_is_replaced() {
     let fx = Fixture::new();
     let mine = TempDir::new().unwrap();
     fs::write(mine.path().join("mine.txt"), "mine\n").unwrap();
-    fs::create_dir_all(fx.config().join("gpy")).unwrap();
-    let link = fx.config().join("gpy/bundled-plugins");
+    fs::create_dir_all(fx.data()).unwrap();
+    let link = fx.data().join("plugins");
     std::os::unix::fs::symlink(mine.path(), &link).unwrap();
 
     let output = fx.setup("zsh");
 
     assert!(!output.status.success(), "{}", stdout(&output));
-    assert!(
-        stderr(&output).contains("bundled-plugins"),
-        "{}",
-        stderr(&output)
-    );
+    assert!(stderr(&output).contains("plugins"), "{}", stderr(&output));
     assert_eq!(fs::read_link(&link).unwrap(), mine.path());
     assert_eq!(
         fs::read_to_string(mine.path().join("mine.txt")).unwrap(),
@@ -479,7 +476,7 @@ fn a_symlinked_install_dir_to_a_separate_tree_is_updated_in_place() {
     fs::create_dir_all(real.join("segments")).unwrap();
     fs::write(real.join("segments/old.zsh"), "retired\n").unwrap();
     fs::write(real.join("keep.txt"), "mine\n").unwrap();
-    fs::create_dir_all(fx.config().join("gpy")).unwrap();
+    fs::create_dir_all(fx.data()).unwrap();
     std::os::unix::fs::symlink(&real, fx.zsh_dir()).unwrap();
 
     assert_ok(&fx.setup("zsh"));
@@ -538,7 +535,7 @@ fn a_successful_rerun_removes_retired_scripts_and_keeps_unrelated_files() {
         "{}\n"
     );
     assert!(zsh.join("segments/git.zsh").is_file());
-    assert_no_leftovers(&fx.config().join("gpy"));
+    assert_no_leftovers(&fx.data());
     assert_no_leftovers(&fx.config().join("fish"));
 }
 
@@ -582,7 +579,7 @@ fn a_failed_copy_at_any_read_position_leaves_the_previous_zsh_install_unchanged(
         );
         assert_eq!(snapshot(&fx.zsh_dir()), before, "{rel:?}: install changed");
         assert_eq!(fs::read(fx.home().join(".zshrc")).unwrap(), zshrc);
-        assert_no_leftovers(&fx.config().join("gpy"));
+        assert_no_leftovers(&fx.data());
         let spot_check = [0, middle, last].contains(&position);
         if let (Some(zsh_path), true) = (&zsh, spot_check) {
             let (diagnostics, loaded) = zsh_startup(zsh_path, &fx.zsh_dir(), fx.home());
@@ -607,7 +604,7 @@ fn a_failed_copy_at_any_read_position_leaves_the_previous_zsh_install_unchanged(
 }
 
 #[test]
-fn a_failed_other_shell_refresh_leaves_that_shell_installed_while_setup_succeeds() {
+fn a_failed_other_shell_install_leaves_that_shell_installed_while_setup_succeeds() {
     if running_as_root() {
         eprintln!("skipped: root bypasses the unreadable-file fixture");
         return;
@@ -624,7 +621,7 @@ fn a_failed_other_shell_refresh_leaves_that_shell_installed_while_setup_succeeds
 
     assert_ok(&output);
     let out = stdout(&output);
-    assert!(out.contains("Could not refresh the bash files"), "{out}");
+    assert!(out.contains("Could not install the bash files"), "{out}");
     assert!(
         out.contains("ipc.bash"),
         "the warning names the source file: {out}"
@@ -639,7 +636,7 @@ fn a_failed_other_shell_refresh_leaves_that_shell_installed_while_setup_succeeds
         zsh_entry.ends_with("# v2\n"),
         "the requested shell was updated"
     );
-    assert_no_leftovers(&fx.config().join("gpy"));
+    assert_no_leftovers(&fx.data());
 }
 
 #[test]
@@ -698,55 +695,18 @@ fn fish_with_an_unreadable_completion_glue_keeps_the_installed_tree_and_completi
 }
 
 #[test]
-fn a_failed_retained_share_update_keeps_the_previous_tree_for_a_later_bare_setup() {
-    if running_as_root() {
-        eprintln!("skipped: root bypasses the unreadable-file fixture");
-        return;
-    }
+fn a_bare_setup_after_an_installer_style_run_finds_the_data_root() {
     let fx = Fixture::new();
     assert_ok(&fx.setup("zsh"));
-    let share = fx.share();
     assert!(
-        share.join("bash/gpy.bash").is_file(),
-        "the first run kept the trees"
+        fx.bash_dir().join("gpy.bash").is_file(),
+        "the first run installed every tree"
     );
-    let bash_before = snapshot(&share.join("bash"));
-    for tree in ["fish", "zsh", "bash"] {
-        bump_tree(&fx.source().join(tree), "# v2\n");
-    }
-    // Bash is not installed, so only the retained copy reads its tree; it is
-    // copied after fish and zsh.
-    let locked = Unreadable::new(fx.source().join("bash/core/ipc.bash"));
 
-    let output = fx.setup("zsh");
-
-    assert_ok(&output);
-    assert!(
-        stdout(&output).contains("Could not keep the shell scripts"),
-        "{}",
-        stdout(&output)
-    );
-    assert_eq!(
-        snapshot(&share.join("bash")),
-        bash_before,
-        "the old bash tree stays whole"
-    );
-    for tree in ["fish", "zsh"] {
-        assert_eq!(
-            files_under(&share.join(tree)),
-            files_under(&fx.source().join(tree)),
-            "{tree}: a replaced tree is complete"
-        );
-    }
-    assert_no_leftovers(&share);
-    drop(locked);
-
-    // A later bare setup finds a usable bash tree, not an entry point alone.
     assert_ok(&fx.bare_setup("bash"));
-    assert_eq!(
-        files_under(&fx.bash_dir()).len(),
-        files_under(&share.join("bash")).len() + 2,
-        "a full tree plus the version stamp and generated completions"
-    );
+
     assert!(fx.bash_dir().join("core/ipc.bash").is_file());
+    assert!(fx.bash_dir().join("completions/gpy.bash").is_file());
+    assert!(fx.bash_dir().join(".gpy-version").is_file());
+    assert_no_leftovers(&fx.data());
 }

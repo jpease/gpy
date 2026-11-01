@@ -1,5 +1,5 @@
 function segment_language_detect
-    if set -q GPY_LANGUAGE_ENABLED; and test "$GPY_LANGUAGE_ENABLED" = 0
+    if test "$__gpy_cfg_language_enabled" = 0
         return 1
     end
 

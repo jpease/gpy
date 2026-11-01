@@ -1,5 +1,5 @@
 __gpy_segment_git_detect() {
-    [[ "${GPY_GIT_ENABLED:-1}" != "0" ]] || return 1
+    [[ "${__gpy_cfg_git_enabled-}" != 0 ]] || return 1
     local root
     __gpy_find_git_root "$PWD" root
 }
@@ -8,7 +8,9 @@ __gpy_segment_git_detect() {
 __gpy_segment_git_omit() {
     __gpy_agent_enabled || return 1
     __gpy_instant_cache_present git "$PWD" && return 1
-    [[ ! -S "$(__gpy_ipc_endpoint)" ]]
+    local __gpy_sgo_sock
+    __gpy_ipc_endpoint_into __gpy_sgo_sock
+    [[ ! -S "$__gpy_sgo_sock" ]]
 }
 
 __gpy_segment_git() {
@@ -62,7 +64,9 @@ __gpy_segment_git() {
     fi
 
     # Stale with agent down: a background refresh has no listener, so run a bounded oneshot.
-    if __gpy_agent_enabled && [[ -S "$(__gpy_ipc_endpoint)" ]]; then
+    local __gpy_sg_sock
+    __gpy_ipc_endpoint_into __gpy_sg_sock
+    if __gpy_agent_enabled && [[ -S "$__gpy_sg_sock" ]]; then
         printf '%s' "$rendered_output"
         __gpy_maybe_refresh "git" "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         return 0

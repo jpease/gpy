@@ -44,7 +44,7 @@ __gpy_char_cache_key="" __gpy_char_cache_val=""
 clock_spec='%D{%-I:%M %p}'
 
 # --- on, with the clock -----------------------------------------------------
-GPY_UI_TRANSIENT_PROMPT=1
+__gpy_cfg_transient_prompt=1
 __enabled_segments=(clock directory)
 __gpy_update_prompts 1
 check "on: time, then the symbol only (no status, no segments)" \
@@ -75,7 +75,7 @@ __gpy_update_prompts 0
 check "on, no clock: the symbol alone" "❯ " "$(printed "$__gpy_transient_prompt")"
 
 # --- off --------------------------------------------------------------------
-GPY_UI_TRANSIENT_PROMPT=0
+__gpy_cfg_transient_prompt=0
 __enabled_segments=(clock directory)
 __gpy_update_prompts 0
 check "off, with the clock: the full prompt is redrawn" "$PROMPT" "$__gpy_transient_prompt"

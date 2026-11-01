@@ -130,8 +130,8 @@ branch name) independent of the active color state.
 
 For bold/dimmed/italic emphasis per state — independent of color — add a
 `[segments.git.git_style]` subtable keyed by the lower-snake-case state name
-(`clean`, `ahead_behind`, `untracked_only`, `modified`, `in_progress`,
-`conflicts`), mirroring the per-language `styles` mechanism:
+(`clean`, `ahead_behind`, `untracked_only`, `modified` — the dirty state, also
+set by the `dirty_*` colours — `in_progress`, `conflicts`), mirroring the per-language `styles` mechanism:
 
 ```toml
 [segments.git.git_style]

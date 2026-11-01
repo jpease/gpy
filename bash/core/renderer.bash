@@ -146,10 +146,11 @@ __gpy_status_icon() {
 # Status icon plus prompt symbol, drawn by the shell for root (which never
 # asks the agent) and when the agent rendered no character.
 __gpy_prompt_tail() {
-    local __exit="${1:-0}" __out="" __sgr __reset __icon __color
+    local __exit="${1:-0}" __out="" __sgr __reset __icon __color __show_status
     __reset="\\[${__GPY_SGR_ESC}[0m\\]"
 
-    if [[ "${GPY_SHOW_STATUS:-1}" == "1" ]]; then
+    __gpy_flag_value "${GPY_SHOW_STATUS-}" on __show_status
+    if [[ "$__show_status" == on ]]; then
         if ((__exit == 0)); then
             __gpy_status_icon ok __icon
             __color=green

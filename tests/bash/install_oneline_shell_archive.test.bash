@@ -103,6 +103,7 @@ run_scenario() {
     stubs="$SHELL_E2E_ROOT/$name/stubs"
     fakebin="$SHELL_E2E_ROOT/$name/fakebin"
     cfg="$SHELL_E2E_ROOT/$name/xdg"
+    data="$SHELL_E2E_ROOT/$name/data"
     log="$SHELL_E2E_ROOT/$name/install.log"
     curl_log="$SHELL_E2E_ROOT/$name/curl.log"
     archive="$SHELL_E2E_ROOT/$name/gpy-shell-files.tar.gz"
@@ -116,7 +117,7 @@ run_scenario() {
     write_cli_stub "$stubs/cli"
     write_fake_curl "$fakebin" "$stubs/agent" "$stubs/cli" "$archive"
 
-    env HOME="$home" XDG_CONFIG_HOME="$cfg" CURL_LOG="$curl_log" FAIL_PATTERN="$pattern" \
+    env HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_DATA_HOME="$data" CURL_LOG="$curl_log" FAIL_PATTERN="$pattern" \
         BAD_SHELL_DIGEST="$bad_digest" \
         PATH="$fakebin:$home/.local/bin:$PATH" GPY_SHELL="$shell" GPY_VERSION=v9.9.9-test \
         sh "$ROOT/install-oneline.sh" </dev/null >"$log" 2>&1
@@ -144,7 +145,7 @@ assert_not_installed() {
     else
         pass "$name: the rc file has no gpy-init block"
     fi
-    if [ -e "$cfg/fish/gpy" ] || [ -e "$cfg/gpy/$shell" ] || [ -L "$cfg/fish/functions/fish_prompt.fish" ]; then
+    if [ -e "$data/gpy" ] || [ -L "$cfg/fish/functions/fish_prompt.fish" ]; then
         fail "$name: shell files or the prompt symlink were installed"
     else
         pass "$name: no shell files or prompt symlink were installed"
@@ -181,7 +182,8 @@ for shell in fish zsh bash; do
     fi
 done
 
-for entry in fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish fish/core/init.fish; do
+for entry in fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish fish/core/init.fish \
+    fish/core/flags.fish fish/completions/gpy-dynamic.fish bash/core/g_runner.bash; do
     run_scenario "missing_$(printf '%s' "$entry" | tr '/.' '__')" fish "$entry" "" ""
     assert_not_installed "archive without $entry" fish
     if grep -qF "has no ${entry}" "$log"; then

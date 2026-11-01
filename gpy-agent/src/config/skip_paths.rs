@@ -126,16 +126,6 @@ impl MatcherCache {
 static CACHE: MatcherCache = MatcherCache::new();
 
 impl GitSettings {
-    /// Whether Git detection may run for the repository rooted at `root` (pass
-    /// its canonical root): `git.enabled` and the root not at or under a
-    /// `git.skip_paths` entry, so an entry inside a repository does not skip it.
-    /// Every Git status scan and Git cache publication entry point, foreground
-    /// or background, must check this against the repository root.
-    #[must_use]
-    pub fn is_enabled_for(&self, root: &Path) -> bool {
-        self.enabled && !self.is_path_skipped(root)
-    }
-
     /// Whether `git.skip_paths` skips `path` (pass a canonical path).
     #[must_use]
     pub(crate) fn is_path_skipped(&self, path: &Path) -> bool {

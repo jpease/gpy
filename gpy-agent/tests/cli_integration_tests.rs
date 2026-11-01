@@ -413,20 +413,20 @@ enabled_segments = ["clock", "duration", "directory", "git"]
         run_gpy_agent_with_config(SUPERVISOR_CONFIG, &["theme", "export", "--shell", "fish"]);
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
     assert!(
-        stdout.contains("set -gx GPY_AGENT_SUPERVISOR_ENABLED \"0\""),
+        stdout.contains("set -g __gpy_cfg_supervisor_enabled \"0\""),
         "expected supervisor enabled export to respect config: {stdout}"
     );
     assert!(
-        stdout.contains("set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS \"45\""),
+        stdout.contains("set -g __gpy_cfg_supervisor_check_interval \"45\""),
         "expected supervisor interval export to respect config: {stdout}"
     );
     assert!(
-        stdout.contains("set -gx GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS \"3\""),
+        stdout.contains("set -g __gpy_cfg_supervisor_max_restarts \"3\""),
         "expected supervisor max restart export to respect config: {stdout}"
     );
     assert!(
-        stdout.contains("set -gx GPY_AGENT_LIVE_UPDATES \"0\""),
-        "expected agent live updates export to reflect config: {stdout}"
+        !stdout.contains("GPY_AGENT_LIVE_UPDATES"),
+        "live_updates has no shell reader and must not be exported: {stdout}"
     );
 }
 
@@ -450,12 +450,12 @@ enabled_segments = ["directory", "git"]
         "expected prompt icons to switch to ascii when show_icons=false: {stdout}"
     );
     assert!(
-        stdout.contains("set -gx GPY_UI_DIRECTORY_MAX_LENGTH \"42\""),
-        "expected GPY_UI_DIRECTORY_MAX_LENGTH export to honour config: {stdout}"
+        !stdout.contains("GPY_UI_DIRECTORY_MAX_LENGTH"),
+        "directory max length must not be exported: {stdout}"
     );
     assert!(
-        stdout.contains("set -gx GPY_UI_DIRECTORY_DISPLAY \"abbreviated\""),
-        "expected GPY_UI_DIRECTORY_DISPLAY export to honour config: {stdout}"
+        !stdout.contains("GPY_UI_DIRECTORY_DISPLAY"),
+        "directory display must not be exported: {stdout}"
     );
     assert!(
         stdout.contains("set -g __enabled_segments directory git"),
@@ -478,10 +478,8 @@ enabled_segments = ["directory", "git"]
         run_gpy_agent_with_config(UI_CONFIG, &["theme", "export", "--shell", "zsh"]);
     assert_eq!(exit_code, 0_i32, "zsh theme export failed: {stderr}");
     assert!(
-        zsh_stdout.contains("export GPY_UI_DIRECTORY_DISPLAY=\"full\"")
-            || zsh_stdout.contains("typeset -gx GPY_UI_DIRECTORY_DISPLAY=\"full\"")
-            || zsh_stdout.contains("typeset -g -x GPY_UI_DIRECTORY_DISPLAY=\"full\""),
-        "expected zsh export to include GPY_UI_DIRECTORY_DISPLAY: {zsh_stdout}"
+        !zsh_stdout.contains("GPY_UI_DIRECTORY_DISPLAY"),
+        "zsh export must not carry GPY_UI_DIRECTORY_DISPLAY: {zsh_stdout}"
     );
 
     let (bash_exit_code, bash_stdout, bash_stderr) =
@@ -491,8 +489,8 @@ enabled_segments = ["directory", "git"]
         "bash theme export failed: {bash_stderr}"
     );
     assert!(
-        bash_stdout.contains("export GPY_UI_DIRECTORY_DISPLAY=\"full\""),
-        "expected bash export to include GPY_UI_DIRECTORY_DISPLAY: {bash_stdout}"
+        !bash_stdout.contains("GPY_UI_DIRECTORY_DISPLAY"),
+        "bash export must not carry GPY_UI_DIRECTORY_DISPLAY: {bash_stdout}"
     );
 }
 
@@ -966,8 +964,8 @@ fn test_theme_export_fish_syntax_valid() {
             .get(2)
             .expect("set command must have form 'set -g|-gx VARNAME VALUE'");
         assert!(
-            var_name.starts_with("__") || var_name.starts_with("GPY_"),
-            "Variable names should start with '__' or 'GPY_': {line}"
+            var_name.starts_with("__"),
+            "Variable names should start with '__': {line}"
         );
     }
 }
@@ -1187,8 +1185,8 @@ enabled_segments = ["clock", "directory", "git"]
     );
 
     assert!(
-        stdout.contains("set -gx GPY_GIT_ENABLED \"0\""),
-        "GPY_GIT_ENABLED should be 0 when git.enabled=false. Got: {stdout}"
+        stdout.contains("set -g __gpy_cfg_git_enabled \"0\""),
+        "__gpy_cfg_git_enabled should be 0 when git.enabled=false. Got: {stdout}"
     );
 }
 
@@ -1221,8 +1219,8 @@ enabled_segments = ["clock", "directory", "git"]
         "Git should be included when enabled. Got: {stdout_enabled}"
     );
     assert!(
-        stdout_enabled.contains("set -gx GPY_GIT_ENABLED \"1\""),
-        "GPY_GIT_ENABLED should be 1 when enabled. Got: {stdout_enabled}"
+        stdout_enabled.contains("set -g __gpy_cfg_git_enabled \"1\""),
+        "__gpy_cfg_git_enabled should be 1 when enabled. Got: {stdout_enabled}"
     );
 
     let (disabled_exit_code, stdout_disabled, disabled_stderr) =
@@ -1236,8 +1234,8 @@ enabled_segments = ["clock", "directory", "git"]
         "Git should be removed when disabled. Got: {stdout_disabled}"
     );
     assert!(
-        stdout_disabled.contains("set -gx GPY_GIT_ENABLED \"0\""),
-        "GPY_GIT_ENABLED should be 0 when disabled. Got: {stdout_disabled}"
+        stdout_disabled.contains("set -g __gpy_cfg_git_enabled \"0\""),
+        "__gpy_cfg_git_enabled should be 0 when disabled. Got: {stdout_disabled}"
     );
 
     assert!(

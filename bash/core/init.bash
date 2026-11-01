@@ -74,7 +74,7 @@ fi
 # it asks the agent, and only a successful export replaces the running state.
 # Its stderr is kept, so an invalid config.toml shows the agent's warning.
 __gpy_load_theme() {
-    local cache_path rc=1 out
+    local cache_path rc=1 out first=""
     if [[ "${1:-}" == fresh ]]; then
         # `eval "$(cmd)"` succeeds even when cmd fails, so fetch first.
         command -v gpy-agent &>/dev/null || return 1
@@ -89,7 +89,10 @@ __gpy_load_theme() {
     __gpy_g_clear_styles
     unset __gpy_script_segments
     cache_path="$(__gpy_theme_export_cache_path)"
-    if [[ -n "$cache_path" && -f "$cache_path" ]]; then
+    # Only a file whose first line is the version sentinel is sourced: an older
+    # agent's file exports GPY_* values this shell would read as user input.
+    [[ -n "$cache_path" && -f "$cache_path" ]] && IFS= read -r first <"$cache_path"
+    if [[ "$first" == '__gpy_export_version="1"' ]]; then
         # Generated at runtime by `gpy-agent theme export`; not in the tree.
         # shellcheck source=/dev/null
         source "$cache_path"
@@ -279,7 +282,7 @@ __gpy_directory_segment_output() {
 
     local result
     result=$(__gpy_segment_directory "$is_last" "$prev_bg" "$is_first")
-    # Propagate the segment's exit code (GPY_SEG_STATUS_ONESHOT) to the caller.
+    # Propagate the segment's exit code (__gpy_seg_status_oneshot) to the caller.
     local seg_status=$?
     if [[ -n "$result" ]]; then
         __gpy_dir_cache_key="$dir_key"
@@ -296,7 +299,7 @@ __gpy_render_prompt() {
     __gpy_last_status="$exit_code"
 
     # One oneshot fork per render. Segment subshells cannot write back, so
-    # they signal a fork via GPY_SEG_STATUS_ONESHOT and later subshells
+    # they signal a fork via __gpy_seg_status_oneshot and later subshells
     # inherit the folded value; no predictable /tmp marker file.
     local __gpy_oneshot_used=0
 
@@ -351,7 +354,7 @@ __gpy_render_prompt() {
             fi
 
             local segment_status=$?
-            if [[ "$segment_status" -eq "$GPY_SEG_STATUS_ONESHOT" ]]; then
+            if [[ "$segment_status" -eq "$__gpy_seg_status_oneshot" ]]; then
                 __gpy_oneshot_used=1
             fi
 
@@ -410,7 +413,7 @@ __gpy_register_with_agent() {
     [[ -z "$__gpy_registered" ]] || return 0
 
     local socket_path
-    socket_path=$(__gpy_ipc_endpoint)
+    __gpy_ipc_endpoint_into socket_path
     [[ -S "$socket_path" ]] || return 1
 
     local register_json
@@ -419,7 +422,7 @@ __gpy_register_with_agent() {
     # Only an explicit "status":"ok" counts; an error reply leaves the shell
     # unregistered so the next prompt retries.
     local response
-    response=$(__gpy_send_json "$register_json" 2>/dev/null) || return 1
+    __gpy_send_json "$register_json" "" response 2>/dev/null || return 1
     [[ $response == *'"status":"ok"'* ]] || return 1
 
     __gpy_registered=1
@@ -461,7 +464,7 @@ __gpy_sync_workspace() {
     local workspace_json response
     workspace_json="$(__gpy_build_workspace_payload)"
 
-    response=$(__gpy_send_json "$workspace_json" 2>/dev/null)
+    __gpy_send_json "$workspace_json" "" response 2>/dev/null
     local send_status=$?
     # Only a failed send or lost registration re-registers; other errors
     # (a rejected path like /etc) keep it.

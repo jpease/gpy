@@ -17,7 +17,9 @@
 # file under ~/.config/gpy/palettes/
 #palette = "default"
 # Segments to render, left to right. Built in: clock, duration, language,
-# directory, git, status, character, hostname, username; plugin segments too.
+# directory, git, status (off by default); hostname and username are bundled
+# plugins, and plugin segments are listed too. The prompt character is always
+# drawn, styled by the theme's [segments.character], and is not listed.
 #enabled_segments = ["clock", "duration", "language", "directory", "git"]
 # Collapse each submitted prompt to clock, prompt icon and command (Fish 4.2+, Zsh)
 #transient_prompt = true
@@ -54,7 +56,7 @@
 #max_restart_attempts = 5
 
 [git]
-# Enable git status detection
+# Deprecated: use ui.enabled_segments (gpy enable/disable). Enable git status detection
 #enabled = true
 # Show ahead/behind commit counts
 #show_upstream = true
@@ -94,7 +96,7 @@
 #in_progress = "↻"
 
 [language]
-# Enable programming language detection
+# Deprecated: use ui.enabled_segments (gpy enable/disable). Enable programming language detection
 #enabled = true
 # Show language versions
 #show_versions = true

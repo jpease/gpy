@@ -219,6 +219,16 @@ gpy theme validate mytheme
 gpy theme use mytheme
 ```
 `gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all nine supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`, `status`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Format templates and style strings may not contain terminal control characters (ESC, BEL, carriage return, …); newline is the only control character a format may carry, and the agent strips any other control character from template text at render time. Both `theme validate` and `theme use` share this validator.
+
+`gpy theme validate` and `gpy doctor` also print warnings for a theme that loads but has parts that do nothing; they never fail validation:
+
+- a key the theme sets that GPY does not read (`unknown key `segments.clock.time_fromat` (ignored)`);
+- a `[segments.<id>]` section that no built-in segment, bundled plugin (`username`, `hostname`) or installed plugin provides (usually a typo such as `[segments.gitt]`);
+- a `[segments.language]` colour key that is not `<lang>_bg_color` or `<lang>_text_color` (`rust_bgcolor` is ignored);
+- an enabled `directory`, `duration`, `git` or `language` segment with no `format`, which renders nothing (for example after `unset = ["segments.git.format"]`);
+- a control character in a git icon override (`staged_icon`, `unstaged_icon`, `untracked_icon`, `conflicts_icon`, `stash_icon`), which is removed when the segment is drawn.
+
+`gpy palette use` checks the active theme's segment templates against the new palette and warns about each segment that would render empty, then switches anyway.
 ### Your copy of a builtin theme after an upgrade
 
 A **full** file `~/.config/gpy/themes/<name>.toml` (one without `extends`) with the name of a builtin theme (`default`, `text`, `starship`) completely replaces the builtin, so it keeps its old keys while the builtin moves on. Older GPY versions wrote such copies from `gpy config wizard`, `gpy theme new` and `gpy theme save`; today these write overlays (above), which hold only your changes and pick up the builtin's updates. A stale copy can fail to load after an upgrade (the 0.7 release moved `show_always`/`trim_at` and the `format` keys of `username` and `hostname` out of the theme). These commands deal with it, none of which overwrites a copy without a backup:
@@ -250,7 +260,7 @@ See [Migrating from Starship](migrating-from-starship.md) for the full walkthrou
 
 To design a theme from scratch, style every git state bucket, or theme a plugin segment, use these:
 
-- **[Create a Theme](../dev/create-theme.md)** — the complete theme-file schema: every `[ui]` field, the full `[segments.<id>]` table, the git segment's 6-bucket color-state model (`Conflicts > InProgress > Modified > UntrackedOnly > AheadBehind > Clean`), per-state `git_style` attributes, and how plugin segments are styled the same way as built-in ones.
+- **[Create a Theme](../dev/create-theme.md)** — the complete theme-file schema: every `[ui]` field, the full `[segments.<id>]` table, the git segment's 6-bucket color-state model (`Conflicts > InProgress > Modified > UntrackedOnly > AheadBehind > Clean`, where `Modified` is the dirty state: `dirty_*` colours and `git_style.modified`), per-state `git_style` attributes, and how plugin segments are styled the same way as built-in ones.
 - **[Configuration Examples](configuration-examples.md)** — copy-paste recipes: a full powerline-style prompt, per-language segment colors, Nerd Font icon swaps, and more.
 
 For what every `config.toml` key does (as opposed to theme-file fields), see [Configuration Reference](configuration-reference.md).

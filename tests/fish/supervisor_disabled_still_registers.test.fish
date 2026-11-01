@@ -35,9 +35,7 @@ end
 
 start_test_agent; or die "test agent did not start"
 
-set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
-set -gx GPY_AGENT_ENABLED 1
-printf '%s\n' 'set -gx GPY_AGENT_ENABLED "1"' 'set -gx GPY_AGENT_SUPERVISOR_ENABLED "0"' >$XDG_CACHE_HOME/gpy/theme-export.fish
+printf '%s\n' 'set -g __gpy_export_version "1"' 'set -g __gpy_cfg_agent_enabled "1"' 'set -g __gpy_cfg_supervisor_enabled "0"' >$XDG_CACHE_HOME/gpy/theme-export.fish
 
 source $repo_root/fish/core/init.fish
 set -l plain (mktemp -d)

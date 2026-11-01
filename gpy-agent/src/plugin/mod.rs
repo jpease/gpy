@@ -33,5 +33,12 @@ pub use script::{
 };
 pub use settings::{SettingDecl, SettingKey, SettingValue};
 
+/// Segments provided by the plugins `gpy setup` installs under the bundled
+/// plugin root (`plugins/` in the release archive). Before 0.7 these were
+/// builtin segments, so an upgrade without `gpy setup` silently drops them.
+/// Every builtin theme styles them, so a theme section for one is known even
+/// before they are installed.
+pub const BUNDLED_PLUGIN_NAMES: [&str; 2] = ["username", "hostname"];
+
 #[cfg(test)]
 mod schema_tests;

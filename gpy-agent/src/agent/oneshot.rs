@@ -130,9 +130,9 @@ fn git_response(request: &OneshotRequest, config: &Config) -> Result<Response> {
     let request_path = Path::new(&request.path);
     let canonical_request_path =
         std::fs::canonicalize(request_path).unwrap_or_else(|_| request_path.to_path_buf());
-    let git_allowed = config.git.enabled
+    let git_allowed = config.segment_enabled("git")
         && crate::git::find_repo_root(&canonical_request_path)
-            .is_none_or(|root| config.git.is_enabled_for(&root));
+            .is_none_or(|root| config.git_enabled_for(&root));
     if !git_allowed {
         return Ok(Response::Error {
             message: "Git segment disabled via config".to_owned(),
@@ -166,7 +166,7 @@ fn language_response(
     config: &Config,
     theme: &ThemeConfig,
 ) -> Option<Response> {
-    if !config.language.enabled {
+    if !config.segment_enabled("language") {
         return None;
     }
 
@@ -214,7 +214,7 @@ fn load_config_and_theme(request: &OneshotRequest) -> Result<(Config, ThemeConfi
     });
 
     let theme_consumed = match request.request_type {
-        OneshotKind::LanguageDetect => config.language.enabled,
+        OneshotKind::LanguageDetect => config.segment_enabled("language"),
         _ => !json,
     };
     let theme = if theme_consumed {

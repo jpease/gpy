@@ -1,11 +1,7 @@
 //! Doctor diagnosis for bundled plugins that an upgrade left uninstalled.
 
+use crate::plugin::BUNDLED_PLUGIN_NAMES;
 use std::path::Path;
-
-/// Segments provided by the plugins `gpy setup` installs under the bundled
-/// plugin root (`plugins/` in the release archive). Before 0.7 these were
-/// builtin segments, so an upgrade without `gpy setup` silently drops them.
-const BUNDLED_PLUGIN_NAMES: [&str; 2] = ["username", "hostname"];
 
 /// Whether `segment` names a bundled plugin whose manifest is absent from
 /// `bundled_dir`, i.e. `gpy setup` has not installed it.

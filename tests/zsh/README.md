@@ -32,9 +32,9 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 ```
 
-The agent and supervisor flags come from `config.toml` through the theme
-export, which loads after `gpy.zsh` starts sourcing, so exporting
-`GPY_AGENT_ENABLED=0` does not stop `gpy.zsh` from starting an agent. Tests
+An exported `GPY_AGENT_ENABLED` or `GPY_AGENT_SUPERVISOR_ENABLED` wins over
+`config.toml` (the theme export never exports either), so exporting
+`GPY_AGENT_ENABLED=0` stops `gpy.zsh` from starting an agent. Tests
 that must not start one source `tests/lib/supervisor_off.zsh`, write
 `[agent] enabled = false` into their own sandbox `config.toml`, or source with
 no `gpy-agent` on `PATH` (`shell_e2e_agent_free_begin` /

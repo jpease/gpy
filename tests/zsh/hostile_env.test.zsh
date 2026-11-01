@@ -95,17 +95,14 @@ scenario_nounset_runtime_only() {
 }
 
 scenario_cache_dir_lifecycle() {
-    local -a d
     local relay="$SANDBOX/gpy_relay_$UID"
     rm -rf "$relay"
     run_child '' $'source "$GPY_TEST_ROOT/zsh/gpy.zsh"\nexit'
-    d=("$relay"/<->_*(N))
-    ((${#d} == 0)) && pass "re-source + exit leaves no relay dir" \
-        || fail "re-source + exit left ${#d} relay dir(s)"
+    [[ ! -e $relay ]] && pass "re-source + exit creates no relay dir" \
+        || fail "re-source + exit created $relay"
     run_child '' $'exec zsh -i -c true'
-    d=("$relay"/<->_*(N))
-    ((${#d} == 0)) && pass "exec leaves no relay dir" \
-        || fail "exec left ${#d} relay dir(s)"
+    [[ ! -e $relay ]] && pass "exec creates no relay dir" \
+        || fail "exec created $relay"
 }
 
 # urg_scenario <label> <prelude> [<extra input>]: a handler defined before

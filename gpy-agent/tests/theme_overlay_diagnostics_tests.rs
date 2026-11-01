@@ -233,3 +233,25 @@ fn theme_validate_applies_the_plugin_rule_to_a_file_in_a_plugin_themes_dir() {
         .expect("run gpy theme validate")
         .assert_success("gpy theme validate <user overlay of mine>");
 }
+
+#[test]
+fn theme_validate_prints_theme_warnings_and_succeeds() {
+    let env = env();
+    write_theme(
+        &env,
+        "mine",
+        "extends = \"default\"\n\n[segments.gitt]\nbg_color = \"red\"\n\n[segments.clock]\ntime_fromat = \"24\"\n",
+    );
+
+    let result = env
+        .run_gpy(&["theme", "validate", "mine"])
+        .expect("run gpy theme validate");
+    let output = combined(&result);
+
+    result.assert_success("gpy theme validate mine");
+    assert!(output.contains("segments.gitt"), "{output}");
+    assert!(
+        output.contains("unknown key `segments.clock.time_fromat` (ignored)"),
+        "{output}"
+    );
+}

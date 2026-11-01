@@ -28,6 +28,7 @@ chmod +x $t_sandbox/bin/gpy-agent
 
 # The cache an agent wrote from an older config.
 printf '%s\n' \
+    'set -g __gpy_export_version "1"' \
     'set -g __enabled_segments clock' \
     'set -g __gpy_fresh_marker stale' >$t_sandbox/cache/gpy/theme-export.fish
 

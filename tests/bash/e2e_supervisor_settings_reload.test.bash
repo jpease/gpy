@@ -17,7 +17,6 @@ printf '\n[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 30\nmax_r
     >>"$XDG_CONFIG_HOME/gpy/config.toml"
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
-export GPY_AGENT_SUPERVISOR_ENABLED=1
 cd "$SHELL_E2E_REPO" || exit 1
 shell_e2e_spawn_client bash "$ROOT" || { shell_e2e_dump_transcript; exit 1; }
 client_pid="$(shell_e2e_client_pid)"
@@ -34,7 +33,7 @@ flag_consumed() { [ ! -e "$reload_flag" ]; }
 expect_settings() {
     _off="$(shell_e2e_size)"
     # shellcheck disable=SC2016 # expanded by the client shell, not here
-    shell_e2e_send 'echo "SUP=$GPY_AGENT_SUPERVISOR_ENABLED/$GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS/$GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS"\r'
+    shell_e2e_send 'echo "SUP=$__gpy_cfg_supervisor_enabled/$__gpy_cfg_supervisor_check_interval/$__gpy_cfg_supervisor_max_restarts"\r'
     shell_e2e_wait_for "SUP=$1" 5 "$_off" >/dev/null
 }
 

@@ -27,8 +27,8 @@ check_copy() {
     fi
 }
 
-check_copy fish/core/ipc.fish 's/^[[:space:]]*set -l EXPECTED_PROTOCOL_VERSION ([0-9]+).*/\1/p'
-check_copy bash/core/ipc.bash 's/^GPY_EXPECTED_PROTOCOL_VERSION=([0-9]+).*/\1/p'
-check_copy zsh/core/ipc.zsh 's/^typeset -g GPY_EXPECTED_PROTOCOL_VERSION=([0-9]+).*/\1/p'
+check_copy fish/core/ipc.fish 's/^[[:space:]]*set -l __gpy_protocol_version ([0-9]+).*/\1/p'
+check_copy bash/core/ipc.bash 's/^__gpy_protocol_version=([0-9]+).*/\1/p'
+check_copy zsh/core/ipc.zsh 's/^typeset -g __gpy_protocol_version=([0-9]+).*/\1/p'
 
 test_finish "every shell declares protocol version $rust_version"

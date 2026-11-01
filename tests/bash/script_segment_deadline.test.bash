@@ -106,6 +106,9 @@ write_export() {
         fish) assign='set -g %s "%s"\n' list='set -g %s %s\n' ;;
     esac
     {
+        # The version sentinel must be the first line, or the shell ignores the file.
+        # shellcheck disable=SC2059
+        printf "$assign" __gpy_export_version 1
         # shellcheck disable=SC2059
         printf "$assign" __gpy_script_sh "$script_sh"
         for name in lat-fast lat-hung lat-ign; do
@@ -192,8 +195,7 @@ cat >"$T/child.fish" <<'EOF'
 source $argv[1]/fish/core/init.fish >/dev/null 2>&1; or exit 1
 if test -n "$argv[3]"
     set -g __gpy_g_bash $argv[3]
-    set -l runner $__gpy_core_dir/g_runner.bash
-    test -r $runner; or set runner (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
+    set -l runner (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
     set -g __gpy_g_src (string collect <$runner)
     set -g __gpy_g_runner_state ready
 end

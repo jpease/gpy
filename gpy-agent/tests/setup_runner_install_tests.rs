@@ -1,5 +1,5 @@
 //! `gpy setup` installs the one committed runner (`bash/core/g_runner.bash`)
-//! into the Fish and Zsh trees as `core/g_runner.bash`.
+//! once, in the Bash tree; Fish and Zsh find it beside their own trees.
 
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
@@ -73,37 +73,34 @@ fn tree_listing(dir: &Path) -> Vec<String> {
     out
 }
 
-/// Where `gpy setup` puts the runner: Fish keeps its tree under `fish/gpy`,
-/// Zsh under `gpy/zsh`.
-fn installed_runner(config_home: &Path, shell: &str) -> std::path::PathBuf {
-    let tree = if shell == "fish" {
-        config_home.join("fish").join("gpy")
-    } else {
-        config_home.join("gpy").join(shell)
-    };
-    tree.join("core/g_runner.bash")
-}
-
 #[test]
-fn fish_and_zsh_setup_install_the_bash_runner() {
+fn fish_and_zsh_setup_leave_one_runner_in_the_bash_tree() {
     let source_runner = fs::read(repo_root().join(RUNNER)).unwrap();
     for shell in ["fish", "zsh"] {
         let home = TempDir::new().unwrap();
         assert_ok(&setup(home.path(), &["--shell", shell]));
-        let installed = installed_runner(&home.path().join(".config"), shell);
+        let data = home.path().join(".local/share/gpy");
         assert_eq!(
-            fs::read(&installed).unwrap(),
+            fs::read(data.join(RUNNER)).unwrap(),
             source_runner,
             "{shell}: installed runner differs from {RUNNER}"
         );
+        for tree in ["fish", "zsh"] {
+            assert!(
+                !data.join(tree).join("core/g_runner.bash").exists(),
+                "{shell}: the {tree} tree must not carry its own runner"
+            );
+        }
     }
+}
 
+#[test]
+fn a_source_without_the_runner_is_refused_before_anything_is_written() {
     for shell in ["fish", "zsh"] {
         let home = TempDir::new().unwrap();
         assert_ok(&setup(home.path(), &["--shell", shell]));
-        let dir = home.path().join(".config");
-        let before = tree_listing(&dir);
-        let installed = installed_runner(&dir, shell);
+        let before = tree_listing(home.path());
+        let installed = home.path().join(".local/share/gpy").join(RUNNER);
         let runner_before = fs::read(&installed).unwrap();
 
         let source = source_without_runner();
@@ -112,10 +109,14 @@ fn fish_and_zsh_setup_install_the_bash_runner() {
         assert!(!output.status.success(), "{shell}: setup must fail");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("has no bash/core/g_runner.bash; the script tree is incomplete"),
+            stderr.contains("has no bash/core/g_runner.bash"),
             "{shell}: {stderr}"
         );
         assert_eq!(fs::read(&installed).unwrap(), runner_before);
-        assert_eq!(tree_listing(&dir), before, "{shell}: files left behind");
+        assert_eq!(
+            tree_listing(home.path()),
+            before,
+            "{shell}: files left behind"
+        );
     }
 }

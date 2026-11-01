@@ -76,8 +76,10 @@ every character the shell would expand in them (`\`, `$` and backticks for
 Bash; those plus `%` for Zsh) through the `bash-prompt` and `zsh-prompt` output
 formats. The instant-prompt
 cache keeps a separate file per format. The integrations pin the prompt options
-that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
-`prompt_percent` and `no_prompt_bang` in Zsh. The clock's live-time token
+that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst` and
+`prompt_percent` in Zsh. Zsh also doubles each data `!` when the user has
+`prompt_bang` on, so the option keeps its meaning in the user's own prompt
+strings. The clock's live-time token
 (`\D{…}`/`%D{…}`) is the only agent text left for the shell to expand. Fish
 prints its prompt literally and receives the unescaped `ansi` format. In every
 format the agent also strips terminal control characters (ESC, BEL and the other
@@ -149,7 +151,7 @@ keyed by the segment's fixed key plus the current values of its declared
 inputs and `env` names, and expire after `ttl_secs`. A non-zero exit, a
 failed `require_command` or C1 output is cached as hidden; a timeout,
 over-cap output or Ctrl-C is not cached, and a failed trigger drops the
-entry. No cache, relay, marker or
+entry. No cache, marker or
 output file is written, nothing under `/tmp`, and no state is keyed by a PID.
 A repaint (Fish SIGURG, Zsh `reset-prompt`) reuses the cached text; the
 script runs at most once per command.

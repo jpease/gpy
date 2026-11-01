@@ -40,10 +40,9 @@ for name in segment core GPY_BASH_ROOT GPY_ROOT __gpy_bash_root __gpy_zsh_root _
     fi
 done
 
-# Shell-managed names, plus the documented GPY_ tunables constants.zsh seeds
-# and the oneshot status channel; every other added name starts with __.
-allowed=(EPOCHREALTIME EPOCHSECONDS epochtime errnos precmd_functions preexec_functions sysparams zle_bracketed_paste zshexit_functions
-    GPY_EXPECTED_PROTOCOL_VERSION GPY_GIT_INSTANT_CACHE_TTL_SECONDS GPY_IPC_COLD_TIMEOUT_MS GPY_IPC_TIMEOUT_MS GPY_LANGUAGE_CACHE_TTL_SECONDS GPY_SEG_STATUS_ONESHOT)
+# Shell-managed names; every other added name starts with __ (GPY_ names are
+# the user's and are never assigned).
+allowed=(EPOCHREALTIME EPOCHSECONDS epochtime errnos precmd_functions preexec_functions sysparams zle_bracketed_paste zshexit_functions)
 unexpected=()
 for name in ${(f)"$(comm -13 "$tmp/before" "$tmp/after")"}; do
     [[ $name == __* ]] && continue

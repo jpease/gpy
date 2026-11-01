@@ -1,5 +1,5 @@
 function segment_git_detect
-    if set -q GPY_GIT_ENABLED; and test "$GPY_GIT_ENABLED" = 0
+    if test "$__gpy_cfg_git_enabled" = 0
         return 1
     end
 
@@ -62,7 +62,7 @@ function segment_git_render --argument-names is_last is_first
     if __gpy_cache_status_variant $cache_status
         if test -S (__gpy_ipc_endpoint)
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
-            set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS | string collect)
+            set -l synced (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms) | string collect)
             if test -n "$synced"
                 printf '%s' "$synced"
                 set -g __gpy_last_segment_bg (__gpy_git_segment_bg "$root")

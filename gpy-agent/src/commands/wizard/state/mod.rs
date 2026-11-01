@@ -533,22 +533,27 @@ impl WizardState {
         config.language.display = self.selected_language_display;
         config.language.show_versions = self.selected_language_show_versions;
 
-        config.git.enabled = self.is_segment_enabled(BuiltinSegment::Git.as_str());
-        config.language.enabled = self.is_segment_enabled(BuiltinSegment::Language.as_str());
+        // A selected git/language renders even if a deprecated flag was
+        // `false`: set it in memory (the save path removes it from the file).
+        // Deselecting only removes the list entry; the wizard writes no flag.
+        if self.is_segment_enabled(BuiltinSegment::Git.as_str()) {
+            config.git.enabled = true;
+        }
+        if self.is_segment_enabled(BuiltinSegment::Language.as_str()) {
+            config.language.enabled = true;
+        }
 
-        // Keep existing order; a deselected listed git/language stays (its
-        // flag is cleared instead), unoffered names stay, new names append.
+        // Keep existing order; unoffered names stay, new built-ins go to their
+        // canonical position and new plugin names append.
         config.ui.enabled_segments.retain(|name| {
-            !self.available_segments.contains(name)
-                || self.is_segment_enabled(name)
-                || matches!(
-                    BuiltinSegment::try_from(name.as_str()),
-                    Ok(BuiltinSegment::Git | BuiltinSegment::Language)
-                )
+            !self.available_segments.contains(name) || self.is_segment_enabled(name)
         });
         for name in &self.available_segments {
-            if self.is_segment_enabled(name) && !config.ui.enabled_segments.contains(name) {
-                config.ui.enabled_segments.push(name.clone());
+            if self.is_segment_enabled(name) {
+                crate::commands::segments::insert_enabled_segment(
+                    &mut config.ui.enabled_segments,
+                    name,
+                );
             }
         }
     }
@@ -583,7 +588,7 @@ const fn toggled_language_display(current: LanguageDisplay) -> LanguageDisplay {
 fn initial_enabled_segments(config: &Config, available: &[String]) -> BTreeSet<String> {
     available
         .iter()
-        .filter(|segment| crate::commands::segments::is_effectively_enabled(config, segment))
+        .filter(|segment| config.segment_enabled(segment))
         .cloned()
         .collect()
 }

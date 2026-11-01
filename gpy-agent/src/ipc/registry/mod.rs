@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::debug_log;
+use crate::env_config::DEFAULT_THROTTLE_MS;
 use crate::sync_ext::MutexExt;
-use crate::watcher::DEFAULT_THROTTLE_MS;
 
 #[cfg(unix)]
 use nix::sys::signal::kill;

@@ -32,21 +32,18 @@ impl Shell {
         match self {
             Self::Fish => VariableSyntax {
                 prefix: "set -g ",
-                export_prefix: "set -gx ",
                 unset_prefix: "set -e ",
                 separator: " ",
                 quote: "\"",
             },
             Self::Zsh => VariableSyntax {
                 prefix: "typeset -g ",
-                export_prefix: "export ",
                 unset_prefix: "unset ",
                 separator: "=",
                 quote: "\"",
             },
             Self::Bash => VariableSyntax {
                 prefix: "",
-                export_prefix: "export ",
                 unset_prefix: "unset ",
                 separator: "=",
                 quote: "\"",
@@ -101,8 +98,6 @@ impl std::str::FromStr for Shell {
 pub struct VariableSyntax {
     /// Assignment command with its trailing space, e.g. `set -g `; empty for a plain Bash assignment.
     pub prefix: &'static str,
-    /// Exported assignment command with its trailing space, e.g. `export `.
-    pub export_prefix: &'static str,
     /// Erase command with its trailing space, e.g. `unset `.
     pub unset_prefix: &'static str,
     /// Name/value separator.
@@ -118,15 +113,6 @@ impl VariableSyntax {
         format!(
             "{}{}{}{}{}{}",
             self.prefix, name, self.separator, self.quote, value, self.quote
-        )
-    }
-
-    /// Format an exported variable assignment.
-    #[must_use]
-    pub fn format_export(self, name: &str, value: &str) -> String {
-        format!(
-            "{}{}{}{}{}{}",
-            self.export_prefix, name, self.separator, self.quote, value, self.quote
         )
     }
 

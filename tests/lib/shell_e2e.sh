@@ -119,14 +119,13 @@ require_yq() {
 #                           commit, arm the teardown guard (below)
 # shell_e2e_agent_free_begin / shell_e2e_agent_free_end
 #                           source the integration without a daemon starting
-#                           under it, then put PATH back. The theme export
-#                           re-sets GPY_AGENT_ENABLED from config.toml, so an
-#                           env value alone cannot keep the startup start
-#                           away; with no gpy-agent on PATH there is neither
-#                           an export nor an agent to start. Run
+#                           under it, then put PATH back. An exported
+#                           GPY_AGENT_ENABLED=0 wins over config.toml, so
 #                           `GPY_AGENT_ENABLED=0 source ...` between the two
-#                           calls, then export GPY_AGENT_ENABLED=1 for the
-#                           call-time reads.
+#                           calls keeps the startup start away; with no
+#                           gpy-agent on PATH there is neither an export nor
+#                           an agent to start either. Then export
+#                           GPY_AGENT_ENABLED=1 for the call-time reads.
 # shell_e2e_text_config SEGS [ICONS] [supervisor-off]
 #                           write the text-theme config.toml with
 #                           `enabled_segments = [SEGS]`
@@ -286,6 +285,7 @@ shell_e2e_init() {
     chmod -R go-w "$SHELL_E2E_ROOT"
     export HOME="$SHELL_E2E_ROOT/home"
     export XDG_CONFIG_HOME="$SHELL_E2E_ROOT/config"
+    export XDG_DATA_HOME="$SHELL_E2E_ROOT/data"
     export XDG_CACHE_HOME="$SHELL_E2E_ROOT/cache"
     export XDG_RUNTIME_DIR="$SHELL_E2E_ROOT/runtime"
     export GPY_AGENT_SOCKET_PATH="$SHELL_E2E_ROOT/gpy.sock"

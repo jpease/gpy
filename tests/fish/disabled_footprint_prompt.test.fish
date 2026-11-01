@@ -55,18 +55,18 @@ echo "Running from: $repo_root"
 echo ""
 echo "Scenario A: conf.d/gpy_init.fish disabled early-return"
 
-# Build a throwaway "installed" layout so gpy_init.fish's install-dir
-# resolution finds this checkout's fish/ tree, not any real dogfooding
-# install that may exist at ~/.config/fish/gpy on the machine running this
-# test.
+# Build a throwaway "installed" layout: gpy_init.fish finds core/ from its own
+# location, so it is sourced through a symlink in the sandboxed data root that
+# points at this checkout's fish/ tree, not any real dogfooding install that
+# may exist at ~/.local/share/gpy on the machine running this test.
 set -l scenario_a_home (mktemp -d)
-mkdir -p "$scenario_a_home/.config/fish"
-ln -s "$repo_root/fish" "$scenario_a_home/.config/fish/gpy"
+mkdir -p "$scenario_a_home/.local/share/gpy"
+ln -s "$repo_root/fish" "$scenario_a_home/.local/share/gpy/fish"
 
 set -l scenario_a_err (mktemp)
 set -l scenario_a_out (env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
     GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
-    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
+    fish --no-config -i -c 'source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
      2>$scenario_a_err | string collect)
 set -l scenario_a_status $status
 
@@ -92,7 +92,7 @@ end
 set -l scenario_a_trace (mktemp)
 env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
     GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
-    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; set fish_trace 1; fish_prompt >/dev/null' </dev/null 2>$scenario_a_trace >/dev/null
+    fish --no-config -i -c 'source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; set fish_trace 1; fish_prompt >/dev/null' </dev/null 2>$scenario_a_trace >/dev/null
 if grep -Eq -- '^-+> rm' $scenario_a_trace
     fail "disabled-footprint fish_prompt forked rm: "(grep -E -- '^-+> rm' $scenario_a_trace | string collect)
 else
@@ -161,14 +161,15 @@ echo "Scenario D: conf.d/gpy_init.fish install-not-found branch"
 # left ENABLED here — this branch is reached by a broken install, not a user
 # choice.
 set -l scenario_d_home (mktemp -d)
-mkdir -p "$scenario_d_home/.config/fish/gpy/core"
-cp "$repo_root/fish/core/defaults.fish" "$scenario_d_home/.config/fish/gpy/core/defaults.fish"
-cp "$repo_root/fish/core/flags.fish" "$scenario_d_home/.config/fish/gpy/core/flags.fish"
+mkdir -p "$scenario_d_home/.local/share/gpy/fish/core" "$scenario_d_home/.local/share/gpy/fish/conf.d"
+cp "$repo_root/fish/conf.d/gpy_init.fish" "$scenario_d_home/.local/share/gpy/fish/conf.d/gpy_init.fish"
+cp "$repo_root/fish/core/defaults.fish" "$scenario_d_home/.local/share/gpy/fish/core/defaults.fish"
+cp "$repo_root/fish/core/flags.fish" "$scenario_d_home/.local/share/gpy/fish/core/flags.fish"
 
 set -l scenario_d_err (mktemp)
 set -l scenario_d_out (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
-    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
+    fish --no-config -i -c 'source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
      2>$scenario_d_err | string collect)
 set -l scenario_d_status $status
 
@@ -200,7 +201,7 @@ end
 set -l scenario_d_probe (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
     fish --no-config -i -c '
-        source fish/conf.d/gpy_init.fish
+        source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish
         __gpy_agent_enabled; and echo "enabled=[yes]"; or echo "enabled=[no]"
         fish --no-config -c \'echo "child=[$GPY_AGENT_ENABLED]"\'
     ' </dev/null 2>/dev/null | string collect)
@@ -229,15 +230,16 @@ echo "Scenario E: conf.d/gpy_init.fish fallback-mode branch"
 # realistic broken-install case: fish_prompt.fish is definitely installed here
 # (only the source failed), so the autoloaded prompt runs uninitialized.
 set -l scenario_e_home (mktemp -d)
-mkdir -p "$scenario_e_home/.config/fish/gpy/core"
-echo 'return 1' >"$scenario_e_home/.config/fish/gpy/core/init.fish"
-cp "$repo_root/fish/core/defaults.fish" "$scenario_e_home/.config/fish/gpy/core/defaults.fish"
-cp "$repo_root/fish/core/flags.fish" "$scenario_e_home/.config/fish/gpy/core/flags.fish"
+mkdir -p "$scenario_e_home/.local/share/gpy/fish/core" "$scenario_e_home/.local/share/gpy/fish/conf.d"
+cp "$repo_root/fish/conf.d/gpy_init.fish" "$scenario_e_home/.local/share/gpy/fish/conf.d/gpy_init.fish"
+echo 'return 1' >"$scenario_e_home/.local/share/gpy/fish/core/init.fish"
+cp "$repo_root/fish/core/defaults.fish" "$scenario_e_home/.local/share/gpy/fish/core/defaults.fish"
+cp "$repo_root/fish/core/flags.fish" "$scenario_e_home/.local/share/gpy/fish/core/flags.fish"
 
 set -l scenario_e_err (mktemp)
 set -l scenario_e_out (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
-    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
+    fish --no-config -i -c 'source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
      2>$scenario_e_err | string collect)
 set -l scenario_e_status $status
 
@@ -273,7 +275,7 @@ rm -f $scenario_e_err
 set -l scenario_e_probe (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
     fish --no-config -i -c '
-        source fish/conf.d/gpy_init.fish
+        source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish
         __gpy_agent_enabled; and echo "enabled=[yes]"; or echo "enabled=[no]"
         __gpy_supervisor_enabled; and echo "supervisor=[yes]"; or echo "supervisor=[no]"
         fish --no-config -c \'echo "child=[$GPY_AGENT_ENABLED]"\'
@@ -308,9 +310,9 @@ end
 set -l scenario_e_retry (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
     fish --no-config -i -c "
-        source fish/conf.d/gpy_init.fish
-        echo 'return 0' >$scenario_e_home/.config/fish/gpy/core/init.fish
-        source fish/conf.d/gpy_init.fish
+        source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish
+        echo 'return 0' >$scenario_e_home/.local/share/gpy/fish/core/init.fish
+        source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish
         __gpy_agent_enabled; and echo 'retry=[yes]'
     " </dev/null 2>/dev/null | string collect)
 

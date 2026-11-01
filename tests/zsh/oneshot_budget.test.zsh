@@ -6,12 +6,12 @@
 # prompt render, and that budget must be enforced with a plain per-render
 # shell variable (__gpy_oneshot_used) instead of a predictable
 # ${TMPDIR:-/tmp}/.gpy_oneshot_used_$$ marker file. __gpy_render_prompt runs
-# entirely inside the $(...) subshell __gpy_precmd uses to capture $PROMPT,
-# and each segment is itself invoked via a further $(...), so no segment can
-# write back to a parent scope directly -- each oneshot-consuming request
-# function instead signals its use via a distinct exit code
-# (GPY_SEG_STATUS_ONESHOT), which the render loop reads off `$?` and folds
-# into __gpy_oneshot_used, which later segments' subshells inherit by fork.
+# in the interactive shell, but each segment is invoked via a `$(...)`, so no
+# segment can write back to the render's scope directly -- each
+# oneshot-consuming request function instead signals its use via a distinct
+# exit code (__gpy_seg_status_oneshot), which the render loop reads off `$?`
+# and folds into __gpy_oneshot_used, which later segments' subshells inherit
+# by fork.
 #
 # zsh's `(( $+commands[gpy-agent] ))` liveness check (unlike bash's
 # `command -v`) only ever sees PATH-hashed external commands, never shell
@@ -55,18 +55,15 @@ __enabled_segments=(directory git duration)
 typeset -g __duration_threshold_ms=100
 typeset -g __gpy_cmd_duration=5000
 
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 
 oneshot_calls=$(wc -c <"$COUNTER_FILE" | tr -d ' ')
 check "at most one oneshot fork per render" 1 "$oneshot_calls"
 
 # No leftover predictable-name marker/flag file under TMPDIR for this PID.
-# The shell's private relay parent (gpy_relay_<uid>, 0700) is not a marker
-# file, though its name can contain the PID's digits.
 leftover_count=0
 setopt local_options nullglob dotglob
 for f in "${TMPDIR:-/tmp}"/*gpy*_$$*; do
-    [[ "${f:t}" == "gpy_relay_$UID" ]] && continue
     leftover_count=$((leftover_count + 1))
     echo "  leftover: $f"
 done

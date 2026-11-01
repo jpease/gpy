@@ -163,11 +163,10 @@ The installer:
    The shell files come from one archive, `gpy-shell-files.tar.gz`, that the
    installer downloads and checks against its published digest before it
    unpacks anything, so every file it installs is covered by a verified digest.
-4. **Runs `gpy setup`**, which installs the shell files (the binaries go to
-   `~/.local/bin/gpy-agent` and `~/.local/bin/gpy`):
-   - Fish: `~/.config/fish/gpy/`
-   - Zsh: `~/.config/gpy/zsh/`
-   - Bash: `~/.config/gpy/bash/`
+4. **Runs `gpy setup`**, which installs the shell files and the bundled plugins
+   under `$XDG_DATA_HOME/gpy` (default `~/.local/share/gpy`) as `fish/`, `zsh/`,
+   `bash/` and `plugins/` (the binaries go to `~/.local/bin/gpy-agent` and
+   `~/.local/bin/gpy`):
 
    and configures your shell by adding a marked block to:
    - Fish: `~/.config/fish/config.fish`
@@ -223,8 +222,8 @@ files, and ask you to re-run with `GPY_SHELL=fish`, `zsh` or `bash`.
   ```
 
 - **`GPY_NERD_FONT`**: Force the icon style instead of auto-detecting (see
-  [Icons and Nerd Fonts](#icons-and-nerd-fonts)). Accepts `1`/`nerd`, `0`/`none`,
-  or `unknown`.
+  [Icons and Nerd Fonts](#icons-and-nerd-fonts)). Accepts `1`/`true`/`yes`/`on`/`nerd`,
+  `0`/`false`/`no`/`off`/`none`/`ascii`, `unknown` (fonts cannot be detected, so ASCII) or `auto` (detect).
   ```bash
   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | GPY_NERD_FONT=none sh
   ```
@@ -286,7 +285,7 @@ install it, and set it as your terminal's font. Then re-run
 `gpy config set ui.show_icons true` (or reinstall) to switch on the glyphs.
 
 You can also force the choice with the `GPY_NERD_FONT` environment variable
-(`1`/`nerd`, `0`/`none`, or `unknown`) — useful for provisioning scripts and
+(`1`/`true`/`yes`/`on`/`nerd`, `0`/`false`/`no`/`off`/`none`/`ascii`, `unknown`, or `auto` to detect) — useful for provisioning scripts and
 non-interactive installs. A set override is taken as your answer: `gpy-agent
 init` writes `show_icons` from it and never opens the confirmation prompt,
 even when a terminal is attached.
@@ -315,7 +314,7 @@ builds `gpy` and `gpy-agent` from the tagged source tarball, which pulls in
 Rust as a build dependency (the curl installer has prebuilt Intel binaries).
 Either way it installs the Fish, Zsh and Bash files and the bundled `username`
 and `hostname` plugins under Homebrew's `share/gpy/{fish,zsh,bash,plugins}`;
-`gpy setup` copies the plugins to `~/.config/gpy/bundled-plugins`.
+`gpy setup` copies them to `$XDG_DATA_HOME/gpy` (default `~/.local/share/gpy`).
 It depends on none of the three shells and does not modify your dotfiles.
 Finish with:
 
@@ -341,10 +340,15 @@ gpy setup --from <dir>       # script trees and bundled plugins from a checkout 
 
 It:
 
-1. Copies the shell's files to the location the curl installer uses (Fish:
-   `~/.config/fish/gpy/`; Zsh and Bash: `~/.config/gpy/<shell>/`), so the two
-   installers are interchangeable and `gpy uninstall` removes either.
-2. Writes the `gpy` tab completions, generated from the binary you run.
+1. Copies the release layout, the `fish/`, `zsh/` and `bash/` trees and
+   `plugins/`, to the data root, `$XDG_DATA_HOME/gpy` (default
+   `~/.local/share/gpy`; only an absolute `XDG_DATA_HOME` counts), the location
+   the curl installer uses, so the two installers are interchangeable and
+   `gpy uninstall` removes either. Your `config.toml`, themes, palettes and
+   plugins stay in `$XDG_CONFIG_HOME/gpy`.
+2. Writes the `gpy` tab completions, generated from the binary you run, for the
+   shell you chose and for every other shell whose rc file already has the GPY
+   block.
 3. Adds one `# >>> gpy-init >>>` block to your rc file (`config.fish`,
    `${ZDOTDIR:-~}/.zshrc`, or `~/.bashrc` plus a login-shell loader), only if
    it is not already there. For Fish it also links `fish_prompt`, moving any
@@ -358,15 +362,29 @@ It:
    listed on one line. `ui.retire_unmodified_themes = false` turns this off.
 5. Picks an icon style for a fresh install (see [Icons and Nerd Fonts](#icons-and-nerd-fonts)).
 
-It is safe to re-run, and after an upgrade it refreshes the copied files: those
-of the shell it sets up, and those of every other shell set up earlier (their
-rc files are left alone). `gpy doctor` warns about a shell whose files an older
-`gpy` installed. It finds the script trees via `--from`, then `GPY_SHARE_DIR`,
-then the `share/gpy` beside the binary (Homebrew), then the source checkout the
-binary was built in. Given `--from` or `GPY_SHARE_DIR`, as the installers do,
-it also keeps a copy of the trees in that `share/gpy` (`~/.local/share/gpy` for
-the installers), so a later bare `gpy setup` works. Nothing in an rc file is
-touched until the files are in place.
+It is safe to re-run, and after an upgrade it refreshes every tree in the data
+root, but wires only the shell you chose (the other shells' rc files are left
+alone). `gpy doctor` lists the shells whose rc file has the GPY block and warns
+about one whose files an older `gpy` installed. It finds the script trees via
+`--from`, then `GPY_SHARE_DIR`, then the `share/gpy` beside the binary
+(Homebrew), then the source checkout the binary was built in, and last the data
+root itself, so a later bare `gpy setup` works for installer users. When the
+source is the data root (the installers' `~/.local/bin/gpy` finds
+`~/.local/share/gpy` as its `share/gpy`), nothing is copied: setup still writes
+the completions and version stamps and wires the rc file. Nothing in an rc file
+is touched until the files are in place.
+
+**Moving from an earlier layout.** Releases up to 0.8 installed Fish into
+`~/.config/fish/gpy` and Zsh and Bash into `~/.config/gpy/{zsh,bash}`, with the
+bundled plugins in `~/.config/gpy/bundled-plugins`. Run `gpy setup` once after
+upgrading: it rewrites your rc block to the new path, re-points the `fish_prompt`
+link, and prints, for each old directory, `The GPY files in <dir> are no longer
+used; remove them after restarting your open shells: rm -rf '<dir>'`. It never
+deletes them itself, because open shells still load files from them. A block you
+edited by hand is left as it is, and setup tells you the path to change it to.
+Until you run it, the old bundled plugin directory keeps serving `username` and
+`hostname` (a fallback that goes away in a later release). `gpy uninstall`
+removes the old locations too.
 
 ## Verifying Your Download
 
@@ -448,10 +466,12 @@ or change each one.
 
 **For Fish:**
 ```bash
-mkdir -p ~/.config/fish/gpy
-cp -r /tmp/gpy/fish/* ~/.config/fish/gpy/
-# The one script segment runner, which Fish runs in a Bash child
-cp /tmp/gpy/bash/core/g_runner.bash ~/.config/fish/gpy/core/g_runner.bash
+gpy_data="${XDG_DATA_HOME:-$HOME/.local/share}/gpy"
+mkdir -p "$gpy_data/fish" "$gpy_data/bash"
+cp -r /tmp/gpy/fish/* "$gpy_data/fish/"
+# The one script segment runner, which Fish runs in a Bash child, found in the
+# Bash tree beside the Fish tree
+cp -r /tmp/gpy/bash/* "$gpy_data/bash/"
 
 # Add to config.fish. Source conf.d/gpy_init.fish, the same fail-safe
 # entry point the installers use (it checks the layout before loading and
@@ -461,30 +481,33 @@ echo '
 # >>> gpy-init >>>
 # GPY shell integration
 if status is-interactive
-    source ~/.config/fish/gpy/conf.d/gpy_init.fish
+    source ~/.local/share/gpy/fish/conf.d/gpy_init.fish
 end
 # <<< gpy-init <<<' >> ~/.config/fish/config.fish
 
 # Link prompt function
 mkdir -p ~/.config/fish/functions
-ln -sf ~/.config/fish/gpy/functions/fish_prompt.fish ~/.config/fish/functions/fish_prompt.fish
+ln -sf ~/.local/share/gpy/fish/functions/fish_prompt.fish ~/.config/fish/functions/fish_prompt.fish
 ```
 
 **For Zsh:**
 ```bash
-mkdir -p ~/.config/gpy/zsh
-cp -r /tmp/gpy/zsh/* ~/.config/gpy/zsh/
-# The one script segment runner, which Zsh runs in a Bash child
-cp /tmp/gpy/bash/core/g_runner.bash ~/.config/gpy/zsh/core/g_runner.bash
+gpy_data="${XDG_DATA_HOME:-$HOME/.local/share}/gpy"
+mkdir -p "$gpy_data/zsh" "$gpy_data/bash"
+cp -r /tmp/gpy/zsh/* "$gpy_data/zsh/"
+# The one script segment runner, which Zsh runs in a Bash child, found in the
+# Bash tree beside the Zsh tree
+cp -r /tmp/gpy/bash/* "$gpy_data/bash/"
 
 # Add to .zshrc (the marker lines are what `gpy uninstall` removes)
-printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
+printf '\n# >>> gpy-init >>>\n# GPY shell integration\nsource ~/.local/share/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
 ```
 
 **For Bash:**
 ```bash
-mkdir -p ~/.config/gpy/bash
-cp -r /tmp/gpy/bash/* ~/.config/gpy/bash/
+gpy_data="${XDG_DATA_HOME:-$HOME/.local/share}/gpy"
+mkdir -p "$gpy_data/bash"
+cp -r /tmp/gpy/bash/* "$gpy_data/bash/"
 
 # Add to .bashrc (the marker lines are what `gpy uninstall` removes)
 cat >> ~/.bashrc <<'EOF'
@@ -492,7 +515,7 @@ cat >> ~/.bashrc <<'EOF'
 # >>> gpy-init >>>
 # GPY shell integration
 case $- in
-    *i*) source ~/.config/gpy/bash/gpy.bash ;;
+    *i*) source ~/.local/share/gpy/bash/gpy.bash ;;
 esac
 # <<< gpy-init <<<
 EOF
@@ -710,8 +733,10 @@ To remove GPY manually instead, this is everything `gpy uninstall` touches:
 ```bash
 gpy-agent stop
 rm -f ~/.local/bin/gpy-agent ~/.local/bin/gpy ~/.local/bin/gpy-agent.backup.* ~/.local/bin/gpy.backup.*
-rm -rf ~/.config/fish/gpy ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish
-rm -rf ~/.config/gpy/bash ~/.config/gpy/zsh ~/.config/gpy/bundled-plugins   # Zsh/Bash integrations and completions
+rm -rf ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/gpy"   # shell files, completions and bundled plugins
+# Older layouts (releases up to 0.8) also left these:
+rm -rf ~/.config/fish/gpy ~/.config/gpy/bash ~/.config/gpy/zsh ~/.config/gpy/bundled-plugins
 # rm -rf ~/.config/gpy  # your config, themes, palettes and plugins are kept unless you delete them
 rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-~/.cache}/gpy"          # cache; socket, shells/
 # Remove the "# >>> gpy-init >>>" ... "# <<< gpy-init <<<" block from

@@ -263,7 +263,7 @@ printf '%s\n' \
     "# >>> gpy-init >>>" \
     "# GPY Prompt Enhancement" \
     "if status is-interactive" \
-    "    source ~/.config/fish/gpy/conf.d/gpy_init.fish" \
+    "    source ~/.local/share/gpy/fish/conf.d/gpy_init.fish" \
     end \
     "# <<< gpy-init <<<" \
     "set -gx ANOTHER_TOOL after_gpy" >"$rc_file_fish"
@@ -290,7 +290,7 @@ printf '%s\n' \
     "" \
     "# >>> gpy-init >>>" \
     "# GPY Prompt Enhancement" \
-    "source ~/.config/gpy/zsh/gpy.zsh" \
+    "source ~/.local/share/gpy/zsh/gpy.zsh" \
     "# <<< gpy-init <<<" \
     "export ANOTHER_TOOL=after_gpy" >"$rc_file_zsh"
 
@@ -332,10 +332,11 @@ end
 set -l home_e (mktemp -d)
 set -l xdg_config_e "$home_e/xdg-config"
 set -l xdg_cache_e "$home_e/xdg-cache"
+set -l xdg_data_e "$home_e/xdg-data"
 set -l fake_bin_e (mktemp -d)
 __gpy_write_fake_curl "$fake_bin_e"
 
-set -l env_prefix_e HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e GPY_SHELL=fish GPY_VERSION=test-version PATH="$fake_bin_e"":$PATH"
+set -l env_prefix_e HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_DATA_HOME=$xdg_data_e XDG_CACHE_HOME=$xdg_cache_e GPY_SHELL=fish GPY_VERSION=test-version PATH="$fake_bin_e"":$PATH"
 
 set -l out_e (env $env_prefix_e sh install-oneline.sh 2>&1)
 set -l status_e $status
@@ -349,10 +350,15 @@ else
         fail "install-oneline.sh (fish, XDG_CONFIG_HOME): config.fish missing/unmarked under \$XDG_CONFIG_HOME/fish"
     end
 
-    if test -d "$xdg_config_e/fish/gpy/core"
-        pass "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files under \$XDG_CONFIG_HOME/fish/gpy"
+    if test -d "$xdg_data_e/gpy/fish/core"
+        pass "install-oneline.sh (fish, XDG_DATA_HOME): shell files under \$XDG_DATA_HOME/gpy/fish"
     else
-        fail "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files missing under \$XDG_CONFIG_HOME/fish/gpy"
+        fail "install-oneline.sh (fish, XDG_DATA_HOME): shell files missing under \$XDG_DATA_HOME/gpy/fish"
+    end
+    if test -e "$xdg_config_e/fish/gpy"
+        fail "install-oneline.sh (fish, XDG_CONFIG_HOME): shell files written under \$XDG_CONFIG_HOME/fish/gpy"
+    else
+        pass "install-oneline.sh (fish, XDG_CONFIG_HOME): nothing under \$XDG_CONFIG_HOME/fish/gpy"
     end
 
     __gpy_assert_no_default_config_dir "install-oneline.sh (fish, XDG_CONFIG_HOME)" "$home_e"
@@ -366,12 +372,17 @@ else
 
     # Uninstall must target the same XDG-resolved fish config dir, and the
     # same XDG-resolved agent config/cache dirs.
-    env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
+    env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_DATA_HOME=$xdg_data_e XDG_CACHE_HOME=$xdg_cache_e $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
 
-    if test -d "$xdg_config_e/fish/gpy"
-        fail "gpy uninstall (XDG_CONFIG_HOME): fish/gpy still present after uninstall"
+    if test -d "$xdg_data_e/gpy"
+        fail "gpy uninstall (XDG_DATA_HOME): \$XDG_DATA_HOME/gpy still present after uninstall"
     else
-        pass "gpy uninstall (XDG_CONFIG_HOME): fish/gpy removed"
+        pass "gpy uninstall (XDG_DATA_HOME): \$XDG_DATA_HOME/gpy removed"
+    end
+    if test -d "$xdg_config_e/fish"
+        pass "gpy uninstall (XDG_CONFIG_HOME): the Fish config directory is kept"
+    else
+        fail "gpy uninstall (XDG_CONFIG_HOME): the Fish config directory was removed"
     end
 
     if test -d "$xdg_config_e/gpy"
@@ -393,10 +404,11 @@ rm -rf "$home_e" "$fake_bin_e"
 set -l home_f (mktemp -d)
 set -l xdg_config_f "$home_f/xdg-config"
 set -l xdg_cache_f "$home_f/xdg-cache"
+set -l xdg_data_f "$home_f/xdg-data"
 set -l fake_bin_f (mktemp -d)
 __gpy_write_fake_curl "$fake_bin_f"
 
-set -l env_prefix_f HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_CACHE_HOME=$xdg_cache_f GPY_SHELL=bash GPY_VERSION=test-version PATH="$fake_bin_f"":$PATH"
+set -l env_prefix_f HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_DATA_HOME=$xdg_data_f XDG_CACHE_HOME=$xdg_cache_f GPY_SHELL=bash GPY_VERSION=test-version PATH="$fake_bin_f"":$PATH"
 
 set -l out_f (env $env_prefix_f sh install-oneline.sh 2>&1)
 set -l status_f $status
@@ -404,10 +416,10 @@ set -l status_f $status
 if test $status_f -ne 0
     fail "install-oneline.sh (bash, XDG_CONFIG_HOME) exited $status_f: $out_f"
 else
-    if test -d "$xdg_config_f/gpy/bash/core"
-        pass "install-oneline.sh (bash, XDG_CONFIG_HOME): shell files under \$XDG_CONFIG_HOME/gpy/bash"
+    if test -d "$xdg_data_f/gpy/bash/core"
+        pass "install-oneline.sh (bash, XDG_DATA_HOME): shell files under \$XDG_DATA_HOME/gpy/bash"
     else
-        fail "install-oneline.sh (bash, XDG_CONFIG_HOME): shell files missing under \$XDG_CONFIG_HOME/gpy/bash"
+        fail "install-oneline.sh (bash, XDG_DATA_HOME): shell files missing under \$XDG_DATA_HOME/gpy/bash"
     end
 
     __gpy_assert_no_default_config_dir "install-oneline.sh (bash, XDG_CONFIG_HOME)" "$home_f"
@@ -419,12 +431,17 @@ else
     mkdir -p "$xdg_config_f/gpy" "$xdg_cache_f/gpy"
     touch "$xdg_config_f/gpy/config.toml" "$xdg_cache_f/gpy/agent.log"
 
-    env HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_CACHE_HOME=$xdg_cache_f $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
+    env HOME=$home_f XDG_CONFIG_HOME=$xdg_config_f XDG_DATA_HOME=$xdg_data_f XDG_CACHE_HOME=$xdg_cache_f $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
 
     if test -d "$xdg_config_f/gpy"
         fail "gpy uninstall (XDG): \$XDG_CONFIG_HOME/gpy still present after uninstall"
     else
-        pass "gpy uninstall (XDG): \$XDG_CONFIG_HOME/gpy removed (shell files and config.toml)"
+        pass "gpy uninstall (XDG): \$XDG_CONFIG_HOME/gpy removed (config.toml)"
+    end
+    if test -d "$xdg_data_f/gpy"
+        fail "gpy uninstall (XDG): \$XDG_DATA_HOME/gpy still present after uninstall"
+    else
+        pass "gpy uninstall (XDG): \$XDG_DATA_HOME/gpy removed (shell files)"
     end
 
     if test -d "$xdg_cache_f/gpy"
@@ -443,9 +460,10 @@ set -l h_multi (mktemp -d)
 set -l xdg_c_multi "$h_multi/xdg-config"
 set -l xdg_cache_multi "$h_multi/xdg-cache"
 set -l xdg_rt_multi "$h_multi/xdg-runtime"
-mkdir -p "$xdg_c_multi/gpy/bash" "$xdg_c_multi/gpy/zsh" "$xdg_cache_multi/gpy" "$xdg_rt_multi"
-set -l bash_entry "$xdg_c_multi/gpy/bash/gpy.bash"
-set -l zsh_entry "$xdg_c_multi/gpy/zsh/gpy.zsh"
+set -l xdg_d_multi "$h_multi/xdg-data"
+mkdir -p "$xdg_d_multi/gpy/bash" "$xdg_d_multi/gpy/zsh" "$xdg_cache_multi/gpy" "$xdg_rt_multi"
+set -l bash_entry "$xdg_d_multi/gpy/bash/gpy.bash"
+set -l zsh_entry "$xdg_d_multi/gpy/zsh/gpy.zsh"
 printf '%s\n' "# bash entry" >"$bash_entry"
 printf '%s\n' "# zsh entry" >"$zsh_entry"
 
@@ -454,7 +472,7 @@ set -l zshrc "$h_multi/.zshrc"
 printf '%s\n' "export PRE_BASH=1" "" "# >>> gpy-init >>>" "source \"$bash_entry\"" "# <<< gpy-init <<<" "export POST_BASH=1" >"$bashrc"
 printf '%s\n' "export PRE_ZSH=1" "" "# >>> gpy-init >>>" "source \"$zsh_entry\"" "# <<< gpy-init <<<" "export POST_ZSH=1" >"$zshrc"
 
-env HOME=$h_multi XDG_CONFIG_HOME=$xdg_c_multi XDG_CACHE_HOME=$xdg_cache_multi XDG_RUNTIME_DIR=$xdg_rt_multi GPY_CONFIG_PATH="$xdg_c_multi/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_multi/gpy.sock" $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
+env HOME=$h_multi XDG_CONFIG_HOME=$xdg_c_multi XDG_DATA_HOME=$xdg_d_multi XDG_CACHE_HOME=$xdg_cache_multi XDG_RUNTIME_DIR=$xdg_rt_multi GPY_CONFIG_PATH="$xdg_c_multi/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_multi/gpy.sock" $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
 
 if not grep -qF gpy-init "$bashrc"; and not grep -qF gpy-init "$zshrc"
     pass "gpy uninstall: neither rc keeps gpy-init block"
@@ -468,6 +486,11 @@ printf '%s\n' "export PRE_BASH=1" "export POST_BASH=1" >"$exp_b"
 printf '%s\n' "export PRE_ZSH=1" "export POST_ZSH=1" >"$exp_z"
 __gpy_assert_byte_identical "gpy uninstall: bashrc bytes preserved" "$exp_b" "$bashrc"
 __gpy_assert_byte_identical "gpy uninstall: zshrc bytes preserved" "$exp_z" "$zshrc"
+if not test -e "$xdg_d_multi/gpy"
+    pass "gpy uninstall: the data root is removed"
+else
+    fail "gpy uninstall: the data root is still present"
+end
 rm -rf "$h_multi"
 
 # --- 2. Fish + Bash + Zsh installed: one global uninstall cleans them all ---
@@ -476,7 +499,8 @@ set -l h_all (mktemp -d)
 set -l xdg_c_all "$h_all/xdg-config"
 set -l xdg_cache_all "$h_all/xdg-cache"
 set -l xdg_rt_all "$h_all/xdg-runtime"
-mkdir -p "$xdg_c_all/gpy/bash" "$xdg_c_all/gpy/zsh" "$xdg_c_all/fish/functions" "$xdg_c_all/fish/conf.d" "$xdg_c_all/fish/completions" "$xdg_c_all/fish/gpy/functions" "$xdg_cache_all/gpy" "$xdg_rt_all"
+set -l xdg_d_all "$h_all/xdg-data"
+mkdir -p "$xdg_c_all/gpy/bash" "$xdg_c_all/gpy/zsh" "$xdg_c_all/fish/functions" "$xdg_c_all/fish/conf.d" "$xdg_c_all/fish/completions" "$xdg_d_all/gpy/fish/functions" "$xdg_cache_all/gpy" "$xdg_rt_all"
 
 # Shared entries and rc files
 set -l bashrc_all "$h_all/.bashrc"
@@ -490,7 +514,7 @@ printf '%s\n' "alias z=1" "" "# >>> gpy-init >>>" "source gpy.zsh" "# <<< gpy-in
 printf '%s\n' "set -g f 1" "" "# >>> gpy-init >>>" "source gpy.fish" "# <<< gpy-init <<<" "set -g f_post 1" >"$fishrc_all"
 
 # Fish integration files
-set -l gpy_prompt_target "$xdg_c_all/fish/gpy/functions/fish_prompt.fish"
+set -l gpy_prompt_target "$xdg_d_all/gpy/fish/functions/fish_prompt.fish"
 printf '%s\n' "function fish_prompt; echo gpy; end" >"$gpy_prompt_target"
 ln -s "$gpy_prompt_target" "$xdg_c_all/fish/functions/fish_prompt.fish"
 set -l fish_backup "$xdg_c_all/fish/functions/fish_prompt.fish.backup.20260101_000000"
@@ -503,7 +527,7 @@ printf '%s\n' "# gpy comp" >"$gpy_comp_fish"
 set -l custom_comp "$xdg_c_all/fish/completions/other.fish"
 printf '%s\n' "# other comp" >"$custom_comp"
 
-env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
+env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_DATA_HOME=$xdg_d_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" $__gpy_real_gpy uninstall --yes --purge-config >/dev/null 2>&1
 
 # Verify all 4 rc files cleaned of gpy-init
 set -l rcs_cleaned 1

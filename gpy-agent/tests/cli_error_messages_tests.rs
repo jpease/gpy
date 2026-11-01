@@ -308,3 +308,23 @@ fn broken_user_theme_without_a_builtin_has_no_override_hint() {
         );
     }
 }
+
+#[test]
+fn read_only_list_key_names_the_command_to_use() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+
+    for (key, needle) in [
+        ("ui.enabled_segments", "gpy enable"),
+        ("git.skip_paths", "config.toml"),
+        ("language.enabled_languages", "config.toml"),
+    ] {
+        let result = env
+            .run_gpy(&["config", "set", key, "x"])
+            .expect("spawn gpy");
+        assert_eq!(result.exit_code, 1_i32, "{key}: {result:?}");
+        assert!(
+            result.stderr.contains("is read-only") && result.stderr.contains(needle),
+            "{key}: the error names `{needle}`: {result:?}"
+        );
+    }
+}

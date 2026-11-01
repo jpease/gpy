@@ -78,24 +78,24 @@ for cmd in $prompt_cmds
 end
 
 # Test 4: `gpy-prompt-debug validate` exits 0 on a sandboxed install whose
-# XDG_CONFIG_HOME differs from $HOME/.config, and exits 1 once a file it checks
+# XDG_DATA_HOME differs from $HOME/.local/share, and exits 1 once a file it checks
 # is gone: a core file init.fish sources from its list (not only flags.fish),
 # the script segment runner or flags.fish. `vars` shows the active theme and
 # `benchmark` prints `name: <N>ms` lines without braces.
 echo ""
-echo "Test 4: gpy-prompt-debug in an XDG_CONFIG_HOME sandbox"
+echo "Test 4: gpy-prompt-debug in an XDG_DATA_HOME sandbox"
 set -l sandbox (mktemp -d)
-mkdir -p $sandbox/home $sandbox/xdg/fish $sandbox/run
-cp -R $repo_root/fish $sandbox/xdg/fish/gpy
-# `gpy setup` installs the script segment runner beside the core files.
-cp $repo_root/bash/core/g_runner.bash $sandbox/xdg/fish/gpy/core/g_runner.bash
+mkdir -p $sandbox/home $sandbox/xdg/fish $sandbox/data/gpy/bash/core $sandbox/run
+cp -R $repo_root/fish $sandbox/data/gpy/fish
+# `gpy setup` installs the script segment runner in the Bash tree beside the Fish tree.
+cp $repo_root/bash/core/g_runner.bash $sandbox/data/gpy/bash/core/g_runner.bash
 set -l debug_out (env -i \
     "PATH=$repo_root/gpy-agent/target/debug:/usr/bin:/bin:"(dirname (command -s fish)) \
-    "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/xdg" \
+    "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/xdg" "XDG_DATA_HOME=$sandbox/data" \
     "XDG_CACHE_HOME=$sandbox/cache" "XDG_RUNTIME_DIR=$sandbox/run" \
     "TMPDIR=$sandbox" GPY_AGENT_SUPERVISOR_ENABLED=0 \
-    fish --no-config -c 'source $XDG_CONFIG_HOME/fish/gpy/core/init.fish
-        set -l core $XDG_CONFIG_HOME/fish/gpy/core
+    fish --no-config -c 'source $XDG_DATA_HOME/gpy/fish/core/init.fish
+        set -l core $XDG_DATA_HOME/gpy/fish/core
         gpy-prompt-debug validate >/dev/null 2>&1
         echo "validate_rc=$status"
         gpy-prompt-debug vars 2>&1
@@ -106,7 +106,7 @@ set -l debug_out (env -i \
         gpy-prompt-debug validate >/dev/null 2>&1
         echo "no_supervisor_rc=$status"
         command mv $core/supervisor.fish.gone $core/supervisor.fish
-        command rm $core/g_runner.bash
+        command rm $XDG_DATA_HOME/gpy/bash/core/g_runner.bash
         gpy-prompt-debug validate >/dev/null 2>&1
         echo "no_runner_rc=$status"
         command rm $core/flags.fish

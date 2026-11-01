@@ -15,8 +15,19 @@ static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
 fn debug_log_path() -> Option<&'static str> {
     DEBUG_PATH
         .get_or_init(|| {
-            std::env::var("GPY_DEBUG_LOG").ok().map(|value| {
-                crate::paths::absolutize(Path::new(&value))
+            // Stderr only: `debug::warn` would re-enter this initialiser.
+            if crate::env_config::DEBUG_LOG
+                .raw()
+                .is_some_and(|value| value.is_empty())
+            {
+                crate::env_config::warn_once(
+                    "GPY_DEBUG_LOG",
+                    "GPY_DEBUG_LOG is empty, so debug logging is off; set it to a file path",
+                    false,
+                );
+            }
+            crate::env_config::DEBUG_LOG.path().map(|value| {
+                crate::paths::absolutize(&value)
                     .to_string_lossy()
                     .into_owned()
             })

@@ -1,24 +1,25 @@
 //! Which config changes require shells to redraw after a reload.
 
 use super::AgentContext;
-use crate::config::{Config, GitSettings};
+use crate::config::Config;
 use crate::theme::{GitState, ThemeConfig};
 use crate::watcher::{RepoFilter, WatchRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
-/// Repository filter for the watcher: a repository under a `git.skip_paths`
-/// entry is not watched. Holds its own copy of the settings, so installing a
-/// filter never borrows the config.
-pub(crate) fn git_repo_filter(git: &GitSettings) -> RepoFilter {
-    let settings = git.clone();
-    Arc::new(move |root: &Path| !settings.is_path_skipped(root))
+/// Repository filter for the watcher: a repository is watched only when
+/// [`Config::git_enabled_for`] allows it (`git` listed, not under a
+/// `git.skip_paths` entry). Holds its own copy of the config, so installing a
+/// filter never borrows it.
+pub(crate) fn git_repo_filter(config: &Config) -> RepoFilter {
+    let owned = config.clone();
+    Arc::new(move |root: &Path| owned.git_enabled_for(root))
 }
 
 /// Apply the watcher-relevant git settings to `registry`.
-pub(super) fn apply_watch_settings(registry: &WatchRegistry, git: &GitSettings) {
-    registry.set_worktree_enabled(git.watch_worktree);
-    registry.set_repo_filter(git_repo_filter(git));
+pub(super) fn apply_watch_settings(registry: &WatchRegistry, config: &Config) {
+    registry.set_worktree_enabled(config.git.watch_worktree);
+    registry.set_repo_filter(git_repo_filter(config));
 }
 
 /// Background the git pill of the repository at `root` is drawn with, the

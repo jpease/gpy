@@ -40,7 +40,7 @@ fi
 echo "Checking render..."
 # Mock __enabled_segments to avoid calling git/ipc in test without agent
 __enabled_segments=(directory)
-PROMPT=$(__gpy_render_prompt)
+__gpy_render_prompt; PROMPT=$__gpy_render_out
 echo "Prompt rendered: $PROMPT"
 
 if [[ -z "$PROMPT" ]]; then

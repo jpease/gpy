@@ -36,7 +36,7 @@ chmod 755 "$G_SANDBOX" "$G_PLUGIN" "$G_PLUGIN/bin"
 
 source "$ROOT/zsh/gpy.zsh"
 __gpy_add_newline=0 __gpy_two_line=0
-GPY_UI_TRANSIENT_PROMPT=0
+__gpy_cfg_transient_prompt=0
 # Zsh runs preexec hooks before every line of a script too; the tests call
 # __gpy_preexec themselves, where a real shell would.
 add-zsh-hook -d preexec __gpy_preexec

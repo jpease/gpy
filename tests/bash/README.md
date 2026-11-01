@@ -58,8 +58,8 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
 - Tests that must not start an agent source `tests/lib/supervisor_off.bash`,
   write `[agent] enabled = false` into their own sandbox `config.toml`, or
   source with no `gpy-agent` on `PATH` (`shell_e2e_agent_free_begin` /
-  `shell_e2e_agent_free_end`). Exporting `GPY_AGENT_ENABLED=0` alone is not
-  enough: the theme export re-sets it from `config.toml`.
+  `shell_e2e_agent_free_end`). An exported `GPY_AGENT_ENABLED=0` wins over
+  `config.toml`, so it is enough on its own.
 
 ### The live-daemon harness
 

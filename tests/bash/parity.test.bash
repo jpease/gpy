@@ -244,7 +244,11 @@ rm -f "$cache_dir/$pb_key.git.none.bash"
 # Request payloads must carry prev_bg. The stub writes to a file because senders run
 # in command substitution, and echoes a response to skip the oneshot fallback.
 __gpy_capture_file=$(mktemp)
-__gpy_send_json() { printf '%s' "$1" > "$__gpy_capture_file"; echo "stubbed-response"; return 0; }
+__gpy_send_json() {
+    printf '%s' "$1" > "$__gpy_capture_file"
+    if [[ -n "${3:-}" ]]; then printf -v "$3" '%s' "stubbed-response"; else echo "stubbed-response"; fi
+    return 0
+}
 
 assert_payload_has_prev_bg() {
     local label="$1" expected="$2" captured
@@ -375,7 +379,7 @@ if [[ -x "$AGENT_BIN" ]]; then
     git_bg_seen="$(__gpy_run_git_bg_case 0)"
     [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:red" ]] || { echo "FAIL: language prev_bg is not the recorded git colour ($git_bg_seen)"; exit 1; }
     pass "segment after git receives the recorded git background"
-    git_bg_seen="$(__gpy_run_git_bg_case "$GPY_SEG_STATUS_ONESHOT")"
+    git_bg_seen="$(__gpy_run_git_bg_case "$__gpy_seg_status_oneshot")"
     clean_bg="${git_bg_seen##*clean:}"
     [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:$clean_bg" ]] || { echo "FAIL: agent-free git render did not use the clean colour ($git_bg_seen)"; exit 1; }
     pass "agent-free git render leaves the clean background for the next segment"

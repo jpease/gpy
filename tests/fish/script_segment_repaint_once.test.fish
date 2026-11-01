@@ -32,6 +32,7 @@ mkdir -p $home/.cache/gpy $home/.config $plugin
 printf '#!/bin/sh\necho run >>%s\necho SEGMENT-OK\n' (string escape -- $cnt) >$plugin/demo.sh
 chmod 755 $plugin/demo.sh
 begin
+    echo 'set -g __gpy_export_version "1"'
     echo 'set -g __gpy_script_sh /bin/sh'
     for line in "name demo" "root $plugin" "command $plugin/demo.sh" "ttl 0" "timeout 500" "scope session" "key 4:test4:demo"
         set -l kv (string split -m1 ' ' -- $line)

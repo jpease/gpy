@@ -178,7 +178,7 @@ after-render=5" "$(zsh_segments)"
 
 # An export that sets the list empty stays empty (the sentinel line is the
 # export's first line).
-printf '%s\n' 'set -g __gpy_export_version 1' 'set -g __enabled_segments' >"$seg_tmp/cache/gpy/theme-export.fish"
+printf '%s\n' 'set -g __gpy_export_version "1"' 'set -g __enabled_segments' >"$seg_tmp/cache/gpy/theme-export.fish"
 printf '%s\n' '__gpy_export_version="1"' '__enabled_segments=""' >"$seg_tmp/cache/gpy/theme-export.bash"
 printf '%s\n' 'typeset -g __gpy_export_version="1"' 'typeset -g -a __enabled_segments=()' >"$seg_tmp/cache/gpy/theme-export.zsh"
 check "fish: an export with an empty list stays empty" "" "$(fish_segments)"

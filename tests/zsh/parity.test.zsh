@@ -7,8 +7,8 @@ ROOT=${0:a:h:h:h}
 cd "$ROOT"
 
 # Hermetic when run directly: the developer's theme export
-# ($XDG_CACHE_HOME/gpy/theme-export.zsh) and exported GPY_* settings (e.g.
-# GPY_LANGUAGE_ENABLED=0) would otherwise override the built-in defaults
+# ($XDG_CACHE_HOME/gpy/theme-export.zsh) and user-exported GPY_* settings (e.g.
+# GPY_AGENT_ENABLED=0) would otherwise override the built-in defaults
 # these checks assert on. quality-check.sh sets its own XDG dirs; this makes
 # a direct `zsh tests/zsh/parity.test.zsh` behave the same.
 for gpy_var in ${(k)parameters[(I)GPY_*]}; do
@@ -224,7 +224,7 @@ __icon_prompt="❯"
 __gpy_add_newline=0
 
 __gpy_two_line=0
-single_prompt=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; single_prompt=$__gpy_render_out
 if [[ "$single_prompt" == *$'\n'* ]]; then
     echo "FAIL: single-line prompt (two_line=0) unexpectedly contains a newline"
     exit 1
@@ -232,7 +232,7 @@ fi
 pass "single-line prompt has no newline (no regression)"
 
 __gpy_two_line=1
-two_line_prompt=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; two_line_prompt=$__gpy_render_out
 if [[ "$two_line_prompt" != *$'\n'* ]]; then
     echo "FAIL: two-line prompt (two_line=1) missing newline before character"
     exit 1
@@ -370,7 +370,7 @@ __gpy_segment_directory_detect() { return 0; }
 __gpy_segment_git_detect() { return 0; }
 __gpy_request_character() { echo ""; }   # avoid socket on the character path
 __enabled_segments=(directory git)
-__gpy_render_prompt 0 >/dev/null
+__gpy_render_prompt 0
 seen_dir="$(sed -n '1p' "$__gpy_seen_file")"
 seen_git="$(sed -n '2p' "$__gpy_seen_file")"
 rm -f "$__gpy_seen_file"
@@ -404,7 +404,7 @@ if [[ -x "$AGENT_BIN" ]]; then
             __gpy_segment_language_omit() { return 1; }
             __gpy_request_character() { echo ""; }
             __enabled_segments=(directory git language)
-            __gpy_render_prompt 0 >/dev/null
+            __gpy_render_prompt 0
             echo "clean:${__color_git_clean_bg:-}" >> "$seen_file"
         )
         cat "$seen_file"
@@ -413,7 +413,7 @@ if [[ -x "$AGENT_BIN" ]]; then
     git_bg_seen="$(__gpy_run_git_bg_case 0)"
     [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:red" ]] || { echo "FAIL: language prev_bg is not the recorded git colour ($git_bg_seen)"; exit 1; }
     pass "segment after git receives the recorded git background"
-    git_bg_seen="$(__gpy_run_git_bg_case "$GPY_SEG_STATUS_ONESHOT")"
+    git_bg_seen="$(__gpy_run_git_bg_case "$__gpy_seg_status_oneshot")"
     clean_bg="${git_bg_seen##*clean:}"
     [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:$clean_bg" ]] || { echo "FAIL: agent-free git render did not use the clean colour ($git_bg_seen)"; exit 1; }
     pass "agent-free git render leaves the clean background for the next segment"

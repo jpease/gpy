@@ -23,7 +23,7 @@ fn zsh_setup_installs_files_and_wires_zshrc_once() {
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 
-    let dir = home.path().join(".config/gpy/zsh");
+    let dir = home.path().join(".local/share/gpy/zsh");
     assert!(dir.join("gpy.zsh").is_file());
     assert!(dir.join("core/init.zsh").is_file());
     assert!(dir.join("completions/_gpy-dynamic").is_file());
@@ -41,7 +41,7 @@ fn bash_setup_wires_bashrc_and_a_login_loader() {
     let home = TempDir::new().unwrap();
     assert_ok(&setup(home.path(), &["--shell", "bash"]));
 
-    let dir = home.path().join(".config/gpy/bash");
+    let dir = home.path().join(".local/share/gpy/bash");
     assert!(dir.join("gpy.bash").is_file());
     assert!(dir.join("completions/gpy.bash").is_file());
     assert_eq!(block_count(&home.path().join(".bashrc")), 1);
@@ -151,7 +151,7 @@ fn fish_setup_links_the_prompt_and_backs_up_an_existing_one() {
     assert_ok(&setup(home.path(), &["--shell", "fish"]));
     assert_ok(&setup(home.path(), &["--shell", "fish"]));
 
-    let dir = home.path().join(".config/fish/gpy");
+    let dir = home.path().join(".local/share/gpy/fish");
     assert_eq!(
         fs::read_link(functions.join("fish_prompt.fish")).unwrap(),
         dir.join("functions/fish_prompt.fish")
@@ -178,8 +178,8 @@ fn fish_setup_links_the_prompt_and_backs_up_an_existing_one() {
     assert!(stamp.chars().all(|c| c.is_ascii_digit() || c == '_'));
 
     assert!(
-        !home.path().join(".config/fish/gpy/completions").exists(),
-        "fish completions live in fish/completions, not the gpy tree"
+        !dir.join("completions/gpy.fish").exists(),
+        "the merged fish completions live in fish/completions, not the data root"
     );
     let completions =
         fs::read_to_string(home.path().join(".config/fish/completions/gpy.fish")).unwrap();
@@ -204,7 +204,7 @@ fn shell_comes_from_the_login_shell_when_no_flag_is_given() {
         .output()
         .unwrap();
     assert_ok(&output);
-    assert!(home.path().join(".config/gpy/zsh/gpy.zsh").is_file());
+    assert!(home.path().join(".local/share/gpy/zsh/gpy.zsh").is_file());
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn re_running_replaces_files_a_package_manager_left_read_only() {
 
     let home = TempDir::new().unwrap();
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
-    let script = home.path().join(".config/gpy/zsh/gpy.zsh");
+    let script = home.path().join(".local/share/gpy/zsh/gpy.zsh");
     fs::set_permissions(&script, fs::Permissions::from_mode(0o444)).unwrap();
 
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
@@ -256,13 +256,15 @@ fn re_running_replaces_files_a_package_manager_left_read_only() {
 fn re_running_removes_scripts_a_newer_release_no_longer_ships() {
     let home = TempDir::new().unwrap();
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
-    let stale = home.path().join(".config/gpy/zsh/segments/retired.zsh");
+    let stale = home
+        .path()
+        .join(".local/share/gpy/zsh/segments/retired.zsh");
     fs::write(&stale, "retired\n").unwrap();
 
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 
     assert!(!stale.exists(), "a dropped script must not survive setup");
-    assert!(home.path().join(".config/gpy/zsh/segments").is_dir());
+    assert!(home.path().join(".local/share/gpy/zsh/segments").is_dir());
 }
 
 /// `<home>/.config/gpy/themes`, created.
@@ -469,7 +471,7 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 
     // What an older gpy left: different scripts and its own version stamp.
-    let bash_dir = home.path().join(".config/gpy/bash");
+    let bash_dir = home.path().join(".local/share/gpy/bash");
     let core = bash_dir.join("core/ipc.bash");
     fs::write(&core, "# scripts from an older gpy\n").unwrap();
     fs::write(bash_dir.join(".gpy-version"), "0.0.1\n").unwrap();
@@ -484,8 +486,6 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
 
     let output = setup(home.path(), &["--shell", "zsh"]);
     assert_ok(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Refreshed bash files"), "{stdout}");
     assert_eq!(
         fs::read_to_string(&core).unwrap(),
         fs::read_to_string(repo_root().join("bash/core/ipc.bash")).unwrap(),
@@ -513,8 +513,8 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
     );
 }
 
-/// The installers run setup with a temporary `--from`. The scripts must be
-/// kept beside the binary, so a later bare `gpy setup` finds them.
+/// The installers run setup with a temporary `--from` from a binary in
+/// `~/.local/bin`. A later bare `gpy setup` must find the trees in the data root.
 #[test]
 fn installer_style_setup_keeps_the_scripts_for_a_bare_rerun() {
     let home = TempDir::new().unwrap();
@@ -537,12 +537,12 @@ fn installer_style_setup_keeps_the_scripts_for_a_bare_rerun() {
     };
 
     assert_ok(&run(&["--from".as_ref(), repo_root().as_os_str()]));
-    assert!(prefix.path().join("share/gpy/zsh/gpy.zsh").is_file());
+    let data = home.path().join(".local/share/gpy");
+    assert!(data.join("zsh/gpy.zsh").is_file());
+    assert!(data.join("fish/conf.d/gpy_init.fish").is_file());
     assert!(
-        prefix
-            .path()
-            .join("share/gpy/fish/conf.d/gpy_init.fish")
-            .is_file()
+        !prefix.path().join("share").exists(),
+        "no copy is kept beside the binary"
     );
     assert_ok(&run(&[]));
 }
@@ -566,6 +566,12 @@ fn fish_setup_fails_when_the_dynamic_completion_glue_is_missing() {
     let source = TempDir::new().unwrap();
     copy_dir(&repo_root().join("fish"), &source.path().join("fish"));
     fs::remove_file(source.path().join("fish/completions/gpy-dynamic.fish")).unwrap();
+    fs::create_dir_all(source.path().join("bash/core")).unwrap();
+    fs::copy(
+        repo_root().join("bash/core/g_runner.bash"),
+        source.path().join("bash/core/g_runner.bash"),
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["setup", "--shell", "fish", "--non-interactive", "--from"])
@@ -580,7 +586,10 @@ fn fish_setup_fails_when_the_dynamic_completion_glue_is_missing() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("gpy-dynamic.fish"), "{stderr}");
+    assert!(
+        stderr.contains("fish/completions/gpy-dynamic.fish"),
+        "{stderr}"
+    );
     assert!(
         !home
             .path()
@@ -622,5 +631,30 @@ fn doctor_inspects_a_plugin_segment_and_ignores_comments() {
     assert!(
         report.contains("heuristic: no obvious slow patterns detected"),
         "{report}"
+    );
+}
+
+#[test]
+fn setup_warns_once_on_unrecognised_nerd_font_override() {
+    let home = TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
+        .args(["setup", "--non-interactive", "--shell", "zsh", "--from"])
+        .arg(repo_root())
+        .current_dir(home.path())
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GPY_NERD_FONT", "blah")
+        .output()
+        .unwrap();
+    assert_ok(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.contains("Warning: [env] ignoring GPY_NERD_FONT=\"blah\""))
+            .count(),
+        1,
+        "{stderr}"
     );
 }

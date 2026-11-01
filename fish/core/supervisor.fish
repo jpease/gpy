@@ -10,7 +10,7 @@ end
 # no valid reply, which a briefly stalled agent also produces. Runs on the
 # prompt, so it waits no longer than the prompt's IPC budget.
 function __gpy_agent_is_healthy --description 'Check the agent: 0 healthy, 1 unreachable, 2 unresponsive'
-    set -l budget (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
+    set -l budget (__gpy_ipc_timeout_ms)
     set -l response (__gpy_ipc_send '{"op":"ping"}' $budget)
     test $status -eq 1; and return 1
 
@@ -76,7 +76,7 @@ function __gpy_supervisor_check --description 'Prompt-time agent probe; starts t
 
     # Rate-limit before any IPC so a healthy agent costs no round-trips. Read
     # at call time so a config reload applies.
-    set -l rate_limit (__gpy_uint_or_default "$GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS" 30)
+    set -l rate_limit (__gpy_supervisor_check_interval)
     set -l now (__gpy_now_seconds)
     string match -qr '^[0-9]+$' -- "$now"; or return 1
     test (math "$now - $__gpy_supervisor_last_check_time") -ge $rate_limit; or return 1
@@ -87,7 +87,7 @@ function __gpy_supervisor_check --description 'Prompt-time agent probe; starts t
         return 0
     end
 
-    set -l max_attempts (__gpy_uint_or_default "$GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS" 5)
+    set -l max_attempts (__gpy_supervisor_max_restarts)
     test $__gpy_supervisor_check_attempts -lt $max_attempts; or return 1
     set -g __gpy_supervisor_check_attempts (math "$__gpy_supervisor_check_attempts + 1")
     __gpy_start_agent_detached

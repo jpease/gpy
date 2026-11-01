@@ -49,7 +49,7 @@ for name in "${names[@]}"; do
     dir="$SHELL_E2E_ROOT/w/$name"
     mkdir -p "$dir"
     cd "$dir" || exit 1
-    PROMPT=$(__gpy_render_prompt 0)
+    __gpy_render_prompt 0; PROMPT=$__gpy_render_out
     assert_shows "IPC directory render" "$PROMPT" "$name"
 done
 
@@ -86,7 +86,7 @@ if shell_e2e_poll 3 test -f "$cache_file"; then
     __gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "" cached
     assert_shows "instant-cache git hit" "$cached" "$branch"
     __enabled_segments=(git)
-    PROMPT=$(__gpy_render_prompt 0)
+    __gpy_render_prompt 0; PROMPT=$__gpy_render_out
     assert_shows "cached git render" "$PROMPT" "$branch"
 else
     fail "the agent did not write the zsh-dialect git cache file $cache_file"

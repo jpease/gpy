@@ -32,7 +32,8 @@ classes. Before 1.0, a BREAKING change bumps the minor component.
 
 - **Config and theme files.** Unknown keys are ignored when loading (GPY
   config and theme types do not use `deny_unknown_fields`); `gpy doctor`
-  reports unknown config keys. A MINOR field takes its serde default when
+  reports unknown config keys, and `gpy theme validate` and `gpy doctor` report
+  unknown theme keys and theme sections no plugin provides. A MINOR field takes its serde default when
   absent, so older files load unchanged.
 - **Theme overlays** ([ADR-0012](../docs/dev/adr/adr-0012-theme-overlays.md)).
   The top-level theme keys `extends` (a theme name) and `unset` (an array of

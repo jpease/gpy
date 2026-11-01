@@ -34,7 +34,10 @@ source "$__gpy_bash_root/core/init.bash"
 
 __gpy_load_theme &>/dev/null
 
-# After the theme export, which sets the GPY_AGENT_*ENABLED flags.
+# Once per shell, in this shell and with stderr visible.
+__gpy_warn_flag_values
+
+# After the theme export, which sets the __gpy_cfg_* config mirrors.
 __gpy_init
 
 for __gpy_seg_file in "$__gpy_bash_root"/segments/*.bash; do

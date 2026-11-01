@@ -53,7 +53,6 @@ printf LANG-FIRST >"$cache_dir/$cache_key.lang_first.none.ansi"
 printf LANG-FIRST-LAST >"$cache_dir/$cache_key.lang_first_last.none.ansi"
 
 set -g __gpy_prompt_now (date +%s)
-set -gx GPY_LANGUAGE_ENABLED 1
 set -gx GPY_LANGUAGE_CACHE_TTL_SECONDS 30
 
 # Segment render functions receive is_last/is_first as "true"/"".

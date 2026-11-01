@@ -98,6 +98,7 @@ end
 
 function write_export
     begin
+        printf '%s\n' 'set -g __gpy_export_version "1"'
         xs __gpy_script_sh /bin/sh
         printf '%s\n' $export_lines
         xs __gpy_script_segments $export_toks

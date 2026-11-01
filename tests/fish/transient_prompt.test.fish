@@ -48,7 +48,7 @@ function __gpy_request_character
 end
 
 # --- on ----------------------------------------------------------------------
-set -gx GPY_UI_TRANSIENT_PROMPT 1
+set -g __gpy_cfg_transient_prompt 1
 set -l out (final_after_failure)
 set -l time_re '^ [0-9]{1,2}:[0-9]{2} [AP]M '
 string match -qr -- "$time_re❯ \$" (plain $out)
@@ -78,7 +78,7 @@ check "on, no clock: the symbol alone" 1 (test $status -eq 0; and echo 1)
 # --- off ---------------------------------------------------------------------
 # The two renders can straddle a minute boundary, so the time is replaced by a
 # placeholder before comparing; each render must still carry one.
-set -gx GPY_UI_TRANSIENT_PROMPT 0
+set -g __gpy_cfg_transient_prompt 0
 set -g __enabled_segments clock
 set -l clock_re '[0-9]{1,2}:[0-9]{2} [AP]M'
 set -l final (plain (final_after_failure) | string replace -r -- $clock_re TIME | string collect)
@@ -89,7 +89,7 @@ check "off: the final rendering is the full prompt" 1 (test "$final" = "$full"; 
 set -e -g fish_transient_prompt
 set -e -g __gpy_owns_fish_transient_prompt
 set -g __gpy_fish_transient_capable 0
-set -gx GPY_UI_TRANSIENT_PROMPT 1
+set -g __gpy_cfg_transient_prompt 1
 __gpy_sync_fish_transient_prompt
 check "Fish before 4.2: left unset" 1 (set -q fish_transient_prompt; or echo 1)
 
@@ -97,7 +97,7 @@ set -g __gpy_fish_transient_capable 1
 __gpy_sync_fish_transient_prompt
 check "on: set to 1" 1 (test "$fish_transient_prompt" = 1; and echo 1)
 
-set -gx GPY_UI_TRANSIENT_PROMPT 0
+set -g __gpy_cfg_transient_prompt 0
 __gpy_sync_fish_transient_prompt
 check "off with the clock: still 1, to refresh the time" 1 (test "$fish_transient_prompt" = 1; and echo 1)
 

@@ -263,9 +263,6 @@ pub fn runtime_dir() -> PathBuf {
     )
 }
 
-/// Environment variable that points the agent socket somewhere else.
-const SOCKET_PATH_ENV: &str = "GPY_AGENT_SOCKET_PATH";
-
 /// The agent socket a process acts on, resolved once from the `--socket`
 /// flag, then `GPY_AGENT_SOCKET_PATH`, then `<runtime_dir>/gpy.sock`.
 ///
@@ -326,8 +323,8 @@ impl SocketPath {
     /// print a path `resolve` rejects.
     #[must_use]
     pub fn resolve_unchecked(flag: Option<&Path>) -> Self {
-        let env = std::env::var_os(SOCKET_PATH_ENV);
-        let mut socket = socket_path_for(flag, env.as_deref(), &runtime_dir());
+        let env = crate::env_config::AGENT_SOCKET_PATH.path();
+        let mut socket = socket_path_for(flag, env.as_deref().map(Path::as_os_str), &runtime_dir());
         socket.path = absolutize(&socket.path);
         socket
     }
@@ -376,6 +373,37 @@ pub fn cache_root_for(
 pub fn cache_root() -> Option<PathBuf> {
     cache_root_for(
         xdg_root("XDG_CACHE_HOME").as_deref(),
+        home_path().as_deref(),
+        local_app_data().as_deref(),
+        Os::host(),
+    )
+}
+
+/// The data root, where `gpy setup` installs the shell trees and bundled
+/// plugins: `$XDG_DATA_HOME/gpy` (absolute per `os`), then
+/// `$HOME/.local/share/gpy` on Unix or `%LOCALAPPDATA%/gpy` on Windows.
+#[must_use]
+pub fn data_root_for(
+    xdg_data_home: Option<&Path>,
+    home: Option<&Path>,
+    local_app_data: Option<&Path>,
+    os: Os,
+) -> Option<PathBuf> {
+    if let Some(xdg_data) = xdg_path(xdg_data_home, os) {
+        return Some(xdg_data.join("gpy"));
+    }
+    match os {
+        Os::Unix => xdg_path(home, Os::Unix)
+            .map(|home_dir| home_dir.join(".local").join("share").join("gpy")),
+        Os::Windows => local_app_data.map(|lad| lad.join("gpy")),
+    }
+}
+
+/// [`data_root_for`] for this process's environment and OS.
+#[must_use]
+pub fn data_root() -> Option<PathBuf> {
+    data_root_for(
+        xdg_data_home().as_deref(),
         home_path().as_deref(),
         local_app_data().as_deref(),
         Os::host(),
@@ -558,6 +586,56 @@ mod tests {
                 "cache root for (XDG_CACHE_HOME={xdg_cache:?}, LOCALAPPDATA={local_app_data:?}, Os::Windows)"
             );
         }
+    }
+
+    #[test]
+    fn data_root_precedence() {
+        type DataCase = (
+            Option<&'static str>,
+            Option<&'static str>,
+            Option<&'static str>,
+        );
+        let cases: [DataCase; 8] = [
+            (Some("/xdgdata"), Some("/home/u"), Some("/xdgdata/gpy")),
+            (None, Some("/home/u"), Some("/home/u/.local/share/gpy")),
+            (Some(""), Some("/home/u"), Some("/home/u/.local/share/gpy")),
+            (
+                Some("data"),
+                Some("/home/u"),
+                Some("/home/u/.local/share/gpy"),
+            ),
+            (
+                Some("C:/x"),
+                Some("/home/u"),
+                Some("/home/u/.local/share/gpy"),
+            ),
+            (Some("/xdgdata"), None, Some("/xdgdata/gpy")),
+            (None, Some("relhome"), None),
+            (None, None, None),
+        ];
+
+        for (xdg_data, home, expected) in cases {
+            assert_eq!(
+                data_root_for(xdg_data.map(Path::new), home.map(Path::new), None, Os::Unix),
+                expected.map(PathBuf::from),
+                "data root for (XDG_DATA_HOME={xdg_data:?}, HOME={home:?}, Os::Unix)"
+            );
+        }
+    }
+
+    #[test]
+    fn data_root_precedence_windows() {
+        let local = Some(Path::new(r"C:\Users\u\AppData\Local"));
+        assert_eq!(
+            data_root_for(Some(Path::new("/data")), None, local, Os::Windows),
+            Some(PathBuf::from("/data/gpy"))
+        );
+        // `join` uses the host separator, hence `/gpy` on this runner.
+        assert_eq!(
+            data_root_for(Some(Path::new("data")), None, local, Os::Windows),
+            Some(PathBuf::from("C:\\Users\\u\\AppData\\Local/gpy"))
+        );
+        assert_eq!(data_root_for(None, None, None, Os::Windows), None);
     }
 
     #[test]

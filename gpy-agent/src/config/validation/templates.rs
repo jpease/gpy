@@ -25,6 +25,7 @@ impl VariableResolver for PlaceholderResolver {
 /// Validate every segment `format` in `theme` against `palette`. Returns the first failure, if any.
 ///
 /// Unknown color tokens (not ANSI, not in `palette`) fail with the segment name.
+/// The first of [`segment_template_errors`].
 ///
 /// # Errors
 /// Returns `Err` describing the offending segment, the unknown color, and the template.
@@ -32,7 +33,18 @@ pub fn validate_segment_templates(
     theme: &ThemeConfig,
     palette: &Palette,
 ) -> Result<(), ValidationError> {
+    segment_template_errors(theme, palette)
+        .into_iter()
+        .next()
+        .map_or(Ok(()), Err)
+}
+
+/// Every segment `format` and style value of `theme` that fails against
+/// `palette`, formats first, in a fixed order. Empty when the theme is valid.
+#[must_use]
+pub fn segment_template_errors(theme: &ThemeConfig, palette: &Palette) -> Vec<ValidationError> {
     let s = &theme.segments;
+    let mut errors = Vec::new();
     for (name, field, format) in [
         ("git", "format", &s.git.format),
         ("language", "format", &s.language.format),
@@ -42,8 +54,10 @@ pub fn validate_segment_templates(
         ("clock", "format", &s.clock.format),
         ("status", "format", &s.status.format),
     ] {
-        if let Some(template) = format.as_deref() {
-            validate_one(name, field, template, palette)?;
+        if let Some(template) = format.as_deref()
+            && let Err(error) = validate_one(name, field, template, palette)
+        {
+            errors.push(error);
         }
     }
     validate_style_values(
@@ -51,44 +65,48 @@ pub fn validate_segment_templates(
         "segments.language",
         &theme.segments.language.styles,
         palette,
-    )?;
+        &mut errors,
+    );
     validate_style_values(
         "git",
         "segments.git.git_style",
         &theme.segments.git.git_style,
         palette,
-    )
+        &mut errors,
+    );
+    errors
 }
 
-/// Validate free-form style strings by rendering each as a one-group template.
+/// Validate free-form style strings by rendering each as a one-group template,
+/// pushing each failure onto `errors`.
 ///
-/// Keys are visited in sorted order so the reported failure is stable.
-///
-/// # Errors
-/// Returns `Err` naming `<prefix>.<key>` for the first style value that fails to render.
+/// Keys are visited in sorted order so the reported failures are stable; each
+/// names `<prefix>.<key>`.
 fn validate_style_values(
     segment: &'static str,
     prefix: &str,
     styles: &HashMap<String, String>,
     palette: &Palette,
-) -> Result<(), ValidationError> {
+    errors: &mut Vec<ValidationError>,
+) {
     let resolver = PlaceholderResolver;
     let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
     let mut entries: Vec<(&String, &String)> = styles.iter().collect();
     entries.sort_unstable();
     for (key, value) in entries {
-        check_template_controls(value)
-            .and_then(|()| render(&format!("[x]({value})"), &ctx).map(drop))
-            .map_err(|error| ValidationError {
+        let checked = check_template_controls(value)
+            .and_then(|()| render(&format!("[x]({value})"), &ctx).map(drop));
+        if let Err(error) = checked {
+            errors.push(ValidationError {
                 field_path: format!("{prefix}.{key}"),
                 kind: ValidationErrorKind::TemplateRenderFailed {
                     segment,
                     template: escape_controls(value),
                     source: error,
                 },
-            })?;
+            });
+        }
     }
-    Ok(())
 }
 
 /// Reject terminal controls in `format`, render it against a placeholder
@@ -132,7 +150,7 @@ fn escape_controls(text: &str) -> String {
 #[cfg(test)]
 mod tests {
 
-    use super::{ValidationErrorKind, validate_segment_templates};
+    use super::{ValidationErrorKind, segment_template_errors, validate_segment_templates};
     use crate::template::Palette;
     use crate::theme::ThemeConfig;
 
@@ -170,6 +188,25 @@ mod tests {
         assert!(
             err.contains("nonsuch"),
             "error must name the unknown color: {err}"
+        );
+    }
+
+    #[test]
+    fn segment_template_errors_reports_every_failing_segment() {
+        let mut theme = ThemeConfig::default();
+        theme.segments.git.format = Some("[$branch](fg:nonsuch)".to_owned());
+        theme.segments.directory.format = Some("[$path](fg:alsonope)".to_owned());
+
+        let errors = segment_template_errors(&theme, &Palette::default());
+
+        let paths: Vec<&str> = errors.iter().map(|e| e.field_path.as_str()).collect();
+        assert_eq!(paths, ["segments.git.format", "segments.directory.format"]);
+        assert_eq!(
+            validate_segment_templates(&theme, &Palette::default())
+                .unwrap_err()
+                .field_path,
+            "segments.git.format",
+            "the validating form still stops at the first failure"
         );
     }
 

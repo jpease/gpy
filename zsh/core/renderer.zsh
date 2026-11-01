@@ -139,10 +139,11 @@ function __gpy_status_icon() {
 
 # Shell-drawn prompt symbol: root, or the fallback when the agent rendered none.
 function __gpy_prompt_tail() {
-    local __exit=${1:-0} __out="" __sgr __reset __icon __color
+    local __exit=${1:-0} __out="" __sgr __reset __icon __color __show_status
     __reset="%{${__GPY_SGR_ESC}[0m%}"
 
-    if [[ ${GPY_SHOW_STATUS:-1} == 1 ]]; then
+    __gpy_flag_value "${GPY_SHOW_STATUS-}" on __show_status
+    if [[ -z ${__gpy_hide_status_tail-} && $__show_status == on ]]; then
         if (( __exit == 0 )); then
             __gpy_status_icon ok __icon
             __color=green

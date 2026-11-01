@@ -35,7 +35,8 @@ source bash/core/init.bash
 CACHE_DIR="$TMP_DIR/cache/gpy"
 mkdir -p "$CACHE_DIR"
 cat >"$CACHE_DIR/theme-export.bash" <<'EOF'
-export __gpy_load_theme_cache_sentinel="from-cache-file"
+__gpy_export_version="1"
+__gpy_load_theme_cache_sentinel="from-cache-file"
 EOF
 
 unset __gpy_load_theme_cache_sentinel

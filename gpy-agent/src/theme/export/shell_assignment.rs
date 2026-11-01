@@ -5,7 +5,6 @@ use crate::shell::Shell;
 #[derive(Debug, Clone, Copy)]
 enum AssignmentScope {
     Local,
-    Export,
     Unset,
 }
 
@@ -20,14 +19,6 @@ impl ShellAssignment {
     pub(super) fn local(name: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             scope: AssignmentScope::Local,
-            name: name.into(),
-            value: value.into(),
-        }
-    }
-
-    pub(super) fn export(name: impl Into<String>, value: impl Into<String>) -> Self {
-        Self {
-            scope: AssignmentScope::Export,
             name: name.into(),
             value: value.into(),
         }
@@ -48,9 +39,6 @@ impl ShellAssignment {
             AssignmentScope::Unset => syntax.format_unset(&self.name),
             AssignmentScope::Local => {
                 syntax.format(&self.name, &escape_shell_value(&self.value, shell))
-            }
-            AssignmentScope::Export => {
-                syntax.format_export(&self.name, &escape_shell_value(&self.value, shell))
             }
         }
     }

@@ -160,17 +160,39 @@ fn apply_to_keeps_default_git_and_language_in_enabled_segments() {
 }
 
 #[test]
-fn apply_to_deselected_git_clears_flag_and_keeps_list_entry() {
-    // Like `gpy disable git`: entry kept so re-enabling restores its position.
+fn apply_to_deselected_git_removes_list_entry() {
+    // Like `gpy disable git`: the entry goes, the flag is left alone.
     let mut state = test_state(Config::default());
     state.toggle_segment("git");
     let mut applied = Config::default();
     state.apply_to(&mut applied);
 
-    assert!(!applied.git.enabled);
+    assert!(!applied.segment_enabled("git"));
     assert_eq!(
         applied.ui.enabled_segments,
-        Config::default().ui.enabled_segments
+        ["clock", "duration", "language", "directory"]
+    );
+}
+
+#[test]
+fn apply_to_selected_builtin_inserts_canonically() {
+    let config = make_config(
+        "default",
+        "default",
+        GitLanguageFlags {
+            git: true,
+            language: true,
+        },
+        &["git", "clock", "directory"],
+    );
+    let mut applied = config.clone();
+    let mut state = test_state(config);
+    state.toggle_segment("language");
+    state.apply_to(&mut applied);
+
+    assert_eq!(
+        applied.ui.enabled_segments,
+        ["git", "clock", "language", "directory"]
     );
 }
 

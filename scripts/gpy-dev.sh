@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Run an unreleased gpy in an isolated fish shell. The installed release, its
-# config (~/.config/gpy, ~/.config/fish/gpy) and its agent are never touched:
-# `exit` returns to them. Contributor flow; end users install with install.sh.
+# config (~/.config/gpy), shell files (~/.local/share/gpy) and its agent are
+# never touched: `exit` returns to them. Contributor flow; end users install with install.sh.
 #
 #   gpy-dev.sh                      build this checkout (debug) and enter the shell
 #   gpy-dev.sh --release            build with the release profile
@@ -12,9 +12,10 @@
 #   gpy-dev.sh --reset              wipe the sandbox first
 #   gpy-dev.sh --sync-config        replace the sandbox config with your real one
 #
-# Isolation: XDG_CONFIG_HOME / XDG_CACHE_HOME hold the config, fish scripts and
-# caches; XDG_RUNTIME_DIR holds the agent socket and is short because macOS caps
-# unix socket paths at 104 bytes. The prompt carries a `[gpy-dev ...]` marker.
+# Isolation: XDG_CONFIG_HOME / XDG_DATA_HOME / XDG_CACHE_HOME hold the config,
+# the shell files `gpy setup` installs, and the caches; XDG_RUNTIME_DIR holds
+# the agent socket and is short because macOS caps unix socket paths at 104
+# bytes. The prompt carries a `[gpy-dev ...]` marker.
 set -euo pipefail
 
 usage() {
@@ -53,7 +54,7 @@ if [ -n "$bin_dir" ]; then
 fi
 
 root="$HOME/.local/share/gpy-dev"
-export XDG_CONFIG_HOME="$root/config" XDG_CACHE_HOME="$root/cache"
+export XDG_CONFIG_HOME="$root/config" XDG_DATA_HOME="$root/data" XDG_CACHE_HOME="$root/cache"
 export XDG_RUNTIME_DIR="/tmp/gpy-dev-$USER"
 if [ "$reset" = 1 ]; then
     rm -rf "$root" "$XDG_RUNTIME_DIR"

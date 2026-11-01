@@ -64,11 +64,11 @@ fn theme_export_keeps_agent_disabled_from_an_invalid_config() {
     let line = exported
         .stdout
         .lines()
-        .find(|line| line.contains("GPY_AGENT_ENABLED"))
-        .unwrap_or_else(|| panic!("GPY_AGENT_ENABLED must be exported: {exported:?}"));
+        .find(|line| line.contains("__gpy_cfg_agent_enabled"))
+        .unwrap_or_else(|| panic!("__gpy_cfg_agent_enabled must be exported: {exported:?}"));
     assert!(
         line.contains('0') && !line.contains('1'),
-        "GPY_AGENT_ENABLED must be 0: {line}"
+        "__gpy_cfg_agent_enabled must be 0: {line}"
     );
 }
 

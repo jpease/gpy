@@ -135,9 +135,15 @@ enabled = false
 enabled = false
 ```
 
-The theme export the shell sources on every start, and again on every config
-reload, re-exports `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` from
-`config.toml`, so a `set -gx` in `config.fish` is overwritten.
+An environment variable wins over `config.toml`: `GPY_AGENT_ENABLED`,
+`GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS`
+and `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` override the matching config
+keys, and the theme export never writes or exports any `GPY_*` variable (it
+sets only non-exported `__gpy_cfg_*` values the shell reads when the variable
+is unset). In Fish, set the variable before the GPY block in `config.fish`
+(`gpy setup` appends that block, which sources `gpy_init.fish`), or in the
+environment the shell starts with; the flag functions read it at call time. In
+Bash and Zsh, export it before the GPY block in `.bashrc` or `.zshrc`.
 
 ```fish
 # Disable file watcher (no live git status updates)
@@ -145,9 +151,9 @@ set -gx GPY_DISABLE_WATCHER 1
 ```
 
 To hide the language segment, turn it off in `config.toml` rather than in
-the shell: the theme export the shell sources on every start re-exports
-`GPY_LANGUAGE_ENABLED` (and every other segment flag) from `config.toml`, so
-a `set -gx` in `config.fish` is overwritten.
+the shell: segment flags (`[language] enabled`, `[git] enabled`) are
+config-only, and no `GPY_LANGUAGE_ENABLED` or `GPY_GIT_ENABLED` variable is
+read.
 
 ```toml
 [language]

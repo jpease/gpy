@@ -23,7 +23,31 @@ pub fn list() -> Result<()> {
     Ok(())
 }
 
+/// Print one warning per segment of the active theme whose `format` would
+/// render empty (fail its template check) with the palette `name`. A theme that
+/// fails to load is skipped: `gpy doctor` reports it on its own.
+fn warn_segments_left_empty(theme_name: &str, name: &str) {
+    use crate::config::validation::ValidationErrorKind;
+
+    let Ok(loaded) = config::loader::load_named_theme(theme_name) else {
+        return;
+    };
+    let palette = crate::palette::resolve::palette_by_name(name);
+    for error in config::validation::templates::segment_template_errors(&loaded.theme, &palette) {
+        if let ValidationErrorKind::TemplateRenderFailed { segment, .. } = &error.kind
+            && error.field_path.ends_with(".format")
+        {
+            super::output::warn(format_args!(
+                "segment {segment} would render empty with palette {name}: {error}"
+            ));
+        }
+    }
+}
+
 /// Switch to a different palette.
+///
+/// Warns about each segment of the active theme that the new palette would
+/// leave empty, and switches anyway.
 ///
 /// # Errors
 /// Returns an error if the palette doesn't exist or config cannot be saved.
@@ -35,6 +59,7 @@ pub fn use_palette(name: &str) -> Result<()> {
     let mut config = original.clone();
     config.ui.palette =
         config::types::PaletteName::try_from(name.to_owned()).map_err(Error::config)?;
+    warn_segments_left_empty(config.ui.theme.as_str(), name);
     save_config(&path, &original, &config, &[])?;
 
     super::output::plain(format_args!("Switched to '{name}' palette"));

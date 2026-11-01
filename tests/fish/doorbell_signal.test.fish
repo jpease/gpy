@@ -12,7 +12,7 @@
 #
 # Run with: fish tests/fish/doorbell_signal.test.fish
 
-# Use the repo copy, not the installed ~/.config/fish/gpy.
+# Use the repo copy, not the installed copy under ~/.local/share/gpy.
 set -l repo_root (path resolve (dirname (status -f))/../..)
 source $repo_root/tests/lib/test_helpers.fish
 source $repo_root/fish/core/util.fish

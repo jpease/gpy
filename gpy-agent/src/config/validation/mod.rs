@@ -15,6 +15,15 @@ pub use theme::validate_theme_config;
 
 use crate::Error;
 
+/// What to do instead of setting a read-only key.
+fn read_only_hint(key: &str) -> &'static str {
+    if key == "ui.enabled_segments" {
+        "use gpy enable <segment> / gpy disable <segment>"
+    } else {
+        "edit it in config.toml (gpy config open)"
+    }
+}
+
 /// A config value failed a structural/semantic validation check.
 ///
 /// `field_path` locates the failing field; `kind` says why.
@@ -103,7 +112,12 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "Unknown config key: {}", self.field_path)
             }
             ValidationErrorKind::ReadOnlyKey => {
-                write!(f, "Config key {} is read-only", self.field_path)
+                write!(
+                    f,
+                    "Config key {} is read-only; {}",
+                    self.field_path,
+                    read_only_hint(&self.field_path)
+                )
             }
             ValidationErrorKind::InvalidSegmentName { value } => write!(
                 f,
@@ -353,7 +367,7 @@ mod tests {
                     field_path: "ui.enabled_segments".to_owned(),
                     kind: ValidationErrorKind::ReadOnlyKey,
                 },
-                "Config key ui.enabled_segments is read-only",
+                "Config key ui.enabled_segments is read-only; use gpy enable <segment> / gpy disable <segment>",
             ),
             (
                 ValidationError {

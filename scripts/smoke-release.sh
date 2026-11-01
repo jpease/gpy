@@ -122,6 +122,7 @@ SHELL_TREES="$SANDBOX/shell-files"
 
 export HOME="$SANDBOX/home"
 export XDG_CONFIG_HOME="$SANDBOX/config"
+export XDG_DATA_HOME="$SANDBOX/data"
 export XDG_CACHE_HOME="$SANDBOX/cache"
 export XDG_RUNTIME_DIR="$SANDBOX/runtime"
 export GPY_AGENT_SOCKET_PATH="$SANDBOX/gpy.sock"
@@ -129,7 +130,7 @@ export GPY_NERD_FONT=none
 export GPY_AGENT_SUPERVISOR_ENABLED=0
 # A runner has no terminal; fish warns and picks a fallback without this.
 export TERM="${TERM:-xterm-256color}"
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE 2>/dev/null || true
 
 echo "--- install.sh from the archive ---"
@@ -226,7 +227,7 @@ case ",$SHELLS," in *,zsh,*)
         # setup installs the tree, its completions and the shared bash runner.
         "$CLI_BIN" setup --shell zsh --non-interactive --from "$SHELL_TREES" >/dev/null ||
             fail "gpy setup --shell zsh failed"
-        printf 'source "%s/gpy/zsh/gpy.zsh"\n' "$XDG_CONFIG_HOME" >"$HOME/.zshrc"
+        printf 'source "%s/gpy/zsh/gpy.zsh"\n' "$XDG_DATA_HOME" >"$HOME/.zshrc"
         zsh_out="$(zsh -i -c '__gpy_precmd; print -r -- "$PROMPT"' </dev/null 2>&1 || true)"
         assert_prompt zsh "$zsh_out"
     else
@@ -236,11 +237,9 @@ case ",$SHELLS," in *,zsh,*)
 esac
 case ",$SHELLS," in *,bash,*)
     echo "--- bash: one prompt from the shell archive's bash/ tree ---"
-    mkdir -p "$XDG_CONFIG_HOME/gpy"
-    cp -R "$SHELL_TREES/bash" "$XDG_CONFIG_HOME/gpy/bash"
-    mkdir -p "$XDG_CONFIG_HOME/gpy/bash/completions"
-    "$CLI_BIN" completions bash >"$XDG_CONFIG_HOME/gpy/bash/completions/gpy.bash" 2>/dev/null || true
-    printf 'source "%s/gpy/bash/gpy.bash"\n' "$XDG_CONFIG_HOME" >"$HOME/.bashrc"
+    "$CLI_BIN" setup --shell bash --non-interactive --from "$SHELL_TREES" >/dev/null ||
+        fail "gpy setup --shell bash failed"
+    printf 'source "%s/gpy/bash/gpy.bash"\n' "$XDG_DATA_HOME" >"$HOME/.bashrc"
     bash_out="$(bash -i -c '__gpy_precmd; printf "%s" "$PS1"' </dev/null 2>&1 || true)"
     assert_prompt bash "$bash_out"
     ;;

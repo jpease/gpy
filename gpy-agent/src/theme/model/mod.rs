@@ -476,9 +476,9 @@ pub struct GitTheme {
     pub clean_bg_color: Option<types::ColorSpec>,
     /// Text color for clean state
     pub clean_text_color: Option<types::ColorSpec>,
-    /// Background color for the modified state (TOML key `dirty_bg_color`).
+    /// Background for the dirty state (`GitState::Modified`; TOML key `dirty_bg_color`).
     pub dirty_bg_color: Option<types::ColorSpec>,
-    /// Text color for the modified state (TOML key `dirty_text_color`).
+    /// Text color for the dirty state (`GitState::Modified`; TOML key `dirty_text_color`).
     pub dirty_text_color: Option<types::ColorSpec>,
     /// Background color for ahead/behind state
     pub ahead_behind_bg_color: Option<types::ColorSpec>,
@@ -540,7 +540,7 @@ pub struct GitTheme {
     /// Render the stash indicator (`None` = shown).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_stash: Option<bool>,
-    /// Per-state style attributes from `[git_style]`, keyed by snake-case `GitState` name.
+    /// `[git_style]` attributes by `GitState` name; `modified` is the dirty state (`dirty_*`).
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub git_style: HashMap<String, String>,
 }

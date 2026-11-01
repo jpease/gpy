@@ -10,23 +10,15 @@ function __gpy_config_root
     end
 end
 
+# PATH first, then ~/.local/bin; never cached (the lookup is about 50 us).
 function __gpy_resolve_agent_binary --description 'Resolve the gpy-agent binary path'
-    if set -q GPY_AGENT_BINARY_PATH; and test -x "$GPY_AGENT_BINARY_PATH"
-        echo "$GPY_AGENT_BINARY_PATH"
+    set -l command_path (command -s gpy-agent)
+    if test -n "$command_path"
+        echo "$command_path"
         return 0
     end
 
-    if command -q gpy-agent
-        set -l command_path (command -s gpy-agent)
-        if test -n "$command_path"
-            set -g GPY_AGENT_BINARY_PATH "$command_path"
-            echo "$command_path"
-            return 0
-        end
-    end
-
     if test -x "$HOME/.local/bin/gpy-agent"
-        set -g GPY_AGENT_BINARY_PATH "$HOME/.local/bin/gpy-agent"
         echo "$HOME/.local/bin/gpy-agent"
         return 0
     end
@@ -79,13 +71,13 @@ function __gpy_theme_export_cache_path --description 'Path to the theme export c
 end
 
 function __gpy_log_error --argument-names context message
-    if test "$GPY_DEBUG" = 1; or test "$GPY_VERBOSE" = 1
+    if test "$GPY_DEBUG" = 1
         echo "gpy[$context]: $message" >&2
     end
 end
 
 function __gpy_log_warn --argument-names context message
-    if test "$GPY_DEBUG" = 1; or test "$GPY_VERBOSE" = 1
+    if test "$GPY_DEBUG" = 1
         echo "gpy[$context]: warning: $message" >&2
     end
 end
@@ -97,7 +89,7 @@ function __gpy_log_debug --argument-names context message
 end
 
 function __gpy_log_info --argument-names context message
-    if test "$GPY_DEBUG" = 1; or test "$GPY_VERBOSE" = 1
+    if test "$GPY_DEBUG" = 1
         echo "gpy[$context]: info: $message" >&2
     end
 end

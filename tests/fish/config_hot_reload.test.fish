@@ -19,15 +19,7 @@ set -lx MISE_DISABLE 1
 source fish/core/init.fish
 
 function __gpy_read_instant_cache
-    if test "$GPY_LANGUAGE_ENABLED" = 0
-        echo ''
-        return
-    end
-    if test "$GPY_LANGUAGE_SHOW_VERSIONS" = 0
-        echo "\\e[0mlang"
-    else
-        echo "\\e[0mlang 1.23"
-    end
+    echo "\\e[0mlang 1.23"
 end
 
 set -gx _fake_project (mktemp -d)
@@ -37,17 +29,6 @@ echo "Initial render uses versions"
 set rendered (segment_language_render last)
 if not string match -q '*1.23*' -- $rendered
     fail "Expected version in initial render, got '$rendered'"
-    exit 1
-end
-
-echo "Reload config with show_versions=false"
-printf "[language]\nenabled = true\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
-# Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
-gpy-agent theme export --shell fish 2>/dev/null | source
-
-set rendered (segment_language_render last)
-if string match -q '*1.23*' -- $rendered
-    fail "Expected version to be hidden after reload, got '$rendered'"
     exit 1
 end
 

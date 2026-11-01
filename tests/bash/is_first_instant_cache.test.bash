@@ -15,7 +15,6 @@ SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-is-first.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
-export GPY_LANGUAGE_ENABLED=1
 
 source bash/gpy.bash
 

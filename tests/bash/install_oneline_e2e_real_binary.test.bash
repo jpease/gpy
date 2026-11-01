@@ -138,7 +138,7 @@ run_shell() {
             fi
             ;;
         zsh)
-            comp="$XDG_CONFIG_HOME/gpy/zsh/completions/_gpy"
+            comp="$XDG_DATA_HOME/gpy/zsh/completions/_gpy"
             if [ -s "$comp" ] && zsh -n "$comp" 2>/dev/null; then
                 pass "$shell: structural completions parse"
             else
@@ -146,7 +146,7 @@ run_shell() {
             fi
             ;;
         bash)
-            comp="$XDG_CONFIG_HOME/gpy/bash/completions/gpy.bash"
+            comp="$XDG_DATA_HOME/gpy/bash/completions/gpy.bash"
             if [ -s "$comp" ] && bash -n "$comp" 2>/dev/null; then
                 pass "$shell: structural completions parse"
             else
@@ -213,7 +213,7 @@ run_shell() {
         fail "$shell: the supervisor loop $supervisor_pid is still running"
         kill "$supervisor_pid" 2>/dev/null || true
     fi
-    leftovers="$(find "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" -iname '*gpy*' 2>/dev/null)"
+    leftovers="$(find "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" -iname '*gpy*' 2>/dev/null)"
     if [ -z "$leftovers" ]; then
         pass "$shell: nothing named *gpy* remains under HOME or the XDG directories"
     else

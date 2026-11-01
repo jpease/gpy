@@ -11,7 +11,7 @@
 #   prints nothing on stderr; after `gpy uninstall` every rc
 #   file is byte-identical to before install.
 #   A row that expects `refuse` instead asserts the installer exits non-zero
-#   and no rc file (and no gpy file under XDG_CONFIG_HOME) was touched.
+#   and no rc file (and no gpy file under XDG_CONFIG_HOME or XDG_DATA_HOME) was touched.
 #
 # Rows = installer x shell x hostile HOME layout:
 #
@@ -19,8 +19,8 @@
 #     INSTALLER  oneline (install-oneline.sh, fake curl) | install.sh (staged
 #                release payload, fish only)
 #     SHELL      fish | zsh | bash | nushell (unsupported: binaries only)
-#     LAYOUT     a `layout_<name>` function below; it sets HOME and
-#                XDG_CONFIG_HOME
+#     LAYOUT     a `layout_<name>` function below; it sets HOME,
+#                XDG_CONFIG_HOME and XDG_DATA_HOME
 #     EXPECT     ok | refuse | binaries-only
 #
 #
@@ -117,12 +117,13 @@ EOF
 }
 
 # Each sets HOME and XDG_CONFIG_HOME under $SB (the sandbox root).
-layout_plain() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; }
-layout_space() { HOME="$SB/sp ace/home"; XDG_CONFIG_HOME="$SB/sp ace/config"; }
-layout_quote() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/q\"uote/config"; }
-layout_dollar() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/d\$ollar/config"; }
-layout_backtick() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\`tick/config"; }
-layout_backslash() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\\slash/config"; }
+layout_plain() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; XDG_DATA_HOME="$SB/data"; }
+layout_space() { HOME="$SB/sp ace/home"; XDG_CONFIG_HOME="$SB/sp ace/config"; XDG_DATA_HOME="$SB/sp ace/data"; }
+# The shell files live under XDG_DATA_HOME, so it is the hostile one here.
+layout_quote() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; XDG_DATA_HOME="$SB/q\"uote/data"; }
+layout_dollar() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; XDG_DATA_HOME="$SB/d\$ollar/data"; }
+layout_backtick() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; XDG_DATA_HOME="$SB/b\`tick/data"; }
+layout_backslash() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; XDG_DATA_HOME="$SB/b\\slash/data"; }
 
 # SEED_BASH (default `chain`: ~/.bashrc plus a ~/.bash_profile sourcing it):
 #   profile_only  no ~/.bashrc, ~/.profile exports FROM_PROFILE (Debian default
@@ -250,7 +251,7 @@ row() {
     SEED_PROMPT=none
     unset ZDOTDIR
     "layout_$layout"
-    export HOME XDG_CONFIG_HOME
+    export HOME XDG_CONFIG_HOME XDG_DATA_HOME
     [ -z "${ZDOTDIR:-}" ] || export ZDOTDIR
     export XDG_CACHE_HOME="$SB/cache"
     mkdir -p "$HOME"
@@ -285,7 +286,7 @@ row() {
         if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
         # `gpy-agent start` itself creates $XDG_CONFIG_HOME/gpy/themes; only shell files count.
-        leftovers="$(find "$XDG_CONFIG_HOME" -iname '*gpy*' ! -path "$XDG_CONFIG_HOME/gpy" ! -path "$XDG_CONFIG_HOME/gpy/themes" 2>/dev/null)"
+        leftovers="$(find "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" -iname '*gpy*' ! -path "$XDG_CONFIG_HOME/gpy" ! -path "$XDG_CONFIG_HOME/gpy/themes" 2>/dev/null)"
         if [ -z "$leftovers" ]; then pass "$name: no shell tree created"; else fail "$name: shell files created: $leftovers"; fi
         if [ -x "$HOME/.local/bin/gpy-agent" ] && [ -x "$HOME/.local/bin/gpy" ]; then pass "$name: both binaries installed"; else fail "$name: a binary is missing"; fi
         if grep -q 'GPY_SHELL=fish, zsh or bash' "$SB/install.log"; then pass "$name: output names GPY_SHELL=fish, zsh or bash"; else fail "$name: no GPY_SHELL hint"; fi
@@ -293,7 +294,7 @@ row() {
     elif [ "$expect" = refuse ]; then
         if [ "$rc" -ne 0 ]; then pass "$name: installer refused (exit $rc)"; else fail "$name: installer exited 0 on an unsupported path"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
-        leftovers="$(find "$XDG_CONFIG_HOME" "$HOME/.local" -iname '*gpy*' 2>/dev/null)"
+        leftovers="$(find "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$HOME/.local" -iname '*gpy*' 2>/dev/null)"
         if [ -z "$leftovers" ]; then pass "$name: nothing installed"; else fail "$name: refused install left files: $leftovers"; fi
     else
         if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi

@@ -64,6 +64,7 @@ gpy completions <shell>      # Generate shell completions
 
 # Install
 gpy setup [--shell <shell>]  # Wire GPY into Fish, Zsh or Bash
+gpy setup --check             # Check the shell files and install path; change nothing
 gpy setup --redetect-icons   # Re-run Nerd Font detection for ui.show_icons
 gpy uninstall [--yes] [--purge-config]  # Remove GPY's integration, rc blocks, cache and binaries
 ```
@@ -468,6 +469,13 @@ Warnings (validation still passes): `unset` in a file without `extends`
 (it does nothing), and an `unset` path the base theme lacks (ignored at load).
 A file in a plugin's `themes/` directory may extend only a builtin theme.
 
+Also warned about (the theme still validates): keys the theme sets that have no
+effect (`unknown key ... (ignored)`), `[segments.<id>]` sections that no built-in,
+bundled or installed plugin segment owns, `[segments.language]` colour keys that
+are not `<lang>_bg_color`/`<lang>_text_color`, an enabled `directory`, `duration`,
+`git` or `language` segment with no `format` (it renders nothing), and control
+characters in a git icon override. `gpy doctor` prints the same warnings.
+
 **Examples:**
 ```bash
 # Validate active theme from config
@@ -636,7 +644,7 @@ The `*` marker indicates the currently active palette. `[builtin]`/`[user]`/`[pl
 
 Switch to a different palette.
 
-Updates the configuration and reloads the running agent to apply changes immediately. Only the named-color set changes — the active theme's structure (segments, templates, delimiters) is unaffected.
+Updates the configuration and reloads the running agent to apply changes immediately. Only the named-color set changes — the active theme's structure (segments, templates, delimiters) is unaffected. It warns once per segment of the active theme whose `format` would render empty with the new palette (for example a color role the palette lacks) and still switches.
 
 **Arguments:**
 - `<name>` - Palette name (without `.toml` extension)
@@ -743,7 +751,7 @@ The imported palette is written to `~/.config/gpy/palettes/<name>.toml`. If the 
 
 Enable a prompt segment.
 
-A segment renders when it is listed in `ui.enabled_segments`; `git` and `language` additionally need their feature flag (`git.enabled` / `language.enabled`). `gpy enable` adds the segment to `ui.enabled_segments` if it is missing, and for `git` and `language` also sets the feature flag to `true`, in a single config save.
+A segment renders when it is listed in `ui.enabled_segments`. `gpy enable` edits only that list: a built-in goes back at its default position (before the next built-in that is listed, else at the end), and a plugin segment is appended. When `config.toml` still has the deprecated `git.enabled` / `language.enabled` key, `gpy enable git` / `gpy enable language` removes it.
 
 **Valid Segments:**
 - `git` - Git repository status
@@ -773,7 +781,7 @@ Enabled git segment
 
 Disable a prompt segment.
 
-Removes the segment from the prompt display without deleting any configuration. Most segments are removed from `ui.enabled_segments`. For `git` and `language`, only the feature flag (`git.enabled` / `language.enabled`) is set to `false`; the list entry stays, so a later `gpy enable` puts the segment back in its original position.
+Removes the segment from `ui.enabled_segments`, without deleting any other configuration. A later `gpy enable` puts a built-in back at its default position.
 
 **Example:**
 ```bash
@@ -792,7 +800,7 @@ Disabled clock segment
 
 List all available segments and their current status.
 
-Shows which segments the prompt will actually render (`x`) and which it won't ( ). `git` and `language` show `x` only when they are listed in `ui.enabled_segments` **and** their feature flag is on; every other segment shows `x` when it is listed. `gpy config wizard` starts its segment checkboxes from the same rule.
+Shows which segments the prompt will actually render (`x`) and which it won't ( ). A segment shows `x` when it is listed in `ui.enabled_segments` (a deprecated `git.enabled = false` / `language.enabled = false` still hides it). `gpy config wizard` starts its segment checkboxes from the same rule.
 
 Each row also names the segment's owner: `gpy-core` for the built-in segments, or the plugin id with `(bundled)` or `(user)` for a plugin's segments. `default` marks a segment that a fresh config enables (`ui.enabled_segments` by default).
 
@@ -936,9 +944,9 @@ Updates the configuration file and reloads the running agent.
 **Common Keys:**
 - `agent.enabled` - Enable/disable background agent
 - `agent.live_updates` - Enable/disable live prompt updates
-- `git.enabled` - Enable/disable git detection
+- `git.enabled` - Deprecated: use `gpy disable git` / `gpy enable git`
 - `git.show_upstream` - Show/hide ahead/behind indicators
-- `language.enabled` - Enable/disable language detection
+- `language.enabled` - Deprecated: use `gpy disable language` / `gpy enable language`
 - `language.show_versions` - Show/hide version numbers
 - `ui.theme` - Active theme name
 - `ui.show_icons` - Show/hide Nerd Font icons
@@ -957,7 +965,7 @@ Updates the configuration file and reloads the running agent.
 - `git.icons.<name>` - Git indicator icon; `<name>` is one of `ahead`, `behind`, `staged`, `unstaged`, `untracked`, `conflicts`, `stash`, `detached`, `in_progress`
 - `ui.palette` - Named color palette; must exist (checked before writing)
 
-List-valued keys (`git.skip_paths`, `language.enabled_languages`, `ui.enabled_segments`) can be read with `gpy config get` but not set. `gpy config list` shows every registered key.
+List-valued keys (`git.skip_paths`, `language.enabled_languages`, `ui.enabled_segments`) can be read with `gpy config get` (space-separated) but not set; `ui.enabled_segments` is edited with `gpy enable` / `gpy disable`, the others in `config.toml` (`gpy config open`). `gpy config list` shows every registered key.
 
 **Boolean values accept:** `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`
 
@@ -1333,6 +1341,7 @@ gpy completions zsh > ~/.zsh/completions/_gpy
 
 ```bash
 gpy setup [--shell fish|zsh|bash] [--from <dir>] [--non-interactive]
+gpy setup --check [--shell fish|zsh|bash] [--from <dir>]
 gpy setup --redetect-icons [--non-interactive]
 ```
 
@@ -1341,7 +1350,10 @@ and source builds finish with this command; the curl installer does the same
 work itself. Safe to re-run. The shell comes from `--shell`, then `GPY_SHELL`,
 then `$SHELL`. `--from` names a directory holding the `fish/`, `zsh/` and
 `bash/` trees; without it, `GPY_SHARE_DIR`, then the `share/gpy` beside the
-binary, then the source checkout it was built in are tried. See
+binary, then the source checkout it was built in, then the data root
+(`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`) are tried. The shell trees
+and bundled plugins are installed into that data root; your config, themes and
+plugins stay in `~/.config/gpy`. See
 [`gpy setup`](../INSTALL.md#gpy-setup) for the full list of steps.
 
 The Bash block loads GPY only in interactive shells. Setup rewrites an
@@ -1354,6 +1366,13 @@ that builtin entirely. Setup moves one that is byte-identical to a version of
 the builtin released up to 0.7.1 to `<name>.toml.bak` and reports it, so the
 builtin applies again; an edited copy or a symlink is kept and listed. Set
 `ui.retire_unmodified_themes` to `false` to keep every copy.
+
+`--check` validates what setup would need and writes nothing: the source tree
+must hold every file the chosen shell needs (for Fish and Zsh, the script
+runner in `bash/core/` too), and the install path must be safe to source from
+an rc file. It prints `ok: <shell> files in <source> can be installed to <dir>`
+and exits 0, or prints the error setup itself would give and exits 1. The
+installers run it with the downloaded `gpy` before replacing any binary.
 
 The last step picks `ui.show_icons`: it detects whether a Nerd Font is
 installed and, on a terminal, shows a sample prompt line and asks whether the
@@ -1523,9 +1542,9 @@ GPY reads the following environment variables:
 | `XDG_RUNTIME_DIR` | Runtime root: `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
 | `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](#gpy-start)). |
 | `HOME` | Fallback for the config and cache roots when the XDG variables are unset. |
-| `GPY_NERD_FONT` | Tells `gpy setup` what to assume about icons instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown`; anything else falls through to detection. Setting it skips the prompt. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. |
+| `GPY_NERD_FONT` | Tells `gpy setup` what to assume about icons instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown` (fonts cannot be detected, so ASCII icons), `auto` (detect); anything else is ignored with one warning and falls through to detection. Setting a recognised value other than `auto` skips the prompt. `gpy doctor` lists the effective value in its [Agent tuning](troubleshooting.md#diagnostic-and-fallback-environment-variables) section. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. |
 | `VISUAL`, `EDITOR` | The editor `gpy config open` launches, in that order, before the platform fallback. |
-| `GPY_DEBUG_LOG` | Path of the agent's trace log; the agent writes its debug lines there only when this is set. (`GPY_DEBUG=1` turns on the *shell* integrations' own debug output.) See [Troubleshooting](troubleshooting.md). |
+| `GPY_DEBUG_LOG` | Path of the agent's trace log; the agent writes its debug lines there only when this is set; an empty value leaves logging off and warns once. (`GPY_DEBUG=1` turns on the *shell* integrations' own debug output.) See [Troubleshooting](troubleshooting.md). |
 | `GPY_IPC_TIMEOUT_MS` | Shell integrations only (Fish, Zsh, Bash alike): how long a prompt render waits for the agent's reply, in milliseconds. Default `150`. A value that is not a non-negative integer falls back to the default. Export it in `config.fish`, `.zshrc` or `.bashrc` before the GPY integration is sourced. An agent that is reached but replies later is not recomputed with a `gpy-agent oneshot` fork: that segment is omitted for the render. |
 | `GPY_IPC_COLD_TIMEOUT_MS` | Shell integrations only: the same wait when the prompt has nothing to show for a segment yet (a git instant cache that is cold, a directory not yet rendered in this shell), so a loaded machine still draws it. Default `500`, never shorter than `GPY_IPC_TIMEOUT_MS`; set and validated like `GPY_IPC_TIMEOUT_MS`. |
 | `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` | Shell integrations only: seconds after which the git instant-cache entry counts as stale. A stale entry is still shown at once and triggers a throttled background refresh. Default `5`; set and validated like `GPY_IPC_TIMEOUT_MS`. |

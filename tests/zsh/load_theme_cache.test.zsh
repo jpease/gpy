@@ -45,6 +45,7 @@ source zsh/core/init.zsh
 CACHE_DIR="$TMP_DIR/cache/gpy"
 mkdir -p "$CACHE_DIR"
 cat >"$CACHE_DIR/theme-export.zsh" <<'EOF'
+typeset -g __gpy_export_version="1"
 typeset -g __gpy_load_theme_cache_sentinel="from-cache-file"
 EOF
 

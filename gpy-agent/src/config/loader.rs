@@ -135,6 +135,36 @@ pub fn save_config(
     write_atomically(&target, &rendered)
 }
 
+/// Delete the dotted `keys` from the config file in place, keeping comments
+/// and layout. Writes nothing when none of them is present. Needed for
+/// deprecated keys that the `Config` struct still serializes, which
+/// [`save_config`] therefore never drops.
+///
+/// # Errors
+/// Returns an error if the file can't be read, parsed, locked, or written.
+pub fn remove_config_keys(path: &Path, keys: &[&str]) -> Result<()> {
+    let target = resolve_write_target(path)?;
+    let _lock = lock_for_save(&target)?;
+    let Some(text) = read_existing(&target)? else {
+        return Ok(());
+    };
+    let mut document: toml_edit::DocumentMut = text.parse().map_err(|e| {
+        Error::config(format!(
+            "Failed to parse existing config {}: {e}",
+            path.display()
+        ))
+    })?;
+    for key in keys {
+        let leaf: Vec<String> = key.split('.').map(str::to_owned).collect();
+        remove_leaf(&mut document, &leaf);
+    }
+    let rendered = document.to_string();
+    if rendered == text {
+        return Ok(());
+    }
+    write_atomically(&target, &rendered)
+}
+
 /// Flatten to sorted `dotted-path -> leaf`; arrays are single leaves.
 ///
 /// # Errors
@@ -410,6 +440,39 @@ mod unknown_config_keys_tests {
             .expect("valid TOML");
 
         assert_eq!(unknown_config_keys(&raw), vec!["git.enabeld".to_owned()]);
+    }
+}
+
+#[cfg(test)]
+mod remove_config_keys_tests {
+    use super::remove_config_keys;
+
+    #[test]
+    fn remove_config_keys_deletes_only_named_keys_and_keeps_comments() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "# top comment\n[git]\nenabled = false # old\nshow_upstream = true\n\n[ui]\ntheme = \"text\"\n",
+        )
+        .expect("write");
+
+        remove_config_keys(&path, &["git.enabled", "language.enabled"]).expect("remove");
+
+        let after = std::fs::read_to_string(&path).expect("read");
+        assert!(!after.contains("enabled = false"), "{after}");
+        assert!(after.contains("# top comment"), "{after}");
+        assert!(after.contains("show_upstream = true"), "{after}");
+        assert!(after.contains("theme = \"text\""), "{after}");
+
+        let before = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .expect("mtime");
+        remove_config_keys(&path, &["git.enabled"]).expect("noop");
+        let again = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .expect("mtime");
+        assert_eq!(before, again, "no key present must write nothing");
     }
 }
 

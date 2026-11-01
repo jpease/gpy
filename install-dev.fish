@@ -69,7 +69,7 @@ if test $files_only -eq 1; and test $no_build -eq 0
 end
 
 # This script installs into ~/.local/bin, which sits ahead of Homebrew, system
-# and package-manager prefixes on PATH, and replaces ~/.config/fish/gpy that
+# and package-manager prefixes on PATH, and replaces the data-root files (~/.local/share/gpy) that
 # `gpy setup` owns. Doing that over a packaged gpy leaves a stale shadow
 # once the package updates, so refuse unless asked. Other earlier copies are
 # reported by `_warn_shadowing_binaries`.
@@ -108,6 +108,15 @@ function _config_home
         echo "$XDG_CONFIG_HOME"
     else
         echo "$HOME/.config"
+    end
+end
+
+# Resolved as `paths::data_root_for` does: only an absolute XDG_DATA_HOME counts.
+function _data_root
+    if string match -q '/*' -- "$XDG_DATA_HOME"
+        echo "$XDG_DATA_HOME/gpy"
+    else
+        echo "$HOME/.local/share/gpy"
     end
 end
 
@@ -268,9 +277,8 @@ function _install_fish_files
     echo "Installing Fish files..."
 
     set -l config_home (_config_home)
-    set -l fish_config_dir "$config_home/fish"
+    set -l data_root (_data_root)
     set -l gpy_config_dir "$config_home/gpy"
-    set -l gpy_fish_dir "$fish_config_dir/gpy"
 
     mkdir -p $gpy_config_dir
     set -l config_file config/config.example.toml
@@ -291,15 +299,23 @@ function _install_fish_files
     end
 
     if test $clean_sync -eq 1
-        rm -rf "$fish_config_dir/gpy"
+        rm -rf "$data_root/fish"
     end
-    if not "$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive
+    set -l setup_log (mktemp)
+    "$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive 2>&1 | tee $setup_log
+    if test $pipestatus[1] -ne 0
+        rm -f $setup_log
         echo "error: gpy setup failed"
         return 1
     end
+    # `gpy setup` reports where it installed the Fish files; fall back to the
+    # data root when a stand-in `gpy` prints nothing.
+    set -g gpy_dev_fish_dir (string replace -rf '^Installed fish files to (.*)$' '$1' <$setup_log)
+    rm -f $setup_log
+    test -n "$gpy_dev_fish_dir"; or set -g gpy_dev_fish_dir "$data_root/fish"
 
     echo "Configuration installed to $gpy_config_dir"
-    echo "Fish files installed to $gpy_fish_dir"
+    echo "Fish files installed to $gpy_dev_fish_dir"
     return 0
 end
 
@@ -318,7 +334,8 @@ function _verify_installation
         echo "warn: Agent not in PATH (add ~/.local/bin to PATH)"
     end
 
-    set -l gpy_fish_dir (_config_home)/fish/gpy
+    set -l gpy_fish_dir $gpy_dev_fish_dir
+    test -n "$gpy_fish_dir"; or set gpy_fish_dir (_data_root)/fish
 
     if test -d "$gpy_fish_dir/core"
         echo "Fish files installed"
@@ -433,3 +450,4 @@ set -e no_build
 set -e clean_sync
 set -e show_help
 set -e allow_shadow
+set -e gpy_dev_fish_dir

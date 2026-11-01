@@ -265,10 +265,9 @@ function test_language_content
     printf 'home = /nonexistent\nversion = 3.99.7\n' >$py/.venv/pyvenv.cfg
     assert_render "language: python with the version read from the project venv" $py "python 3.99.7" ""
 
-    # `[language] enabled = false` reaches the shell as GPY_LANGUAGE_ENABLED=0
+    # `[language] enabled = false` reaches the shell as __gpy_cfg_language_enabled=0
     # through the theme export, and segment_language_detect then hides the
-    # segment. (Setting the variable in config.fish instead is overwritten by
-    # that same export.)
+    # segment. (GPY_LANGUAGE_ENABLED is not read: the flag is config-only.)
     write_config '[language]' 'enabled = false' 'display = "text"' 'show_versions = true'
     assert_render "language: [language] enabled = false hides the segment" $py "❯" "python|3.99.7"
 end

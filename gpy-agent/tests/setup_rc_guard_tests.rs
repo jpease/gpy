@@ -26,7 +26,9 @@ const GUARDED_LOADER: &str =
     "[ -n \"${BASH_VERSION:-}\" ] && [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
 
 fn gpy_bash(home: &Path) -> String {
-    home.join(".config/gpy/bash/gpy.bash").display().to_string()
+    home.join(".local/share/gpy/bash/gpy.bash")
+        .display()
+        .to_string()
 }
 
 /// A GPY block as an earlier release wrote it.

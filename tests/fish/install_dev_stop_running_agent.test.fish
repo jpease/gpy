@@ -119,7 +119,7 @@ printf '%s\n' \
     "" \
     "env GPY_AGENT_SOCKET_PATH='$decoy_socket' gpy-agent stop >/dev/null 2>&1" >$driver
 
-set -l out (env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_CACHE_HOME="$home_dir/.cache" \
+set -l out (env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_DATA_HOME="$home_dir/.local/share" XDG_CACHE_HOME="$home_dir/.cache" \
     fish --no-config $driver 2>&1)
 set -l out_status $status
 

@@ -38,7 +38,6 @@ function __setup_offline_edit_env
     init_test_env
     set -e XDG_RUNTIME_DIR
     set -gx PATH $__gpy_root/gpy-agent/target/debug $PATH
-    set -gx GPY_AGENT_BINARY_PATH $__gpy_root/gpy-agent/target/debug/gpy-agent
     mkdir -p $__gpy_test_tmp_dir/plain
 end
 

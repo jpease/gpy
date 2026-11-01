@@ -2,9 +2,9 @@
 # tests/zsh/script_segment_runner_missing.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# When g_runner.bash is missing (neither beside script.zsh nor in the sibling
+# When g_runner.bash is missing (not in the sibling
 # bash/core), zsh/core/script.zsh turns script segments off
-# and emits a warning on stderr if GPY_DEBUG=1 or GPY_VERBOSE=1, matching Fish.
+# and emits a warning on stderr if GPY_DEBUG=1, matching Fish.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -35,12 +35,8 @@ check "missing runner, GPY_DEBUG=1: one warning, runner disabled" \
     "$expected_warn|src=" \
     "$(run_with 'export GPY_DEBUG=1' | paste -sd'|' -)"
 
-check "missing runner, GPY_VERBOSE=1: the same warning" \
-    "$expected_warn|src=" \
-    "$(run_with 'export GPY_VERBOSE=1' | paste -sd'|' -)"
-
 check "missing runner, no debug flags: silent" \
     "src=" \
-    "$(run_with 'unset GPY_DEBUG GPY_VERBOSE')"
+    "$(run_with 'unset GPY_DEBUG')"
 
 test_finish "script segment runner missing"

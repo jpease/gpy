@@ -71,10 +71,10 @@ check "an unknown name is the default, not a wrong color" "49" "$(param bg chart
 # A probe segment after `status` reports the prev_bg the loop handed it.
 function __gpy_segment_probe() { printf 'probe:%s;' "$2"; }
 __enabled_segments=(status probe)
-rendered=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; rendered=$__gpy_render_out
 check "after an ok status pill the next segment's prev_bg is the ok background" true \
     "$(contains "$rendered" 'probe:green;')"
-rendered=$(__gpy_render_prompt 7)
+__gpy_render_prompt 7; rendered=$__gpy_render_out
 check "after a failed status pill the next segment's prev_bg is the fail background" true \
     "$(contains "$rendered" 'probe:magenta;')"
 check "the fail pill carries the fail icon, not the ok one" true \
@@ -82,7 +82,7 @@ check "the fail pill carries the fail icon, not the ok one" true \
 
 # status alone is both the first and the last segment: first cap, last cap
 __enabled_segments=(status)
-rendered=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; rendered=$__gpy_render_out
 check "a lone status pill opens with the first-position cap and closes with the last" true \
     "$([[ $rendered == *"<"*"OK"*")"* ]] && echo true || echo false)"
 p=$(printed "$rendered")
@@ -98,14 +98,14 @@ __icon_prompt=">" __prompt_color="cyan"
 GPY_SHOW_STATUS=0
 
 __gpy_is_root=0
-rendered=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; rendered=$__gpy_render_out
 check "non-root: the agent's character is the prompt symbol" true \
     "$([[ $rendered == *AGENTCHAR ]] && echo true || echo false)"
 
 __gpy_is_root=1
 : >"$SANDBOX/char-requests"
 __gpy_char_cache_key="" __gpy_char_cache_val=""
-rendered=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; rendered=$__gpy_render_out
 check "root: the agent is never asked for a character" 0 "$(wc -l <"$SANDBOX/char-requests" | tr -d ' ')"
 check "root: the symbol is __icon_root_prompt plus a space, outside the escapes" "#! " \
     "$(printed "$rendered" | sed 's/.*probe:[^;]*;//')"
@@ -116,10 +116,10 @@ check "root: no agent character in the prompt" true \
 
 # GPY_SHOW_STATUS=1 puts fish's exit-status indicator before the root symbol
 GPY_SHOW_STATUS=1
-rendered=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; rendered=$__gpy_render_out
 check "root + GPY_SHOW_STATUS=1: ok indicator, then the root symbol" "OK #! " \
     "$(printed "$rendered" | sed 's/.*probe:[^;]*;//')"
-rendered=$(__gpy_render_prompt 2)
+__gpy_render_prompt 2; rendered=$__gpy_render_out
 check "root + failed command: fail indicator in red, then the root symbol" true \
     "$([[ $(flat "$rendered") == *$'\033[31;49m'"NO "* && $(printed "$rendered") == *"NO #! " ]] && echo true || echo false)"
 
@@ -128,7 +128,7 @@ __gpy_is_root=0
 function __gpy_request_character() { return 0; }
 __gpy_char_cache_key="" __gpy_char_cache_val=""
 GPY_SHOW_STATUS=0
-rendered=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; rendered=$__gpy_render_out
 check "agent silent: the local prompt icon in __prompt_color (cyan, 36)" true \
     "$([[ $(flat "$rendered") == *$'\033[36;49m'">"* && $(printed "$rendered") == *"> " ]] && echo true || echo false)"
 unfunction __gpy_request_character

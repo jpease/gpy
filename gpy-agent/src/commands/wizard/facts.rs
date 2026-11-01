@@ -28,9 +28,8 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
     // Canonical, like the IPC `SafePath`, so symlinked `git.skip_paths` entries
     // match; they gate the repository root, as in the agent.
     let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    let git_allowed = config.git.enabled
-        && crate::git::find_repo_root(&canonical_cwd)
-            .is_some_and(|root| config.git.is_enabled_for(&root));
+    let git_allowed = crate::git::find_repo_root(&canonical_cwd)
+        .is_some_and(|root| !config.git.is_path_skipped(&root));
     let repository_status = if git_allowed {
         crate::git::status::load_repository_state(
             cwd,
@@ -49,12 +48,10 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
         None
     };
 
-    let languages = if config.language.enabled {
+    let languages = {
         let detected = Detector::detect_directory_bounded(cwd, config.language.detection_mode);
         let request = DisplayRequest::new(&detected, theme, &config.language).with_cwd(Some(cwd));
         display_info(&request, Versions::Probe).unwrap_or_default()
-    } else {
-        Vec::new()
     };
 
     Ok(PreviewFacts {
@@ -131,21 +128,6 @@ mod tests {
     }
 
     #[test]
-    fn gather_respects_git_disabled() {
-        let repo = init_temp_repo();
-        let mut config = Config::default();
-        config.git.enabled = false;
-        let theme = ThemeConfig::default();
-
-        let facts = gather(repo.path(), &config, &theme).expect("gather should not error");
-
-        assert!(
-            facts.repository_status.is_none(),
-            "config gate should win over repo presence"
-        );
-    }
-
-    #[test]
     fn gather_respects_git_skip_paths() {
         let repo = init_temp_repo();
         let mut config = Config::default();
@@ -173,21 +155,6 @@ mod tests {
             "expected a 'rust' entry, got {:?}",
             facts.languages.iter().map(|l| &l.name).collect::<Vec<_>>()
         );
-    }
-
-    #[test]
-    fn gather_respects_language_disabled() {
-        let dir = TempDir::new().expect("failed to create temp dir");
-        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
-            .expect("failed to write Cargo.toml");
-        let mut config = Config::default();
-        config.language.enabled = false;
-        config.language.detection_mode = DetectionMode::Markers;
-        let theme = ThemeConfig::default();
-
-        let facts = gather(dir.path(), &config, &theme).expect("gather should not error");
-
-        assert_eq!(facts.languages, Vec::new());
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub enum PromptDialect {
     Ansi,
     /// Bash `PS1` source (assumes `shopt -s promptvars`).
     BashPrompt,
-    /// Zsh `PROMPT` source (assumes `prompt_subst`, `prompt_percent`, `no_prompt_bang`).
+    /// Zsh `PROMPT` source (assumes `prompt_subst` and `prompt_percent`; the shell doubles `!` under `prompt_bang`).
     ZshPrompt,
 }
 

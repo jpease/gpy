@@ -111,18 +111,34 @@ pub fn user_plugins_dir() -> PathBuf {
 }
 
 /// Return the bundled plugin root: `GPY_BUNDLED_PLUGIN_DIR` when set, else
-/// `bundled-plugins` beside the user root, where `gpy setup` installs the
-/// plugins GPY ships (`username`, `hostname`).
+/// `plugins` in the data root, where `gpy setup` installs the plugins GPY ships
+/// (`username`, `hostname`).
+///
+/// Deprecated fallback, for one minor release: a data root without `plugins`
+/// beside an old `<config root>/bundled-plugins` (a package upgrade with no
+/// `gpy setup` since) uses the old directory, so those segments keep rendering.
 #[must_use]
 pub fn bundled_plugins_dir() -> PathBuf {
-    crate::env_config::env_string("GPY_BUNDLED_PLUGIN_DIR").map_or_else(
-        || crate::paths::config_root().join(BUNDLED_PLUGINS_DIR_NAME),
-        |dir| crate::paths::absolutize(std::path::Path::new(&dir)),
-    )
+    if let Some(dir) = crate::env_config::BUNDLED_PLUGIN_DIR.path() {
+        return crate::paths::absolutize(&dir);
+    }
+    let legacy = || crate::paths::config_root().join(BUNDLED_PLUGINS_DIR_NAME);
+    crate::paths::data_root().map_or_else(legacy, |data| {
+        let current = data.join(BUNDLED_PLUGINS_SOURCE_DIR);
+        if !current.exists() && legacy().is_dir() {
+            legacy()
+        } else {
+            current
+        }
+    })
 }
 
-/// Directory name of the default bundled plugin root under the config root.
+/// Directory name of the old bundled plugin root under the config root
+/// (deprecated fallback of [`bundled_plugins_dir`]).
 pub const BUNDLED_PLUGINS_DIR_NAME: &str = "bundled-plugins";
+
+/// Directory name of the bundled plugin root under the data root.
+const BUNDLED_PLUGINS_SOURCE_DIR: &str = "plugins";
 
 fn plugin_roots() -> Vec<(PluginSource, PathBuf)> {
     vec![

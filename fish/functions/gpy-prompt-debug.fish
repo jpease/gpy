@@ -9,13 +9,12 @@ function __gpy_validate_installation
     set -l install_dir $__gpy_core_dir/..
 
     # Every file init.fish and conf.d/gpy_init.fish need: the files init.fish
-    # sources directly, the list it sources the rest from, the script segment
-    # runner, and the loader.
+    # sources directly, the list it sources the rest from, and the loader.
     set -l needed core/flags.fish core/util.fish core/defaults.fish core/init.fish
     for file in $__gpy_core_files
         set -a needed core/$file
     end
-    set -a needed core/g_runner.bash conf.d/gpy_init.fish
+    set -a needed conf.d/gpy_init.fish
     for file in $needed
         if test -f $install_dir/$file
             echo "✓ File: $file"
@@ -23,6 +22,14 @@ function __gpy_validate_installation
             echo "✗ Missing file: $file"
             set errors (math $errors + 1)
         end
+    end
+    # The runner sits in the Bash tree beside this one (resolved lexically).
+    set -l runner (path normalize $install_dir/../bash/core/g_runner.bash)
+    if test -f $runner
+        echo "✓ File: bash/core/g_runner.bash"
+    else
+        echo "✗ Missing file: bash/core/g_runner.bash"
+        set errors (math $errors + 1)
     end
 
     echo ""
@@ -109,7 +116,7 @@ function gpy-prompt-debug --description 'GPY debug helpers' --argument-names act
             echo "  Theme: $__gpy_theme_name"
             echo "  Enabled segments: $__enabled_segments"
             echo "  Performance:"
-            echo "    Language cache TTL: $GPY_LANGUAGE_CACHE_TTL_SECONDS"
+            echo "    Language cache TTL: "(__gpy_lang_cache_ttl)
             echo "    Duration threshold: $__duration_threshold_ms"
         case ""
             echo "Usage: gpy-prompt-debug [validate|benchmark|cache|vars]"

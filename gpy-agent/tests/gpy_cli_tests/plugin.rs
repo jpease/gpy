@@ -149,12 +149,21 @@ provided_segments = ["ctx"]
     fs::write(plugin_dir.join("ctx.sh"), "echo ctx\n").expect("Failed to write script");
 }
 
-/// Mark an integration as installed the way `gpy setup` does (entry point present).
-fn install_integration(env: &CliTestEnv, entry_point: &str) {
-    let path = env.xdg_config_home().join(entry_point);
-    fs::create_dir_all(path.parent().expect("entry point has a parent"))
-        .expect("Failed to create integration dir");
-    fs::write(path, "").expect("Failed to write integration entry point");
+/// Mark an integration as installed the way `gpy setup` does: its rc file
+/// (relative to `HOME`, or `XDG_CONFIG_HOME` for Fish) holds the GPY block.
+fn install_integration(env: &CliTestEnv, rc_file: &str) {
+    let path = if rc_file.starts_with("fish/") {
+        env.xdg_config_home().join(rc_file)
+    } else {
+        env.root().join(rc_file)
+    };
+    fs::create_dir_all(path.parent().expect("rc file has a parent"))
+        .expect("Failed to create rc file dir");
+    fs::write(
+        path,
+        "# >>> gpy-init >>>\n# GPY shell integration\n# <<< gpy-init <<<\n",
+    )
+    .expect("Failed to write rc file");
 }
 
 fn enable_stdout(env: &CliTestEnv, segment: &str) -> String {
@@ -171,8 +180,8 @@ fn enable_stdout(env: &CliTestEnv, segment: &str) -> String {
 fn enable_plugin_segment_notes_bash_and_zsh_skip_it() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     write_demo_plugin(&env);
-    install_integration(&env, "gpy/bash/gpy.bash");
-    install_integration(&env, "fish/gpy/conf.d/gpy_init.fish");
+    install_integration(&env, ".bashrc");
+    install_integration(&env, "fish/config.fish");
 
     let stdout = enable_stdout(&env, "k8s_tools");
     assert!(
@@ -188,7 +197,7 @@ fn enable_plugin_segment_notes_bash_and_zsh_skip_it() {
 fn enable_plugin_segment_is_silent_without_bash_or_zsh() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     write_demo_plugin(&env);
-    install_integration(&env, "fish/gpy/conf.d/gpy_init.fish");
+    install_integration(&env, "fish/config.fish");
 
     let stdout = enable_stdout(&env, "k8s_tools");
     assert!(
@@ -200,7 +209,7 @@ fn enable_plugin_segment_is_silent_without_bash_or_zsh() {
 #[test]
 fn enable_builtin_segment_is_silent_even_with_bash_and_zsh() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
-    install_integration(&env, "gpy/bash/gpy.bash");
+    install_integration(&env, ".bashrc");
     install_integration(&env, "gpy/zsh/gpy.zsh");
 
     let stdout = enable_stdout(&env, "clock");
@@ -214,7 +223,7 @@ fn enable_builtin_segment_is_silent_even_with_bash_and_zsh() {
 fn script_plugin_gets_no_fish_only_note() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     write_script_plugin(&env);
-    install_integration(&env, "gpy/bash/gpy.bash");
+    install_integration(&env, ".bashrc");
 
     let validate = env
         .run_gpy(&["plugin", "validate", "scripty"])

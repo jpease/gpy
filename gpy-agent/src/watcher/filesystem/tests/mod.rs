@@ -2,11 +2,9 @@
 
 use super::backend::poll_watch_targets;
 use super::ignore::{force_added_set, is_force_added};
-use super::probe::{
-    DEFAULT_WATCH_POLL_MS, DEFAULT_WATCH_PROBE_MS, engage_poll_fallback,
-    native_backend_delivers_events,
-};
+use super::probe::{engage_poll_fallback, native_backend_delivers_events};
 use super::*;
+use crate::env_config::{DEFAULT_WATCH_POLL_MS, DEFAULT_WATCH_PROBE_MS};
 use crate::sync_ext::MutexExt;
 use crate::watcher::{FileEvent, GitPaths, PendingCallback, PendingEvent};
 use notify::event::{

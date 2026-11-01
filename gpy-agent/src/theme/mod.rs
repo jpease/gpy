@@ -9,6 +9,7 @@ mod parse;
 mod released_hashes;
 pub mod retire;
 pub mod user_copy;
+pub mod warnings;
 
 pub use manager::{ThemeManager, ThemeSource};
 pub use model::{

@@ -4,7 +4,7 @@
 #
 # This test verifies that git.show_upstream config changes hot-reload across:
 #   1. CLI oneshot git command (parses JSON to verify ahead/behind behavior)
-#   2. Fish prompt rendering (verifies GPY_GIT_SHOW_UPSTREAM variable)
+#   2. Fish prompt rendering (the theme export carries no GPY_GIT_SHOW_UPSTREAM)
 #
 # Test setup:
 #   - Creates bare repo as "origin"
@@ -125,13 +125,13 @@ function test_git_show_upstream_reload
         return 1
     end
 
-    # Verify theme export includes GPY_GIT_SHOW_UPSTREAM=1
+    # Verify theme export does not export GPY_GIT_SHOW_UPSTREAM (config values are not environment mirrors)
     set -l theme1 (gpy-agent theme export --shell fish 2>/dev/null)
 
-    if echo "$theme1" | grep -q "set -gx GPY_GIT_SHOW_UPSTREAM \"1\""
-        pass "Theme export shows GPY_GIT_SHOW_UPSTREAM=1"
+    if not echo "$theme1" | grep -q GPY_GIT_SHOW_UPSTREAM
+        pass "Theme export does not export GPY_GIT_SHOW_UPSTREAM"
     else
-        fail "Theme export shows GPY_GIT_SHOW_UPSTREAM=1" "Variable not found or wrong value"
+        fail "Theme export does not export GPY_GIT_SHOW_UPSTREAM" "Variable present in the export"
         cleanup_test_files
         return 1
     end
@@ -164,13 +164,13 @@ function test_git_show_upstream_reload
         return 1
     end
 
-    # Verify theme export shows GPY_GIT_SHOW_UPSTREAM=0
+    # Verify the theme export still does not export GPY_GIT_SHOW_UPSTREAM
     set -l theme2 (gpy-agent theme export --shell fish 2>/dev/null)
 
-    if echo "$theme2" | grep -q "set -gx GPY_GIT_SHOW_UPSTREAM \"0\""
-        pass "Theme export shows GPY_GIT_SHOW_UPSTREAM=0"
+    if not echo "$theme2" | grep -q GPY_GIT_SHOW_UPSTREAM
+        pass "Theme export does not export GPY_GIT_SHOW_UPSTREAM"
     else
-        fail "Theme export shows GPY_GIT_SHOW_UPSTREAM=0" "Variable not found or wrong value"
+        fail "Theme export does not export GPY_GIT_SHOW_UPSTREAM" "Variable present in the export"
         cleanup_test_files
         return 1
     end

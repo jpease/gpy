@@ -10,8 +10,14 @@ source "$repo_root/fish/core/ipc.fish"
 # Point at a nonexistent socket so IPC fails with no fallback
 set -gx GPY_AGENT_SOCKET_PATH /tmp/gpy-nonexistent-test-socket-$fish_pid.sock
 set -gx GPY_AGENT_ENABLED 1
-# Disable agent binary so oneshot fallback also fails
-set -gx GPY_AGENT_BINARY_PATH /nonexistent/gpy-agent-binary
+# No agent binary on PATH and none under a sandbox HOME, so the oneshot
+# fallback also fails
+set -gx HOME (mktemp -d)
+set -l test_path
+for dir in $PATH
+    test -x "$dir/gpy-agent"; or set -a test_path $dir
+end
+set -gx PATH $test_path
 
 set -l result (__gpy_request ping)
 set -l exit_status $status

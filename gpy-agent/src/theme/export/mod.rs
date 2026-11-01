@@ -14,3 +14,9 @@ pub(crate) use theme_to_shell::{PluginExports, theme_to_shell};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod export_names_tests;
+
+#[cfg(test)]
+mod cfg_mirror_tests;

@@ -14,7 +14,8 @@ For an end-to-end contributor workflow (plugin + theme), see:
 Plugins are discovered from:
 - User root: `$XDG_CONFIG_HOME/gpy/plugins/<plugin-id>/plugin.toml`
 - Bundled root: `$GPY_BUNDLED_PLUGIN_DIR/<plugin-id>/plugin.toml`, default
-  `$XDG_CONFIG_HOME/gpy/bundled-plugins` (see [Bundled Plugins](#bundled-plugins))
+  `$XDG_DATA_HOME/gpy/plugins`, `~/.local/share/gpy/plugins` when it is unset
+  (see [Bundled Plugins](#bundled-plugins))
 
 Required fields:
 - `id`
@@ -95,18 +96,21 @@ repository (`plugins/username`, `plugins/hostname`); there is no built-in
 renderer, IPC request or `gpy-agent oneshot` mode for either.
 
 - **Where they live.** Discovery reads the bundled root from
-  `$GPY_BUNDLED_PLUGIN_DIR`, default `$XDG_CONFIG_HOME/gpy/bundled-plugins`
-  (`~/.config/gpy/bundled-plugins`). A user plugin with the same id in
-  `plugins/` overrides a bundled one.
+  `$GPY_BUNDLED_PLUGIN_DIR`, default `$XDG_DATA_HOME/gpy/plugins`
+  (`~/.local/share/gpy/plugins`). For one minor release, when that directory
+  does not exist but the old `$XDG_CONFIG_HOME/gpy/bundled-plugins` does (a
+  package upgrade with no `gpy setup` since), the old directory is used. A user
+  plugin with the same id in `plugins/` overrides a bundled one.
 - **How they get there.** Release archives (`gpy-release.tar.gz`,
   `gpy-release.zip`) and `gpy-shell-files.tar.gz` carry `plugins/`, and the
   Homebrew formula installs it under `share/gpy/plugins`. `gpy setup` (run by
   `install.sh`, `install-oneline.sh`, `install-dev.fish` and by hand after a
   Homebrew install) replaces the bundled root with the source's `plugins/`
   tree and clears the group and world write bits, because script segments
-  refuse a script that others can write (see [Trust](#trust)). Given `--from`
-  or `GPY_SHARE_DIR`, setup also keeps a copy in `share/gpy/plugins` beside
-  the binary. `gpy uninstall` removes the bundled root.
+  refuse a script that others can write (see [Trust](#trust)). When the
+  source already is the data root (the installers' layout), setup only clears
+  the write bits. `gpy uninstall` removes the bundled root, and the old
+  `bundled-plugins` directory too.
 - **Settings.** Both are configured under `config.toml`
   `[plugin.hostname]` (`show_always`, `trim_at`) and `[plugin.username]`
   (`show_always`), not in the theme.
@@ -408,7 +412,7 @@ the `bash/core/g_runner.bash` beside their tree. `gpy doctor`'s trial run
 applies the same rules, and `tests/bash/script_runner_conformance.test.bash`
 holds the two to the same verdicts and environment. With no
 Bash at all, script segments are disabled (one warning, shown only with
-`GPY_DEBUG`/`GPY_VERBOSE`).
+`GPY_DEBUG`).
 
 - **Once per command.** Triggers are evaluated in this order before the
   script: `require_env` (set and non-empty, no fork), then

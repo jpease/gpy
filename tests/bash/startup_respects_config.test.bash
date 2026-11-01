@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/bash/startup_respects_config.test.bash
-# Startup `gpy-agent start` must honour the theme export's GPY_AGENT_ENABLED from
-# config.toml. A stub gpy-agent logs argv and exports flags from STUB_AGENT / STUB_SUP.
+# Startup `gpy-agent start` must honour the theme export's __gpy_cfg_agent_enabled
+# mirror of config.toml. A stub gpy-agent logs argv and writes mirrors from STUB_AGENT / STUB_SUP.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -17,8 +17,9 @@ cat >"$tmp/bin/gpy-agent" <<EOF
 echo "\$*" >> "$tmp/calls.log"
 case "\$1 \$2" in
   "theme export")
-    echo "export GPY_AGENT_ENABLED=\"\$STUB_AGENT\""
-    echo "export GPY_AGENT_SUPERVISOR_ENABLED=\"\$STUB_SUP\""
+    echo '__gpy_export_version="1"'
+    echo "__gpy_cfg_agent_enabled=\"\$STUB_AGENT\""
+    echo "__gpy_cfg_supervisor_enabled=\"\$STUB_SUP\""
     ;;
   status*) exit 1 ;;
 esac

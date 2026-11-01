@@ -4,7 +4,7 @@ use super::super::WatchRegistry;
 use super::super::watch_set::{WatchMode, WatchSet};
 use super::backend::{BackendKind, WatcherBackend, build_poll_watcher, poll_watch_targets};
 use crate::deadline::Deadline;
-use crate::env_config::{env_string, parse_flag, parse_u64, parse_u64_positive};
+use crate::env_config::{WATCH_FORCE_POLL, WATCH_POLL_MS, WATCH_PROBE_MS};
 use crate::sync_ext::MutexExt;
 use notify::event::{EventKind, Flag};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -15,12 +15,6 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-
-/// Health-probe timeout: well above healthy latency (<250ms), far below reconcile.
-pub(super) const DEFAULT_WATCH_PROBE_MS: u64 = 2_000;
-
-/// `PollWatcher` fallback interval; override with `GPY_WATCH_POLL_MS`.
-pub(super) const DEFAULT_WATCH_POLL_MS: u64 = 2_000;
 
 /// Wait before re-touching the sentinel, so a pre-arm write isn't read as a dead backend.
 pub(super) const PROBE_TOUCH_INTERVAL: Duration = Duration::from_millis(250);
@@ -57,37 +51,28 @@ impl FallbackPolicy {
     /// Resolve from `GPY_WATCH_FORCE_POLL`, `GPY_WATCH_PROBE_MS` (`0` = native only),
     /// and `GPY_WATCH_POLL_MS`.
     pub(super) fn from_env() -> Self {
-        let force_raw = env_string("GPY_WATCH_FORCE_POLL");
-        let probe_raw = env_string("GPY_WATCH_PROBE_MS");
-        let poll_raw = env_string("GPY_WATCH_POLL_MS");
         Self::resolve(
-            force_raw.as_deref(),
-            probe_raw.as_deref(),
-            poll_raw.as_deref(),
+            WATCH_FORCE_POLL.flag(),
+            WATCH_PROBE_MS.zero_disables(),
+            WATCH_POLL_MS.positive(),
         )
     }
 
     /// Pure form of [`FallbackPolicy::from_env`], testable without `set_var`.
-    pub(super) fn resolve(
-        force_raw: Option<&str>,
-        probe_raw: Option<&str>,
-        poll_raw: Option<&str>,
-    ) -> Self {
-        let poll_interval =
-            Duration::from_millis(parse_u64_positive(poll_raw).unwrap_or(DEFAULT_WATCH_POLL_MS));
+    /// `probe_ms == None` means the probe is off.
+    pub(super) const fn resolve(force_poll: bool, probe_ms: Option<u64>, poll_ms: u64) -> Self {
+        let poll_interval = Duration::from_millis(poll_ms);
 
-        if parse_flag(force_raw, false) {
+        if force_poll {
             return Self::ForcePoll { poll_interval };
         }
 
-        let probe_ms = parse_u64(probe_raw).unwrap_or(DEFAULT_WATCH_PROBE_MS);
-        if probe_ms == 0_u64 {
-            return Self::NativeOnly;
-        }
-
-        Self::ProbeThenFallback {
-            probe_timeout: Duration::from_millis(probe_ms),
-            poll_interval,
+        match probe_ms {
+            None => Self::NativeOnly,
+            Some(millis) => Self::ProbeThenFallback {
+                probe_timeout: Duration::from_millis(millis),
+                poll_interval,
+            },
         }
     }
 }

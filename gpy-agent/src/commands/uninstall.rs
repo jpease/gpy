@@ -6,7 +6,9 @@
 use super::lifecycle;
 use super::output;
 use super::rc_block::{has_start, remove_blocks};
-use super::setup::{Environment, SHELLS, shell_dir_for};
+use super::setup::{
+    DataRoot, Environment, SHELLS, VERSION_STAMP, legacy_shell_dir_for, shell_dir_for,
+};
 use super::setup_install::{fish_completions_dir, plugins_target};
 use crate::shell::Shell;
 use crate::{Error, Result, paths};
@@ -47,6 +49,7 @@ enum Binaries {
 struct Plan {
     config_home: PathBuf,
     config_dir: PathBuf,
+    data_root: DataRoot,
     /// Shell trees, completions, the fish conf.d entry and bundled plugins.
     integration: Vec<PathBuf>,
     /// rc files holding a GPY block.
@@ -118,7 +121,11 @@ pub fn run(options: &UninstallOptions) -> Result<ExitCode> {
     for path in &plan.integration {
         tally.remove(path);
     }
-    restore_fish_prompt(&plan.config_home, &mut tally);
+    // The data root itself goes only when nothing else of the user's is in it.
+    if fs::remove_dir(&plan.data_root.0).is_ok() {
+        output::plain(format_args!("Removed empty {}", plan.data_root.0.display()));
+    }
+    restore_fish_prompt(&plan.config_home, &plan.data_root, &mut tally);
     remove_binaries(&plan.binaries, &mut tally);
     remove_config(&plan.config_dir, options.purge_config, &mut tally);
     if let Some(cache) = &plan.cache {
@@ -168,15 +175,29 @@ fn build_plan(env: &Environment) -> Result<Plan> {
     let config_home = env.config_home()?;
     let fish_dir = config_home.join("fish");
 
+    let data_root = env.data_root()?;
     let mut integration: Vec<PathBuf> = SHELLS
         .into_iter()
-        .map(|shell| shell_dir_for(&config_home, shell))
+        .map(|shell| shell_dir_for(&data_root, shell))
         .collect();
+    // Deprecated: the pre-data-root locations, removed only when GPY stamped them.
+    integration.extend(
+        SHELLS
+            .into_iter()
+            .map(|shell| legacy_shell_dir_for(&config_home, shell))
+            .filter(|dir| dir.join(VERSION_STAMP).is_file()),
+    );
     let completions = fish_completions_dir(&config_home);
     integration.push(completions.join("gpy.fish"));
     integration.push(completions.join("gpy-dynamic.fish"));
     integration.push(fish_dir.join("conf.d").join("gpy_init.fish"));
-    integration.push(plugins_target(&config_home));
+    integration.push(plugins_target(&data_root));
+    // Deprecated: the pre-data-root bundled plugin root, never stamped.
+    integration.push(
+        config_home
+            .join("gpy")
+            .join(crate::plugin::BUNDLED_PLUGINS_DIR_NAME),
+    );
 
     let mut candidates = vec![
         home.join(".bashrc"),
@@ -207,6 +228,7 @@ fn build_plan(env: &Environment) -> Result<Plan> {
     Ok(Plan {
         config_dir: config_home.join("gpy"),
         config_home,
+        data_root,
         integration,
         rc_files,
         unreadable,
@@ -445,17 +467,24 @@ fn clean_rc_files(rc_files: &[PathBuf], tally: &mut Tally) -> Result<()> {
 /// Remove GPY's `fish_prompt.fish` (its symlink, or a regular-file copy of its
 /// prompt) and, when nothing is left there, restore the newest
 /// `fish_prompt.fish.backup.<stamp>`. A prompt that is not GPY's stays.
-fn restore_fish_prompt(config_home: &Path, tally: &mut Tally) {
+fn restore_fish_prompt(config_home: &Path, root: &DataRoot, tally: &mut Tally) {
     let prompt = config_home
         .join("fish")
         .join("functions")
         .join("fish_prompt.fish");
-    let shell_dir = shell_dir_for(config_home, Shell::Fish);
-    let own_prompt = shell_dir.join("functions").join("fish_prompt.fish");
+    // GPY's prompt link goes into the current Fish tree, or the pre-data-root one.
+    let own_dirs = [
+        shell_dir_for(root, Shell::Fish),
+        legacy_shell_dir_for(config_home, Shell::Fish),
+    ];
 
     if let Ok(meta) = prompt.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            if fs::read_link(&prompt).is_ok_and(|target| target == own_prompt) {
+            if fs::read_link(&prompt).is_ok_and(|target| {
+                own_dirs
+                    .iter()
+                    .any(|dir| target == dir.join("functions").join("fish_prompt.fish"))
+            }) {
                 tally.remove(&prompt);
             } else {
                 output::plain("fish_prompt.fish is a symlink GPY did not create; leaving it alone");
@@ -467,7 +496,7 @@ fn restore_fish_prompt(config_home: &Path, tally: &mut Tally) {
     if exists(&prompt) {
         return;
     }
-    let Some(backup) = newest_backup(&prompt, &shell_dir) else {
+    let Some(backup) = newest_backup(&prompt, &own_dirs) else {
         return;
     };
     match fs::rename(&backup, &prompt) {
@@ -506,7 +535,7 @@ fn is_backup_stamp(stamp: &str) -> bool {
 
 /// The newest `<prompt>.backup.<stamp>` beside `prompt`. A symlink into
 /// GPY's own shell tree never qualifies.
-fn newest_backup(prompt: &Path, shell_dir: &Path) -> Option<PathBuf> {
+fn newest_backup(prompt: &Path, own_dirs: &[PathBuf]) -> Option<PathBuf> {
     let dir = prompt.parent()?;
     let prefix = format!("{}.backup.", prompt.file_name()?.to_string_lossy());
     let mut best: Option<(String, PathBuf)> = None;
@@ -520,7 +549,9 @@ fn newest_backup(prompt: &Path, shell_dir: &Path) -> Option<PathBuf> {
             continue;
         };
         if meta.file_type().is_symlink() {
-            if fs::read_link(&path).is_ok_and(|target| target.starts_with(shell_dir)) {
+            if fs::read_link(&path)
+                .is_ok_and(|target| own_dirs.iter().any(|own| target.starts_with(own)))
+            {
                 continue;
             }
         } else if !meta.is_file() {

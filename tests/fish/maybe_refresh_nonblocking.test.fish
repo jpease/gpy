@@ -41,10 +41,10 @@ set -gx XDG_CACHE_HOME $tmp/cache
 # Agent stub: logs its argv; `oneshot directory` prints DIR, anything else
 # prints nothing. Only ever reached through a oneshot fallback.
 printf '%s\n' '#!/bin/sh' \
-    'echo "$*" >> "$(dirname "$0")/calls.log"' \
-    'case "$1 $2" in "oneshot directory") printf DIR;; esac' >$tmp/stub-agent
-chmod +x $tmp/stub-agent
-set -gx GPY_AGENT_BINARY_PATH $tmp/stub-agent
+    "echo \"\$*\" >> '$tmp/calls.log'" \
+    'case "$1 $2" in "oneshot directory") printf DIR;; esac' >$tmp/gpy-agent
+chmod +x $tmp/gpy-agent
+set -gx PATH $tmp $PATH
 
 # --- Case 1: non-blocking against a slow listener ---
 set -l sock $tmp/gpy.sock
@@ -57,6 +57,7 @@ test_stub_listener $sock reply --reply '{"status":"ok"}' --delay 3 \
 set -l fake_bin $tmp/bin
 mkdir -p $fake_bin
 ln -s (command -v nc) $fake_bin/nc
+ln -s $tmp/gpy-agent $fake_bin/gpy-agent
 set -gx GPY_AGENT_SOCKET_PATH $sock
 set -g __gpy_registered 1
 set -g __gpy_prompt_now ($real_date +%s)

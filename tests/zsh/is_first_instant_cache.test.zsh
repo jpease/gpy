@@ -15,7 +15,6 @@ cd "$ROOT" || exit 1
 
 source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing-is-first.sock"
-export GPY_LANGUAGE_ENABLED=1
 
 source zsh/gpy.zsh
 

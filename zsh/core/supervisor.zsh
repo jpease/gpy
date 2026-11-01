@@ -22,7 +22,10 @@ __gpy_supervisor_check_attempts=0
 function __gpy_supervisor_check() {
     __gpy_agent_enabled && __gpy_supervisor_enabled || return 0
 
-    local rate_limit="${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}"
+    # The user's non-negative integer (0 = every prompt), else the config
+    # mirror, else 30.
+    local rate_limit="${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS-}"
+    [[ "$rate_limit" == <-> ]] || rate_limit="${__gpy_cfg_supervisor_check_interval-}"
     [[ "$rate_limit" == <-> ]] || rate_limit=30
     local now=$EPOCHSECONDS
     (( now - __gpy_supervisor_last_check_time >= rate_limit )) || return 0
@@ -33,7 +36,9 @@ function __gpy_supervisor_check() {
         return 0
     fi
 
-    local max_attempts="${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}"
+    # The user's non-negative integer, else the config mirror, else 5.
+    local max_attempts="${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS-}"
+    [[ "$max_attempts" == <-> ]] || max_attempts="${__gpy_cfg_supervisor_max_restarts-}"
     [[ "$max_attempts" == <-> ]] || max_attempts=5
     (( __gpy_supervisor_check_attempts < max_attempts )) || return 0
     (( __gpy_supervisor_check_attempts++ ))

@@ -13,7 +13,6 @@ pub mod oneshot;
 pub mod startup;
 
 use crate::debug_log;
-use crate::env_config::{env_flag, env_u64_positive};
 use crate::git::cache::GitStatusCache;
 #[cfg(unix)]
 use crate::ipc::registry::{ShellRenudger, renudge_unregistered_shells};
@@ -36,11 +35,8 @@ use std::time::Duration;
 /// Whether `GPY_DISABLE_WATCHER` disables the file watcher. Startup and
 /// hot-reload both check it so a reload never re-enables the watcher.
 fn watcher_disabled_by_env() -> bool {
-    env_flag("GPY_DISABLE_WATCHER", false)
+    crate::env_config::DISABLE_WATCHER.flag()
 }
-
-/// Default reconcile interval; above the git-status cache TTL so scans see fresh state.
-const RECONCILE_INTERVAL_SECS: u64 = 45;
 
 /// Connect attempts the start announcement makes before announcing anyway;
 /// with [`ANNOUNCE_CONNECT_POLL`], a 5 s wait for the socket to accept.
@@ -56,9 +52,10 @@ const ANNOUNCE_CONNECT_POLL: Duration = Duration::from_millis(50);
 const SERVER_STOP_WAIT_MAX: Duration = Duration::from_secs(5);
 
 /// Resolve the reconcile interval from `GPY_RECONCILE_INTERVAL_SECS`, else
-/// [`RECONCILE_INTERVAL_SECS`]. For setups where `FSEvents` never arrive.
+/// [`crate::env_config::DEFAULT_RECONCILE_INTERVAL_SECS`]. For setups where
+/// `FSEvents` never arrive.
 fn reconcile_interval_secs() -> u64 {
-    env_u64_positive("GPY_RECONCILE_INTERVAL_SECS").unwrap_or(RECONCILE_INTERVAL_SECS)
+    crate::env_config::RECONCILE_INTERVAL_SECS.positive()
 }
 
 /// Runs `scan_fn` over `repos` on a blocking thread (git status is a subprocess).
@@ -162,7 +159,7 @@ fn handle_clock_tick(
 ) -> u64 {
     let config = ctx.config_manager.get();
 
-    if !config.ui.enabled_segments.iter().any(|s| s == "clock") {
+    if !config.segment_enabled("clock") {
         return last_notified_minute;
     }
 
@@ -277,7 +274,7 @@ impl Agent {
         // on every coordinator, so they must see the same config paths.
         let watch_registry = Arc::new(crate::watcher::WatchRegistry::new());
         watch_registry.set_worktree_enabled(initial_config.git.watch_worktree);
-        watch_registry.set_repo_filter(events::git_repo_filter(&initial_config.git));
+        watch_registry.set_repo_filter(events::git_repo_filter(&initial_config));
 
         let theme_manager = Self::init_theme_manager(&initial_config)?;
 
@@ -431,7 +428,7 @@ impl Agent {
 
         if !disable_watcher
             && initial_config.agent.live_updates
-            && (initial_config.git.enabled || initial_config.language.enabled)
+            && initial_config.any_agent_segment_enabled()
         {
             match events::create_watcher(watcher_config, ctx) {
                 Ok(initial_watcher) => {

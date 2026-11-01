@@ -2,7 +2,7 @@
 //! file, a theme's chain): OS notifications plus an optional polling fallback.
 
 use crate::Result;
-use crate::env_config::env_u64_positive;
+use crate::env_config::EnvVar;
 use crate::sync_ext::MutexExt;
 use crate::watcher::WatchCoordinator;
 use std::path::{Path, PathBuf};
@@ -145,15 +145,16 @@ impl HotReloadSlot {
         Ok(true)
     }
 
-    /// Start the poll fallback when `env_var` holds positive milliseconds, for
-    /// environments where OS notifications (`FSEvents`) never arrive.
+    /// Start the poll fallback when `var` holds positive milliseconds (`0` or
+    /// unset leaves it off), for environments where OS notifications
+    /// (`FSEvents`) never arrive.
     pub fn start_poll_fallback(
         &self,
-        env_var: &str,
+        var: &EnvVar,
         debounce_duration: Duration,
         target: PollTarget,
     ) {
-        let Some(poll_interval_ms) = env_u64_positive(env_var) else {
+        let Some(poll_interval_ms) = var.zero_disables() else {
             return;
         };
         self.spawn_poll_thread(

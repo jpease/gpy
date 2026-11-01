@@ -4,13 +4,13 @@ __gpy_protocol_version_checked=0
 
 __gpy_supervisor_is_running() {
     local socket_path
-    socket_path=$(__gpy_ipc_endpoint)
+    __gpy_ipc_endpoint_into socket_path
 
     [[ -S "$socket_path" ]] || return 1
 
     local ping_json='{"op":"ping"}'
     local response
-    response=$(__gpy_send_json "$ping_json" 2>/dev/null)
+    __gpy_send_json "$ping_json" "" response 2>/dev/null
 
     [[ -n "$response" && "$response" == *'"status":"ok"'* ]] || return 1
 
@@ -58,7 +58,10 @@ __gpy_supervisor_check() {
 
     # Rate-limit before any IPC so a healthy agent costs no round-trips.
     # Read at call time so a config reload applies.
-    local rate_limit="${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}"
+    # The user's non-negative integer (0 = every prompt), else the config
+    # mirror, else 30.
+    local rate_limit="${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS-}"
+    [[ "$rate_limit" =~ ^[0-9]+$ ]] || rate_limit="${__gpy_cfg_supervisor_check_interval-}"
     [[ "$rate_limit" =~ ^[0-9]+$ ]] || rate_limit=30
 
     # Builtin epoch on bash 4.2+: no fork for the checks the limiter rejects.
@@ -77,7 +80,9 @@ __gpy_supervisor_check() {
         return
     fi
 
-    local max_attempts="${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}"
+    # The user's non-negative integer, else the config mirror, else 5.
+    local max_attempts="${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS-}"
+    [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts="${__gpy_cfg_supervisor_max_restarts-}"
     [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=5
     if [[ $__gpy_supervisor_check_attempts -ge $max_attempts ]]; then
         return

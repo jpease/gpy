@@ -28,18 +28,17 @@ function __gpy_uint_or_default --argument-names value default --description 'Pur
     end
 end
 
-set -g GPY_IPC_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
-
-# Budget when the prompt has nothing to show for a segment (a cold git cache,
-# a directory not yet rendered): waiting longer keeps the segment under load.
-# Never shorter than GPY_IPC_TIMEOUT_MS; see __gpy_ipc_cold_timeout_ms.
-set -g GPY_IPC_COLD_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_COLD_TIMEOUT_MS" 500)
+# Public tuning knobs are read at the use site, never assigned: the user's
+# value if a non-negative integer, else the default.
+function __gpy_ipc_timeout_ms --description 'IPC budget in ms (GPY_IPC_TIMEOUT_MS)'
+    __gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150
+end
 
 # Self-heal bound when a SIGURG repaint push is missed.
-set -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS (__gpy_uint_or_default "$GPY_GIT_INSTANT_CACHE_TTL_SECONDS" 5)
+function __gpy_git_cache_ttl --description 'Git instant-cache TTL in seconds (GPY_GIT_INSTANT_CACHE_TTL_SECONDS)'
+    __gpy_uint_or_default "$GPY_GIT_INSTANT_CACHE_TTL_SECONDS" 5
+end
 
-set -g GPY_LANGUAGE_CACHE_TTL_SECONDS (__gpy_uint_or_default "$GPY_LANGUAGE_CACHE_TTL_SECONDS" 30)
-
-set -g GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS (__gpy_uint_or_default "$GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS" 30)
-
-set -g GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS (__gpy_uint_or_default "$GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS" 5)
+function __gpy_lang_cache_ttl --description 'Language cache TTL in seconds (GPY_LANGUAGE_CACHE_TTL_SECONDS)'
+    __gpy_uint_or_default "$GPY_LANGUAGE_CACHE_TTL_SECONDS" 30
+end

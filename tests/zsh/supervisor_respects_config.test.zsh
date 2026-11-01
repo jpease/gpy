@@ -21,8 +21,9 @@ cat >"$tmp/bin/gpy-agent" <<EOF
 echo "\$*" >> "$tmp/calls.log"
 case "\$1 \$2" in
   "theme export")
-    echo 'export GPY_AGENT_ENABLED="1"'
-    echo "export GPY_AGENT_SUPERVISOR_ENABLED=\"\$STUB_SUPERVISOR_ENABLED\""
+    echo '__gpy_export_version="1"'
+    echo '__gpy_cfg_agent_enabled="1"'
+    echo "__gpy_cfg_supervisor_enabled=\"\$STUB_SUPERVISOR_ENABLED\""
     ;;
   status*) exit 1 ;;
 esac

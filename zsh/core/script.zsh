@@ -1,23 +1,23 @@
 # zsh/core/script.zsh
 # Script ("G") segments: plugin scripts named by the theme export
 # (`__gpy_script_*`, contract in docs/dev/plugins.md "Theme export"), run once
-# per command from precmd in this interactive shell, never from the
-# `$(__gpy_render_prompt ...)` subshell or a repaint (TRAPURG, reset-prompt).
+# per command from precmd in this interactive shell, never from a repaint
+# (TRAPURG, reset-prompt).
 #
 # - Triggers first: `require_env` (no fork), then one scan child for
 #   `require_files`/`require_folders`/`require_extensions` (30 ms, then
 #   SIGKILL), then `require_command` inside the runner.
 # - Cache: shell variables only, keyed by the exported static key plus the
 #   declared inputs and `env` values, reused for `ttl` seconds (0 = never).
-# - Runner: bash/core/g_runner.bash (`gpy setup` installs it as
-#   core/g_runner.bash; a checkout uses the repository copy) in one Bash child
+# - Runner: bash/core/g_runner.bash, found beside this tree in a checkout and
+#   in the data root, in one Bash child
 #   per due prompt, with one shared deadline. The child is a Bash 4 or later
 #   when one is installed, else /bin/bash; with Bash 3.2 a Ctrl-C waits for the
 #   timeout (the run still reports it and the process groups are killed).
 #   Declared values reach the child through its environment, never argv.
 # - Output: the runner caps, strips C0/DEL and rejects C1; this file escapes
 #   the text for the prompt once and stores only that render-ready value.
-# - No files: no cache, relay or marker file; the descriptors used here are
+# - No files: no cache or marker file; the descriptors used here are
 #   closed before the prompt.
 
 zmodload zsh/datetime zsh/system
@@ -38,13 +38,10 @@ typeset -g __gpy_g_sh=/bin/sh __gpy_g_bash="" __gpy_g_bash_resolved=""
 typeset -g __gpy_g_src=""
 # Consecutive timeouts or over-cap outputs that disable a segment for this shell.
 typeset -gi __gpy_g_strikes_max=2
-typeset -g __gpy_g_core_dir=${${(%):-%x}:a:h}
-typeset -g __gpy_g_runner_file=$__gpy_g_core_dir/g_runner.bash
-[[ -r $__gpy_g_runner_file ]] || __gpy_g_runner_file=${__gpy_g_core_dir:h:h}/bash/core/g_runner.bash
-unset __gpy_g_core_dir
+typeset -g __gpy_g_runner_file=${${${(%):-%x}:a:h}:h:h}/bash/core/g_runner.bash
 if [[ -r $__gpy_g_runner_file ]]; then
     __gpy_g_src="$(<$__gpy_g_runner_file)"$'\n''__gpy_g_batch "$@"'
-elif [[ ${GPY_DEBUG-} == 1 || ${GPY_VERBOSE-} == 1 ]]; then
+elif [[ ${GPY_DEBUG-} == 1 ]]; then
     print -ru2 -- "gpy[script]: warning: Runner $__gpy_g_runner_file missing - script segments disabled"
 fi
 
@@ -61,7 +58,7 @@ function __gpy_g_digits_ok() {
 
 # The runner child: the first Bash 4 or later on PATH, else /bin/bash.
 # Resolved once per shell (one short `bash -c` per candidate checked). None
-# found: a warning under GPY_DEBUG/GPY_VERBOSE only, as Fish logs it.
+# found: a warning under GPY_DEBUG only, as Fish logs it.
 function __gpy_g_resolve_bash() {
     __gpy_g_bash_resolved=1
     local d b
@@ -75,7 +72,7 @@ function __gpy_g_resolve_bash() {
     done
     if [[ -x /bin/bash ]]; then
         __gpy_g_bash=/bin/bash
-    elif [[ ${GPY_DEBUG-} == 1 || ${GPY_VERBOSE-} == 1 ]]; then
+    elif [[ ${GPY_DEBUG-} == 1 ]]; then
         print -ru2 -- "gpy[script]: warning: No bash found - script segments disabled"
     fi
     return 0

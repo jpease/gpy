@@ -13,7 +13,7 @@
 # No pty needed. With the real gpy-agent on PATH and a dead socket:
 #   (a) a STALE cache entry holding a sentinel plus a dirty tree renders the
 #       real oneshot output (branch + unstaged marker), not the sentinel;
-#   (b) the segment reports the oneshot budget claim (GPY_SEG_STATUS_ONESHOT)
+#   (b) the segment reports the oneshot budget claim (__gpy_seg_status_oneshot)
 #       so a render can never fork more than one oneshot;
 #   (c) a FRESH cache entry is still served as-is (no fork);
 #   (d) with the socket present (agent up), a stale entry is served as-is and
@@ -69,10 +69,10 @@ case "$text" in
     *"✱1"*) pass "the oneshot output shows the dirty tree" ;;
     *) fail "the oneshot output does not show the unstaged marker: '$text'" ;;
 esac
-if [ "$rc" -eq "${GPY_SEG_STATUS_ONESHOT:-3}" ]; then
+if [ "$rc" -eq "${__gpy_seg_status_oneshot:-3}" ]; then
     pass "the segment reported the oneshot budget claim (status $rc)"
 else
-    fail "expected exit status GPY_SEG_STATUS_ONESHOT (${GPY_SEG_STATUS_ONESHOT:-3}), got $status"
+    fail "expected exit status __gpy_seg_status_oneshot (${__gpy_seg_status_oneshot:-3}), got $status"
 fi
 
 # --- (b) budget: a second call in the same render does not fork again ------------
@@ -81,7 +81,7 @@ __gpy_oneshot_used=1
 out2="$(__gpy_segment_git "true" black "")"
 rc2=$?
 text2="$(printf '%s' "$out2" | strip)"
-if [ "$rc2" -ne "${GPY_SEG_STATUS_ONESHOT:-3}" ]; then
+if [ "$rc2" -ne "${__gpy_seg_status_oneshot:-3}" ]; then
     pass "with the budget spent the segment does not fork oneshot again (status $rc2)"
 else
     fail "the segment forked a second oneshot in one render"

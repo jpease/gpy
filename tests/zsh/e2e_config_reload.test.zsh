@@ -47,13 +47,13 @@ export_file="$XDG_CACHE_HOME/gpy/theme-export.zsh"
 # The export carries show_icons=1 now (asserted next); a rewrite is the only
 # way it can come to carry show_icons=0, so the content is the evidence. No
 # mtime comparison: `stat` takes different flags on GNU and BSD.
-grep -q 'GPY_UI_SHOW_ICONS="1"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
+grep -q '__prompt_icons="nerd"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
 
 # --- the edit ----------------------------------------------------------------------
 shell_e2e_text_config '"directory", "git"'
 
 export_rewritten() {
-    grep -q 'GPY_UI_SHOW_ICONS="0"' "$export_file"
+    grep -q '__prompt_icons="ascii"' "$export_file"
 }
 if shell_e2e_poll 10 export_rewritten; then
     pass "the theme export was rewritten with show_icons=0"

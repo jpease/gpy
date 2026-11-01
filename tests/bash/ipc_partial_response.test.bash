@@ -75,4 +75,38 @@ else
     fail "whitespace/backslashes preserved: got '$ws_result', want '$ws_want'"
 fi
 
+# OUTVAR form: a partial reply leaves it empty (never stale), a complete one
+# is assigned, and RS (\036) turns into newlines with trailing ones stripped,
+# the bytes `$(...)` returned before.
+sock4="$test_tmp_dir/gpy-outvar-partial.sock"
+shell_e2e_stub_listener "$sock4" partial --reply '{"status":"o' --lifetime 3
+
+export GPY_AGENT_SOCKET_PATH="$sock4"
+outvar_result="stale"
+__gpy_send_json '{"op":"ping"}' "" outvar_result
+
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
+
+if [[ -z "$outvar_result" ]]; then
+    pass "OUTVAR is empty after a partial write"
+else
+    fail "OUTVAR is empty after a partial write: got '$outvar_result'"
+fi
+
+sock5="$test_tmp_dir/gpy-outvar-rs.sock"
+shell_e2e_stub_listener "$sock5" reply --reply $'first\036second\036'
+
+export GPY_AGENT_SOCKET_PATH="$sock5"
+outvar_result="stale"
+__gpy_send_json '{"op":"ping"}' "" outvar_result
+outvar_status=$?
+
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
+
+if [[ "$outvar_status" == 0 && "$outvar_result" == $'first\nsecond' ]]; then
+    pass "OUTVAR gets RS as newlines, trailing newlines stripped"
+else
+    fail "OUTVAR RS reply: status $outvar_status, got '$outvar_result'"
+fi
+
 test_finish

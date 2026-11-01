@@ -27,7 +27,6 @@ set -gx XDG_CONFIG_HOME $temp_home/.config
 mkdir -p $XDG_CONFIG_HOME/gpy
 
 # Ensure language is enabled for tests (regardless of user config)
-set -gx GPY_LANGUAGE_ENABLED 1
 
 # Test 1: Git segment detects real git repository
 echo "Test 1: Git detection in actual repository"

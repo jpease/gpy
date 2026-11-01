@@ -16,19 +16,6 @@ typeset -ga __gpy_fallback_segments=(clock duration language directory git)
 # The theme export overwrites this; an export that sets it empty stays empty.
 typeset -ga __enabled_segments=($__gpy_fallback_segments)
 
-# IPC round-trip bound (ms); __gpy_ms_to_secs rejects a non-numeric override.
-typeset -g GPY_IPC_TIMEOUT_MS=${GPY_IPC_TIMEOUT_MS:-150}
-
-# Budget when the prompt has nothing to show for a segment (a cold git cache,
-# a directory not yet rendered); never shorter than GPY_IPC_TIMEOUT_MS.
-typeset -g GPY_IPC_COLD_TIMEOUT_MS=${GPY_IPC_COLD_TIMEOUT_MS:-500}
-
-# Stale git cache entries are still served but trigger a background refresh,
-# so a missed agent repaint push self-heals within this bound.
-typeset -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS=${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}
-
-typeset -g GPY_LANGUAGE_CACHE_TTL_SECONDS=${GPY_LANGUAGE_CACHE_TTL_SECONDS:-30}
-
 # Pre-theme default; `theme export` redefines it. With OUT_VAR the value is
 # written via `printf -v` so the hot render loop never forks.
 function __gpy_segment_bg() {
@@ -57,7 +44,9 @@ function __gpy_segment_bg() {
 
 # Returned by request wrappers when they forked the oneshot fallback; the
 # render loop folds it in so a dead daemon costs one fork per render.
-typeset -g GPY_SEG_STATUS_ONESHOT=3
+typeset -g __gpy_seg_status_oneshot=3
 
-# The agent's escaping sends data `%` as `%%` and cannot know prompt_bang's state.
-setopt prompt_subst prompt_percent no_prompt_bang
+# Zsh expands PROMPT after precmd returns, so both options must stay global.
+# prompt_bang is left as the user set it: __gpy_update_prompts doubles each
+# data `!` when it is on.
+setopt prompt_subst prompt_percent

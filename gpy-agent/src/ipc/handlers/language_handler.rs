@@ -53,7 +53,7 @@ impl LanguageHandler {
         virtual_env: Option<&str>,
     ) -> Result<Response, HandlerError> {
         let config = self.render.config_manager.get();
-        if !config.language.enabled {
+        if !config.segment_enabled("language") {
             return Ok(Response::Language { languages: vec![] });
         }
         #[allow(
@@ -187,16 +187,12 @@ impl LanguageHandler {
 
     /// Start a background re-detection for a cache hit older than
     /// [`LANGUAGE_REFRESH_INTERVAL`] in a directory the watcher does not cover:
-    /// outside a git repository, or in one under a `git.skip_paths` entry.
+    /// outside a git repository, or in one the git gate excludes (`git`
+    /// unlisted or under a `git.skip_paths` entry).
     /// Never awaited.
     fn revalidate_stale_hit(&self, repo_root: &Path, in_git_repo: bool, age: Duration) {
-        let unwatched = !in_git_repo
-            || self
-                .render
-                .config_manager
-                .get()
-                .git
-                .is_path_skipped(repo_root);
+        let unwatched =
+            !in_git_repo || !self.render.config_manager.get().git_enabled_for(repo_root);
         if unwatched && age >= LANGUAGE_REFRESH_INTERVAL {
             drop(self.language_detection_job(repo_root));
         }
@@ -317,6 +313,32 @@ mod tests {
             .expect("safe path");
         let forwarded = venv.map(|v| v.to_str().expect("utf8 path"));
         handler.detect(&path, false, None, forwarded)
+    }
+
+    /// `language` missing from `ui.enabled_segments` skips detection even with `language.enabled = true`.
+    #[test]
+    fn unlisted_language_segment_skips_detection() {
+        let mut config = Config::default();
+        assert!(config.language.enabled);
+        config
+            .ui
+            .enabled_segments
+            .retain(|segment| segment != "language");
+        let (handler, _registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\n",
+        )
+        .expect("marker file");
+        let root = std::fs::canonicalize(temp_dir.path()).expect("canonical root");
+
+        let response = detect(&handler, &root, None).expect("detect answers");
+
+        assert!(
+            matches!(response, Response::Language { ref languages } if languages.is_empty()),
+            "{response:?}"
+        );
     }
 
     /// A request without a usable `virtual_env` clears the stash.

@@ -29,7 +29,7 @@ set -gx GPY_AGENT_SOCKET_PATH $tmp/absent.sock
 set -gx GPY_AGENT_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS 100000
-set -gx GPY_AGENT_BINARY_PATH $tmp/gpy-agent
+set -gx PATH $tmp $PATH
 printf '%s\n' '#!/bin/sh' "echo \"\$*\" >>'$tmp/agent.calls'" 'exit 1' >$tmp/gpy-agent
 chmod +x $tmp/gpy-agent
 

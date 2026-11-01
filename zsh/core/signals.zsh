@@ -1,16 +1,14 @@
 # zsh/core/signals.zsh
 
-# Drop the agent-rendered character and directory memos. Their keys hold no
-# config, so a theme or config change (a reload, or an agent restarted with
-# another config) must not leave them serving the old render. Pending relays
-# go too, so a miss rendered before the change is not replayed.
+# Drop the agent-rendered character and directory memos (plain shell
+# variables). Their keys hold no config, so a theme or config change (a
+# reload, or an agent restarted with another config) must not leave them
+# serving the old render.
 function __gpy_clear_render_memos() {
     __gpy_char_cache_key=""
     __gpy_char_cache_val=""
     __gpy_dir_cache_key=""
     __gpy_dir_cache_val=""
-    [[ -n "$__gpy_char_cache_relay_path" ]] && rm -f "$__gpy_char_cache_relay_path" 2>/dev/null
-    [[ -n "$__gpy_dir_cache_relay_path" ]] && rm -f "$__gpy_dir_cache_relay_path" 2>/dev/null
     return 0
 }
 
@@ -93,8 +91,6 @@ function TRAPURG() {
         __gpy_consume_shell_flags
         if zle; then
             __gpy_update_prompts "${__gpy_last_exit_code:-0}"
-            __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
-            __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
             zle reset-prompt
         fi
         [[ -n "$base" && ( -e "$base.reregister" || -e "$base.reload" ) ]] || break
@@ -113,8 +109,6 @@ function __gpy_zshexit() {
     local request="{\"op\":\"unregister\",\"pid\":$$}"
     __gpy_send_json "$request" &>/dev/null
     __gpy_untrack_shell_for_agent_recovery
-    # Empty when mktemp failed at init.
-    [[ -n "$__gpy_cache_dir" ]] && rm -rf "$__gpy_cache_dir" 2>/dev/null
 }
 
 if (( ! ${zshexit_functions[(I)__gpy_zshexit]:-0} )); then

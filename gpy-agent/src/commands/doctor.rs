@@ -3,6 +3,7 @@
 use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
 use super::doctor_ipc::check_ipc_client;
 use super::doctor_themes::check_theme_overrides;
+use super::doctor_tuning::print_agent_tuning;
 use super::utils::agent_binary;
 use crate::agent::lifecycle::{AgentClient, StatusProbe};
 use crate::commands::output::{self, Status};
@@ -42,6 +43,9 @@ pub fn run() -> Result<()> {
     let discovery = discover_plugins();
     all_ok &= check_config_and_theme(&loaded_config, &discovery);
     check_theme_overrides(loaded_config.as_ref().ok().map(|cfg| cfg.ui.theme.as_str()));
+    output::blank();
+
+    print_agent_tuning();
     output::blank();
 
     all_ok &= check_plugins(&discovery);
@@ -134,6 +138,21 @@ fn print_unknown_config_keys(path: &std::path::Path) {
             Status::Warn,
             format_args!("Unknown key in {}: {key} (ignored)", path.display()),
         );
+    }
+    for key in ["git", "language"] {
+        if raw
+            .get(key)
+            .and_then(|table| table.get("enabled"))
+            .is_some()
+        {
+            output::detail_status(
+                1,
+                Status::Warn,
+                format_args!(
+                    "`{key}.enabled` is deprecated; use `gpy disable {key}` / `gpy enable {key}` instead, and remove the key"
+                ),
+            );
+        }
     }
 }
 

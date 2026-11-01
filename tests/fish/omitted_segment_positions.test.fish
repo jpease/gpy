@@ -40,8 +40,6 @@ mkdir -p $XDG_CONFIG_HOME/gpy $XDG_RUNTIME_DIR
 # Supervisor disabled: full init path without spawning a daemon.
 set -gx GPY_AGENT_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
-set -gx GPY_GIT_ENABLED 1
-set -gx GPY_LANGUAGE_ENABLED 1
 # Load the real git, language and status segments.
 set -g __gpy_test_segments directory git language status
 

@@ -49,6 +49,7 @@ fn bench_discovery(c: &mut Criterion) {
         // Criterion runs every benchmark on this thread, so nothing else reads
         // the environment while the guard changes it.
         let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", xdg.path());
+        env.set("XDG_DATA_HOME", xdg.path());
         env.remove("GPY_BUNDLED_PLUGIN_DIR");
         assert_eq!(
             discover_plugins().plugins.len(),

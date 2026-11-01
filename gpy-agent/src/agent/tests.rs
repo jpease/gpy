@@ -408,3 +408,63 @@ mod prune_reconcile_tests {
         }
     }
 }
+
+/// The clock timer stays silent when `clock` is not in `ui.enabled_segments`.
+#[cfg(unix)]
+mod clock_tick_tests {
+    use super::super::events::{AgentContext, RepoRefreshCoordinator};
+    use super::super::handle_clock_tick;
+    use crate::cache::InstantPromptCache;
+    use crate::config::Config;
+    use crate::config::manager::ConfigManager;
+    use crate::git::cache::GitStatusCache;
+    use crate::ipc::ClientDirectory;
+    use crate::theme::ThemeManager;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn context_with(config: Config) -> (AgentContext, Arc<AtomicU64>) {
+        let (registry, rings) = ClientDirectory::counting_rings();
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
+        let initial = config_manager.get();
+        let ctx = AgentContext {
+            registry: registry.shared(),
+            cache: Arc::new(GitStatusCache::new()),
+            config_manager,
+            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme manager")),
+            instant_cache: Arc::new(InstantPromptCache::new_for_test()),
+            language_cache: crate::language::DetectionCache::new(),
+            palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial)),
+            dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
+            watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
+            theme_export_dir: tempfile::tempdir().expect("export dir").keep(),
+            announce_gate: Arc::new(Mutex::new(())),
+        };
+        (ctx, rings)
+    }
+
+    #[test]
+    fn clock_tick_is_inert_when_clock_unlisted() {
+        let mut config = Config::default();
+        config
+            .ui
+            .enabled_segments
+            .retain(|segment| segment != "clock");
+        let (ctx, rings) = context_with(config);
+
+        let carried = handle_clock_tick(&ctx, &ctx.registry, 7);
+
+        assert_eq!(carried, 7, "the last notified minute is returned unchanged");
+        assert_eq!(rings.load(Ordering::SeqCst), 0, "no doorbell rings");
+    }
+
+    #[test]
+    fn clock_tick_rings_when_clock_listed() {
+        let (ctx, rings) = context_with(Config::default());
+
+        let carried = handle_clock_tick(&ctx, &ctx.registry, 7);
+
+        assert_ne!(carried, 7, "a listed clock advances the minute");
+        assert!(rings.load(Ordering::SeqCst) >= 1, "the doorbell rings");
+    }
+}

@@ -7,7 +7,7 @@ use crate::Result;
 use crate::commands::palette;
 use crate::commands::theme;
 use crate::commands::utils::{active_config_path, load_active_config};
-use crate::config::loader::save_config;
+use crate::config::loader::{remove_config_keys, save_config};
 use std::path::{Path, PathBuf};
 
 /// Apply, validate, and persist `state`'s selection onto the config at `path`.
@@ -29,6 +29,14 @@ pub fn save_to(state: &WizardState, path: &Path) -> Result<()> {
     palette::validate_by_name(state.selected_palette())?;
 
     save_config(path, &original, &config, &[])?;
+    // A selected git/language no longer needs its deprecated flag (apply_to set
+    // it `true` in memory only so the preview renders), so drop it from the file.
+    let unused_keys: Vec<&str> = [("git", "git.enabled"), ("language", "language.enabled")]
+        .into_iter()
+        .filter(|(segment, _)| config.segment_enabled(segment))
+        .map(|(_, key)| key)
+        .collect();
+    remove_config_keys(path, &unused_keys)?;
     Ok(())
 }
 
@@ -92,7 +100,7 @@ mod tests {
         let mut state = test_state(config);
         state.select_theme("default");
         state.select_palette("default");
-        // Starts disabled, so this proves apply_to writes through.
+        // Starts unlisted with the deprecated flag false, so this proves selecting git renders it.
         state.toggle_segment("git");
 
         save_to(&state, &path).expect("save_to should succeed");
@@ -102,7 +110,11 @@ mod tests {
 
         assert_eq!(reloaded.ui.theme.as_str(), "default");
         assert_eq!(reloaded.ui.palette.to_string(), "default");
-        assert!(reloaded.git.enabled);
+        assert!(reloaded.ui.enabled_segments.contains(&"git".to_owned()));
+        assert!(
+            !saved.contains("enabled = "),
+            "deprecated git.enabled removed: {saved}"
+        );
         assert!(
             reloaded
                 .ui

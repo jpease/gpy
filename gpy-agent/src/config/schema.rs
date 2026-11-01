@@ -34,8 +34,9 @@ pub fn config_candidates_for(
 /// the daemon (in `/`) and CLI watch the same path.
 #[must_use]
 pub fn get_config_paths() -> Vec<PathBuf> {
-    let custom_path = crate::paths::root_var_os("GPY_CONFIG_PATH")
-        .map(|value| crate::paths::absolutize(Path::new(&value)));
+    let custom_path = crate::env_config::CONFIG_PATH
+        .path()
+        .map(|value| crate::paths::absolutize(&value));
     let home = crate::paths::home_path();
     let xdg_config = crate::paths::xdg_config_home();
 

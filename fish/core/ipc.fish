@@ -110,7 +110,7 @@ end
 # but no complete reply arrived in time; on 2 callers must not resend or fork
 # oneshot for the same segment.
 function __gpy_ipc_send --argument-names payload timeout_ms sock
-    set -q timeout_ms[1]; or set timeout_ms $GPY_IPC_TIMEOUT_MS
+    set -q timeout_ms[1]; or set timeout_ms (__gpy_ipc_timeout_ms)
     test -n "$sock"; or set sock (__gpy_ipc_endpoint)
 
     # The real connect fast-fails if nothing listens.
@@ -163,7 +163,7 @@ end
 # Fire-and-forget send. Fish runs functions in the foreground, so only a pipeline
 # ending in an external `command` becomes a real background job.
 function __gpy_ipc_send_detached --argument-names payload timeout_ms --description 'Send an IPC payload in a detached background job, discarding the reply'
-    set -q timeout_ms[1]; or set timeout_ms $GPY_IPC_TIMEOUT_MS
+    set -q timeout_ms[1]; or set timeout_ms (__gpy_ipc_timeout_ms)
     set -l sock (__gpy_ipc_endpoint)
     test -S "$sock"; or return 1
 
@@ -283,7 +283,7 @@ function __gpy_request_duration --argument-names duration_ms is_last prev_bg is_
     set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg"))
     set payload (string join '' $payload '}')
 
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
     set -l send_status $status
 
     # Oneshot fallback when no daemon is running. Not when the daemon is
@@ -332,7 +332,7 @@ function __gpy_request_character --argument-names success is_last prev_bg --desc
     set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" '' "$prev_bg"))
     set payload (string join '' $payload '}')
 
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
     set -l send_status $status
 
     # Oneshot fallback when no daemon is running; a late daemon (status 2) is
@@ -363,7 +363,7 @@ end
 function __gpy_request_clock --argument-names is_last is_first prev_bg --description 'Send clock render request to agent'
     set -l payload (string join '' '{"op":"clock","shell":"fish","format":"ansi"' (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg") '}')
 
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
 
     if test -z "$result"
         return 1
@@ -381,7 +381,7 @@ function __gpy_request_exit_status --argument-names success is_last is_first pre
 
     set -l payload (string join '' '{"op":"exit_status","success":' $success_val ',"format":"ansi"' (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg") '}')
 
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
 
     if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
         return 1
@@ -541,9 +541,9 @@ function __gpy_read_instant_cache --argument-names suffix cwd prev_bg --descript
     end
 
     # Both caches are served stale; only the TTL differs.
-    set -l ttl $GPY_GIT_INSTANT_CACHE_TTL_SECONDS
+    set -l ttl (__gpy_git_cache_ttl)
     if string match -q 'lang*' -- $suffix
-        set ttl $GPY_LANGUAGE_CACHE_TTL_SECONDS
+        set ttl (__gpy_lang_cache_ttl)
         test -z "$ttl"; and set ttl 30
     else
         test -z "$ttl"; and set ttl 5
@@ -609,7 +609,7 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
     end
 
     # A directory request means the memo had nothing to show.
-    set -l timeout_ms $GPY_IPC_TIMEOUT_MS
+    set -l timeout_ms (__gpy_ipc_timeout_ms)
     test "$op" = directory; and set timeout_ms (__gpy_ipc_cold_timeout_ms)
     set -l result (__gpy_ipc_send $payload $timeout_ms)
     set -l send_status $status
@@ -655,7 +655,7 @@ function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_
     __gpy_register_with_agent >/dev/null 2>&1
 
     set -l payload (__gpy_build_data_payload $op "$root" ansi "$is_last" "$prev_bg" "$is_first")
-    __gpy_ipc_send_detached $payload $GPY_IPC_TIMEOUT_MS
+    __gpy_ipc_send_detached $payload (__gpy_ipc_timeout_ms)
 end
 
 # Prints the agent version; sets __gpy_agent_version/_protocol_version.
@@ -665,7 +665,7 @@ function __gpy_get_agent_version --description 'Get the version and protocol ver
     end
 
     set -l payload '{"op":"status"}'
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
 
     if test -z "$result"
         return 1
@@ -691,18 +691,18 @@ end
 
 function __gpy_check_protocol_version --description 'Check and warn on protocol version mismatch'
     # MUST match PROTOCOL_VERSION in gpy-agent/src/ipc/protocol/mod.rs.
-    set -l EXPECTED_PROTOCOL_VERSION 2
+    set -l __gpy_protocol_version 2
 
     if not __gpy_get_agent_version >/dev/null
         return 0
     end
 
-    if test "$__gpy_agent_protocol_version" -ne "$EXPECTED_PROTOCOL_VERSION"
+    if test "$__gpy_agent_protocol_version" -ne "$__gpy_protocol_version"
         echo "" >&2
         echo "warning: protocol version mismatch" >&2
         echo "================================================" >&2
         echo "Running agent protocol version: $__gpy_agent_protocol_version" >&2
-        echo "Expected protocol version: $EXPECTED_PROTOCOL_VERSION" >&2
+        echo "Expected protocol version: $__gpy_protocol_version" >&2
         echo "" >&2
         echo "This may cause compatibility issues. Recommended actions:" >&2
         echo "  1. Restart the agent: gpy-agent restart" >&2

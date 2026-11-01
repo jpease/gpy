@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # A dead daemon costs at most ONE `gpy-agent oneshot` fork per render. Segments
-# run in $(...) subshells, so each signals use via GPY_SEG_STATUS_ONESHOT and the
+# run in $(...) subshells, so each signals use via __gpy_seg_status_oneshot and the
 # loop sets __gpy_oneshot_used=1 for later forks. The stub counts calls in a file.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

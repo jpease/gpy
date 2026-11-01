@@ -153,9 +153,11 @@ set -g SPI_ISO (mktemp -d)
 set -gx XDG_CONFIG_HOME $SPI_ISO
 # Bundled username/hostname plugins, as `gpy setup` installs them (go-w: the
 # agent refuses group/world-writable plugin trees).
-cp -R $spi_repo_root/plugins $SPI_ISO/bundled-plugins
-chmod -R go-w $SPI_ISO/bundled-plugins
-set -gx GPY_BUNDLED_PLUGIN_DIR $SPI_ISO/bundled-plugins
+mkdir -p $SPI_ISO/data/gpy
+cp -R $spi_repo_root/plugins $SPI_ISO/data/gpy/plugins
+chmod -R go-w $SPI_ISO/data/gpy/plugins
+set -gx XDG_DATA_HOME $SPI_ISO/data
+set -gx GPY_BUNDLED_PLUGIN_DIR $SPI_ISO/data/gpy/plugins
 set -gx HOME $SPI_ISO
 # Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR

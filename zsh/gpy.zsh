@@ -28,6 +28,9 @@ source "$__gpy_zsh_root/core/init.zsh"
 __gpy_load_theme &>/dev/null
 __gpy_g_reload
 
+# Once per shell, in this shell and with stderr visible.
+__gpy_warn_flag_values
+
 # Start only after the theme export set the flags; [agent.supervisor]
 # enabled = false disables restarts, not this start.
 __gpy_agent_enabled && __gpy_start_agent

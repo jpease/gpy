@@ -3,35 +3,14 @@
 use super::output;
 use super::utils::{active_config_path, load_active_config, read_config, reload_agent_and_notify};
 use crate::config::Config;
-use crate::config::loader::save_config;
+use crate::config::loader::{remove_config_keys, save_config};
 use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
 use crate::shell::Shell;
 use crate::{Error, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A builtin segment that also has a dedicated `*.enabled` config field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FeatureToggle {
-    Git,
-    Language,
-}
-
-/// Whether the prompt will actually render `name` under `config`.
-///
-/// Mirrors the filter in `theme::export`: listed in `ui.enabled_segments`, and
-/// for `git`/`language` also their `*.enabled` flag.
-#[must_use]
-pub(crate) fn is_effectively_enabled(config: &Config, name: &str) -> bool {
-    let listed = config.ui.enabled_segments.iter().any(|s| s == name);
-    listed
-        && match BuiltinSegment::try_from(name) {
-            Ok(BuiltinSegment::Git) => config.git.enabled,
-            Ok(BuiltinSegment::Language) => config.language.enabled,
-            _ => true,
-        }
-}
-
-/// Enable a prompt segment; `git`/`language` also get their feature flag set.
+/// Enable a prompt segment, inserting a built-in at its canonical position and
+/// removing a deprecated `git.enabled`/`language.enabled` key from the file.
 ///
 /// # Errors
 /// Returns an error if the segment name is invalid or config cannot be saved.
@@ -44,6 +23,11 @@ pub fn enable(segment: &str) -> Result<()> {
     let mut config = original.clone();
     apply_enable(&mut config, &canonical);
     save_config(&path, &original, &config, &[])?;
+    match BuiltinSegment::try_from(canonical.as_str()) {
+        Ok(BuiltinSegment::Git) => remove_config_keys(&path, &["git.enabled"])?,
+        Ok(BuiltinSegment::Language) => remove_config_keys(&path, &["language.enabled"])?,
+        _ => {}
+    }
 
     output::plain(format_args!("Enabled {canonical} segment"));
     if is_file_plugin_segment(&canonical)
@@ -100,8 +84,8 @@ fn skipped_by_note(segment: &str, installed: &[Shell]) -> Option<String> {
 
 /// Disable a prompt segment.
 ///
-/// `git`/`language` only have their flag cleared, keeping the list entry so a
-/// later `gpy enable` restores the original position.
+/// Removes the entry from `ui.enabled_segments`; a later `gpy enable` puts a
+/// built-in back at its default position.
 ///
 /// # Errors
 /// Returns an error if the segment name is invalid or config cannot be saved.
@@ -109,11 +93,7 @@ pub fn disable(segment: &str) -> Result<()> {
     let canonical = canonicalize_segment(segment)?;
     ensure_segment_known(&canonical, false)?;
 
-    match BuiltinSegment::try_from(canonical.as_str()) {
-        Ok(BuiltinSegment::Git) => set_feature_enabled(FeatureToggle::Git, false)?,
-        Ok(BuiltinSegment::Language) => set_feature_enabled(FeatureToggle::Language, false)?,
-        _ => remove_from_enabled_segments(&canonical)?,
-    }
+    remove_from_enabled_segments(&canonical)?;
 
     output::plain(format_args!("Disabled {canonical} segment"));
     reload_agent_and_notify();
@@ -156,7 +136,7 @@ pub fn list() -> Result<()> {
         .unwrap_or_default();
 
     for (segment, owner) in &rows {
-        let status = if is_effectively_enabled(&config, segment) {
+        let status = if config.segment_enabled(segment) {
             "x"
         } else {
             " "
@@ -205,46 +185,40 @@ fn canonicalize_segment(segment: &str) -> Result<String> {
     Ok(name.to_string())
 }
 
-/// Apply a feature toggle to an in-memory config.
-const fn apply_feature_toggle(
-    config: &mut crate::config::Config,
-    feature: FeatureToggle,
-    enabled: bool,
-) {
-    match feature {
-        FeatureToggle::Git => config.git.enabled = enabled,
-        FeatureToggle::Language => config.language.enabled = enabled,
-    }
-}
-
-/// Persist a feature's enabled flag.
-fn set_feature_enabled(feature: FeatureToggle, enabled: bool) -> Result<()> {
-    let path = active_config_path()?;
-    let original = load_active_config(&path)?;
-    let mut config = original.clone();
-
-    apply_feature_toggle(&mut config, feature, enabled);
-
-    save_config(&path, &original, &config, &[])?;
-    Ok(())
+/// Apply `gpy disable <segment>` to an in-memory config: drop the list entry.
+fn apply_disable(config: &mut Config, segment: &str) {
+    config.ui.enabled_segments.retain(|s| s != segment);
 }
 
 /// Apply `gpy enable <segment>` to an in-memory config.
+///
+/// The in-memory deprecated flag is set `true`, so `save_config` never writes a
+/// stale `false`; [`enable`] then removes the key from the file.
 fn apply_enable(config: &mut Config, segment: &str) {
     match BuiltinSegment::try_from(segment) {
-        Ok(BuiltinSegment::Git) => apply_feature_toggle(config, FeatureToggle::Git, true),
-        Ok(BuiltinSegment::Language) => {
-            apply_feature_toggle(config, FeatureToggle::Language, true);
-        }
+        Ok(BuiltinSegment::Git) => config.git.enabled = true,
+        Ok(BuiltinSegment::Language) => config.language.enabled = true,
         _ => {}
     }
     insert_enabled_segment(&mut config.ui.enabled_segments, segment);
 }
 
-/// Append `segment` to `ui.enabled_segments` unless already listed, so existing
-/// order is preserved.
-fn insert_enabled_segment(list: &mut Vec<String>, segment: &str) {
+/// Insert `segment` into `ui.enabled_segments` unless already listed. A
+/// built-in goes at its canonical position: immediately before the first
+/// later [`BUILTIN_ORDER`] built-in that is listed, else at the end, so the
+/// relative order of every other entry is kept. Plugin segments are appended.
+pub(crate) fn insert_enabled_segment(list: &mut Vec<String>, segment: &str) {
     if list.iter().any(|s| s == segment) {
+        return;
+    }
+    if let Ok(builtin) = BuiltinSegment::try_from(segment)
+        && let Some(at) = BUILTIN_ORDER
+            .iter()
+            .skip_while(|candidate| **candidate != builtin)
+            .skip(1)
+            .find_map(|later| list.iter().position(|s| s == later.as_str()))
+    {
+        list.insert(at, segment.to_owned());
         return;
     }
     list.push(segment.to_owned());
@@ -255,7 +229,7 @@ fn remove_from_enabled_segments(segment: &str) -> Result<()> {
     let path = active_config_path()?;
     let original = load_active_config(&path)?;
     let mut config = original.clone();
-    config.ui.enabled_segments.retain(|s| s != segment);
+    apply_disable(&mut config, segment);
     save_config(&path, &original, &config, &[])?;
     Ok(())
 }
@@ -342,38 +316,6 @@ mod tests {
         assert!(both.contains("zsh and bash prompts will skip it"), "{both}");
     }
 
-    #[test]
-    fn apply_feature_toggle_sets_git_independently_of_language() {
-        let mut config = crate::config::Config::default();
-        assert!(config.git.enabled, "git.enabled should default to true");
-        assert!(
-            config.language.enabled,
-            "language.enabled should default to true"
-        );
-
-        apply_feature_toggle(&mut config, FeatureToggle::Git, false);
-        assert!(!config.git.enabled);
-        assert!(
-            config.language.enabled,
-            "toggling git must not affect language"
-        );
-
-        apply_feature_toggle(&mut config, FeatureToggle::Git, true);
-        assert!(config.git.enabled);
-    }
-
-    #[test]
-    fn apply_feature_toggle_sets_language_independently_of_git() {
-        let mut config = crate::config::Config::default();
-
-        apply_feature_toggle(&mut config, FeatureToggle::Language, false);
-        assert!(!config.language.enabled);
-        assert!(config.git.enabled, "toggling language must not affect git");
-
-        apply_feature_toggle(&mut config, FeatureToggle::Language, true);
-        assert!(config.language.enabled);
-    }
-
     /// A config listing `segments`, with `git`/`language` `enabled` set to `flags`.
     fn config_with(segments: &[&str], flags: bool) -> Config {
         let mut config = Config::default();
@@ -383,40 +325,82 @@ mod tests {
         config
     }
 
-    #[test]
-    fn insert_enabled_segment_appends_without_reordering() {
-        let mut list = vec!["directory".to_owned(), "clock".to_owned()];
-        insert_enabled_segment(&mut list, "status");
-        assert_eq!(list, ["directory", "clock", "status"]);
+    fn list_of(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_owned()).collect()
+    }
 
-        insert_enabled_segment(&mut list, "directory");
+    #[test]
+    fn insert_enabled_segment_places_builtins_canonically_and_appends_plugins() {
+        let mut list = list_of(&["git", "clock", "directory"]);
+        insert_enabled_segment(&mut list, "language");
+        assert_eq!(list, ["git", "clock", "language", "directory"]);
+
+        insert_enabled_segment(&mut list, "language");
         assert_eq!(
             list,
-            ["directory", "clock", "status"],
+            ["git", "clock", "language", "directory"],
             "existing name is a no-op"
+        );
+
+        insert_enabled_segment(&mut list, "status");
+        assert_eq!(list, ["git", "clock", "language", "directory", "status"]);
+
+        insert_enabled_segment(&mut list, "k8s");
+        assert_eq!(
+            list,
+            ["git", "clock", "language", "directory", "status", "k8s"]
+        );
+
+        let mut no_later = list_of(&["directory", "clock"]);
+        insert_enabled_segment(&mut no_later, "duration");
+        assert_eq!(no_later, ["duration", "directory", "clock"]);
+    }
+
+    #[test]
+    fn disable_git_removes_list_entry() {
+        let mut config = Config::default();
+        apply_disable(&mut config, "git");
+        assert!(!config.ui.enabled_segments.iter().any(|s| s == "git"));
+        assert!(!config.segment_enabled("git"));
+        assert!(
+            config.git.enabled,
+            "disable never touches the deprecated flag"
         );
     }
 
     #[test]
-    fn is_effectively_enabled_requires_flag_and_list_membership() {
-        let absent = config_with(&["directory"], true);
-        assert!(!is_effectively_enabled(&absent, "git"));
-        assert!(!is_effectively_enabled(&absent, "language"));
-
-        let flag_off = config_with(&["language", "directory", "git"], false);
-        assert!(!is_effectively_enabled(&flag_off, "git"));
-        assert!(!is_effectively_enabled(&flag_off, "language"));
-
-        let both = config_with(&["language", "directory", "git"], true);
-        assert!(is_effectively_enabled(&both, "git"));
-        assert!(is_effectively_enabled(&both, "language"));
-
-        assert!(is_effectively_enabled(&absent, "directory"));
-        assert!(!is_effectively_enabled(&absent, "clock"));
+    fn reenabled_builtin_returns_to_canonical_position() {
+        let mut config = Config::default();
+        let default = config.ui.enabled_segments.clone();
+        apply_disable(&mut config, "language");
+        apply_enable(&mut config, "language");
+        assert_eq!(config.ui.enabled_segments, default);
+        assert_eq!(
+            config.ui.enabled_segments,
+            ["clock", "duration", "language", "directory", "git"]
+        );
     }
 
     #[test]
-    fn apply_enable_git_sets_flag_and_restores_list_entry() {
+    fn enable_git_removes_deprecated_flag() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[git]\nenabled = false\n").expect("write");
+
+        let original = crate::config::loader::load_config_from_file(&path).expect("load");
+        let mut config = original.clone();
+        apply_enable(&mut config, "git");
+        save_config(&path, &original, &config, &[]).expect("save");
+        remove_config_keys(&path, &["git.enabled"]).expect("remove");
+
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(!text.contains("enabled ="), "{text}");
+        let reloaded = crate::config::loader::load_config_from_file(&path).expect("reload");
+        assert!(reloaded.segment_enabled("git"));
+    }
+
+    #[test]
+    fn apply_enable_git_resets_flag_and_restores_list_entry() {
         let mut config = config_with(&["clock", "duration", "directory"], false);
         apply_enable(&mut config, "git");
         assert!(config.git.enabled);
@@ -424,13 +408,13 @@ mod tests {
             config.ui.enabled_segments,
             vec!["clock", "duration", "directory", "git"]
         );
-        assert!(is_effectively_enabled(&config, "git"));
+        assert!(config.segment_enabled("git"));
 
         apply_enable(&mut config, "language");
         assert!(config.language.enabled);
         assert_eq!(
             config.ui.enabled_segments,
-            vec!["clock", "duration", "directory", "git", "language"]
+            vec!["clock", "duration", "language", "directory", "git"]
         );
     }
 

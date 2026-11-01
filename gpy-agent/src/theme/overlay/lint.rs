@@ -2,9 +2,45 @@
 //! (ADR-0012 sections 1 and 2). Neither is a load error: both files load.
 
 use super::resolve::{Candidates, OwnName, link_for_path};
-use super::{ChainFile, merge, read_chain};
+use super::{ChainFile, ChainLink, merge, read_chain};
 use crate::theme::parse::parse_table;
 use std::path::Path;
+
+/// The merged table of the chain `top` heads, as `merge_chain` builds it
+/// (each file's language spelling canonicalised and `unset` applied, base
+/// first), but without validating or typing it. With `include_top = false`
+/// the top file is left out of the merge, which is the base its `unset` is
+/// checked against. `None` when a file of the chain can't be read or resolved.
+///
+/// `top` is a link already resolved to its own name, so `top.on_disk == false`
+/// reads the embedded builtin of that name.
+pub(crate) fn merged_table(top: &ChainLink, include_top: bool) -> Option<toml::Table> {
+    let label = top.path.display().to_string();
+    let first = ChainFile::read(top.clone(), label).ok()?;
+    let mut files = read_chain(first, OwnName::Stem, &mut Candidates::discover()).ok()?;
+    if !include_top && !files.is_empty() {
+        files.remove(0);
+    }
+    Some(merge_files(files))
+}
+
+/// Merge `files` (top first), base first, as `merge_chain` does.
+fn merge_files(files: Vec<ChainFile>) -> toml::Table {
+    let mut merged = toml::Table::new();
+    for file in files.into_iter().rev() {
+        let ChainFile {
+            table: mut file_table,
+            header,
+            ..
+        } = file;
+        merge::canonicalise(&mut file_table);
+        for entry in &header.unset {
+            merge::remove_path(&mut merged, &entry.path);
+        }
+        merge::deep_merge(&mut merged, file_table);
+    }
+    merged
+}
 
 /// Warnings about the `unset` key of the theme file at `path`: it does
 /// nothing in a file without `extends`, and an entry naming a path the base
@@ -33,26 +69,14 @@ pub fn unset_warnings(path: &Path) -> Vec<String> {
     let Ok(first) = ChainFile::read(link_for_path(path), label.clone()) else {
         return Vec::new();
     };
-    let Ok(files) = read_chain(first, OwnName::Stem, &mut Candidates::discover()) else {
+    let Ok(mut files) = read_chain(first, OwnName::Stem, &mut Candidates::discover()) else {
         return Vec::new();
     };
-    let mut links = files.into_iter();
-    let Some(top) = links.next() else {
+    if files.is_empty() {
         return Vec::new();
-    };
-    let mut base = toml::Table::new();
-    for file in links.rev() {
-        let ChainFile {
-            table: mut file_table,
-            header,
-            ..
-        } = file;
-        merge::canonicalise(&mut file_table);
-        for entry in &header.unset {
-            merge::remove_path(&mut base, &entry.path);
-        }
-        merge::deep_merge(&mut base, file_table);
     }
+    let top = files.remove(0);
+    let base = merge_files(files);
     top.header
         .unset
         .iter()

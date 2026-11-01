@@ -55,7 +55,7 @@ set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS 0
 set -g start_log $tmp/starts.log
 printf '%s\n' '#!/bin/sh' "echo \"\$*\" >> '$start_log'" 'exit 0' >$tmp/gpy-agent
 chmod +x $tmp/gpy-agent
-set -gx GPY_AGENT_BINARY_PATH $tmp/gpy-agent
+set -gx PATH $tmp $PATH
 
 function __gpy_agent_is_healthy
     set -g check_no (math $check_no + 1)

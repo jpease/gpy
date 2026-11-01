@@ -5,16 +5,68 @@ zmodload zsh/datetime 2>/dev/null
 # zstat only: plain zsh/stat would shadow the external `stat`.
 zmodload -F zsh/stat b:zstat 2>/dev/null
 
-# A flag is off only when set to `0` or `false`; unset, empty and any other
-# value leave it on. Fish and Bash apply the same rule.
-# Gates every start/register/talk path; rendering still works via oneshot.
+# The boolean table shared with Fish, Bash and the agent (tests/fixtures/
+# shell_env_flag_vectors.tsv): `1/true/yes/on` is on, `0/false/no/off` is off,
+# case-insensitive, no surrounding whitespace. Assigns `on`, `off`, or DEFAULT
+# for anything else to OUTVAR via `printf -v`, so it never forks. Silent.
+# Usage: __gpy_flag_value VALUE DEFAULT OUTVAR
+function __gpy_flag_value() {
+    case "$1" in
+        1 | [Tt][Rr][Uu][Ee] | [Yy][Ee][Ss] | [Oo][Nn]) printf -v "$3" '%s' on ;;
+        0 | [Ff][Aa][Ll][Ss][Ee] | [Nn][Oo] | [Oo][Ff][Ff]) printf -v "$3" '%s' off ;;
+        *) printf -v "$3" '%s' "$2" ;;
+    esac
+}
+
+# Precedence: a recognised user value, then the theme export's __gpy_cfg_*
+# mirror (off only for `0`), then on. Silent; __gpy_warn_flag_values reports
+# once. Gates every start/register/talk path; rendering still works via oneshot.
 function __gpy_agent_enabled() {
-    [[ "${GPY_AGENT_ENABLED:-}" != (0|false) ]]
+    local __gpy_ae_state
+    __gpy_flag_value "${GPY_AGENT_ENABLED-}" cfg __gpy_ae_state
+    case "$__gpy_ae_state" in
+        on) return 0 ;;
+        off) return 1 ;;
+    esac
+    [[ "${__gpy_cfg_agent_enabled-}" != 0 ]]
 }
 
 # Governs restarts only; agent start and registration use __gpy_agent_enabled.
 function __gpy_supervisor_enabled() {
-    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != (0|false) ]]
+    local __gpy_se_state
+    __gpy_flag_value "${GPY_AGENT_SUPERVISOR_ENABLED-}" cfg __gpy_se_state
+    case "$__gpy_se_state" in
+        on) return 0 ;;
+        off) return 1 ;;
+    esac
+    [[ "${__gpy_cfg_supervisor_enabled-}" != 0 ]]
+}
+
+# Runs once per shell, after the theme loads: names the flag values whose
+# meaning changed, and logs unrecognised ones under GPY_DEBUG.
+function __gpy_warn_flag_values() {
+    local __gpy_wf_name __gpy_wf_value __gpy_wf_state
+    for __gpy_wf_name in GPY_AGENT_ENABLED GPY_AGENT_SUPERVISOR_ENABLED GPY_SHOW_STATUS; do
+        __gpy_wf_value="${(P)__gpy_wf_name-}"
+        [[ -n "$__gpy_wf_value" ]] || continue
+        if [[ "$__gpy_wf_name" == GPY_SHOW_STATUS ]]; then
+            case "$__gpy_wf_value" in
+                [Tt][Rr][Uu][Ee] | [Yy][Ee][Ss] | [Oo][Nn])
+                    print -ru2 -- "gpy: GPY_SHOW_STATUS=$__gpy_wf_value now shows the status indicator (it used to hide it); set GPY_SHOW_STATUS=1 or unset it"
+                    ;;
+            esac
+        else
+            case "$__gpy_wf_value" in
+                [Nn][Oo] | [Oo][Ff][Ff])
+                    print -ru2 -- "gpy: $__gpy_wf_name=$__gpy_wf_value now disables it (it used to leave it on); set $__gpy_wf_name=0 to silence this"
+                    ;;
+            esac
+        fi
+        __gpy_flag_value "$__gpy_wf_value" unrecognised __gpy_wf_state
+        if [[ "$__gpy_wf_state" == unrecognised && "${GPY_DEBUG-}" == 1 ]]; then
+            print -ru2 -- "gpy[flags]: debug: $__gpy_wf_name=$__gpy_wf_value is not a boolean; ignoring it"
+        fi
+    done
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes
@@ -316,7 +368,7 @@ function __gpy_send_json() {
 }
 
 # Must match PROTOCOL_VERSION in gpy-agent/src/ipc/protocol/mod.rs.
-typeset -g GPY_EXPECTED_PROTOCOL_VERSION=2
+typeset -g __gpy_protocol_version=2
 
 # 1 only on a confirmed mismatch; an unqueryable agent passes.
 function __gpy_check_protocol_version() {
@@ -329,8 +381,8 @@ function __gpy_check_protocol_version() {
         protocol_version="${match[1]}"
     fi
 
-    if [[ "$protocol_version" != "$GPY_EXPECTED_PROTOCOL_VERSION" ]]; then
-        print -r -- "gpy: WARNING: agent protocol version $protocol_version does not match expected $GPY_EXPECTED_PROTOCOL_VERSION; restart the agent (gpy-agent restart)" >&2
+    if [[ "$protocol_version" != "$__gpy_protocol_version" ]]; then
+        print -r -- "gpy: WARNING: agent protocol version $protocol_version does not match expected $__gpy_protocol_version; restart the agent (gpy-agent restart)" >&2
         return 1
     fi
 
@@ -490,11 +542,11 @@ function __gpy_git_bg_file_tail() {
 
 # Background the git pill was drawn with, for the segment after it, into
 # variable $1: the colour the agent recorded, else the clean colour. Agent-free
-# renders (git segment status GPY_SEG_STATUS_ONESHOT) never read the file: it may
+# renders (git segment status __gpy_seg_status_oneshot) never read the file: it may
 # be days old. No subshell: `read` in this shell with the per-prompt cwd memo.
 function __gpy_git_segment_bg() {
     local __gpy_gsb_key_path __gpy_gsb_dir __gpy_gsb_key __gpy_gsb_tail __gpy_gsb_bg=""
-    if [[ "${__gpy_git_seg_status:-0}" != "$GPY_SEG_STATUS_ONESHOT" ]] &&
+    if [[ "${__gpy_git_seg_status:-0}" != "$__gpy_seg_status_oneshot" ]] &&
         __gpy_instant_cache_key_path git "$PWD" __gpy_gsb_key_path &&
         __gpy_instant_cache_dir __gpy_gsb_dir; then
         __gpy_path_to_cache_key "$__gpy_gsb_key_path" __gpy_gsb_key
@@ -684,7 +736,7 @@ function __gpy_oneshot_claim() {
     return 0
 }
 
-# Returns GPY_SEG_STATUS_ONESHOT whenever it forked, output or not.
+# Returns __gpy_seg_status_oneshot whenever it forked, output or not.
 function __gpy_fallback_oneshot() {
     local op=$1
     # Not `path`: that local would replace $PATH and hide gpy-agent.
@@ -706,7 +758,7 @@ function __gpy_fallback_oneshot() {
     fi
 
     gpy-agent oneshot $args 2>/dev/null
-    return "$GPY_SEG_STATUS_ONESHOT"
+    return "$__gpy_seg_status_oneshot"
 }
 
 function __gpy_request_duration() {
@@ -740,7 +792,7 @@ function __gpy_request_duration() {
 
     [[ -n "$result" ]] && print -r -- "$result"
     if [[ "$used_oneshot" -eq 1 ]]; then
-        return "$GPY_SEG_STATUS_ONESHOT"
+        return "$__gpy_seg_status_oneshot"
     fi
     [[ -n "$result" ]] && return 0
     return 1
@@ -824,7 +876,7 @@ function __gpy_request_character() {
 
     [[ -n "$result" ]] && print -r -- "$result"
     if [[ "$used_oneshot" -eq 1 ]]; then
-        return "$GPY_SEG_STATUS_ONESHOT"
+        return "$__gpy_seg_status_oneshot"
     fi
     [[ -n "$result" ]] && return 0
     return 1

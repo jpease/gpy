@@ -22,6 +22,7 @@ mod merge;
 mod resolve;
 
 pub(crate) use header::split_path;
+pub(crate) use lint::merged_table;
 pub use lint::unset_warnings;
 pub(crate) use merge::nested_language_path;
 pub use resolve::resolve_top;

@@ -161,13 +161,19 @@ pass "Config check completed"
 
 echo ""
 echo "Test 9: Verify environment variables"
-# Check that GPY set configuration variables (this is expected)
-set -l gpy_vars (set -n | grep -i gpy | grep -v GPY_AGENT_ENABLED | grep -v GPY_AGENT_SUPERVISOR_ENABLED | grep -v __gpy)
+# GPY keeps its state in non-exported __gpy_* variables and never assigns a
+# public GPY_* name; the theme export's config mirrors are __gpy_cfg_*.
+set -l gpy_vars (set -n | string match -r '^__gpy_cfg_.*')
 if test (count $gpy_vars) -gt 0
-    pass "GPY configuration variables set: "(count $gpy_vars)" vars"
-    echo "  Example vars: GPY_IPC_TIMEOUT_MS, GPY_LANGUAGE_CACHE_TTL_SECONDS"
+    pass "GPY config mirrors set: "(count $gpy_vars)" vars"
 else
-    fail "No GPY configuration variables set (expected some)"
+    fail "No __gpy_cfg_ config mirrors set (expected some)"
+end
+set -l user_vars (set -n | string match -r '^GPY_.*' | string match -v -r '^GPY_(AGENT_ENABLED|AGENT_SUPERVISOR_ENABLED)$')
+if test (count $user_vars) -eq 0
+    pass "GPY set no public GPY_* variables"
+else
+    fail "GPY set public variables: $user_vars"
 end
 
 echo ""

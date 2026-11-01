@@ -4,7 +4,7 @@ function fish_prompt
     set -l last_status $status
 
     # Fish 4.2+ --final-rendering stays in scrollback; runs before the resets (shares the char memo).
-    if contains -- --final-rendering $argv; and test "$GPY_UI_TRANSIENT_PROMPT" != 0
+    if contains -- --final-rendering $argv; and test "$__gpy_cfg_transient_prompt" != 0
         __gpy_transient_prompt $last_status
         return
     end
@@ -100,8 +100,7 @@ function fish_prompt
     __gpy_resolve_prompt_character $last_status
 
     # Skip when the character is agent-rendered: its exit colour already shows status.
-    set -q GPY_SHOW_STATUS; or set -g GPY_SHOW_STATUS 1
-    if test "$GPY_SHOW_STATUS" = 1; and test "$__gpy_char_agent_rendered" -ne 1
+    if test (__gpy_flag_value "$GPY_SHOW_STATUS" on) = on; and test "$__gpy_char_agent_rendered" -ne 1
         if test $last_status -eq 0
             set_color green
             printf "%s " "$__icon_status_ok"
@@ -182,7 +181,7 @@ end
 # Enable Fish's fish_transient_prompt (4.2+) when needed; only erase a value GPY set.
 function __gpy_sync_fish_transient_prompt
     test "$__gpy_fish_transient_capable" = 1; or return 0
-    if test "$GPY_UI_TRANSIENT_PROMPT" != 0; or contains clock $__enabled_segments
+    if test "$__gpy_cfg_transient_prompt" != 0; or contains clock $__enabled_segments
         if not set -q __gpy_owns_fish_transient_prompt
             set -g fish_transient_prompt 1
             set -g __gpy_owns_fish_transient_prompt 1

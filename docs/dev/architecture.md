@@ -224,6 +224,14 @@ Theme and config files are shared across shells:
   └── theme.toml     # Shared by all shells
 ```
 
+The shell code `gpy setup` installs lives apart from the config, in the data
+root (`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`):
+```
+~/.local/share/gpy/
+  ├── fish/ zsh/ bash/   # the release layout, one tree per shell
+  └── plugins/           # bundled script plugins (username, hostname)
+```
+
 Agent exports theme to shell-specific variables:
 - Fish: `set -gx GPY_COLOR_GIT_CLEAN "#00ff00"`
 - Zsh: `export GPY_COLOR_GIT_CLEAN='#00ff00'`
@@ -828,7 +836,7 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
 
 **Currently supported** (no restart required):
 - Theme changes (colors, glyphs, segment styling)
-- Config changes (git.enabled, language.enabled, segment enabling/disabling)
+- Config changes (`ui.enabled_segments`; `git.enabled`/`language.enabled` are deprecated segment switches replaced by it)
 - Git status updates (cross-terminal via file watcher)
 - Clock updates (every minute)
 
@@ -844,7 +852,7 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
    - Variable change handler calls `force-repaint`
    - No direct `commandline -f` calls from signal handlers (causes timing issues)
 
-2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like `git.enabled = false`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`GPY_GIT_ENABLED`, `__enabled_segments`) so segments can correctly determine which is last.
+2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like removing `git` from `ui.enabled_segments`, or the deprecated `git.enabled = false`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`__gpy_cfg_git_enabled`, `__enabled_segments`) so segments can correctly determine which is last.
 
 3. **Theme Loading Must Use Pipe-to-Source**:
    ```fish

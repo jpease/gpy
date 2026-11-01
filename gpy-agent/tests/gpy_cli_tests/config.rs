@@ -237,3 +237,27 @@ directory.max_length = 80
         "Should reject non-existent key"
     );
 }
+
+#[test]
+fn config_set_deprecated_flag_warns_once_on_stderr() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+
+    let result = env
+        .run_gpy(&["config", "set", "git.enabled", "false"])
+        .expect("spawn gpy");
+
+    result.assert_success("gpy config set git.enabled false");
+    let deprecated: Vec<&str> = result
+        .stderr
+        .lines()
+        .filter(|line| line.contains("deprecated"))
+        .collect();
+    assert_eq!(deprecated.len(), 1, "one deprecation line: {result:?}");
+    assert!(
+        deprecated
+            .iter()
+            .all(|line| line.contains("gpy disable git")),
+        "{result:?}"
+    );
+    assert!(!result.stdout.contains("deprecated"), "{result:?}");
+}

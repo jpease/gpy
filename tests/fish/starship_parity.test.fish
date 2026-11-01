@@ -88,9 +88,11 @@ mkdir -p $SP_ISO/gpy/themes
 cp $repo_root/config/themes/starship.toml $SP_ISO/gpy/themes/starship.toml
 # Bundled username/hostname plugins, as `gpy setup` installs them (go-w: the
 # agent refuses group/world-writable plugin trees).
-cp -R $repo_root/plugins $SP_ISO/bundled-plugins
-chmod -R go-w $SP_ISO/bundled-plugins
-set -gx GPY_BUNDLED_PLUGIN_DIR $SP_ISO/bundled-plugins
+mkdir -p $SP_ISO/data/gpy
+cp -R $repo_root/plugins $SP_ISO/data/gpy/plugins
+chmod -R go-w $SP_ISO/data/gpy/plugins
+set -gx XDG_DATA_HOME $SP_ISO/data
+set -gx GPY_BUNDLED_PLUGIN_DIR $SP_ISO/data/gpy/plugins
 
 set -gx XDG_CONFIG_HOME $SP_ISO
 set -gx HOME $SP_ISO

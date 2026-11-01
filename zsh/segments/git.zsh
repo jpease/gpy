@@ -1,5 +1,5 @@
 function __gpy_segment_git_detect() {
-    [[ "${GPY_GIT_ENABLED:-1}" != "0" ]] || return 1
+    [[ "${__gpy_cfg_git_enabled-}" != "0" ]] || return 1
     local root
     __gpy_find_git_root "$PWD" root
 }

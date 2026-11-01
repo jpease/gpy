@@ -163,16 +163,6 @@ echo ""
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
-# The rc-file block sources this path inside double quotes; refuse characters
-# that would break out rather than escape them.
-CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-case "$CONFIG_HOME" in
-    *[\"\$\`\\]* | *"
-"*)
-        die "cannot install: $CONFIG_HOME contains a quote, \$, backtick, backslash or newline, which cannot be sourced safely from a shell rc file. Use an XDG_CONFIG_HOME without those characters."
-        ;;
-esac
-
 # Unlike install-oneline.sh, this also resolves Windows assets.
 case $PLATFORM in
     linux)
@@ -221,6 +211,16 @@ mkdir -p "$INSTALL_DIR"
 trap 'rm -f "${STAGED_AGENT:-}" "${STAGED_CLI:-}"' EXIT
 stage_binary "bin/$BINARY" "$INSTALL_DIR/gpy-agent" "agent"
 stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/gpy" "CLI"
+# `gpy setup` refuses native Windows, so the MSYS/Cygwin arm has no shell files to check.
+if [ "$wire_shell" = 1 ]; then
+    case "$PLATFORM" in
+        mingw*|msys*|cygwin*) ;;
+        *)
+            CURRENT_STEP="checking the shell files (nothing is installed yet)"
+            "$STAGED_CLI" setup --check --from "$(pwd)"
+            ;;
+    esac
+fi
 commit_binary "$STAGED_AGENT" "$INSTALL_DIR/gpy-agent" "agent"
 commit_binary "$STAGED_CLI" "$INSTALL_DIR/gpy" "CLI"
 trap - EXIT

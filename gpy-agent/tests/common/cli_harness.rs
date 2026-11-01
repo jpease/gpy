@@ -89,6 +89,7 @@ impl CliCommandResult {
 struct Isolation {
     root: PathBuf,
     config_home: PathBuf,
+    data_home: PathBuf,
     runtime_dir: PathBuf,
     cache_home: PathBuf,
 }
@@ -98,6 +99,7 @@ impl Isolation {
         Self {
             root: root.to_path_buf(),
             config_home: root.join(".config"),
+            data_home: root.join(".local/share"),
             runtime_dir: root.join(".runtime"),
             cache_home: root.join(".cache"),
         }
@@ -108,6 +110,7 @@ impl Isolation {
         command
             .env("HOME", &self.root)
             .env("XDG_CONFIG_HOME", &self.config_home)
+            .env("XDG_DATA_HOME", &self.data_home)
             .env("XDG_RUNTIME_DIR", &self.runtime_dir)
             .env("XDG_CACHE_HOME", &self.cache_home)
             .env("PATH", path_with_cargo_bin_dir());

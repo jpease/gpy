@@ -18,9 +18,9 @@ source "$repo_root/fish/core/ipc.fish"
 print_test_header "Fish refresh-throttle buckets are per context"
 
 set -l tmp (mktemp -d)
-printf '%s\n' '#!/bin/sh' >$tmp/stub-agent
-chmod +x $tmp/stub-agent
-set -gx GPY_AGENT_BINARY_PATH $tmp/stub-agent
+printf '%s\n' '#!/bin/sh' >$tmp/gpy-agent
+chmod +x $tmp/gpy-agent
+set -gx PATH $tmp $PATH
 
 set -g sent_payloads
 function __gpy_register_with_agent

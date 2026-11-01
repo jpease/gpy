@@ -15,8 +15,8 @@
 # text, so a repaint runs nothing.
 #
 # Runner. Fish has no subshell, sub-second timer or read timeout, so the
-# runner is bash/core/g_runner.bash (`gpy setup` installs it as
-# core/g_runner.bash; a checkout uses the repository copy), run in one Bash
+# runner is bash/core/g_runner.bash, found beside this tree in a checkout and
+# in the data root, run in one Bash
 # child per prompt: the first Bash 4 or later on PATH, else
 # /bin/bash, resolved once. Command substitution returns when that direct
 # child exits, so a leftover holding the pipe cannot hold the prompt; Fish
@@ -170,14 +170,10 @@ end
 function __gpy_g_resolve_runner
     test "$__gpy_g_runner_state" = unresolved; or return 0
     set -g __gpy_g_runner_state none
-    # The installed tree holds a copy; a checkout, a release staging dir and
-    # Homebrew share/gpy hold the Bash tree beside this one. `path normalize`
-    # resolves `..` lexically, so a symlinked tree still finds its sibling.
-    set -g __gpy_g_runner_file $__gpy_core_dir/g_runner.bash
-    if not test -r $__gpy_g_runner_file
-        set -l sibling (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
-        test -r $sibling; and set -g __gpy_g_runner_file $sibling
-    end
+    # The Bash tree sits beside this one in a checkout, a release staging dir,
+    # Homebrew share/gpy and the data root. `path normalize` resolves `..`
+    # lexically, so a symlinked tree still finds its sibling.
+    set -g __gpy_g_runner_file (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
     if not test -r $__gpy_g_runner_file
         __gpy_log_warn script "Runner $__gpy_g_runner_file missing - script segments disabled"
         return 1

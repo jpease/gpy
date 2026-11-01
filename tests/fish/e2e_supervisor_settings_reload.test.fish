@@ -27,7 +27,7 @@ set -g export_cache $XDG_CACHE_HOME/gpy/theme-export.fish
 function __export_has --argument-names line
     test -r $export_cache; and string match -q -- $line <$export_cache
 end
-poll_until 5 __export_has 'set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS "7"'
+poll_until 5 __export_has 'set -g __gpy_cfg_supervisor_check_interval "7"'
 or die "the agent never wrote the initial export"
 
 source $repo_root/fish/core/init.fish
@@ -60,25 +60,25 @@ function __run_checks --argument-names step prompts
 end
 
 __reload_settings
-check "exported interval is 7 s" 7 $GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
-check "exported attempt limit is 1" 1 $GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS
+check "exported interval is 7 s" 7 $__gpy_cfg_supervisor_check_interval
+check "exported attempt limit is 1" 1 $__gpy_cfg_supervisor_max_restarts
 check "6 s prompts on a 7 s interval, one attempt: two probes, one start" "2 1" (__run_checks 6 4)
 
 # $1 key, $2 value, $3 variable the export must then hold, $4 its value.
 function __apply --argument-names key value var want
     gpy config set $key $value >/dev/null 2>&1; or die "gpy config set $key $value failed"
-    poll_until 5 __export_has "set -gx $var \"$want\""; or die "the export never set $var=$want"
+    poll_until 5 __export_has "set -g $var \"$want\""; or die "the export never set $var=$want"
     __reload_settings
     pass "$key=$value reached the exported settings"
 end
 
-__apply agent.supervisor.check_interval_seconds 9 GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS 9
+__apply agent.supervisor.check_interval_seconds 9 __gpy_cfg_supervisor_check_interval 9
 check "8 s prompts on a 9 s interval: the second prompt is rate limited" "1 1" (__run_checks 8 2)
 
-__apply agent.supervisor.max_restart_attempts 3 GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS 3
+__apply agent.supervisor.max_restart_attempts 3 __gpy_cfg_supervisor_max_restarts 3
 check "three attempts allowed: six checked prompts start the agent three times" "6 3" (__run_checks 10 6)
 
-__apply agent.supervisor.enabled false GPY_AGENT_SUPERVISOR_ENABLED 0
+__apply agent.supervisor.enabled false __gpy_cfg_supervisor_enabled 0
 check "a disabled supervisor neither probes nor starts" "0 0" (__run_checks 10 6)
 
 cleanup_test_files

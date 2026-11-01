@@ -9,7 +9,7 @@ use super::segments::{
     append_git_language_color_assignments, append_global_assignments, append_prompt_assignments,
     append_status_assignments,
 };
-use super::shell_assignment::push_line;
+use super::shell_assignment::{ShellAssignment, append_shell_assignment, push_line};
 use super::shell_colors::ShellColors;
 use crate::config::Config;
 use crate::formatter::separator::Glyphs;
@@ -36,20 +36,9 @@ fn append_header(output: &mut String, shell: Shell, theme_name: &str) {
     output.push('\n');
 }
 
-/// The enabled-segment list; `git`/`language` dropped when disabled in `config`.
+/// The enabled-segment list: [`Config::effective_segments`].
 fn append_enabled_segments(output: &mut String, shell: Shell, config: &Config) {
-    let filtered: Vec<String> = config
-        .ui
-        .enabled_segments
-        .iter()
-        .filter(|s| match s.as_str() {
-            "git" => config.git.enabled,
-            "language" => config.language.enabled,
-            _ => true,
-        })
-        .cloned()
-        .collect();
-    let segments = filtered.join(" ");
+    let segments = config.effective_segments().collect::<Vec<_>>().join(" ");
 
     // Bash needs a space-separated string: `$arr` expands to the first element only.
     match shell {
@@ -244,6 +233,11 @@ pub(crate) fn theme_to_shell(
     let colors = ShellColors { shell, palette };
     let glyphs = Glyphs::from(&config.ui);
 
+    append_shell_assignment(
+        &mut output,
+        shell,
+        ShellAssignment::local("__gpy_export_version", "1"),
+    );
     append_header(&mut output, shell, theme_name);
     append_builtin_assignments(&mut output, theme, theme_name, config, colors, glyphs);
 

@@ -78,7 +78,7 @@ impl GitHandler {
         let path_buf = path.as_path();
         let config = self.render.config_manager.get();
 
-        if !config.git.enabled {
+        if !config.segment_enabled("git") {
             return Err(HandlerError::FeatureDisabled("Git"));
         }
 
@@ -89,7 +89,7 @@ impl GitHandler {
         };
 
         // `skip_paths` gates the repository root, as every background entry point does.
-        if !config.git.is_enabled_for(&git_root) {
+        if !config.git_enabled_for(&git_root) {
             return Err(HandlerError::FeatureDisabled("Git"));
         }
 
@@ -496,6 +496,28 @@ mod tests {
             handler.status(&kept, None).is_ok(),
             "a sibling sharing only a string prefix must not be skipped"
         );
+    }
+
+    /// `git` missing from `ui.enabled_segments` disables Git even with `git.enabled = true`.
+    #[test]
+    fn unlisted_git_segment_is_feature_disabled() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let git_root = init_dirty_repo(&temp_dir);
+        let mut config = crate::config::Config::default();
+        assert!(config.git.enabled);
+        config
+            .ui
+            .enabled_segments
+            .retain(|segment| segment != "git");
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
+        let (handler, _registry) =
+            make_handler_with_config(Arc::new(GitStatusCache::new()), config_manager);
+
+        let path = crate::security::SafePath::new(git_root.to_str().expect("utf8")).expect("safe");
+        assert!(matches!(
+            handler.status(&path, None),
+            Err(HandlerError::FeatureDisabled("Git"))
+        ));
     }
 
     /// A within-TTL hit past its cooldown serves the cached value and revalidates in the background.

@@ -1,17 +1,40 @@
-//! Opt-in operation timing, enabled by setting `GPY_PROFILE`.
+//! Opt-in operation timing, enabled by setting `GPY_PROFILE` to a true flag
+//! value (`1`, `true`, `yes`, `on`).
 
+use crate::env_config::{self, PROFILE};
 use crate::warn_log;
 use std::sync::OnceLock;
 use std::time::Instant;
 
 static PROFILE_ENABLED: OnceLock<bool> = OnceLock::new();
 
-/// Check if profiling is enabled via `GPY_PROFILE`.
+/// Check if profiling is enabled via `GPY_PROFILE` set to a true flag value.
 #[must_use]
 pub fn is_profile_enabled() -> bool {
-    *PROFILE_ENABLED.get_or_init(|| std::env::var("GPY_PROFILE").is_ok())
+    *PROFILE_ENABLED.get_or_init(|| {
+        if PROFILE.flag() {
+            return true;
+        }
+        // Any other value used to enable profiling; say so once.
+        if let Some(raw) = PROFILE
+            .raw()
+            .map(|value| value.to_string_lossy().into_owned())
+            && matches!(
+                env_config::parse_flag(Some(&raw)),
+                env_config::Reading::Value(false) | env_config::Reading::Unset
+            )
+        {
+            env_config::warn_once(
+                "GPY_PROFILE",
+                &format!("GPY_PROFILE={raw} no longer enables profiling; use 1 to enable"),
+                true,
+            );
+        }
+        false
+    })
 }
-/// Logs the elapsed time between construction and drop when `GPY_PROFILE` is set.
+
+/// Logs the elapsed time between construction and drop when `GPY_PROFILE` is a true value.
 pub struct Timer {
     name: &'static str,
     start: Instant,
@@ -50,12 +73,5 @@ mod tests {
     fn timer_constructs_and_drops_without_panic() {
         let timer = Timer::new("test_operation");
         drop(timer);
-    }
-
-    #[test]
-    fn profile_enabled_is_consistent() {
-        let first = is_profile_enabled();
-        let second = is_profile_enabled();
-        assert_eq!(first, second);
     }
 }

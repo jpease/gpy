@@ -23,7 +23,7 @@ source (dirname (status --filename))/../lib/test_helpers.fish
 
 set -gx XDG_CACHE_HOME (mktemp -d)
 mkdir -p "$XDG_CACHE_HOME/gpy"
-touch "$XDG_CACHE_HOME/gpy/theme-export.fish"
+printf '%s\n' 'set -g __gpy_export_version "1"' >"$XDG_CACHE_HOME/gpy/theme-export.fish"
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish

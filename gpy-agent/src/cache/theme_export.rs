@@ -99,8 +99,8 @@ mod tests {
 
         for (file_name, needle) in [
             ("theme-export.fish", "set -g"),
-            ("theme-export.bash", "export"),
-            ("theme-export.zsh", "export"),
+            ("theme-export.bash", "__gpy_cfg_"),
+            ("theme-export.zsh", "__gpy_cfg_"),
         ] {
             let cache_path = cache_dir.join(file_name);
             assert!(cache_path.exists(), "{file_name} must be created");

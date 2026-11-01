@@ -115,6 +115,15 @@ pub fn get(key: &str) -> Result<()> {
     Ok(())
 }
 
+/// The segment a deprecated `<segment>.enabled` flag key belonged to.
+fn deprecated_segment_flag(key: &str) -> Option<&'static str> {
+    match key {
+        "git.enabled" => Some("git"),
+        "language.enabled" => Some("language"),
+        _ => None,
+    }
+}
+
 /// Set a config value.
 ///
 /// Loads, mutates, and saves the active config file. Load or validation
@@ -139,6 +148,11 @@ pub fn set(key: &str, value: &str) -> Result<()> {
 
     save_config(&path, &original, &config, &[explicit_key.as_str()])?;
     output::plain(format_args!("Set {key} = {value}"));
+    if let Some(segment) = deprecated_segment_flag(key) {
+        output::warn_stderr(format_args!(
+            "`{key}` is deprecated; use `gpy disable {segment}` / `gpy enable {segment}` instead"
+        ));
+    }
 
     reload_agent_and_notify();
     Ok(())

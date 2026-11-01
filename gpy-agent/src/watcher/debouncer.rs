@@ -198,7 +198,7 @@ impl DebounceEngine {
     /// Get recommended debounce duration for file watching
     #[must_use]
     pub const fn default_debounce_duration() -> Duration {
-        Duration::from_millis(super::DEFAULT_DEBOUNCE_MS)
+        Duration::from_millis(crate::env_config::DEFAULT_DEBOUNCE_MS)
     }
 
     /// Get the default max-delay cap.

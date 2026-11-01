@@ -271,10 +271,10 @@ fn test_theme_manager_export_fish_format() {
     // duration icon.
     assert!(!fish_output.contains("__icon_duration"));
     assert!(fish_output.contains("set -g __enabled_segments clock directory git"));
-    assert!(fish_output.contains("set -gx GPY_AGENT_ENABLED \"1\""));
-    assert!(fish_output.contains("set -gx GPY_AGENT_SUPERVISOR_ENABLED \"1\""));
-    assert!(fish_output.contains("set -gx GPY_LANGUAGE_ENABLED \"1\""));
-    assert!(fish_output.contains("set -gx GPY_GIT_ENABLED \"1\""));
+    assert!(fish_output.starts_with("set -g __gpy_export_version \"1\"\n"));
+    assert!(fish_output.contains("set -g __gpy_cfg_agent_enabled \"1\""));
+    assert!(fish_output.contains("set -g __gpy_cfg_language_enabled \"0\""));
+    assert!(fish_output.contains("set -g __gpy_cfg_git_enabled \"1\""));
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn test_disabled_git_removed_from_segment_list() {
 
     assert!(!fish_output.contains("clock directory git"));
     assert!(fish_output.contains("set -g __enabled_segments clock directory"));
-    assert!(fish_output.contains("set -gx GPY_GIT_ENABLED \"0\""));
+    assert!(fish_output.contains("set -g __gpy_cfg_git_enabled \"0\""));
 }
 
 #[test]
@@ -777,7 +777,7 @@ fn test_theme_export_fish_includes_plugin_segment_vars() {
         &gpy_agent::template::Palette::default(),
     );
 
-    assert!(output.contains("set -gx GPY_UI_DIRECTORY_DISPLAY \"basename\""));
+    assert!(output.contains("set -g __gpy_cfg_transient_prompt \"1\""));
     assert!(output.contains("set -g __gpy_segment_k8s_id \"k8s\""));
     assert!(output.contains("set -g __gpy_segment_k8s_bg_color \"#073642\""));
     assert!(output.contains("set -g __gpy_segment_k8s_text_color \"white\""));
@@ -812,7 +812,7 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
         &config,
         &gpy_agent::template::Palette::default(),
     );
-    assert!(zsh_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
+    assert!(zsh_output.contains("typeset -g __gpy_cfg_git_enabled=\"0\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_id=\"k8s\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_bg_color=\"#073642\""));
     assert!(zsh_output.contains("typeset -g __color_k8s_prod_bg=\"#326ce5\""));
@@ -825,7 +825,7 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
         &config,
         &gpy_agent::template::Palette::default(),
     );
-    assert!(bash_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
+    assert!(bash_output.contains("__gpy_cfg_git_enabled=\"0\""));
     assert!(bash_output.contains("__gpy_segment_k8s_id=\"k8s\""));
     assert!(bash_output.contains("__gpy_segment_k8s_bg_color=\"#073642\""));
     assert!(bash_output.contains("__color_k8s_prod_bg=\"#326ce5\""));

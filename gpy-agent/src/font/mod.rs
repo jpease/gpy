@@ -3,6 +3,7 @@
 //! Heuristic: "no Nerd Font installed" is reliable; "installed" is only a hint, since
 //! the terminal's configured font is unobservable. `GPY_NERD_FONT` overrides detection.
 
+use crate::env_config::{Reading, parse_flag};
 use std::path::{Path, PathBuf};
 
 /// Whether the current system appears able to render Nerd Font glyphs.
@@ -31,16 +32,38 @@ pub fn detect_nerd_font() -> FontCapability {
     detect_from_platform()
 }
 
-/// Parse the `GPY_NERD_FONT` override, if set to a recognized value.
+/// Read the `GPY_NERD_FONT` override; `None` means detect. An unrecognised
+/// value is ignored with one warning.
 /// Public so `gpy setup` can skip confirmation for an explicit user answer.
 #[must_use]
 pub fn override_from_env() -> Option<FontCapability> {
-    let raw = crate::env_config::env_string("GPY_NERD_FONT")?;
-    match raw.trim().to_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" | "nerd" => Some(FontCapability::NerdFont),
-        "0" | "false" | "no" | "off" | "none" | "ascii" => Some(FontCapability::NoNerdFont),
-        "unknown" => Some(FontCapability::Unknown),
-        _ => None,
+    crate::env_config::NERD_FONT.nerd_font()
+}
+
+/// Parse a `GPY_NERD_FONT` value. Flag spellings and `nerd` force a Nerd
+/// Font; falsey spellings, `none` and `ascii` force none; `unknown` forces
+/// ASCII as "fonts cannot be detected"; `auto` detects (`Value(None)`).
+#[must_use]
+pub(crate) fn parse_nerd_font(raw: Option<&str>) -> Reading<Option<FontCapability>> {
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Reading::Unset;
+    };
+    if value.eq_ignore_ascii_case("nerd") {
+        return Reading::Value(Some(FontCapability::NerdFont));
+    }
+    if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("ascii") {
+        return Reading::Value(Some(FontCapability::NoNerdFont));
+    }
+    if value.eq_ignore_ascii_case("unknown") {
+        return Reading::Value(Some(FontCapability::Unknown));
+    }
+    if value.eq_ignore_ascii_case("auto") {
+        return Reading::Value(None);
+    }
+    match parse_flag(Some(value)) {
+        Reading::Value(true) => Reading::Value(Some(FontCapability::NerdFont)),
+        Reading::Value(false) => Reading::Value(Some(FontCapability::NoNerdFont)),
+        Reading::Unset | Reading::Invalid(_) => Reading::Invalid(value.to_owned()),
     }
 }
 
@@ -252,6 +275,45 @@ mod tests {
             detect_from_font_dirs(&[missing]),
             FontCapability::Unknown,
             "an unreadable font source must be Unknown, not a false NoNerdFont"
+        );
+    }
+
+    #[test]
+    fn parse_nerd_font_accepts_flag_spellings_and_aliases() {
+        let cases = [
+            ("1", Some(FontCapability::NerdFont)),
+            ("true", Some(FontCapability::NerdFont)),
+            ("YES", Some(FontCapability::NerdFont)),
+            (" on ", Some(FontCapability::NerdFont)),
+            ("nerd", Some(FontCapability::NerdFont)),
+            ("Nerd", Some(FontCapability::NerdFont)),
+            ("0", Some(FontCapability::NoNerdFont)),
+            ("false", Some(FontCapability::NoNerdFont)),
+            ("no", Some(FontCapability::NoNerdFont)),
+            ("OFF", Some(FontCapability::NoNerdFont)),
+            ("none", Some(FontCapability::NoNerdFont)),
+            ("ascii", Some(FontCapability::NoNerdFont)),
+            ("unknown", Some(FontCapability::Unknown)),
+            ("auto", None),
+            ("AUTO", None),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(
+                parse_nerd_font(Some(raw)),
+                Reading::Value(expected),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_nerd_font_rejects_unknown_values() {
+        assert_eq!(parse_nerd_font(None), Reading::Unset);
+        assert_eq!(parse_nerd_font(Some("")), Reading::Unset);
+        assert_eq!(parse_nerd_font(Some("  ")), Reading::Unset);
+        assert_eq!(
+            parse_nerd_font(Some("blah")),
+            Reading::Invalid("blah".to_owned())
         );
     }
 }

@@ -167,9 +167,6 @@ no_bash() {
 check "no bash, GPY_DEBUG=1: one warning, runner disabled" \
     "gpy[script]: warning: No bash found - script segments disabled|bash=" \
     "$(GPY_DEBUG=1 no_bash | paste -sd'|' -)"
-check "no bash, GPY_VERBOSE=1: the same warning" \
-    "gpy[script]: warning: No bash found - script segments disabled|bash=" \
-    "$(GPY_VERBOSE=1 no_bash | paste -sd'|' -)"
-check "no bash, no debug flags: silent" "bash=" "$(GPY_DEBUG= GPY_VERBOSE= no_bash)"
+check "no bash, no debug flags: silent" "bash=" "$(GPY_DEBUG= no_bash)"
 
 test_finish "script segment lifecycle"

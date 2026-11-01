@@ -30,7 +30,7 @@ set -gx XDG_RUNTIME_DIR $tmp/run
 set -gx GPY_AGENT_SOCKET_PATH $tmp/agent.sock
 set -gx GPY_AGENT_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 1
-set -gx GPY_AGENT_BINARY_PATH $tmp/gpy-agent
+set -gx PATH $tmp $PATH
 set -g calls $tmp/agent.calls
 printf '%s\n' '#!/bin/sh' "echo \"\$*\" >>'$calls'" 'exit 0' >$tmp/gpy-agent
 chmod +x $tmp/gpy-agent

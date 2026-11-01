@@ -50,7 +50,7 @@ check_prompt() {
 }
 
 __enabled_segments=(directory git)
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 check_prompt "fresh render"
 
 # The render above warmed the zsh-dialect instant cache; render again so the
@@ -61,7 +61,7 @@ cache_written() {
     (( ${#files} > 0 ))
 }
 if shell_e2e_poll 3 cache_written; then
-    PROMPT=$(__gpy_render_prompt 0)
+    __gpy_render_prompt 0; PROMPT=$__gpy_render_out
     check_prompt "instant-cache render"
 else
     fail "the agent did not write a zsh-dialect git cache file"

@@ -13,7 +13,7 @@ fn health_probe_aborts_and_reports_healthy_when_stopping() {
 #[test]
 fn fallback_policy_defaults_to_probing_for_every_watcher() {
     assert_eq!(
-        FallbackPolicy::resolve(None, None, None),
+        FallbackPolicy::resolve(false, Some(DEFAULT_WATCH_PROBE_MS), DEFAULT_WATCH_POLL_MS),
         FallbackPolicy::ProbeThenFallback {
             probe_timeout: Duration::from_millis(DEFAULT_WATCH_PROBE_MS),
             poll_interval: Duration::from_millis(DEFAULT_WATCH_POLL_MS),
@@ -24,7 +24,7 @@ fn fallback_policy_defaults_to_probing_for_every_watcher() {
 #[test]
 fn fallback_policy_probe_zero_disables_auto_detection() {
     assert_eq!(
-        FallbackPolicy::resolve(None, Some("0"), None),
+        FallbackPolicy::resolve(false, None, DEFAULT_WATCH_POLL_MS),
         FallbackPolicy::NativeOnly
     );
 }
@@ -32,7 +32,7 @@ fn fallback_policy_probe_zero_disables_auto_detection() {
 #[test]
 fn fallback_policy_honors_forced_poll() {
     assert_eq!(
-        FallbackPolicy::resolve(Some("1"), None, Some("750")),
+        FallbackPolicy::resolve(true, Some(DEFAULT_WATCH_PROBE_MS), 750),
         FallbackPolicy::ForcePoll {
             poll_interval: Duration::from_millis(750),
         }
@@ -40,20 +40,9 @@ fn fallback_policy_honors_forced_poll() {
 }
 
 #[test]
-fn fallback_policy_ignores_unparsable_and_zero_overrides() {
-    assert_eq!(
-        FallbackPolicy::resolve(Some("no"), Some("abc"), Some("0")),
-        FallbackPolicy::ProbeThenFallback {
-            probe_timeout: Duration::from_millis(DEFAULT_WATCH_PROBE_MS),
-            poll_interval: Duration::from_millis(DEFAULT_WATCH_POLL_MS),
-        }
-    );
-}
-
-#[test]
 fn fallback_policy_honors_custom_probe_and_poll_intervals() {
     assert_eq!(
-        FallbackPolicy::resolve(None, Some(" 500 "), Some(" 1500 ")),
+        FallbackPolicy::resolve(false, Some(500), 1_500),
         FallbackPolicy::ProbeThenFallback {
             probe_timeout: Duration::from_millis(500),
             poll_interval: Duration::from_millis(1_500),

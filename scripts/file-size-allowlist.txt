@@ -5,9 +5,9 @@
 2266 gpy-agent/src/cache/instant_prompt/tests.rs
 817 gpy-agent/src/formatter/prompt/tests.rs
 836 gpy-agent/src/git/native/tests.rs
-1040 gpy-agent/src/theme/export/tests.rs
+1000 gpy-agent/src/theme/export/tests.rs
 1263 gpy-agent/src/watcher/multi_repo/tests.rs
-1636 gpy-agent/tests/cli_integration_tests.rs
+1634 gpy-agent/tests/cli_integration_tests.rs
 1175 gpy-agent/tests/language_tests.rs
 1864 gpy-agent/tests/multi_repo_integration_tests.rs
 1609 gpy-agent/tests/theme_manager_tests.rs

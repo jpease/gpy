@@ -29,64 +29,19 @@ typeset -gi __gpy_cmd_start_time=0
 typeset -gi __gpy_cmd_duration=0
 typeset -g __duration_threshold_ms=100  # milliseconds; overwritten by `gpy theme export`
 
-# Render memoization. __gpy_render_prompt runs inside a `$(...)` subshell, so
-# a cache-miss write would vanish; it goes to a relay file that precmd reads
-# back and deletes.
+# Render memoization. __gpy_render_prompt runs in this shell, so the memos
+# are plain variables, as in Bash.
 typeset -g __gpy_char_cache_key=""
 typeset -g __gpy_char_cache_val=""
 typeset -g __gpy_dir_cache_key=""
 typeset -g __gpy_dir_cache_val=""
-
-# Relays live in a private `mktemp -d` dir (0700, unpredictable name) so no
-# local user can pre-create content read into $PROMPT. If mktemp fails, the
-# paths stay empty and memoization is disabled rather than insecure.
-# The dirs sit in a per-user parent, `$TMPDIR/gpy_relay_<uid>`, used only if
-# it is a real directory we own with no group or other access. The startup
-# sweep reads that parent, not all of $TMPDIR, which can hold a million
-# entries other programs left. A dir's name starts with its shell's PID:
-# re-source reuses our dir; otherwise sweep dirs of this PID (exec runs no
-# zshexit) and of dead PIDs. Glob qualifiers lstat, so symlinks never match.
-typeset -g __gpy_cache_dir="${__gpy_cache_dir-}"
-typeset -g __gpy_char_cache_relay_path=""
-typeset -g __gpy_dir_cache_relay_path=""
-if [[ -z "$__gpy_cache_dir" || -L "$__gpy_cache_dir" || ! -d "$__gpy_cache_dir" || ! -O "$__gpy_cache_dir" ]]; then
-    __gpy_cache_dir=""
-    () {
-        local parent="${TMPDIR:-/tmp}/gpy_relay_${UID}" d pid
-        [[ -e "$parent" || -L "$parent" ]] || mkdir -m 700 -- "$parent" 2>/dev/null
-        local -a usable=("$parent"(N/Uf-077))
-        (( ${#usable} )) || return 0
-        for d in "$parent"/<->_*(N/U); do
-            pid=${${d:t}%%_*}
-            if [[ $pid == $$ ]] || ! kill -0 "$pid" 2>/dev/null; then
-                rm -rf -- "$d" 2>/dev/null
-            fi
-        done
-        __gpy_cache_dir=$(mktemp -d "$parent/$$_XXXXXX" 2>/dev/null)
-    }
-fi
-if [[ -n "$__gpy_cache_dir" ]]; then
-    __gpy_char_cache_relay_path="$__gpy_cache_dir/char"
-    __gpy_dir_cache_relay_path="$__gpy_cache_dir/dir"
-fi
-
-# Empty relay_path means memoization is disabled.
-function __gpy_load_cache_relay() {
-    local relay_path="$1" key_var="$2" val_var="$3"
-    [[ -n "$relay_path" && -s "$relay_path" ]] || return 0
-    local content
-    content=$(<"$relay_path")
-    rm -f "$relay_path"
-    typeset -g "$key_var=${content%%$'\n'*}"
-    typeset -g "$val_var=${content#*$'\n'}"
-}
 
 # Prefer the agent's cached theme-export file over forking `theme export`.
 # `fresh` (gpy-prompt-reload) never reads the cache file, which may be stale:
 # it asks the agent, and only a successful export replaces the running state.
 # Its stderr is kept, so an invalid config.toml shows the agent's warning.
 function __gpy_load_theme() {
-    local cache_path out
+    local cache_path out first=""
     if [[ "${1:-}" == fresh ]]; then
         # `eval "$(cmd)"` succeeds even when cmd fails, so fetch first.
         command -v gpy-agent &>/dev/null || return 1
@@ -98,7 +53,10 @@ function __gpy_load_theme() {
     fi
     __gpy_g_clear_styles
     cache_path=$(__gpy_theme_export_cache_path)
-    if [[ -n "$cache_path" && -f "$cache_path" ]]; then
+    # Only a file whose first line is the version sentinel is sourced: an older
+    # agent's file exports GPY_* values this shell would read as user input.
+    [[ -n "$cache_path" && -f "$cache_path" ]] && IFS= read -r first <"$cache_path"
+    if [[ "$first" == 'typeset -g __gpy_export_version="1"' ]]; then
         source "$cache_path"
         return $?
     fi
@@ -237,8 +195,7 @@ function __gpy_precmd() {
         __gpy_register_with_agent
     fi
 
-    # Script segments: once per command, here in this shell, never in the
-    # render subshell below (it inherits the stored text by fork).
+    # Script segments: once per command, here in this shell.
     __gpy_g_maybe_run
 
     __gpy_update_prompts $ret
@@ -248,10 +205,6 @@ function __gpy_precmd() {
     if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
         __gpy_register_with_agent &>/dev/null
     fi
-
-    # Pull back cache-miss writes from the render subshell.
-    __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
-    __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
 
     __gpy_sync_workspace
 
@@ -269,7 +222,7 @@ function __gpy_render_prompt() {
     local -a segments_to_render
 
     # Per-render oneshot budget. Segment subshells can't write back, so they
-    # signal via GPY_SEG_STATUS_ONESHOT and later subshells inherit this by fork.
+    # signal via __gpy_seg_status_oneshot and later subshells inherit this by fork.
     local __gpy_oneshot_used=0
 
     for seg in $__enabled_segments; do
@@ -304,7 +257,7 @@ function __gpy_render_prompt() {
                 seg_out="$(__gpy_g_render "$g_tok" "$is_last" "$prev_bg" "$is_first")"
                 seg_status=$?
             elif [[ "$seg" == "directory" ]]; then
-                # Memoized; a miss writes through the relay file.
+                # Memoized in the shell; a miss fills the memo.
                 local is_last_bool="${is_last:-false}"
                 local is_first_bool="${is_first:-false}"
                 local dir_key="${__gpy_theme_name:-}:${PWD}:${is_last_bool}:${is_first_bool}:${prev_bg}"
@@ -314,8 +267,9 @@ function __gpy_render_prompt() {
                     seg_out="$(__gpy_segment_$seg "$is_last" "$prev_bg" "$is_first")"
                     seg_status=$?
                     # Never cache an empty render: the agent-down fallback must retry.
-                    if [[ -n "$seg_out" && -n "$__gpy_dir_cache_relay_path" ]]; then
-                        printf '%s\n%s' "$dir_key" "$seg_out" > "$__gpy_dir_cache_relay_path" 2>/dev/null
+                    if [[ -n "$seg_out" ]]; then
+                        typeset -g __gpy_dir_cache_key=$dir_key
+                        typeset -g __gpy_dir_cache_val=$seg_out
                     fi
                 fi
             else
@@ -324,7 +278,7 @@ function __gpy_render_prompt() {
                 seg_status=$?
             fi
 
-            if [[ "$seg_status" -eq "$GPY_SEG_STATUS_ONESHOT" ]]; then
+            if [[ "$seg_status" -eq "$__gpy_seg_status_oneshot" ]]; then
                 __gpy_oneshot_used=1
             fi
 
@@ -355,15 +309,16 @@ function __gpy_render_prompt() {
     if [[ "${__gpy_is_root:-0}" != "1" ]]; then
         local char_success=0
         [[ "$last_ret" -eq 0 ]] && char_success=1
-        # The chevron uses fg:prev_bg. Memoized; a miss writes through the relay file.
+        # The chevron uses fg:prev_bg. Memoized in the shell, as in Bash.
         local char_key="${__gpy_theme_name:-}:${char_success}:${prev_bg}"
         if [[ -n "$__gpy_char_cache_key" && "$char_key" == "$__gpy_char_cache_key" ]]; then
             char_rendered="$__gpy_char_cache_val"
         else
             char_rendered=$(__gpy_request_character "$char_success" "true" "$prev_bg")
             # Never cache an empty render: the agent-down fallback must retry.
-            if [[ -n "$char_rendered" && -n "$__gpy_char_cache_relay_path" ]]; then
-                printf '%s\n%s' "$char_key" "$char_rendered" > "$__gpy_char_cache_relay_path" 2>/dev/null
+            if [[ -n "$char_rendered" ]]; then
+                typeset -g __gpy_char_cache_key=$char_key
+                typeset -g __gpy_char_cache_val=$char_rendered
             fi
         fi
     fi
@@ -374,17 +329,17 @@ function __gpy_render_prompt() {
     fi
     p+="$char_rendered"
 
-    # The transient line needs the symbol alone; it returns after a Record
-    # Separator, which no prompt contains.
+    # The transient line needs the symbol alone, kept apart from the prompt.
+    typeset -g __gpy_render_tail=""
     if [[ "${__gpy_emit_tail:-}" == "1" ]]; then
         if [[ -z "$char_from_agent" ]]; then
-            local GPY_SHOW_STATUS=0
+            local __gpy_hide_status_tail=1
             __gpy_prompt_tail "$last_ret" char_rendered
         fi
-        p+=$'\x1e'"$char_rendered"
+        __gpy_render_tail=$char_rendered
     fi
 
-    print -r -- "$p"
+    typeset -g __gpy_render_out=$p
 }
 
 # __gpy_transient_prompt is what zle-line-finish swaps in on Enter so
@@ -392,17 +347,26 @@ function __gpy_render_prompt() {
 # off with clock → full prompt (zle re-expands `%D{...}`); off without → empty.
 function __gpy_update_prompts() {
     local last_ret=${1:-0}
-    local __gpy_emit_tail=1 out
-    out=$(__gpy_render_prompt "$last_ret")
-    PROMPT=${out%%$'\x1e'*}
-    local tail=${out#*$'\x1e'}
-    [[ "$out" == *$'\x1e'* ]] || tail=""
+    # Read here, not under `setopt local_options`: zsh expands PROMPT after
+    # precmd returns, so a local option would already be reverted. Under
+    # prompt_bang a data `!` must be written `!!`; memo values stay raw.
+    local bang=0
+    [[ -o prompt_bang ]] && bang=1
+    local __gpy_emit_tail=1
+    __gpy_render_prompt "$last_ret"
+    local tail=$__gpy_render_tail
+    if (( bang )); then
+        PROMPT=${__gpy_render_out//\!/!!}
+    else
+        PROMPT=$__gpy_render_out
+    fi
 
     local has_clock=0
     (( ${__enabled_segments[(Ie)clock]} )) && has_clock=1
 
-    if [[ "${GPY_UI_TRANSIENT_PROMPT:-1}" != "1" ]]; then
+    if [[ "${__gpy_cfg_transient_prompt-}" == "0" ]]; then
         if (( has_clock )); then
+            # Already doubled above; copied unchanged.
             __gpy_transient_prompt=$PROMPT
         else
             __gpy_transient_prompt=""
@@ -423,7 +387,12 @@ function __gpy_update_prompts() {
         local plain=${(S)tail//\%\{*\%\}/}
         [[ "$plain" == " "* ]] || t+=" "
     fi
-    __gpy_transient_prompt="${t}${tail}"
+    t+=$tail
+    if (( bang )); then
+        __gpy_transient_prompt=${t//\!/!!}
+    else
+        __gpy_transient_prompt=$t
+    fi
 }
 
 # CONTEXT=start skips vared and continuation lines.

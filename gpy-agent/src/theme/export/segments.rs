@@ -14,47 +14,31 @@ const fn flag(value: bool) -> &'static str {
     if value { "1" } else { "0" }
 }
 
-/// `GPY_*` env exports mirroring `config`; all values are flags/validated enums.
+/// The seven config mirrors a shell reads, as non-exported `__gpy_cfg_*` values: `1`/`0` flags or integers.
+/// Never exported: `GPY_*` names are user overrides only.
 fn config_export_assignments(config: &Config) -> Vec<ShellAssignment> {
     let agent = &config.agent;
     let supervisor = &agent.supervisor;
     vec![
-        ShellAssignment::export("GPY_AGENT_ENABLED", flag(agent.enabled)),
-        ShellAssignment::export("GPY_AGENT_LIVE_UPDATES", flag(agent.live_updates)),
-        ShellAssignment::export("GPY_AGENT_SUPERVISOR_ENABLED", flag(supervisor.enabled)),
-        ShellAssignment::export(
-            "GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS",
+        ShellAssignment::local("__gpy_cfg_agent_enabled", flag(agent.enabled)),
+        ShellAssignment::local("__gpy_cfg_supervisor_enabled", flag(supervisor.enabled)),
+        ShellAssignment::local(
+            "__gpy_cfg_supervisor_check_interval",
             supervisor.check_interval_seconds.to_string(),
         ),
-        ShellAssignment::export(
-            "GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS",
+        ShellAssignment::local(
+            "__gpy_cfg_supervisor_max_restarts",
             supervisor.max_restart_attempts.to_string(),
         ),
-        ShellAssignment::export(
-            "GPY_AGENT_TIMEOUT_SECONDS",
-            agent.timeout_seconds.to_string(),
+        ShellAssignment::local("__gpy_cfg_git_enabled", flag(config.segment_enabled("git"))),
+        ShellAssignment::local(
+            "__gpy_cfg_language_enabled",
+            flag(config.segment_enabled("language")),
         ),
-        ShellAssignment::export("GPY_LANGUAGE_ENABLED", flag(config.language.enabled)),
-        ShellAssignment::export(
-            "GPY_LANGUAGE_SHOW_VERSIONS",
-            flag(config.language.show_versions),
+        ShellAssignment::local(
+            "__gpy_cfg_transient_prompt",
+            flag(config.ui.transient_prompt),
         ),
-        ShellAssignment::export("GPY_GIT_ENABLED", flag(config.git.enabled)),
-        ShellAssignment::export("GPY_GIT_SHOW_UPSTREAM", flag(config.git.show_upstream)),
-        ShellAssignment::export(
-            "GPY_GIT_MAX_BRANCH_LENGTH",
-            config.git.max_branch_length.to_string(),
-        ),
-        ShellAssignment::export(
-            "GPY_UI_DIRECTORY_MAX_LENGTH",
-            config.ui.directory.max_length.to_string(),
-        ),
-        ShellAssignment::export(
-            "GPY_UI_DIRECTORY_DISPLAY",
-            config.ui.directory.display.to_string(),
-        ),
-        ShellAssignment::export("GPY_UI_SHOW_ICONS", flag(config.ui.show_icons)),
-        ShellAssignment::export("GPY_UI_TRANSIENT_PROMPT", flag(config.ui.transient_prompt)),
     ]
 }
 

@@ -286,3 +286,33 @@ fn import_rejects_a_traversal_name() {
         "nothing is written outside the palettes directory"
     );
 }
+
+#[test]
+fn palette_use_warns_about_each_segment_that_would_render_empty() {
+    let env = CliTestEnv::with_config("[ui]\ntheme = \"mine\"\npalette = \"default\"\n")
+        .expect("create isolated CLI test env");
+    std::fs::create_dir_all(env.themes_dir()).expect("themes dir");
+    std::fs::write(
+        env.themes_dir().join("mine.toml"),
+        "extends = \"default\"\n\n[segments.git]\nformat = \"[$branch](fg:no_such_role)\"\n\n[segments.directory]\nformat = \"[$path](fg:no_such_role)\"\n",
+    )
+    .expect("write theme");
+
+    let result = env.run_gpy(&["palette", "use", "nord"]).expect("spawn gpy");
+
+    result.assert_success("gpy palette use nord");
+    let warnings: Vec<&str> = result
+        .stdout
+        .lines()
+        .filter(|line| line.contains("would render empty with palette nord"))
+        .collect();
+    assert_eq!(warnings.len(), 2, "one warning per segment: {result:?}");
+    assert!(warnings.iter().any(|line| line.contains("segment git")));
+    assert!(
+        warnings
+            .iter()
+            .any(|line| line.contains("segment directory"))
+    );
+    let shown = env.run_gpy(&["palette", "show"]).expect("spawn gpy");
+    assert_eq!(shown.stdout.trim(), "nord", "it still switches: {shown:?}");
+}

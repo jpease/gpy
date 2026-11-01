@@ -243,22 +243,6 @@ main() {
     CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
     CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 
-    if [ -n "$CURRENT_SHELL" ]; then
-        if [ "$CURRENT_SHELL" = "fish" ]; then
-            SHELL_CONFIG_DIR="$CONFIG_HOME/fish/gpy"
-        else
-            SHELL_CONFIG_DIR="$CONFIG_HOME/gpy/$CURRENT_SHELL"
-        fi
-
-        # The rc block sources this path inside double quotes; refuse characters that
-        # would break out rather than escape them for three shells.
-        case "$SHELL_CONFIG_DIR" in
-            *[\"\$\`\\]* | *"
-"*)
-                die "Cannot install: $SHELL_CONFIG_DIR contains a quote, \$, backtick, backslash or newline, which cannot be sourced safely from a shell rc file. Use an XDG_CONFIG_HOME without those characters."
-                ;;
-        esac
-    fi
 
     REPO="jpease/gpy"
     VERSION="${GPY_VERSION:-${RELEASE_VERSION:-latest}}"
@@ -292,7 +276,6 @@ main() {
         command -v tar >/dev/null 2>&1 || die "tar not found; it is required to unpack the shell files."
 
         STAGE_DIR="$TEMP_DIR/share"
-        STAGE_SHELL_DIR="$STAGE_DIR/$CURRENT_SHELL"
         TEMP_SHELL_ARCHIVE="$TEMP_DIR/$SHELL_ARCHIVE_NAME"
         mkdir -p "$STAGE_DIR"
 
@@ -302,17 +285,6 @@ main() {
 
         tar -xzf "$TEMP_SHELL_ARCHIVE" -C "$STAGE_DIR" ||
             die "Failed to unpack $SHELL_ARCHIVE_NAME"
-
-        # Check required files before anything is installed.
-        case "$CURRENT_SHELL" in
-            fish) REQUIRED_SHELL_FILES="conf.d/gpy_init.fish functions/fish_prompt.fish core/init.fish core/flags.fish" ;;
-            zsh) REQUIRED_SHELL_FILES="gpy.zsh core/init.zsh" ;;
-            bash) REQUIRED_SHELL_FILES="gpy.bash core/init.bash" ;;
-        esac
-        for required_file in $REQUIRED_SHELL_FILES; do
-            [ -f "$STAGE_SHELL_DIR/$required_file" ] ||
-                die "$SHELL_ARCHIVE_NAME has no $CURRENT_SHELL/$required_file; refusing to install an incomplete integration."
-        done
     fi
 
     mkdir -p "$INSTALL_DIR"
@@ -324,6 +296,14 @@ main() {
 
     info "Staging GPY CLI (gpy)..."
     stage_binary "$CLI_BINARY_NAME" gpy "CLI binary"
+
+    # Refuse an incomplete archive or an unusable install path before any binary
+    # is replaced; the staged CLI is the one authority on both.
+    if [ -n "$CURRENT_SHELL" ]; then
+        info "Checking the $CURRENT_SHELL integration files..."
+        "$STAGED_CLI" setup --check --shell "$CURRENT_SHELL" --from "$STAGE_DIR" ||
+            die "The $CURRENT_SHELL integration files cannot be installed (see above); nothing was installed."
+    fi
 
     # The agent goes first: the CLI's setup step starts it.
     commit_binary "$STAGED_AGENT" gpy-agent "Agent binary"
@@ -363,9 +343,6 @@ main() {
     echo ""
     echo "Agent:         $INSTALL_DIR/gpy-agent"
     echo "CLI:           $INSTALL_DIR/gpy"
-    if [ -n "$CURRENT_SHELL" ]; then
-        echo "Shell files:   $SHELL_CONFIG_DIR"
-    fi
     echo "Config:        $CONFIG_HOME/gpy/config.toml"
     echo "Agent status:  gpy-agent status"
     echo "Agent logs:    tail -f $CACHE_HOME/gpy/agent.log"

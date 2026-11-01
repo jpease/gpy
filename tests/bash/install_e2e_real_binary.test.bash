@@ -70,6 +70,59 @@ installed_agent_responding() {
     "$HOME/.local/bin/gpy-agent" status >/dev/null 2>&1
 }
 
+echo "--- unsupported login shell: binaries only, no shell check ---"
+# A stub CLI that logs its argv stands in for the real one in the two cases below.
+STUB_PKG="$SHELL_E2E_ROOT/stub-pkg"
+write_stub_pkg() {
+    mkdir -p "$STUB_PKG/bin"
+    cp "$ROOT/install.sh" "$STUB_PKG/install.sh"
+    for asset in "$@"; do
+        # shellcheck disable=SC2016  # the stub's own $@ and $0 must stay literal
+        printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$STUB_LOG"\nexit 0\n' >"$STUB_PKG/bin/$asset"
+        chmod +x "$STUB_PKG/bin/$asset"
+        printf '%s  %s\n' "$(sha256_of "$STUB_PKG/bin/$asset")" "$asset" >"$STUB_PKG/bin/$asset.sha256"
+    done
+}
+write_stub_pkg "$AGENT_ASSET" "$CLI_ASSET"
+STUB_HOME="$SHELL_E2E_ROOT/stub-home-sh"
+STUB_LOG="$SHELL_E2E_ROOT/stub-sh.log"
+mkdir -p "$STUB_HOME"
+: >"$STUB_LOG"
+(cd "$STUB_PKG" && env -u GPY_SHELL HOME="$STUB_HOME" SHELL=/bin/sh STUB_LOG="$STUB_LOG" bash ./install.sh) \
+    >"$SHELL_E2E_ROOT/install-sh.log" 2>&1
+if grep -qF 'setup' "$STUB_LOG"; then
+    fail "an unsupported login shell still ran gpy setup: $(cat "$STUB_LOG")"
+else
+    pass "SHELL=/bin/sh without GPY_SHELL never runs gpy setup (--check or otherwise)"
+fi
+
+echo "--- Windows arm: setup --check is never called ---"
+SHIM_BIN="$SHELL_E2E_ROOT/shim-bin"
+mkdir -p "$SHIM_BIN"
+cat >"$SHIM_BIN/uname" <<'EOF'
+#!/bin/sh
+case "$1" in
+    -s) echo MINGW64_NT-10.0 ;;
+    *) exec /usr/bin/uname "$@" ;;
+esac
+EOF
+chmod +x "$SHIM_BIN/uname"
+rm -rf "$STUB_PKG"
+write_stub_pkg gpy-agent-windows-x86_64.exe gpy-windows-x86_64.exe
+STUB_HOME="$SHELL_E2E_ROOT/stub-home-win"
+STUB_LOG="$SHELL_E2E_ROOT/stub-win.log"
+mkdir -p "$STUB_HOME"
+: >"$STUB_LOG"
+(cd "$STUB_PKG" && env HOME="$STUB_HOME" SHELL=/bin/bash STUB_LOG="$STUB_LOG" PATH="$SHIM_BIN:$PATH" bash ./install.sh) \
+    >"$SHELL_E2E_ROOT/install-win.log" 2>&1
+if [ -s "$STUB_LOG" ] && ! grep -qF 'setup --check' "$STUB_LOG"; then
+    pass "the MINGW arm installs without calling setup --check"
+else
+    fail "MINGW arm: stub log empty or contains setup --check: $(cat "$STUB_LOG")"
+    sed -n '1,30p' "$SHELL_E2E_ROOT/install-win.log"
+fi
+rm -rf "$STUB_PKG"
+
 echo "--- install ---"
 (cd "$PKG" && GPY_SHELL=fish bash ./install.sh) >"$SHELL_E2E_ROOT/install1.log" 2>&1
 rc=$?
@@ -117,7 +170,7 @@ if [ "$backup_count" -eq 1 ]; then
 else
     fail "expected one fish_prompt.fish.backup.*, found $backup_count"
 fi
-if [ -L "$USER_PROMPT" ] && [ "$(readlink "$USER_PROMPT")" = "$FISH_CONFIG/gpy/functions/fish_prompt.fish" ]; then
+if [ -L "$USER_PROMPT" ] && [ "$(readlink "$USER_PROMPT")" = "$XDG_DATA_HOME/gpy/fish/functions/fish_prompt.fish" ]; then
     pass "fish_prompt.fish is a symlink to the installed prompt"
 else
     fail "fish_prompt.fish is not the GPY symlink"
@@ -220,7 +273,7 @@ if [ -n "$supervisor_pid" ]; then
 else
     pass "no supervisor pid file was left to stop (none recorded)"
 fi
-leftovers="$(find "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" -iname '*gpy*' 2>/dev/null)"
+leftovers="$(find "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR" -iname '*gpy*' 2>/dev/null)"
 if [ -z "$leftovers" ]; then
     pass "nothing named *gpy* remains under HOME or the XDG directories"
 else

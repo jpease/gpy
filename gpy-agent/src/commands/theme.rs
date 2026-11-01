@@ -346,7 +346,12 @@ fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
     ensure_theme_discovered(theme_name)?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
-    validate_templates(&loaded, &palette)
+    validate_templates(
+        &loaded,
+        &palette,
+        &config,
+        &crate::plugin::discover_plugins(),
+    )
 }
 
 fn validate_theme_file(path: &Path) -> std::result::Result<(), Failure> {
@@ -354,14 +359,23 @@ fn validate_theme_file(path: &Path) -> std::result::Result<(), Failure> {
         .map_err(|error| classify_load_failure(error, Some(path)))?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
-    validate_templates(&loaded, &palette)
+    validate_templates(
+        &loaded,
+        &palette,
+        &config,
+        &crate::plugin::discover_plugins(),
+    )
 }
 
 /// Template validation; an overlay's failure names the file and line that set
-/// the failing key.
+/// the failing key. Prints the `unset` warnings of an on-disk theme file and
+/// [`theme_warnings`](crate::theme::warnings::theme_warnings) for every theme,
+/// embedded builtins included.
 fn validate_templates(
     loaded: &LoadedTheme,
     palette: &crate::template::Palette,
+    config: &config::Config,
+    plugins: &crate::plugin::PluginDiscovery,
 ) -> std::result::Result<(), Failure> {
     crate::config::validation::templates::validate_segment_templates(&loaded.theme, palette)
         .map_err(|error| Failure::new(FailureKind::Template, loaded.template_error(error)))?;
@@ -370,6 +384,9 @@ fn validate_templates(
         for warning in crate::theme::overlay::unset_warnings(&top.path) {
             output::warn(warning);
         }
+    }
+    for warning in crate::theme::warnings::theme_warnings(loaded, config, plugins) {
+        output::warn(warning);
     }
     Ok(())
 }

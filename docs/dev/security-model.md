@@ -68,14 +68,11 @@ the PID is well-formed and that the process is alive via `kill(pid, 0)`; it does
 not authenticate the caller, and a local process may claim any live PID. Treat
 it as a liveness and hygiene check, not as an authentication mechanism.
 
-**The Zsh integration does not trust `/tmp`.** Zsh memoizes prompt segments
-through relay files kept in a private directory created by `mktemp -d` — mode
-0700, unpredictable name — instead of a predictable `$$`-based path under a
-world-writable `/tmp`. A local attacker can then neither guess the path nor
-pre-create a file whose contents would be read back into `$PROMPT`, which would
-be a terminal-escape and prompt-injection vector. If `mktemp` is unavailable the
-memoization disables itself and every prompt does a full IPC round trip
-(`zsh/core/init.zsh`). Script segments add no files: their cache stays in
+**The Zsh integration writes no memo files.** Zsh renders the prompt in the
+interactive shell and memoizes the directory and prompt-character renders in
+shell variables, so no file under `/tmp` or `$TMPDIR` can be pre-created by a
+local attacker and read back into `$PROMPT` (`zsh/core/init.zsh`). Script
+segments add no files either: their cache stays in
 shell variables, with no `/tmp` path and no PID-keyed state (see
 [Script Segment Trust Model](../../SECURITY.md#script-segment-trust-model)).
 

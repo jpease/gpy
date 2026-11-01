@@ -35,12 +35,12 @@ shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 export_file="$XDG_CACHE_HOME/gpy/theme-export.bash"
 [ -f "$export_file" ] || fail "no theme export at $export_file"
 # Content is the evidence of a rewrite; no mtime (`stat` flags differ GNU/BSD).
-grep -q 'GPY_UI_SHOW_ICONS="1"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
+grep -q '__prompt_icons="nerd"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
 
 shell_e2e_text_config '"directory", "git"'
 
 export_rewritten() {
-    grep -q 'GPY_UI_SHOW_ICONS="0"' "$export_file"
+    grep -q '__prompt_icons="ascii"' "$export_file"
 }
 if shell_e2e_poll 10 export_rewritten; then
     pass "the theme export was rewritten with show_icons=0"

@@ -30,7 +30,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
             caveat: Some("Preview uses a representative sample duration, not a real command."),
         },
         Ok(BuiltinSegment::Language) => SegmentDetail {
-            config_field: "language.enabled + ui.enabled_segments",
+            config_field: "ui.enabled_segments",
             preview_contribution: "Shows the detected language and version for the current directory.",
             caveat: Some("Only shown when a supported language is detected in the directory."),
         },
@@ -40,7 +40,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
             caveat: None,
         },
         Ok(BuiltinSegment::Git) => SegmentDetail {
-            config_field: "git.enabled + ui.enabled_segments",
+            config_field: "ui.enabled_segments",
             preview_contribution: "Shows git branch, ahead/behind counts, and working-tree status.",
             caveat: Some("Only shown inside a git repository."),
         },
@@ -470,7 +470,7 @@ mod tests {
             "git"
         );
         assert!(lines.contains(&"Enabled".to_owned()));
-        assert!(lines.contains(&"Config field: git.enabled + ui.enabled_segments".to_owned()));
+        assert!(lines.contains(&"Config field: ui.enabled_segments".to_owned()));
         assert!(
             lines
                 .iter()

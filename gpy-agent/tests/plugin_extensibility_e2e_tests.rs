@@ -236,6 +236,7 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
     write_config(xdg.path(), "community", &["clock", "k8s_tools"]);
 
     let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", xdg.path());
+    env.set("XDG_DATA_HOME", xdg.path());
     env.remove("GPY_BUNDLED_PLUGIN_DIR");
 
     let themes = ThemeManager::discover_available_themes();

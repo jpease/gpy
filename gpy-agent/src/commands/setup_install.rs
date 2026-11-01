@@ -9,7 +9,7 @@
 //! the source, so setup can never delete the files it installs from.
 
 use super::output;
-use super::setup::{VERSION_STAMP, check_sourceable, shell_dir_for};
+use super::setup::{DataRoot, VERSION_STAMP, check_sourceable, shell_dir_for};
 use crate::shell::Shell;
 use crate::{Error, Result};
 use std::ffi::OsString;
@@ -31,9 +31,14 @@ fn io_at<'a>(action: &'a str, path: &'a Path) -> impl FnOnce(io::Error) -> io::E
     }
 }
 
-/// The runner in a source tree, and where Fish and Zsh installs keep a copy.
-const RUNNER_SOURCE: &str = "bash/core/g_runner.bash";
-const RUNNER_INSTALLED: &str = "core/g_runner.bash";
+/// How a tree reaches the data root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InstallMode {
+    /// Copy the source into the data root through a staged swap.
+    Copy,
+    /// The source already is the data root: write only the generated files.
+    InPlace,
+}
 
 /// Write `bytes` to `path`, creating its parent directories.
 fn write_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -120,24 +125,32 @@ pub(super) fn fish_completions_dir(config_home: &Path) -> PathBuf {
 }
 
 /// Where the bundled plugin root is installed.
-pub(super) fn plugins_target(config_home: &Path) -> PathBuf {
-    config_home
-        .join("gpy")
-        .join(crate::plugin::BUNDLED_PLUGINS_DIR_NAME)
+pub(super) fn plugins_target(root: &DataRoot) -> PathBuf {
+    root.0.join(BUNDLED_PLUGINS_SOURCE)
 }
 
-/// Validate every location `setup` for `shell` will write against
-/// `source_root`, before any of them is touched.
+/// Validate every location a copying `setup` will write against
+/// `source_root`, before any of them is touched: the data-root tree of each
+/// shell in `shells`, the bundled plugins, and Fish's merged completion file
+/// when `fish_completions` is set.
 ///
 /// # Errors
 /// Fails when an install location aliases or overlaps the source.
-pub(super) fn preflight(shell: Shell, source_root: &Path, config_home: &Path) -> Result<()> {
-    guard(source_root, &shell_dir_for(config_home, shell))?;
-    if shell == Shell::Fish {
+pub(super) fn preflight(
+    shells: &[Shell],
+    fish_completions: bool,
+    source_root: &Path,
+    root: &DataRoot,
+    config_home: &Path,
+) -> Result<()> {
+    for &shell in shells {
+        guard(source_root, &shell_dir_for(root, shell))?;
+    }
+    if fish_completions {
         guard(source_root, &fish_completions_dir(config_home))?;
     }
     if source_root.join(BUNDLED_PLUGINS_SOURCE).is_dir() {
-        guard_replace(source_root, &plugins_target(config_home))?;
+        guard_replace(source_root, &plugins_target(root))?;
     }
     Ok(())
 }
@@ -394,14 +407,17 @@ impl PendingCompletion {
     }
 }
 
-/// Install `shell`'s tree and completions from `source_root`, with the
+/// Install `shell`'s tree from `source_root` into the data root, with the
 /// version stamp, and return the install directory. Leaves the rc file alone.
+/// Completions are generated only when `with_completions` is set.
 ///
 /// The files other than the shipped ones in the install directory are kept;
 /// each shipped subtree is replaced whole, so scripts a newer release dropped
 /// are gone. Everything is prepared in a staging directory first, so a source
 /// that cannot be read, a missing Fish completion glue or a failed completion
-/// generation leaves the previous install exactly as it was.
+/// generation leaves the previous install exactly as it was. With
+/// [`InstallMode::InPlace`] the tree is already there: only the generated
+/// files and the stamp are written.
 ///
 /// # Errors
 /// Fails when the install location aliases or overlaps the source, or a file
@@ -409,67 +425,63 @@ impl PendingCompletion {
 pub(super) fn install_files(
     shell: Shell,
     source_root: &Path,
+    root: &DataRoot,
     config_home: &Path,
+    mode: InstallMode,
+    with_completions: bool,
     completions: &impl Fn(Shell) -> Result<Vec<u8>>,
 ) -> Result<PathBuf> {
-    let shell_dir = shell_dir_for(config_home, shell);
+    let shell_dir = shell_dir_for(root, shell);
     check_sourceable(&shell_dir)?;
-    let live = guard(source_root, &shell_dir)?;
+    let live = if mode == InstallMode::Copy {
+        Some(guard(source_root, &shell_dir)?)
+    } else {
+        None
+    };
 
     let source = source_root.join(shell.as_str());
-    let generated = completions(shell)?;
-    // Fish's completion glue is merged into the generated file instead.
-    let skip: &[&str] = if shell == Shell::Fish {
-        &["completions"]
-    } else {
-        &[]
-    };
-    let (staged_completion, pending) = match shell {
-        Shell::Fish => (
-            None,
-            Some(PendingCompletion::prepare(
-                source_root,
-                &source,
-                config_home,
-                generated,
-            )?),
-        ),
-        Shell::Zsh => (Some(("completions/_gpy", generated)), None),
-        Shell::Bash => (Some(("completions/gpy.bash", generated)), None),
-    };
-
-    // The one committed runner lives in the Bash tree; Fish and Zsh run it in
-    // a Bash child, so their installed trees carry a copy.
-    let runner = if shell == Shell::Bash {
-        None
-    } else {
-        let runner_path = source_root.join(RUNNER_SOURCE);
-        let Ok(bytes) = fs::read(&runner_path) else {
-            if let Some(completion) = &pending {
-                completion.discard();
+    let mut staged_completion = None;
+    let mut pending = None;
+    if with_completions {
+        let generated = completions(shell)?;
+        match shell {
+            // Fish's completion glue is merged into the generated file instead
+            // of being autoloaded from the data root.
+            Shell::Fish => {
+                pending = Some(PendingCompletion::prepare(
+                    source_root,
+                    &source,
+                    config_home,
+                    generated,
+                )?);
             }
-            return Err(Error::invalid(format!(
-                "{} has no {RUNNER_SOURCE}; the script tree is incomplete",
-                source_root.display()
-            )));
-        };
-        Some(bytes)
-    };
+            Shell::Zsh => staged_completion = Some(("completions/_gpy", generated)),
+            Shell::Bash => staged_completion = Some(("completions/gpy.bash", generated)),
+        }
+    }
 
-    let swapped = stage_and_swap(&live, Swap::Entries, |stage| {
-        copy_tree(&source, stage, skip)?;
-        if let Some(bytes) = &runner {
-            write_file(&stage.join(RUNNER_INSTALLED), bytes)?;
-        }
-        if let Some((relative, bytes)) = &staged_completion {
-            write_file(&stage.join(relative), bytes)?;
-        }
-        write_file(
-            &stage.join(VERSION_STAMP),
-            format!("{}\n", crate::VERSION).as_bytes(),
-        )
-    });
-    match (swapped, pending) {
+    let stamp = format!("{}\n", crate::VERSION);
+    let written = live.map_or_else(
+        || {
+            (|| -> io::Result<()> {
+                if let Some((relative, bytes)) = &staged_completion {
+                    write_file(&shell_dir.join(relative), bytes)?;
+                }
+                write_file(&shell_dir.join(VERSION_STAMP), stamp.as_bytes())
+            })()
+            .map_err(Error::from)
+        },
+        |live_dir| {
+            stage_and_swap(&live_dir, Swap::Entries, |stage| {
+                copy_tree(&source, stage, &[])?;
+                if let Some((relative, bytes)) = &staged_completion {
+                    write_file(&stage.join(relative), bytes)?;
+                }
+                write_file(&stage.join(VERSION_STAMP), stamp.as_bytes())
+            })
+        },
+    );
+    match (written, pending) {
         (Ok(()), Some(completion)) => completion.commit()?,
         (Ok(()), None) => {}
         (Err(err), Some(completion)) => {
@@ -482,17 +494,13 @@ pub(super) fn install_files(
 }
 
 /// Replace `dst` with a copy of `src`, staged beside it first so a failed
-/// copy leaves `dst` as it was. `source_root` is the directory `src` belongs
-/// to; `dst` must not alias or overlap it.
+/// copy leaves `dst` as it was, with `prepare` run on the staged copy before
+/// the swap. `source_root` is the directory `src` belongs to; `dst` must not
+/// alias or overlap it.
 ///
 /// # Errors
 /// Fails when `dst` aliases or overlaps the source, or is a symlink, or the
 /// copy or swap fails.
-pub(super) fn replace_tree(src: &Path, dst: &Path, source_root: &Path) -> Result<()> {
-    replace_staged(src, dst, source_root, |_| Ok(()))
-}
-
-/// [`replace_tree`] with `prepare` run on the staged copy before the swap.
 fn replace_staged(
     src: &Path,
     dst: &Path,
@@ -506,21 +514,25 @@ fn replace_staged(
     })
 }
 
-/// Replace the bundled plugin root (`<config home>/gpy/bundled-plugins`) with
+/// Replace the bundled plugin root (`<data root>/plugins`) with
 /// `source_root/plugins`, so a plugin dropped by an upgrade is gone too. A
 /// source without that tree (an older archive) leaves the installed root alone.
 /// Group and world write bits are cleared before the swap, as export refuses
-/// a shared script.
+/// a shared script. [`InstallMode::InPlace`] only clears the bits.
 pub(super) fn install_bundled_plugins(
     source_root: &Path,
-    config_home: &Path,
+    root: &DataRoot,
+    mode: InstallMode,
 ) -> Result<Option<PathBuf>> {
     let source = source_root.join(BUNDLED_PLUGINS_SOURCE);
     if !source.is_dir() {
         return Ok(None);
     }
-    let target = plugins_target(config_home);
-    replace_staged(&source, &target, source_root, clear_shared_write)?;
+    let target = plugins_target(root);
+    match mode {
+        InstallMode::Copy => replace_staged(&source, &target, source_root, clear_shared_write)?,
+        InstallMode::InPlace => clear_shared_write(&target)?,
+    }
     Ok(Some(target))
 }
 

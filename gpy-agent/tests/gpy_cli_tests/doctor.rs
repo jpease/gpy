@@ -382,3 +382,56 @@ this is not valid toml
         "Should detect malformed config. Output: {combined}"
     );
 }
+
+#[test]
+fn doctor_lists_agent_tuning_and_warns_on_ignored_env() {
+    let env = CliTestEnv::with_config("[agent]\nenabled = false\n")
+        .expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy_with_env(&["doctor"], &[("GPY_DEBOUNCE_MS", "abc")])
+        .expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("[Agent tuning]"),
+        "doctor must print the Agent tuning section: {output:?}"
+    );
+    let line = output
+        .stdout
+        .lines()
+        .find(|line| line.contains("GPY_DEBOUNCE_MS"))
+        .unwrap_or_else(|| panic!("no GPY_DEBOUNCE_MS line: {output:?}"));
+    assert!(
+        line.contains("ignored") && line.contains("100 ms"),
+        "an ignored value must say so and show the default: {line:?}"
+    );
+    assert_eq!(
+        output.exit_code, 0_i32,
+        "an ignored tunable is a warning, not a failure: {output:?}"
+    );
+}
+
+#[test]
+fn doctor_warns_on_deprecated_segment_flags() {
+    let env = CliTestEnv::with_config(
+        "[agent]\nenabled = false\n\n[git]\nenabled = false\n\n[ui]\nenabled_segments = [\"directory\", \"git\"]\n",
+    )
+    .expect("Failed to create isolated CLI test environment");
+
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+
+    output.assert_success("gpy doctor");
+    let warnings: Vec<&str> = output
+        .stdout
+        .lines()
+        .filter(|line| line.contains("`git.enabled` is deprecated"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "one deprecation warning: {output:?}");
+    assert!(
+        warnings.iter().all(|line| line.contains("gpy disable git")),
+        "{output:?}"
+    );
+    assert!(
+        !output.stdout.contains("`language.enabled` is deprecated"),
+        "{output:?}"
+    );
+}

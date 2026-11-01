@@ -60,7 +60,7 @@ out_var_result=""
 __gpy_segment_bg git out_var_result
 check "git_bg file: OUT_VAR form" red "$out_var_result"
 
-__gpy_git_seg_status="$GPY_SEG_STATUS_ONESHOT"
+__gpy_git_seg_status="$__gpy_seg_status_oneshot"
 check "agent-free git render ignores the file" \
     "${__color_git_clean_bg:-}" "$(__gpy_segment_bg git)"
 unset __gpy_git_seg_status

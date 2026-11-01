@@ -70,6 +70,7 @@ function write_driver --argument-names driver repo_root home_dir safe_path insta
         "cd '$repo_root'" \
         "set -gx HOME '$home_dir'" \
         "set -gx XDG_CONFIG_HOME '$home_dir/.config'" \
+        "set -gx XDG_DATA_HOME '$home_dir/.local/share'" \
         "set -gx XDG_CACHE_HOME '$home_dir/.cache'" \
         "set -gx PATH '$safe_path'" \
         "source install-dev.fish --files-only --allow-shadow >/dev/null 2>&1" \
@@ -202,6 +203,32 @@ if contains -- "xdg=$sandbox/xdg" $out_cfg
 else
     fail "_config_home ignored XDG_CONFIG_HOME in: $out_cfg"
 end
+
+# (h) _data_root: $HOME/.local/share/gpy by default, $XDG_DATA_HOME/gpy when it
+# is absolute, the default again when it is relative
+set -l driver_data "$sandbox/driver_data.fish"
+printf '%s\n' \
+    "cd '$repo_root'" \
+    "set -gx HOME '$home_dir'" \
+    "set -gx XDG_CACHE_HOME '$home_dir/.cache'" \
+    "set -gx PATH '$safe_path'" \
+    "set -e XDG_DATA_HOME" \
+    "source install-dev.fish --files-only --allow-shadow >/dev/null 2>&1" \
+    "echo default=(_data_root)" \
+    "set -gx XDG_DATA_HOME '$sandbox/xdg-data'" \
+    "echo xdg=(_data_root)" \
+    "set -gx XDG_DATA_HOME relative/data" \
+    "echo relative=(_data_root)" >"$driver_data"
+set -l out_data (env -i HOME=$home_dir PATH=$safe_path fish --no-config "$driver_data" 2>&1)
+contains -- "default=$home_dir/.local/share/gpy" $out_data
+and pass "_data_root defaults to \$HOME/.local/share/gpy"
+or fail "_data_root default wrong in: $out_data"
+contains -- "xdg=$sandbox/xdg-data/gpy" $out_data
+and pass "_data_root honours an absolute XDG_DATA_HOME"
+or fail "_data_root ignored XDG_DATA_HOME in: $out_data"
+contains -- "relative=$home_dir/.local/share/gpy" $out_data
+and pass "_data_root ignores a relative XDG_DATA_HOME"
+or fail "_data_root accepted a relative XDG_DATA_HOME in: $out_data"
 
 rm -rf "$sandbox"
 test_finish "_warn_shadowing_binaries reports earlier copies on PATH and deletes nothing"

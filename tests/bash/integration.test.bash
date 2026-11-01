@@ -232,12 +232,22 @@ if [[ "$workspace_payload" != *'"op":"workspace"'* || "$workspace_payload" != *'
 fi
 echo "PASS: Bash agent payloads"
 
+# __gpy_send_json stubs honour the optional OUTVAR ($3) like the real one:
+# assign the reply when it is given, print it otherwise.
+__gpy_test_stub_reply() {
+    if [[ -n "$2" ]]; then
+        printf -v "$2" '%s' "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
 echo "=== Testing Bash Workspace Sync ==="
 captured_workspace_payload=""
 captured_workspace_file=$(mktemp)
 __gpy_send_json() {
     printf '%s' "$1" > "$captured_workspace_file"
-    echo '{"Ack":null}'
+    __gpy_test_stub_reply '{"Ack":null}' "${3:-}"
 }
 sync_dir=$(mktemp -d)
 __gpy_registered=1
@@ -288,15 +298,17 @@ else
         : > "$__gpy_supervisor_call_count_file"
         __gpy_send_json() {
             printf 'x' >> "$__gpy_supervisor_call_count_file"
+            local stub_reply=""
             case "$1" in
                 *'"op":"ping"'*)
 # The daemon's real Ack is {"status":"ok"}; supervisor.bash must accept exactly that.
-                    printf '{"status":"ok"}'
+                    stub_reply='{"status":"ok"}'
                     ;;
                 *'"op":"status"'*)
-                    printf '{"AgentStatus":{"version":"0.1.0-test","protocol_version":1,"watched_repos":0,"registered_clients":0,"cache_entries":0}}'
+                    stub_reply='{"AgentStatus":{"version":"0.1.0-test","protocol_version":1,"watched_repos":0,"registered_clients":0,"cache_entries":0}}'
                     ;;
             esac
+            __gpy_test_stub_reply "$stub_reply" "${3:-}"
             return 0
         }
         __gpy_supervisor_call_count() {
@@ -406,7 +418,7 @@ else
 # Restore the always-Ack stub rather than unsetting: later sections call
 # __gpy_send_json unconditionally.
         __gpy_send_json() {
-            echo '{"Ack":null}'
+            __gpy_test_stub_reply '{"Ack":null}' "${3:-}"
         }
         unset -f __gpy_supervisor_call_count
         unset __gpy_supervisor_call_count_file
@@ -600,12 +612,12 @@ visible_text() {
 # is_first/is_last ride in the shared flags tail; the exit_status op is
 # distinct from the agent health-check "status" op. The __gpy_send_json stub
 # lives in the command-substitution subshell only.
-output=$(function __gpy_send_json() { printf '%s' "$1"; }; __gpy_request_exit_status 1 true "" true)
+output=$(__gpy_send_json() { __gpy_test_stub_reply "$1" "${3:-}"; }; __gpy_request_exit_status 1 true "" true)
 if [[ "$output" != '{"op":"exit_status","success":true,"format":"bash-prompt","is_last":true,"is_first":true}' ]]; then
     echo "FAIL: Exit-status request payload incorrect: $output"
     exit 1
 fi
-output=$(function __gpy_send_json() { printf '%s' "$1"; }; __gpy_request_exit_status 0 "" "blue" "")
+output=$(__gpy_send_json() { __gpy_test_stub_reply "$1" "${3:-}"; }; __gpy_request_exit_status 0 "" "blue" "")
 if [[ "$output" != '{"op":"exit_status","success":false,"format":"bash-prompt","prev_bg":"blue"}' ]]; then
     echo "FAIL: Exit-status failure request payload incorrect: $output"
     exit 1
@@ -624,7 +636,7 @@ __gpy_test_render_fallback_pill() {
 }
 for gpy_test_reply in unreachable error; do
     if [[ "$gpy_test_reply" == error ]]; then
-        output=$(__gpy_send_json() { printf '%s\n' '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'; }; __gpy_test_render_fallback_pill)
+        output=$(__gpy_send_json() { __gpy_test_stub_reply '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}' "${3:-}"; }; __gpy_test_render_fallback_pill)
     else
         output=$(__gpy_send_json() { return 1; }; __gpy_test_render_fallback_pill)
     fi

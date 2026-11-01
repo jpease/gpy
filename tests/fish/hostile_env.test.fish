@@ -5,8 +5,8 @@
 # Hostile-shell-environment harness (fish counterpart of
 # tests/bash/hostile_env.test.bash and tests/zsh/hostile_env.test.zsh).
 # Every scenario starts a FRESH child fish with a sandboxed HOME/XDG tree in
-# which GPY is "installed" the way the installer does it (conf.d file plus
-# $XDG_CONFIG_HOME/fish/gpy). New hostile-environment issues add a
+# which GPY is "installed" the way the installer does it (the Fish tree in
+# $XDG_DATA_HOME/gpy/fish, which holds conf.d beside core/). New hostile-environment issues add a
 # `scenario_<name>` function plus one `run_scenario` line at the bottom.
 #
 # Children never start a gpy-agent: the supervisor is disabled, PATH holds no
@@ -18,9 +18,10 @@ source (dirname (status --filename))/../lib/test_helpers.fish
 set -l script_dir (dirname (status --filename))
 set -g repo_root (cd "$script_dir/../.." && pwd)
 set -g sandbox (mktemp -d)
-mkdir -p $sandbox/cfg/fish/conf.d $sandbox/cache $sandbox/run $sandbox/home
-ln -s $repo_root/fish $sandbox/cfg/fish/gpy
-cp $repo_root/fish/conf.d/gpy_init.fish $sandbox/cfg/fish/conf.d/gpy_init.fish
+mkdir -p $sandbox/cfg/fish $sandbox/data/gpy $sandbox/cache $sandbox/run $sandbox/home
+# gpy_init.fish finds core/ from its own location, and the runner beside the Fish tree.
+ln -s $repo_root/fish $sandbox/data/gpy/fish
+ln -s $repo_root/bash $sandbox/data/gpy/bash
 
 function cleanup_sandbox --on-event fish_exit
     rm -rf $sandbox
@@ -30,17 +31,17 @@ end
 # The code receives the conf.d path as $argv[1].
 function run_child --argument-names code
     set -g CHILD_OUT (env -i PATH=/usr/bin:/bin TERM=dumb HOME=$sandbox/home \
-        XDG_CONFIG_HOME=$sandbox/cfg XDG_CACHE_HOME=$sandbox/cache \
+        XDG_CONFIG_HOME=$sandbox/cfg XDG_DATA_HOME=$sandbox/data XDG_CACHE_HOME=$sandbox/cache \
         XDG_RUNTIME_DIR=$sandbox/run TMPDIR=$sandbox \
         GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_SOCKET_PATH=$sandbox/missing.sock \
-        (command -v fish) --no-config -c $code -- $sandbox/cfg/fish/conf.d/gpy_init.fish \
+        (command -v fish) --no-config -c $code -- $sandbox/data/gpy/fish/conf.d/gpy_init.fish \
         </dev/null 2>&1)
     set -g CHILD_STATUS $status
 end
 
 # Regular files only: fish itself creates empty cache/data dirs on startup.
 function files_snapshot
-    find $sandbox -type f -not -path "$sandbox/cfg/fish/gpy/*" 2>/dev/null | sort
+    find $sandbox -type f -not -path "$sandbox/data/gpy/*" 2>/dev/null | sort
 end
 
 function scenario_noninteractive_c_is_inert
@@ -78,7 +79,7 @@ function scenario_disabled_prompt_forks_no_rm
     : >$rm_log
 
     env -i PATH=$stub_dir:/usr/bin:/bin TERM=dumb HOME=$sandbox/home \
-        XDG_CONFIG_HOME=$sandbox/cfg XDG_CACHE_HOME=$sandbox/cache \
+        XDG_CONFIG_HOME=$sandbox/cfg XDG_DATA_HOME=$sandbox/data XDG_CACHE_HOME=$sandbox/cache \
         XDG_RUNTIME_DIR=$sandbox/run TMPDIR=$sandbox RM_LOG=$rm_log \
         GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
         GPY_AGENT_SOCKET_PATH=$sandbox/missing.sock \
@@ -88,7 +89,7 @@ echo BEGIN_RENDER >> $argv[3]
 for i in 1 2 3 4 5
     fish_prompt >/dev/null
 end
-echo END_RENDER >> $argv[3]' -- $sandbox/cfg/fish/conf.d/gpy_init.fish $repo_root/fish/functions/fish_prompt.fish $rm_log </dev/null >/dev/null 2>&1
+echo END_RENDER >> $argv[3]' -- $sandbox/data/gpy/fish/conf.d/gpy_init.fish $repo_root/fish/functions/fish_prompt.fish $rm_log </dev/null >/dev/null 2>&1
     set -l child_status $status
 
     set -l log_lines (cat $rm_log)
@@ -99,14 +100,14 @@ echo END_RENDER >> $argv[3]' -- $sandbox/cfg/fish/conf.d/gpy_init.fish $repo_roo
 
     # A spent budget is reset by the next render.
     set -l reset_out (env -i PATH=/usr/bin:/bin TERM=dumb HOME=$sandbox/home \
-        XDG_CONFIG_HOME=$sandbox/cfg XDG_CACHE_HOME=$sandbox/cache \
+        XDG_CONFIG_HOME=$sandbox/cfg XDG_DATA_HOME=$sandbox/data XDG_CACHE_HOME=$sandbox/cache \
         XDG_RUNTIME_DIR=$sandbox/run TMPDIR=$sandbox \
         GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
         (command -v fish) --no-config -i -c 'source $argv[1]
 source $argv[2]
 set -g __gpy_oneshot_used 1
 fish_prompt >/dev/null
-set -q __gpy_oneshot_used; and echo SPENT; or echo RESET' -- $sandbox/cfg/fish/conf.d/gpy_init.fish $repo_root/fish/functions/fish_prompt.fish </dev/null 2>/dev/null)
+set -q __gpy_oneshot_used; and echo SPENT; or echo RESET' -- $sandbox/data/gpy/fish/conf.d/gpy_init.fish $repo_root/fish/functions/fish_prompt.fish </dev/null 2>/dev/null)
     test "$reset_out[-1]" = RESET; and pass "spent oneshot budget reset by prompt render"; or fail "spent oneshot budget survived the prompt render: $reset_out"
 end
 

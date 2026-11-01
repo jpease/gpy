@@ -172,13 +172,7 @@ impl ClientHandler {
             return;
         };
 
-        if !self
-            .render
-            .config_manager
-            .get()
-            .git
-            .is_enabled_for(&git_root)
-        {
+        if !self.render.config_manager.get().git_enabled_for(&git_root) {
             return;
         }
 

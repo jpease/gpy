@@ -151,7 +151,7 @@ run_driver() {
         *) cwd="$row_cwd" ;;
     esac
     local -a scn_env=(
-        "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/config" "XDG_CACHE_HOME=$sandbox/cache"
+        "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/config" "XDG_DATA_HOME=$sandbox/data" "XDG_CACHE_HOME=$sandbox/cache"
         "XDG_RUNTIME_DIR=$sandbox/runtime" "GPY_AGENT_SOCKET_PATH=$sandbox/p.sock"
         "GPY_DEBUG_LOG=$sandbox/agent.log" "PATH=$sandbox/bin:$PATH"
         "SCN_CALLS=$sandbox/calls.log" "SCN_REAL_AGENT=$REAL_AGENT"
@@ -180,8 +180,9 @@ run_shell() {
     # The bundled username/hostname plugins, where `gpy setup` puts them
     # (the default bundled root). Plugin files must not be group/world
     # writable, which a umask of 002 would leave them.
-    cp -R "$ROOT/plugins" "$sandbox/config/gpy/bundled-plugins"
-    chmod -R go-w "$sandbox/config/gpy/bundled-plugins"
+    mkdir -p "$sandbox/data/gpy"
+    cp -R "$ROOT/plugins" "$sandbox/data/gpy/plugins"
+    chmod -R go-w "$sandbox/data"
     # The fixture plugins of the rows (script segments), where users keep theirs.
     mkdir -p "$sandbox/config/gpy/plugins"
     cp -R "$SCN_FIXTURES"/plugins/* "$sandbox/config/gpy/plugins/"
@@ -202,7 +203,7 @@ run_shell() {
     : >"$sandbox/calls.log"
     : >"$sandbox/ipc.log"
 
-    export HOME="$sandbox/home" XDG_CONFIG_HOME="$sandbox/config" XDG_CACHE_HOME="$sandbox/cache"
+    export HOME="$sandbox/home" XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" XDG_CACHE_HOME="$sandbox/cache"
     export XDG_RUNTIME_DIR="$sandbox/runtime" GPY_AGENT_SOCKET_PATH="$sandbox/r.sock"
     export GPY_DEBUG_LOG="$sandbox/agent.log"
     SHELL_E2E_ROOT="$sandbox"

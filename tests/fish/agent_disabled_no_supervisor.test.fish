@@ -12,16 +12,17 @@ source $repo_root/tests/lib/test_helpers.fish
 set -l tmp (mktemp -d)
 set -gx XDG_RUNTIME_DIR $tmp/run
 set -gx XDG_CONFIG_HOME $tmp/config
+set -gx XDG_DATA_HOME $tmp/data
 set -gx XDG_CACHE_HOME $tmp/cache
 mkdir -p $XDG_RUNTIME_DIR $XDG_CONFIG_HOME/fish $XDG_CACHE_HOME/gpy
 test_track_dir $tmp
 set -g stub_log $tmp/agent-calls.log
 
-printf '%s\n' 'set -gx GPY_AGENT_ENABLED "0"' 'set -gx GPY_AGENT_SUPERVISOR_ENABLED "1"' >$XDG_CACHE_HOME/gpy/theme-export.fish
+printf '%s\n' 'set -g __gpy_export_version "1"' 'set -g __gpy_cfg_agent_enabled "0"' 'set -g __gpy_cfg_supervisor_enabled "1"' >$XDG_CACHE_HOME/gpy/theme-export.fish
 
 printf '%s\n' '#!/bin/sh' "echo \"\$*\" >> '$stub_log'" 'exit 0' >$tmp/gpy-agent
 chmod +x $tmp/gpy-agent
-set -gx GPY_AGENT_BINARY_PATH $tmp/gpy-agent
+set -gx PATH $tmp $PATH
 
 function die
     fail "$argv"
@@ -29,7 +30,7 @@ function die
 end
 
 source $repo_root/fish/core/init.fish
-test "$GPY_AGENT_ENABLED" = 0; or die "theme export did not set GPY_AGENT_ENABLED=0 (got '$GPY_AGENT_ENABLED')"
+test "$__gpy_cfg_agent_enabled" = 0; or die "theme export did not set __gpy_cfg_agent_enabled=0 (got '$__gpy_cfg_agent_enabled')"
 set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS 0
 
 for prompt in 1 2 3

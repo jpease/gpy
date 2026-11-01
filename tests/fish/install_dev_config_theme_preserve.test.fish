@@ -48,7 +48,7 @@ function __gpy_run_install_dev --argument-names home_dir safe_path extra_flag
     if test -n "$extra_flag"
         set -a flags $extra_flag
     end
-    env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" PATH=$safe_path \
+    env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_DATA_HOME="$home_dir/.local/share" PATH=$safe_path \
         fish --no-config install-dev.fish $flags 2>&1
 end
 
@@ -146,7 +146,7 @@ set -l pkg_bin (mktemp -d)
 printf '#!/bin/sh\necho "gpy 0.0.0"\n' >"$pkg_bin/gpy"
 chmod +x "$pkg_bin/gpy"
 mkdir -p "$home4/.local/bin"
-set -l out4 (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
+set -l out4 (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" XDG_DATA_HOME="$home4/.local/share" PATH="$pkg_bin:$safe_path" \
     fish --no-config install-dev.fish --files-only 2>&1 | string collect)
 set -l status4 $pipestatus[1]
 if test $status4 -ne 0; and string match -q "*already installed at $pkg_bin/gpy*" -- "$out4"
@@ -154,7 +154,7 @@ if test $status4 -ne 0; and string match -q "*already installed at $pkg_bin/gpy*
 else
     fail "install-dev.fish: did not refuse a packaged gpy (status $status4): $out4"
 end
-set -l out4b (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
+set -l out4b (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" XDG_DATA_HOME="$home4/.local/share" PATH="$pkg_bin:$safe_path" \
     fish --no-config install-dev.fish --files-only --allow-shadow 2>&1 | string collect)
 if string match -q "*already installed at*" -- "$out4b"
     fail "install-dev.fish: --allow-shadow still refused: $out4b"

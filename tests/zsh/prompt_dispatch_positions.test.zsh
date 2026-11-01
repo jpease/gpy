@@ -27,7 +27,7 @@ function __gpy_segment_stubb() { printf 'stubb:%s|%s;' "$1" "$3" }
 function __gpy_segment_stubc() { printf 'stubc:%s|%s;' "$1" "$3" }
 
 __enabled_segments=(stuba stubb stubc)
-PROMPT=$(__gpy_render_prompt 0)
+__gpy_render_prompt 0; PROMPT=$__gpy_render_out
 
 check "first segment gets is_first set, is_last empty" true \
     "$([[ "$PROMPT" == *"stuba:|true;"* ]] && echo true || echo false)"

@@ -21,6 +21,7 @@ pub mod doctor;
 mod doctor_bundled;
 mod doctor_ipc;
 mod doctor_themes;
+mod doctor_tuning;
 /// Lifecycle exit codes and the `--help` text that lists them.
 pub mod exit_codes;
 /// Icon-style bootstrap run by `gpy setup`.
@@ -49,6 +50,8 @@ pub mod segments;
 pub mod setup;
 /// `gpy setup` step that stages and swaps in the installed shell trees.
 mod setup_install;
+/// `gpy setup` step that moves an old-layout install over to the data root.
+mod setup_migrate;
 /// `gpy setup` step that retires unedited copies of builtin themes.
 mod setup_themes;
 /// Theme management commands.

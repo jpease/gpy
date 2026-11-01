@@ -598,7 +598,7 @@ impl ThemeManager {
 
     fn start_poll_fallback(&self, debounce_duration: Duration) {
         self.hot_reload.start_poll_fallback(
-            "GPY_THEME_WATCH_POLL_MS",
+            &crate::env_config::THEME_WATCH_POLL_MS,
             debounce_duration,
             self.poll_target(),
         );
