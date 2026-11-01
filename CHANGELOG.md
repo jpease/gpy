@@ -128,6 +128,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, and both binaries are verified before either is replaced (#1125).
 - **Breaking (library):** `Error::json` is removed and `Error::Json` wraps a
   `serde_json::Error`; `GitIcons` fields are `Option<Icon>` (#1128, #1163).
+- **Breaking (library):** `ipc::protocol::{serialize_response,
+  deserialize_response, CONFIG_RELOAD_JSON}`, `ipc::decode_wire_reply` and
+  `agent::lifecycle::AgentStatusInfo` are removed; `Response` no longer
+  implements `Serialize`/`Deserialize`, and `Response::AgentStatus` holds an
+  `ipc::AgentStatus`. Use `ipc::wire` (#1129).
+- **Breaking (library):** `ipc::handlers::RequestHandler`,
+  `ipc::handlers::MiscHandler` and `HandlerError::UnexpectedMessage` are
+  removed; `HandlerRegistry::new` takes the concrete handlers (#1130).
 
 ## [0.8.0] - 2026-10-29
 

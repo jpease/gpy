@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-/// The daemon's exact ping ack (`ipc::ACK_WIRE_JSON`).
+/// The daemon's exact ping ack (`ipc::wire::ACK_WIRE_JSON`).
 pub const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
 
 /// How long the fake waits for a client's request bytes before moving on.

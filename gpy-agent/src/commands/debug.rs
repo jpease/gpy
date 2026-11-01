@@ -2,6 +2,8 @@
 
 use crate::Result;
 #[cfg(unix)]
+use crate::ipc::wire::Op;
+#[cfg(unix)]
 use crate::paths::get_socket_path;
 #[cfg(unix)]
 use std::io::Write;
@@ -128,14 +130,15 @@ pub fn prompt() -> Result<()> {
 
         print!("Ping (Baseline):      ");
         std::io::stdout().flush()?;
-        let ping_duration = send_request(&mut stream, &serde_json::json!({"op": "ping"})).await?;
+        let ping_duration =
+            send_request(&mut stream, &serde_json::json!({"op": Op::Ping.as_str()})).await?;
         println!("{ping_duration:.2?}");
 
         print!("Git Status:           ");
         std::io::stdout().flush()?;
         let git_duration = send_request(
             &mut stream,
-            &serde_json::json!({"op": "git", "cwd": safe_cwd_str, "format": "json"}),
+            &serde_json::json!({"op": Op::Git.as_str(), "cwd": safe_cwd_str, "format": "json"}),
         )
         .await?;
         println!("{git_duration:.2?}");
@@ -144,7 +147,7 @@ pub fn prompt() -> Result<()> {
         std::io::stdout().flush()?;
         let lang_duration = send_request(
             &mut stream,
-            &serde_json::json!({"op": "lang", "cwd": safe_cwd_str, "format": "json", "is_last": true}),
+            &serde_json::json!({"op": Op::Lang.as_str(), "cwd": safe_cwd_str, "format": "json", "is_last": true}),
         )
         .await?;
         println!("{lang_duration:.2?}");

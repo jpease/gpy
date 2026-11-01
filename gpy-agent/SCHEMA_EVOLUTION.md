@@ -7,7 +7,7 @@ recorded in [CHANGELOG.md](../CHANGELOG.md), not here.
 
 | Contract | Defined by | Published form |
 |---|---|---|
-| IPC protocol | `src/ipc/protocol/mod.rs`, `Response` in `src/ipc/mod.rs` | `schemas/message.json`, `schemas/response.json` |
+| IPC protocol | `src/ipc/protocol/mod.rs`, `src/ipc/wire.rs`, `Response` in `src/ipc/mod.rs` | `schemas/message.json`, `schemas/response.json` |
 | Agent config | `src/config/` | `~/.config/gpy/config.toml`; keys in [configuration-reference.md](../docs/user/configuration-reference.md) |
 | Themes and palettes | `src/theme/model/`, `src/palette/` | builtins in `config/themes/`, `config/palettes/` |
 | Plugin manifests | `src/plugin/` | `schemas/plugin-manifest.json`, `schemas/script-segment-manifest.json` |

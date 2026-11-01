@@ -3,7 +3,8 @@ use crate::shell::Shell;
 
 #[test]
 fn test_config_reload_json_deserializes_to_config_reload() {
-    let msg = deserialize_message(CONFIG_RELOAD_JSON.as_bytes()).expect("deserialize failed");
+    let msg = deserialize_message(Op::ConfigReload.bare_request().as_bytes())
+        .expect("deserialize failed");
     assert!(matches!(msg, Message::ConfigReload));
 }
 
@@ -89,7 +90,8 @@ fn test_status_op_is_still_the_agent_health_check() {
 
 #[test]
 fn test_control_messages_have_no_segment() {
-    for json in [r#"{"op":"ping"}"#, r#"{"op":"status"}"#, CONFIG_RELOAD_JSON] {
+    for op in [Op::Ping, Op::Status, Op::ConfigReload] {
+        let json = op.bare_request();
         let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
         assert!(msg.segment().is_none(), "{json}");
     }

@@ -5,7 +5,7 @@
 
 use gpy_agent::config::Config;
 use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
-use gpy_agent::ipc::{LanguageInfo, Response};
+use gpy_agent::ipc::{AgentStatus, LanguageInfo, Response};
 use gpy_agent::theme::ThemeConfig;
 use insta::{assert_snapshot, with_settings};
 
@@ -97,14 +97,14 @@ fn sample_language_single_no_version() -> Response {
 
 /// Helper to create agent status response
 fn sample_agent_status() -> Response {
-    Response::AgentStatus {
+    Response::AgentStatus(AgentStatus {
         version: "0.1.0".to_owned(),
         protocol_version: 1,
         watched_repos: 3,
         registered_clients: 5,
         cache_entries: 10,
         pid: None,
-    }
+    })
 }
 
 #[test]

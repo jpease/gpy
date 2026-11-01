@@ -21,6 +21,9 @@ use crate::Result;
 use crate::VERSION;
 #[cfg(unix)]
 use crate::deadline::Deadline;
+use crate::ipc::AgentStatus;
+#[cfg(unix)]
+use crate::ipc::wire::Op;
 #[cfg(unix)]
 use client::{PingOutcome, REQUEST_BUDGET, ping_agent_outcome, request};
 #[cfg(unix)]
@@ -147,7 +150,7 @@ const fn is_ack(response: &crate::ipc::Response) -> bool {
 pub async fn send_shutdown_command() -> Result<()> {
     // Bounded so a wedged agent cannot hang `gpy-agent stop`.
     let socket_path = crate::paths::get_socket_path()?;
-    let response = request(&socket_path, r#"{"op":"shutdown"}"#, REQUEST_BUDGET).await?;
+    let response = request(&socket_path, &Op::Shutdown.bare_request(), REQUEST_BUDGET).await?;
 
     if is_ack(&response) {
         Ok(())
@@ -196,7 +199,7 @@ pub async fn send_config_reload_command() -> Result<ConfigReload> {
 
     match request(
         &socket_path,
-        crate::ipc::protocol::CONFIG_RELOAD_JSON,
+        &Op::ConfigReload.bare_request(),
         REQUEST_BUDGET,
     )
     .await
@@ -248,37 +251,20 @@ pub fn socket_is_stale(_socket_path: &Path) -> bool {
     false
 }
 
-/// Agent status information from IPC query.
-#[derive(Debug)]
-pub struct AgentStatusInfo {
-    /// The version of the running agent.
-    pub version: String,
-    /// The protocol version the agent is using.
-    pub protocol_version: u8,
-    /// The number of repositories currently being watched by the agent.
-    pub watched_repos: usize,
-    /// The number of clients currently registered with the agent.
-    pub registered_clients: usize,
-    /// The number of entries in the agent's cache.
-    pub cache_entries: usize,
-    /// The agent's process ID, when it reports one.
-    pub pid: Option<u32>,
-}
-
 /// Query the running agent for its status via IPC.
 ///
 /// # Errors
 /// Returns an error if the socket connection fails or the response is not an
 /// agent status.
 #[cfg(unix)]
-pub async fn query_agent_status() -> Result<AgentStatusInfo> {
+pub async fn query_agent_status() -> Result<AgentStatus> {
     query_status_at(&crate::paths::get_socket_path()?).await
 }
 
 /// [`query_agent_status`] against an explicit socket.
 #[cfg(unix)]
-async fn query_status_at(socket_path: &Path) -> Result<AgentStatusInfo> {
-    agent_status_from(request(socket_path, r#"{"op":"status"}"#, REQUEST_BUDGET).await?)
+async fn query_status_at(socket_path: &Path) -> Result<AgentStatus> {
+    agent_status_from(request(socket_path, &Op::Status.bare_request(), REQUEST_BUDGET).await?)
 }
 
 /// Query agent status (native Windows stub).
@@ -286,7 +272,7 @@ async fn query_status_at(socket_path: &Path) -> Result<AgentStatusInfo> {
 /// # Errors
 /// Always returns an error on this platform.
 #[cfg(not(unix))]
-pub async fn query_agent_status() -> Result<AgentStatusInfo> {
+pub async fn query_agent_status() -> Result<AgentStatus> {
     Err(crate::ipc::native_windows_unsupported())
 }
 
@@ -303,23 +289,9 @@ pub fn probe_status(_socket_path: &Path) -> StatusProbe {
 /// # Errors
 /// Returns an error if `response` is anything but an `AgentStatus`.
 #[cfg(unix)]
-fn agent_status_from(response: crate::ipc::Response) -> Result<AgentStatusInfo> {
+fn agent_status_from(response: crate::ipc::Response) -> Result<AgentStatus> {
     match response {
-        crate::ipc::Response::AgentStatus {
-            version,
-            protocol_version,
-            watched_repos,
-            registered_clients,
-            cache_entries,
-            pid,
-        } => Ok(AgentStatusInfo {
-            version,
-            protocol_version,
-            watched_repos,
-            registered_clients,
-            cache_entries,
-            pid,
-        }),
+        crate::ipc::Response::AgentStatus(status) => Ok(status),
         other => {
             crate::debug_log!("agent", "Expected an AgentStatus response, got: {other:?}");
             Err(Error::ipc(
@@ -553,7 +525,7 @@ enum Verdict {
 
 /// Decide from the running agent's status: protocol first, then version.
 #[cfg(unix)]
-fn verdict(running: &AgentStatusInfo) -> Verdict {
+fn verdict(running: &AgentStatus) -> Verdict {
     if running.protocol_version != crate::ipc::protocol::PROTOCOL_VERSION {
         Verdict::ReplaceProtocol
     } else if running.version.trim() == VERSION {
@@ -570,7 +542,7 @@ fn verdict(running: &AgentStatusInfo) -> Verdict {
 /// # Errors
 /// Returns an error if the runtime cannot be built or the query fails.
 #[cfg(unix)]
-fn status_blocking(socket_path: &Path) -> Result<AgentStatusInfo> {
+fn status_blocking(socket_path: &Path) -> Result<AgentStatus> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -659,7 +631,7 @@ pub fn inspect_socket(socket_path: &Path, on_notice: &mut dyn FnMut(StartNotice)
 
 #[cfg(all(test, unix))]
 mod version_order_tests {
-    use super::{AgentStatusInfo, Verdict, should_replace, verdict};
+    use super::{AgentStatus, Verdict, should_replace, verdict};
     use crate::VERSION;
     use crate::ipc::protocol::PROTOCOL_VERSION;
 
@@ -704,7 +676,7 @@ mod version_order_tests {
             ("999.0.0", other_protocol, Verdict::ReplaceProtocol),
         ];
         for (version, protocol_version, expected) in cases {
-            let status = AgentStatusInfo {
+            let status = AgentStatus {
                 version: version.to_owned(),
                 protocol_version,
                 watched_repos: 0,
@@ -733,7 +705,8 @@ mod stale_socket_tests {
     // `inspect_socket` retries are tested in `tests/stale_socket_tests.rs`,
     // which needs `unsafe` env mutation the lib denies.
     use super::{SHUTDOWN_WAIT_MAX, wait_for_agent_shutdown};
-    use crate::ipc::Response;
+    use crate::ipc::wire::Op;
+    use crate::ipc::{AgentStatus, Response};
     use std::io::{Read, Write};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
@@ -1125,19 +1098,12 @@ mod stale_socket_tests {
             .render(&Response::Ack, &ctx)
             .expect("Ack renders");
 
-        assert_eq!(rendered, crate::ipc::ACK_WIRE_JSON);
+        assert_eq!(rendered, crate::ipc::wire::ACK_WIRE_JSON);
         assert_eq!(
             ACK_WIRE_FORM,
             format!("{rendered}\n").as_bytes(),
             "the test fixtures must send exactly what the daemon sends"
         );
-    }
-
-    /// Serde's own `"Ack"` encoding also decodes as an acknowledgement.
-    #[test]
-    fn a_native_ack_over_the_wire_is_an_acknowledgement() {
-        let response = request_against(b"\"Ack\"\n").expect("native Ack decodes");
-        assert!(super::is_ack(&response), "got {response:?}");
     }
 
     /// A formatter error whose message contains "ok" is not an acknowledgement.
@@ -1152,13 +1118,13 @@ mod stale_socket_tests {
         assert!(!super::is_ack(&response));
     }
 
-    /// A serde `Error` reply containing "ok" is not an acknowledgement.
+    /// An `Error` reply containing "ok" is not an acknowledgement.
     #[test]
     fn an_error_reply_containing_ok_is_not_an_acknowledgement() {
         let failure = Response::Error {
             message: "something not ok here".to_owned(),
         };
-        let wire = serde_json::to_string(&failure).expect("Error response serializes");
+        let wire = crate::ipc::wire::encode_json(&failure).expect("Error response encodes");
 
         assert!(
             wire.contains("ok"),
@@ -1197,26 +1163,13 @@ mod stale_socket_tests {
         let outcome = runtime
             .block_on(super::request(
                 &socket_path,
-                r#"{"op":"config_reload"}"#,
+                &Op::ConfigReload.bare_request(),
                 Duration::from_secs(2),
             ))
             .map_err(crate::Error::from);
         server.join().expect("join fake server thread");
 
         outcome
-    }
-
-    /// A wire `Error` reply to `config_reload` mentioning "ok" is not a reload.
-    #[test]
-    fn a_failure_reply_over_the_wire_is_not_an_acknowledgement() {
-        let outcome =
-            request_against(b"{\"Error\":{\"message\":\"config not ok: parse failed\"}}\n");
-
-        let response = outcome.expect("a well-formed Error reply still decodes as a Response");
-        assert!(
-            !super::is_ack(&response),
-            "a decoded Error reply must not be treated as an acknowledgement, got {response:?}"
-        );
     }
 
     /// The daemon's real `Ack` is recognized.
@@ -1240,7 +1193,7 @@ mod stale_socket_tests {
     ///
     /// # Errors
     /// Whatever the query reported.
-    fn query_status_against(reply: Vec<u8>) -> crate::Result<super::AgentStatusInfo> {
+    fn query_status_against(reply: Vec<u8>) -> crate::Result<super::AgentStatus> {
         let tmp = tempfile::tempdir().expect("tempdir");
         let socket_path = tmp.path().join("status.sock");
 
@@ -1268,15 +1221,17 @@ mod stale_socket_tests {
     /// A status line is parsed whole, however many reads it arrives in.
     #[test]
     fn a_status_reply_larger_than_one_read_buffer_parses() {
-        let status = Response::AgentStatus {
+        let status = Response::AgentStatus(AgentStatus {
             version: "9".repeat(16 * 1024),
             protocol_version: 3_u8,
             watched_repos: 5_usize,
             registered_clients: 2_usize,
             cache_entries: 12_usize,
             pid: Some(4321_u32),
-        };
-        let mut reply = serde_json::to_vec(&status).expect("AgentStatus serializes");
+        });
+        let mut reply = crate::ipc::wire::encode_json(&status)
+            .expect("AgentStatus encodes")
+            .into_bytes();
         reply.push(b'\n');
         assert!(reply.len() > 4096, "premise: the reply exceeds 4 KiB");
 

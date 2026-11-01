@@ -3,32 +3,13 @@
 use crate::Result;
 use crate::formatter::{Formatter, RenderContext};
 use crate::ipc::Response;
-use serde_json::json;
 
 /// Serializes responses to JSON.
 pub struct JsonFormatter;
 
 impl Formatter for JsonFormatter {
     fn render(&self, response: &Response, _ctx: &RenderContext<'_>) -> Result<String> {
-        let json_value = match response {
-            // Delegate to `Serialize` so no field can be silently dropped.
-            Response::RepositoryStatus(status) => serde_json::to_value(status)?,
-            Response::Language { languages } => json!({
-                "languages": serde_json::to_value(languages)?,
-            }),
-            Response::Ack => json!({"status": "ok"}),
-            // Wire shape is `{"AgentStatus":{…}}`, the same in every format.
-            Response::AgentStatus { .. } => serde_json::to_value(response)?,
-            Response::Directory { cwd, read_only } => json!({"cwd": cwd, "read_only": read_only}),
-            Response::Clock { shell } => json!({"shell": shell.as_str()}),
-            Response::Duration { duration_ms } => json!({"duration_ms": duration_ms}),
-            Response::Character { success } | Response::ExitStatus { success } => {
-                json!({"success": success})
-            }
-            Response::Error { message } => json!({"error": message}),
-        };
-
-        Ok(serde_json::to_string(&json_value)?)
+        crate::ipc::wire::encode_json(response)
     }
 }
 
@@ -96,101 +77,5 @@ mod tests {
         assert_eq!(field(&parsed, "/detached"), true);
         assert_eq!(field(&parsed, "/rebase_progress/step"), 2_i32);
         assert_eq!(field(&parsed, "/rebase_progress/total"), 5_i32);
-    }
-
-    fn pinned_cases() -> Vec<(Response, &'static str)> {
-        vec![
-            (
-                Response::RepositoryStatus(crate::git::RepositoryStatus {
-                    branch: "main".to_owned(),
-                    ahead: 2,
-                    behind: 1,
-                    ahead_capped: false,
-                    behind_capped: false,
-                    staged: 3,
-                    unstaged: 4,
-                    untracked: 5,
-                    conflicts: 0,
-                    state: crate::git::RepositoryState::Clean,
-                    stash_count: 0,
-                    detached: false,
-                    rebase_progress: None,
-                }),
-                r#"{"ahead":2,"ahead_capped":false,"behind":1,"behind_capped":false,"branch":"main","conflicts":0,"detached":false,"rebase_progress":null,"staged":3,"stash_count":0,"state":"clean","unstaged":4,"untracked":5}"#,
-            ),
-            (
-                Response::Language {
-                    languages: vec![
-                        crate::ipc::LanguageInfo {
-                            name: "Rust".to_owned(),
-                            version: Some("1.75.0".to_owned()),
-                            color: crate::config::types::ColorSpec::new("#dea584").unwrap(),
-                        },
-                        crate::ipc::LanguageInfo {
-                            name: "Python".to_owned(),
-                            version: None,
-                            color: crate::config::types::ColorSpec::new("#3776ab").unwrap(),
-                        },
-                    ],
-                },
-                r##"{"languages":[{"color":"#dea584","name":"Rust","version":"1.75.0"},{"color":"#3776ab","name":"Python","version":null}]}"##,
-            ),
-            (Response::Ack, r#"{"status":"ok"}"#),
-            (
-                Response::AgentStatus {
-                    version: "1.0.0".to_owned(),
-                    protocol_version: 2,
-                    watched_repos: 1,
-                    registered_clients: 2,
-                    cache_entries: 3,
-                    pid: Some(4321),
-                },
-                r#"{"AgentStatus":{"cache_entries":3,"pid":4321,"protocol_version":2,"registered_clients":2,"version":"1.0.0","watched_repos":1}}"#,
-            ),
-            (
-                Response::Directory {
-                    cwd: "~/src".to_owned(),
-                    read_only: true,
-                },
-                r#"{"cwd":"~/src","read_only":true}"#,
-            ),
-            (
-                Response::Clock {
-                    shell: crate::shell::Shell::Zsh,
-                },
-                r#"{"shell":"zsh"}"#,
-            ),
-            (
-                Response::Duration { duration_ms: 1500 },
-                r#"{"duration_ms":1500}"#,
-            ),
-            (
-                Response::Character { success: false },
-                r#"{"success":false}"#,
-            ),
-            (
-                Response::ExitStatus { success: true },
-                r#"{"success":true}"#,
-            ),
-            (
-                Response::Error {
-                    message: r#"boom "q""#.to_owned(),
-                },
-                r#"{"error":"boom \"q\""}"#,
-            ),
-        ]
-    }
-
-    /// Byte-exact output for every `Response` variant; extend when a variant is added.
-    #[test]
-    fn json_formatter_pins_every_variant() {
-        let (config, theme) = create_test_context();
-        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-        for (response, expected) in pinned_cases() {
-            let output = JsonFormatter
-                .render(&response, &ctx)
-                .expect("render failed");
-            assert_eq!(output, expected, "{response:?}");
-        }
     }
 }

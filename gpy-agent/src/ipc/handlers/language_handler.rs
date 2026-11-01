@@ -1,10 +1,8 @@
 //! IPC handler for language detection requests; detection lives in [`crate::language`].
 
-use super::{
-    HandlerError, JobGuard, RenderDeps, RequestHandler, SharedJob, SingleFlight, notify_if_changed,
-    spawn_detached,
-};
-use crate::ipc::{LanguageInfo, Message, Response};
+use super::{HandlerError, RenderDeps, notify_if_changed, spawn_detached};
+use crate::ipc::single_flight::{JobGuard, SharedJob, SingleFlight};
+use crate::ipc::{LanguageInfo, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::display::{DisplayRequest, Versions, display_info};
@@ -47,7 +45,7 @@ impl LanguageHandler {
     /// # Errors
     /// Fails if a cold detection or version probe exceeds the timeout budget;
     /// the work keeps running and its result is served from cache next time.
-    fn handle_language_detection(
+    pub(crate) fn detect(
         &self,
         path: &crate::security::SafePath,
         _is_last: bool,
@@ -277,36 +275,14 @@ fn remaining(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
 }
 
-impl RequestHandler for LanguageHandler {
-    fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
-        match message {
-            Message::LanguageDetect {
-                path,
-                segment,
-                virtual_env,
-            } => self.handle_language_detection(
-                path,
-                segment.is_last,
-                segment.prev_bg.as_deref(),
-                virtual_env.as_deref(),
-            ),
-            _ => Err(HandlerError::UnexpectedMessage {
-                handler: "LanguageHandler",
-                qualifier: "non-language",
-                message: format!("{message:?}"),
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cache::InstantPromptCache;
     use crate::config::Config;
     use crate::config::manager::ConfigManager;
+    use crate::ipc::ClientDirectory;
     use crate::ipc::fixtures::render_deps;
-    use crate::ipc::{ClientDirectory, Segment};
     use crate::language::DetectedLanguage;
     #[cfg(unix)]
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -331,24 +307,16 @@ mod tests {
         )
     }
 
-    /// Build a synchronous `LanguageDetect` request for `repo_root`.
-    fn language_detect_request(repo_root: &Path) -> Message {
-        Message::LanguageDetect {
-            path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
-                .expect("safe path"),
-            segment: Segment::default(),
-            virtual_env: None,
-        }
-    }
-
-    /// Same as [`language_detect_request`] but forwarding `virtual_env`.
-    fn language_detect_request_with_venv(repo_root: &Path, venv: Option<&Path>) -> Message {
-        Message::LanguageDetect {
-            path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
-                .expect("safe path"),
-            segment: Segment::default(),
-            virtual_env: venv.map(|v| v.to_str().expect("utf8 path").to_owned()),
-        }
+    /// Run a synchronous detection request for `repo_root`, forwarding `venv`.
+    fn detect(
+        handler: &LanguageHandler,
+        repo_root: &Path,
+        venv: Option<&Path>,
+    ) -> Result<Response, HandlerError> {
+        let path = crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
+            .expect("safe path");
+        let forwarded = venv.map(|v| v.to_str().expect("utf8 path"));
+        handler.detect(&path, false, None, forwarded)
     }
 
     /// A request without a usable `virtual_env` clears the stash.
@@ -380,19 +348,12 @@ mod tests {
         );
 
         for follow_up in [None, Some(not_a_venv.as_path())] {
-            handler
-                .handle(&language_detect_request_with_venv(
-                    &repo_root,
-                    Some(&ext_venv),
-                ))
-                .expect("request with venv");
+            detect(&handler, &repo_root, Some(&ext_venv)).expect("request with venv");
             assert!(
                 crate::language::venv::stashed_project_venv(&repo_root).is_some(),
                 "a forwarded venv must be stashed"
             );
-            handler
-                .handle(&language_detect_request_with_venv(&repo_root, follow_up))
-                .expect("request without usable venv");
+            detect(&handler, &repo_root, follow_up).expect("request without usable venv");
             assert_eq!(
                 crate::language::venv::stashed_project_venv(&repo_root),
                 None,
@@ -455,21 +416,15 @@ mod tests {
             }],
         );
 
-        let response = handler
-            .handle(&language_detect_request(&repo_root))
-            .expect("request without venv");
+        let response = detect(&handler, &repo_root, None).expect("request without venv");
         assert_eq!(python_version(&response), None);
         assert!(
             !project_log.exists(),
             "the project interpreter must not run"
         );
 
-        let forwarded_response = handler
-            .handle(&language_detect_request_with_venv(
-                &repo_root,
-                Some(&forwarded),
-            ))
-            .expect("request with forwarded venv");
+        let forwarded_response =
+            detect(&handler, &repo_root, Some(&forwarded)).expect("request with forwarded venv");
         assert_eq!(
             python_version(&forwarded_response).as_deref(),
             Some("3.8.2")
@@ -519,11 +474,10 @@ mod tests {
                 total_bytes: 6,
             }],
         );
-        let request = language_detect_request_with_venv(&repo_root, Some(&forwarded));
         let notified_before = rings.load(Ordering::SeqCst);
 
         let started = std::time::Instant::now();
-        let result = handler.handle(&request);
+        let result = detect(&handler, &repo_root, Some(&forwarded));
         let elapsed = started.elapsed();
         assert!(
             matches!(result, Err(HandlerError::TimedOut(_))),
@@ -546,7 +500,7 @@ mod tests {
         );
 
         let warm_start = std::time::Instant::now();
-        let response = handler.handle(&request).expect("warm request");
+        let response = detect(&handler, &repo_root, Some(&forwarded)).expect("warm request");
         assert_eq!(python_version(&response).as_deref(), Some("3.7.4"));
         assert!(
             warm_start.elapsed() < Duration::from_millis(500),
@@ -577,16 +531,14 @@ mod tests {
             }],
         );
 
-        let message = language_detect_request(&repo_root);
-
-        handler.handle(&message).expect("first request");
+        detect(&handler, &repo_root, None).expect("first request");
         assert_eq!(
             rings.load(Ordering::SeqCst),
             1,
             "a synchronous request that changes the cached output should repaint live shells"
         );
 
-        handler.handle(&message).expect("second request");
+        detect(&handler, &repo_root, None).expect("second request");
         assert_eq!(
             rings.load(Ordering::SeqCst),
             1,
@@ -636,9 +588,7 @@ mod tests {
         write_rust_project(&root);
         seed_stale_empty_entry(&handler, &root);
 
-        let response = handler
-            .handle(&language_detect_request(&root))
-            .expect("stale hit request");
+        let response = detect(&handler, &root, None).expect("stale hit request");
         assert!(
             matches!(&response, Response::Language { languages } if languages.is_empty()),
             "a cache hit must be served immediately from the stale entry: {response:?}"
@@ -675,9 +625,7 @@ mod tests {
         write_rust_project(&root);
         seed_stale_empty_entry(&handler, &root);
 
-        handler
-            .handle(&language_detect_request(&root))
-            .expect("stale hit request");
+        detect(&handler, &root, None).expect("stale hit request");
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let detected_rust = loop {
@@ -707,9 +655,7 @@ mod tests {
         write_rust_project(&root);
         seed_stale_empty_entry(&handler, &root);
 
-        handler
-            .handle(&language_detect_request(&root))
-            .expect("stale hit request");
+        detect(&handler, &root, None).expect("stale hit request");
 
         // Absence window: a detection job started by the request above would
         // have replaced the empty entry by now.
@@ -739,9 +685,7 @@ mod tests {
         std::fs::create_dir_all(&docs).expect("docs dir");
         std::fs::write(docs.join("README.md"), "# d\n").expect("README.md");
 
-        let response = handler
-            .handle(&language_detect_request(&docs))
-            .expect("docs request");
+        let response = detect(&handler, &docs, None).expect("docs request");
         assert!(
             matches!(&response, Response::Language { languages }
                 if languages.iter().any(|l| l.name == "rust")),
@@ -788,11 +732,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             other => panic!("unexpected response: {other:?}"),
         };
-        let request = || {
-            handler
-                .handle(&language_detect_request(&docs))
-                .expect("docs request")
-        };
+        let request = || detect(&handler, &docs, None).expect("docs request");
         let go_stale = || {
             crate::language::ProjectRoot::backdate_non_git_memo(&docs, LANGUAGE_REFRESH_INTERVAL);
             handler.language_cache.age_entry_for_test(

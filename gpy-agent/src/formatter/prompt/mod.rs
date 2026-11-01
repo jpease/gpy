@@ -88,7 +88,7 @@ impl Formatter for PromptFormatter {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
                 String::new()
             }
-            Response::Ack | Response::AgentStatus { .. } => String::new(),
+            Response::Ack | Response::AgentStatus(_) => String::new(),
         };
         Ok(rendered)
     }

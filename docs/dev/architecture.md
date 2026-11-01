@@ -375,8 +375,10 @@ error.rs (foundation)
   │   └── version.rs (version detection trait)
   │
   ├── ipc/
-  │   ├── protocol.rs (JSON serialization)
-  │   ├── server.rs (request dispatcher)
+  │   ├── protocol/ (request parsing, PROTOCOL_VERSION)
+  │   ├── wire.rs (op names, JSON reply encoding)
+  │   ├── server/ (connections; HandlerRegistry::route in handlers/ maps each op to a typed handler method)
+  │   ├── single_flight.rs (coalesces duplicate concurrent jobs)
   │   └── registry.rs (Fish PID tracking)
   │
   └── watcher/

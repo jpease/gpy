@@ -1,13 +1,11 @@
 //! IPC handler for Git status requests: serves from [`crate::git::cache::GitStatusCache`]
 //! when fresh, else computes natively with a progressive timeout.
 
-use super::{
-    HandlerError, JobGuard, RenderDeps, RequestHandler, SharedJob, SingleFlight, notify_if_changed,
-    spawn_detached,
-};
+use super::{HandlerError, RenderDeps, notify_if_changed, spawn_detached};
 use crate::config::Config;
 use crate::git::{self, cache::GitStatusCache};
-use crate::ipc::{Message, Response};
+use crate::ipc::Response;
+use crate::ipc::single_flight::{JobGuard, SharedJob, SingleFlight};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -67,9 +65,12 @@ impl GitHandler {
 
     /// Get git status for a path, checking cache first.
     ///
+    /// `prev_bg` is the raw wire string: it names both the chevron color and
+    /// the cache-key token, so the reading shell resolves the same file.
+    ///
     /// # Errors
     /// Fails if git is disabled or skipped, the path isn't in a repo, or status fails.
-    fn get_git_status(
+    pub fn status(
         &self,
         path: &crate::security::SafePath,
         prev_bg: Option<&str>,
@@ -270,23 +271,6 @@ impl GitHandler {
     }
 }
 
-impl RequestHandler for GitHandler {
-    fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
-        match message {
-            Message::RepositoryStatus { path, segment } => {
-                // `write_git` uses the raw wire string for both chevron color and
-                // cache-key token, so the reading shell resolves the same file.
-                self.get_git_status(path, segment.prev_bg.as_deref())
-            }
-            _ => Err(HandlerError::UnexpectedMessage {
-                handler: "GitHandler",
-                qualifier: "non-git",
-                message: format!("{message:?}"),
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,7 +439,7 @@ mod tests {
         let safe_path = crate::security::SafePath::new(bare_path.to_str().expect("utf8 path"))
             .expect("safe path");
 
-        let handler_result = handler.get_git_status(&safe_path, None);
+        let handler_result = handler.status(&safe_path, None);
         let oneshot_result = load_repository_state(&bare_path, 0, false);
 
         let Err(handler_error) = handler_result else {
@@ -497,7 +481,7 @@ mod tests {
         let skipped = crate::security::SafePath::new(repo.to_str().expect("utf8")).expect("safe");
         assert!(
             matches!(
-                handler.get_git_status(&skipped, None),
+                handler.status(&skipped, None),
                 Err(HandlerError::FeatureDisabled("Git"))
             ),
             "repo under a symlinked skip_paths entry must be disabled"
@@ -505,7 +489,7 @@ mod tests {
 
         let kept = crate::security::SafePath::new(other.to_str().expect("utf8")).expect("safe");
         assert!(
-            handler.get_git_status(&kept, None).is_ok(),
+            handler.status(&kept, None).is_ok(),
             "a sibling sharing only a string prefix must not be skipped"
         );
     }
@@ -527,7 +511,7 @@ mod tests {
 
         // (a) The hit path returns the seeded status immediately.
         let response = handler
-            .get_git_status(&safe_path, None)
+            .status(&safe_path, None)
             .expect("cache hit should return the seeded status");
         let Response::RepositoryStatus(served) = response else {
             panic!("expected a RepositoryStatus response");
@@ -568,12 +552,7 @@ mod tests {
         default_cache.set_canonical(&git_root, status(0), HashMap::new());
         fresh_handler.revalidate_stale_hit(&git_root, &git_root, 0);
         assert!(
-            fresh_handler
-                .in_flight
-                .jobs
-                .lock()
-                .expect("jobs lock")
-                .is_empty(),
+            fresh_handler.in_flight.is_idle(),
             "a within-cooldown entry must not spawn a background revalidation"
         );
 

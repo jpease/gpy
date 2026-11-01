@@ -269,14 +269,14 @@ fn error_response_renders_empty() {
 fn non_segment_responses_render_empty() {
     let (config, theme) = ctx();
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let status = Response::AgentStatus {
+    let status = Response::AgentStatus(crate::ipc::AgentStatus {
         version: "0".into(),
         protocol_version: 1,
         watched_repos: 0,
         registered_clients: 0,
         cache_entries: 0,
         pid: None,
-    };
+    });
     for dialect in PromptDialect::ALL {
         for response in [&Response::Ack, &status] {
             let got = PromptFormatter::new(dialect)
