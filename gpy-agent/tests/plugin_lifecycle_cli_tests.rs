@@ -392,6 +392,11 @@ fn install_finds_an_existing_plugin_by_id_not_directory_name() {
         1_usize
     );
 
+    // The forced install above and the removal below back up `foo` to
+    // `plugins.bak/foo.<YYYYMMDD_HHMMSS>`; within one second the second backup
+    // is refused by design, so clear the first one to keep the test clock-free.
+    std::fs::remove_dir_all(env.config_dir().join("plugins.bak")).expect("clear first backup");
+
     // Removal also finds the plugin by id wherever its directory lives.
     std::fs::rename(
         env.plugins_dir().join("foo"),
@@ -402,6 +407,10 @@ fn install_finds_an_existing_plugin_by_id_not_directory_name() {
         .expect("spawn gpy")
         .assert_success("remove foo");
     assert!(!env.plugins_dir().join("foo-old").exists());
+    assert_eq!(
+        count_entries(&env.config_dir().join("plugins.bak")),
+        1_usize
+    );
 }
 
 #[test]
