@@ -5,7 +5,7 @@ use super::output;
 use super::unified_diff;
 use super::utils::{read_config, reload_agent_and_notify};
 use crate::config::discovery::{Source, validate_config_name};
-use crate::config::loader::load_named_theme;
+use crate::theme::load::load_named_theme;
 use crate::theme::overlay::{load_link, resolve_top};
 use crate::theme::{ThemeChain, ThemeManager, normalised_table, parse_table, user_copy};
 use crate::{Error, Result};

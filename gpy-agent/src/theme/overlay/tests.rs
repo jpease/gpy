@@ -209,7 +209,7 @@ fn self_named_overlay_prefers_a_plugin_theme_to_the_builtin() {
         chain_text(&loaded),
         "starship (user) → starship (plugin:acme)"
     );
-    assert_eq!(loaded.theme.ui.prompt_icon, "A");
+    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("A"));
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn user_to_plugin_to_builtin_chain_skips_user_files_below_the_plugin() {
         chain_text(&loaded),
         "mine (user) → acme (plugin:acme) → starship (builtin)"
     );
-    assert_eq!(loaded.theme.ui.prompt_icon, "M");
+    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("M"));
     assert_eq!(
         loaded.theme.segments.clock.time_format.as_deref(),
         Some("24")
@@ -264,7 +264,7 @@ fn lexically_greatest_plugin_wins_a_name() {
 
     let loaded = fixture.load("mine").expect("chain loads");
 
-    assert_eq!(loaded.theme.ui.prompt_icon, "b");
+    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("b"));
 }
 
 #[test]
@@ -491,7 +491,7 @@ fn a_full_theme_is_a_chain_of_one_and_ignores_unset() {
 
     assert!(!loaded.chain.is_overlay());
     assert_eq!(chain_text(&loaded), "full (user)");
-    assert_eq!(loaded.theme.ui.prompt_icon, "F");
+    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("F"));
     assert!(loaded.fingerprint.is_some());
 }
 

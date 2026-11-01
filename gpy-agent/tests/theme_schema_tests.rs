@@ -4,7 +4,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
-use gpy_agent::config::loader;
+use gpy_agent::theme::load;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,8 +46,8 @@ text_color = "white"
 "#,
     );
 
-    let theme = loader::load_theme_from_path(&theme_path).expect("load theme");
-    assert_eq!(theme.ui.prompt_icon, "::");
+    let theme = load::load_theme_from_path(&theme_path).expect("load theme");
+    assert_eq!(theme.ui.prompt_icon.as_deref(), Some("::"));
     assert_eq!(theme.segments.directory.bg_color, "magenta");
     assert_eq!(theme.segments.duration.icon.as_deref(), Some("X"));
     assert!(theme.segments.plugin.is_empty());
@@ -82,7 +82,7 @@ bg_color = "match_bg"
 "##,
     );
 
-    let theme = loader::load_theme_from_path(&theme_path).expect("load theme");
+    let theme = load::load_theme_from_path(&theme_path).expect("load theme");
     let k8s = theme.segments.plugin.get("k8s").expect("k8s style present");
     assert_eq!(k8s.bg_color.as_deref(), Some("#073642"));
     assert_eq!(k8s.text_color.as_deref(), Some("white"));
@@ -113,7 +113,7 @@ fn plugin_segment_theme_rejects_untyped_keys() {
             "plugin-untyped",
             &format!("[ui]\nprompt_icon = \">\"\n\n[segments.k8s]\n{key} = {value}\n"),
         );
-        let err = loader::load_theme_from_path(&theme_path)
+        let err = load::load_theme_from_path(&theme_path)
             .expect_err("untyped plugin key must fail")
             .to_string();
         assert!(err.contains(key), "{key} not named in: {err}");
@@ -168,7 +168,7 @@ show_seconds = true
 #[test]
 fn starship_preset_loads_with_format_templates() {
     // Builtin presets are embedded; no file on disk.
-    let theme = loader::load_theme_from_path(Path::new("starship.toml"))
+    let theme = load::load_theme_from_path(Path::new("starship.toml"))
         .expect("starship preset should load");
 
     assert!(
@@ -207,7 +207,7 @@ fn starship_preset_loads_with_format_templates() {
 fn starship_preset_clock_blends_into_flat_look() {
     // The clock still renders shell-side; without an explicit transparent bg it
     // defaults to a black box that clashes with the flat Starship look.
-    let theme = loader::load_theme_from_path(Path::new("starship.toml"))
+    let theme = load::load_theme_from_path(Path::new("starship.toml"))
         .expect("starship preset should load");
     assert_eq!(
         theme.segments.clock.bg_color, "transparent",
@@ -219,7 +219,7 @@ fn starship_preset_clock_blends_into_flat_look() {
 fn starship_preset_recommends_full_ui_layout() {
     // The preset declares order/display/icons so `theme use --force` needs no
     // manual config edits.
-    let theme = loader::load_theme_from_path(Path::new("starship.toml"))
+    let theme = load::load_theme_from_path(Path::new("starship.toml"))
         .expect("starship preset should load");
     let recommended = theme
         .ui
@@ -259,54 +259,44 @@ fn starship_preset_recommends_full_ui_layout() {
         Some(true),
         "starship preset should recommend truncate_to_repo for parity"
     );
-    assert_eq!(
-        recommended.show_icons,
-        Some(true),
-        "starship preset should recommend language icons"
+    assert!(
+        recommended.show_icons.is_none(),
+        "show_icons is deprecated and not recommended"
     );
 }
 
 #[test]
-fn default_preset_recommends_builtin_defaults() {
-    // Default recommends stock settings so `--force` round-trips back; text
-    // leaves config alone.
+fn default_preset_recommends_the_builtin_defaults() {
+    // The default theme's block is its statement of the builtin layout; it must
+    // follow `Config::default()`. Text leaves config alone.
     let default =
-        loader::load_theme_from_path(Path::new("default.toml")).expect("default theme should load");
+        load::load_theme_from_path(Path::new("default.toml")).expect("default theme should load");
     let recommended = default
         .ui
         .recommended
         .expect("default theme should recommend builtin settings");
+    let stock = gpy_agent::config::Config::default();
     assert_eq!(
-        recommended.enabled_segments,
-        Some(vec![
-            "clock".to_owned(),
-            "duration".to_owned(),
-            "language".to_owned(),
-            "directory".to_owned(),
-            "git".to_owned()
-        ])
+        recommended.enabled_segments.as_ref(),
+        Some(&stock.ui.enabled_segments)
     );
     let directory = recommended
         .directory
         .as_ref()
         .expect("default theme should recommend directory settings");
-    assert_eq!(
-        directory.display,
-        Some(gpy_agent::config::types::DirectoryDisplay::Basename)
-    );
+    assert_eq!(directory.display, Some(stock.ui.directory.display));
     assert_eq!(
         directory.truncate_to_repo,
-        Some(false),
-        "default preset should recommend truncate_to_repo off for clean round-trip"
+        Some(stock.ui.directory.truncate_to_repo)
     );
-    assert_eq!(recommended.show_icons, Some(true));
     assert_eq!(
         recommended.language_detection,
-        Some(gpy_agent::config::types::DetectionMode::Markers)
+        Some(stock.language.detection_mode)
     );
+    assert_eq!(recommended.palette, None);
+    assert_eq!(recommended.show_icons, None);
 
-    let text =
-        loader::load_theme_from_path(Path::new("text.toml")).expect("text theme should load");
+    let text = load::load_theme_from_path(Path::new("text.toml")).expect("text theme should load");
     assert!(
         text.ui.recommended.is_none(),
         "text theme should not recommend ui settings"
@@ -369,56 +359,72 @@ fn theme_use_force_writes_recommended_ui_settings() {
 }
 
 #[test]
-fn theme_use_force_preserves_explicit_user_preferences() {
+fn theme_use_force_overwrites_and_lists_each_change() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let xdg_config = temp_dir.path().join("config");
-    // `show_icons = false` differs from default's recommendation, so it is a
-    // real user edit.
     write_config(
         &xdg_config,
-        "[ui]\ntheme = \"default\"\nenabled_segments = [\"clock\", \"git\"]\nshow_icons = false\n",
+        "[ui]\ntheme = \"default\"\npalette = \"nord\"\nenabled_segments = [\"clock\", \"git\"]\n\n[ui.directory]\ndisplay = \"truncated\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .args(["theme", "use", "starship", "--force"])
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run gpy theme use --force");
+    let stdout = theme_use_force(&xdg_config, "starship");
     assert!(
-        output.status.success(),
-        "theme use --force should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        stdout.contains("ui.palette: nord → starship"),
+        "--force should list the palette change: {stdout}"
     );
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(
-        stdout.contains("Preserved your explicit settings"),
-        "--force should report which explicit settings it kept: {stdout}"
+        stdout.contains(
+            "ui.enabled_segments: clock git → username hostname directory git language duration"
+        ),
+        "--force should list the old and new segment list: {stdout}"
+    );
+    assert!(
+        !stdout.contains("ui.directory.display"),
+        "a field that already matches is not listed: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Preserved"),
+        "--force preserves nothing: {stdout}"
     );
 
     let written = fs::read_to_string(xdg_config.join("gpy").join("config.toml"))
         .expect("read updated config");
     let config: gpy_agent::config::Config = toml::from_str(&written).expect("parse config");
     assert_eq!(config.ui.theme.as_str(), "starship");
+    assert_eq!(config.ui.palette.as_str(), "starship");
     assert_eq!(
         config.ui.enabled_segments,
-        vec!["clock", "git"],
-        "--force must preserve the user's explicit segment order"
+        vec![
+            "username",
+            "hostname",
+            "directory",
+            "git",
+            "language",
+            "duration"
+        ],
+        "--force overwrites the user's segment order"
     );
+}
+
+#[test]
+fn theme_use_force_never_changes_show_icons() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let xdg_config = temp_dir.path().join("config");
+    write_config(
+        &xdg_config,
+        "[ui]\ntheme = \"default\"\nshow_icons = false\n",
+    );
+
+    let stdout = theme_use_force(&xdg_config, "starship");
     assert!(
-        !config.ui.show_icons,
-        "--force must preserve the user's explicit show_icons = false"
+        !stdout.contains("show_icons"),
+        "--force must not mention show_icons: {stdout}"
     );
-    assert_eq!(
-        config.ui.directory.display,
-        gpy_agent::config::types::DirectoryDisplay::Truncated,
-        "--force should still apply recommended directory display the user did not set"
-    );
-    assert_eq!(
-        config.ui.directory.truncation_length.get(),
-        3,
-        "--force should still apply recommended truncation length the user did not set"
-    );
+
+    let written = fs::read_to_string(xdg_config.join("gpy").join("config.toml"))
+        .expect("read updated config");
+    let config: gpy_agent::config::Config = toml::from_str(&written).expect("parse config");
+    assert!(!config.ui.show_icons, "--force must leave show_icons alone");
 }
 
 /// Writes the `contentpref` test theme: the stock theme recommending `content`.
@@ -462,38 +468,13 @@ fn theme_use_force_applies_recommended_detection_mode() {
 
     let stdout = theme_use_force(&xdg_config, "contentpref");
     assert!(
-        stdout.contains("language detection (content)"),
-        "applying the contentpref theme should report the content detection mode: {stdout}"
+        stdout.contains("language.detection_mode: markers → content"),
+        "applying the contentpref theme should list the detection change: {stdout}"
     );
     assert_eq!(
         written_detection_mode(&xdg_config),
         gpy_agent::config::types::DetectionMode::Content,
         "--force should apply the theme's recommended content detection mode"
-    );
-}
-
-#[test]
-fn theme_use_force_preserves_explicit_detection_mode() {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let xdg_config = temp_dir.path().join("config");
-    // Text theme has no recommendation, so the user's `hybrid` is user-owned
-    // and must survive forcing a theme that recommends `content`.
-    write_config(
-        &xdg_config,
-        "[ui]\ntheme = \"text\"\n\n[language]\ndetection_mode = \"hybrid\"\n",
-    );
-    write_contentpref_theme(&xdg_config);
-
-    let stdout = theme_use_force(&xdg_config, "contentpref");
-    assert!(
-        stdout.contains("Preserved your explicit settings")
-            && stdout.contains("language detection (hybrid)"),
-        "--force should preserve the user's explicit detection mode: {stdout}"
-    );
-    assert_eq!(
-        written_detection_mode(&xdg_config),
-        gpy_agent::config::types::DetectionMode::Hybrid,
-        "--force must preserve the user's explicit hybrid detection mode"
     );
 }
 
@@ -507,7 +488,7 @@ fn stock_preset_round_trips_detection_mode() {
     theme_use_force(&xdg_config, "contentpref");
     let stdout = theme_use_force(&xdg_config, "default");
     assert!(
-        stdout.contains("language detection (markers)"),
+        stdout.contains("language.detection_mode: content → markers"),
         "the stock theme should restore the markers detection mode: {stdout}"
     );
     assert_eq!(
@@ -558,42 +539,34 @@ fn theme_use_without_force_preserves_config_and_hints() {
 
 #[test]
 fn theme_use_default_force_restores_builtin_layout() {
-    // Starship-written fields equal starship's recommendation, so they're
-    // theme-owned and overwritten when switching back to default.
+    // The default theme's recommendation is the builtin layout; it recommends
+    // no palette, so the palette starship set stays.
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let xdg_config = temp_dir.path().join("config");
     write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
 
-    let run = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
-            .args(args)
-            .env("XDG_CONFIG_HOME", &xdg_config)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .expect("run gpy theme use");
-        assert!(
-            output.status.success(),
-            "{args:?} should succeed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-
-    run(&["theme", "use", "starship", "--force"]);
-    run(&["theme", "use", "default", "--force"]);
+    theme_use_force(&xdg_config, "starship");
+    theme_use_force(&xdg_config, "default");
 
     let written = fs::read_to_string(xdg_config.join("gpy").join("config.toml"))
         .expect("read updated config");
     let config: gpy_agent::config::Config = toml::from_str(&written).expect("parse config");
+    let stock = gpy_agent::config::Config::default();
     assert_eq!(config.ui.theme.as_str(), "default");
+    assert_eq!(config.ui.enabled_segments, stock.ui.enabled_segments);
+    assert_eq!(config.ui.directory.display, stock.ui.directory.display);
     assert_eq!(
-        config.ui.enabled_segments,
-        vec!["clock", "duration", "language", "directory", "git"],
-        "default --force should restore GPY's stock segment order"
+        config.ui.directory.truncate_to_repo,
+        stock.ui.directory.truncate_to_repo
     );
     assert_eq!(
-        config.ui.directory.display,
-        gpy_agent::config::types::DirectoryDisplay::Basename,
-        "default --force should restore basename directory display"
+        config.language.detection_mode,
+        stock.language.detection_mode
+    );
+    assert_eq!(
+        config.ui.palette.as_str(),
+        "starship",
+        "the default theme recommends no palette"
     );
 }
 
@@ -643,7 +616,7 @@ fn load_theme_missing_segments_errors() {
         "[ui]\nprompt_icon = \">\"\n",
     );
 
-    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
+    let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message
@@ -663,7 +636,7 @@ fn load_theme_invalid_color_errors() {
         "[ui]\nprompt_icon = \">\"\n\n[segments.clock]\nbg_color = \"not-a-color\"\ntext_color = \"white\"\n",
     );
 
-    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
+    let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message.contains("Invalid color"),
@@ -681,7 +654,7 @@ fn load_theme_invalid_icon_errors() {
         "[ui]\nprompt_icon = \"\\u0007\"\n\n[segments.clock]\nbg_color = \"black\"\ntext_color = \"white\"\n",
     );
 
-    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
+    let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message.contains("contains control characters"),
@@ -708,10 +681,32 @@ warn_bg_color = "definitely-not-a-color"
 "#,
     );
 
-    let err = loader::load_theme_from_path(&broken).expect_err("theme load should fail");
+    let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
         message.contains("definitely-not-a-color"),
         "Expected plugin color validation error, got: {message}"
     );
+}
+
+#[test]
+fn builtin_shell_fallback_symbol_matches_agent_character() {
+    for name in ["default", "text", "starship"] {
+        let manager = gpy_agent::theme::ThemeManager::builtin(name).expect("builtin loads");
+        let character = manager.get().segments.character.clone();
+        let export = manager.export(
+            gpy_agent::shell::Shell::Bash,
+            &gpy_agent::config::Config::default(),
+            &gpy_agent::template::Palette::default(),
+        );
+
+        assert!(
+            export.contains(&format!("__icon_prompt=\"{}\"\n", character.success_symbol)),
+            "{name}: {export}"
+        );
+        assert!(
+            export.contains(&format!("__prompt_color=\"{}\"\n", character.success_color)),
+            "{name}: {export}"
+        );
+    }
 }

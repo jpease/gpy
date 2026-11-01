@@ -354,6 +354,7 @@ __gpy_render_prompt() {
             fi
 
             local segment_status=$?
+            # shellcheck disable=SC2154 # set by constants.bash
             if [[ "$segment_status" -eq "$__gpy_seg_status_oneshot" ]]; then
                 __gpy_oneshot_used=1
             fi

@@ -8,7 +8,7 @@ use crate::agent::lifecycle::{
     AgentClient, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, protocol_mismatch,
     start_background_agent,
 };
-use crate::config::schema;
+use crate::config::location;
 use crate::ipc::AgentStatus;
 use crate::paths::SocketPath;
 use crate::{Error, Result, VERSION};
@@ -80,8 +80,8 @@ fn error_reason(probe: Option<&StatusProbe>) -> Option<String> {
 
 /// The `config:` value: the active config file, or the built-in defaults.
 fn config_line() -> String {
-    let config_paths = schema::get_config_paths();
-    match schema::resolve_active_config(&config_paths) {
+    let config_paths = location::get_config_paths();
+    match location::resolve_active_config(&config_paths) {
         Some((_, Some(existing))) => existing.display().to_string(),
         _ => "none (built-in defaults)".to_owned(),
     }

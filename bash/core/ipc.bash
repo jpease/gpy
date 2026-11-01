@@ -549,6 +549,7 @@ __gpy_git_bg_file_tail() {
 # be days old. No subshell: `read` in this shell with the per-prompt cwd memo.
 __gpy_git_segment_bg() {
     local __gpy_gsb_key_path __gpy_gsb_dir __gpy_gsb_key __gpy_gsb_tail __gpy_gsb_bg=""
+    # shellcheck disable=SC2154 # set by constants.bash
     if [[ "${__gpy_git_seg_status:-0}" != "$__gpy_seg_status_oneshot" ]] &&
         __gpy_instant_cache_key_path git "$PWD" __gpy_gsb_key_path &&
         __gpy_instant_cache_dir __gpy_gsb_dir; then

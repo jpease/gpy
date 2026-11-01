@@ -294,7 +294,8 @@ row() {
     elif [ "$expect" = refuse ]; then
         if [ "$rc" -ne 0 ]; then pass "$name: installer refused (exit $rc)"; else fail "$name: installer exited 0 on an unsupported path"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
-        leftovers="$(find "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$HOME/.local" -iname '*gpy*' 2>/dev/null)"
+        # The harness pre-creates the empty $XDG_CONFIG_HOME/gpy; anything inside it still counts.
+        leftovers="$(find "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$HOME/.local" -iname '*gpy*' ! -path "$XDG_CONFIG_HOME/gpy" 2>/dev/null)"
         if [ -z "$leftovers" ]; then pass "$name: nothing installed"; else fail "$name: refused install left files: $leftovers"; fi
     else
         if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi

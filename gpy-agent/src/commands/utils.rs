@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// Returns an error if no candidate path can be constructed.
 pub fn active_config_path() -> Result<PathBuf> {
-    let paths = config::schema::get_config_paths();
+    let paths = config::location::get_config_paths();
 
-    config::schema::resolve_active_config(&paths)
+    config::location::resolve_active_config(&paths)
         .map(|(write_path, _existing)| write_path)
         .ok_or_else(|| {
             Error::config(

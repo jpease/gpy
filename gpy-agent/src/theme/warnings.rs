@@ -40,6 +40,8 @@ const CHECKS: &[Check] = &[
     language_colour_keys,
     missing_formats,
     git_icon_controls,
+    deprecated_prompt_keys,
+    deprecated_recommended_show_icons,
 ];
 
 /// Warnings for the merged, validated theme `loaded`, under `config` (which
@@ -186,6 +188,43 @@ fn git_icon_controls(inputs: &Inputs<'_>, out: &mut Vec<String>) {
     }
 }
 
+/// `ui.prompt_icon` and `ui.prompt_color`, deprecated for the `[segments.character]` keys.
+fn deprecated_prompt_keys(inputs: &Inputs<'_>, out: &mut Vec<String>) {
+    let ui = &inputs.loaded.theme.ui;
+    for (key, set, replacement) in [
+        ("ui.prompt_icon", ui.prompt_icon.is_some(), "success_symbol"),
+        (
+            "ui.prompt_color",
+            ui.prompt_color.is_some(),
+            "success_color",
+        ),
+    ] {
+        if set {
+            out.push(inputs.line(format_args!(
+                "`{key}` is deprecated: set `segments.character.{replacement}`"
+            )));
+        }
+    }
+}
+
+/// `ui.recommended.show_icons`, ignored since `ui.show_icons` is a font
+/// capability set by `gpy setup`. The builtins no longer carry it, so a hit
+/// comes from a user or plugin file.
+fn deprecated_recommended_show_icons(inputs: &Inputs<'_>, out: &mut Vec<String>) {
+    if inputs
+        .loaded
+        .theme
+        .ui
+        .recommended
+        .as_ref()
+        .is_some_and(|rec| rec.show_icons.is_some())
+    {
+        out.push(inputs.line(
+            "`ui.recommended.show_icons` is deprecated and ignored: `gpy setup` sets `ui.show_icons`",
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,7 +243,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let path = dir.path().join("probe.toml");
         std::fs::write(&path, text).expect("write theme");
-        let loaded = crate::config::loader::load_theme_file(&path).expect("theme loads");
+        let loaded = crate::theme::load::load_theme_file(&path).expect("theme loads");
         theme_warnings(&loaded, config, &PluginDiscovery::default())
     }
 
@@ -214,6 +253,44 @@ mod tests {
             "{}\n{extra}",
             crate::config::defaults::DEFAULT_THEME_CONTENT
         )
+    }
+
+    #[test]
+    fn user_theme_setting_ui_prompt_icon_is_reported_deprecated() {
+        let spliced = crate::config::defaults::DEFAULT_THEME_CONTENT.replacen(
+            "[ui]\n",
+            "[ui]\nprompt_icon = \"$\"\n",
+            1,
+        );
+        assert!(spliced.contains("prompt_icon"));
+
+        let warnings = file_warnings(&spliced, &Config::default());
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("`ui.prompt_icon` is deprecated")
+                    && w.contains("segments.character.success_symbol")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn recommended_show_icons_is_reported_deprecated() {
+        let spliced = crate::config::defaults::DEFAULT_THEME_CONTENT.replacen(
+            "[ui.recommended]\n",
+            "[ui.recommended]\nshow_icons = true\n",
+            1,
+        );
+        assert!(spliced.contains("show_icons = true"));
+
+        let warnings = file_warnings(&spliced, &Config::default());
+
+        let hits = warnings
+            .iter()
+            .filter(|w| w.contains("`ui.recommended.show_icons` is deprecated"))
+            .count();
+        assert_eq!(hits, 1, "{warnings:?}");
     }
 
     #[test]

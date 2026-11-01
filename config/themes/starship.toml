@@ -15,11 +15,9 @@
 #   gpy theme use starship --force
 
 [ui]
-prompt_icon = "❯"
-prompt_color = "green"
 root_prompt_icon = "❯"
 root_prompt_color = "red"
-# Opt-in two-line layout (segments line + character line).
+# Two-line layout (segments line + character line).
 two_line = true
 
 # Settings applied to `config.ui` by `gpy theme use starship --force`.
@@ -28,8 +26,6 @@ two_line = true
 # Starship's segment order ($all: ...$hostname$directory...): hostname comes
 # before directory, then git → language → cmd_duration → char.
 enabled_segments = ["username", "hostname", "directory", "git", "language", "duration"]
-# Starship shows per-language symbols.
-show_icons = true
 # Starship surfaces a language only when its project markers/extensions exist
 # (e.g. Cargo.toml, package.json), rather than scanning directory contents.
 language_detection = "markers"

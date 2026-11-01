@@ -19,6 +19,11 @@ cd "$repo_root"
 echo "Running from: $repo_root"
 echo ""
 
+# A fresh install starts from no GPY_* user values; Test 9 asserts GPY adds none.
+for name in (set -n | string match -r '^GPY_.*')
+    set -e $name
+end
+
 # Save current environment
 set -l saved_home $HOME
 set -l saved_config_home $XDG_CONFIG_HOME
@@ -44,6 +49,11 @@ echo "Test 1: Initialize GPY with no existing config"
 # icon initialization and segment loading (Tests 5 and 10 would then fail).
 set -gx GPY_AGENT_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
+
+# The theme export (and with it the __gpy_cfg_* mirrors Test 9 checks) comes
+# from this checkout's debug agent, never an installed one. A one-shot
+# `theme export` starts no daemon.
+set -lx PATH $repo_root/gpy-agent/target/debug $PATH
 
 # Source into the current scope, NOT through a pipe: `source ... | string match`
 # runs source in a subshell, so every function/variable it defines (icons,

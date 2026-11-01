@@ -1,9 +1,11 @@
 # GPY theme template with plugin segment styling
 [ui]
-prompt_icon = "❯"
 root_prompt_icon = "❯"
-prompt_color = "white"
 root_prompt_color = "red"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "white"
 
 [segments.clock]
 bg_color = "blue"

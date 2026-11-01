@@ -37,7 +37,7 @@ while IFS=$'\t' read -r value_col state_col _rest; do
     if [[ "$as_on" == "$as_off" ]]; then
         actual="$as_on"
     else
-        actual=unset
+        actual="unset"
     fi
     check "case $CASE_COUNT ($value_col)" "$state_col" "$actual"
 done <"$FIXTURE"

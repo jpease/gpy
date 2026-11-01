@@ -37,14 +37,19 @@ printf "[language]\nenabled = false\nshow_versions = false\n\n[ui]\nshow_icons =
 # Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
 gpy-agent theme export --shell fish 2>/dev/null | source
 
-if segment_language_detect
-    fail "Language segment should not detect when disabled"
+# The reload must hand the config's language.enabled to the shell as the
+# non-exported mirror; the prompt never renders a segment whose detect fails.
+if test "$__gpy_cfg_language_enabled" != 0
+    fail "Expected __gpy_cfg_language_enabled=0 after the reload, got '$__gpy_cfg_language_enabled'"
+    exit 1
+end
+if set -qx __gpy_cfg_language_enabled
+    fail "__gpy_cfg_language_enabled must not be exported"
     exit 1
 end
 
-set rendered (segment_language_render last)
-if test -n "$rendered"
-    fail "Expected no render output when disabled, got '$rendered'"
+if segment_language_detect
+    fail "Language segment should not detect when disabled"
     exit 1
 end
 

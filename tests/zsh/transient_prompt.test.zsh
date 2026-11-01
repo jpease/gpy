@@ -22,6 +22,12 @@ SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-transient.XXXXXX")
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.zsh" "$SANDBOX"
 export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
+# A stub that renders nothing, first on PATH, keeps the oneshot fallback from
+# reaching an installed gpy-agent.
+mkdir -p "$SANDBOX/stubs"
+printf '#!/bin/sh\nexit 1\n' >"$SANDBOX/stubs/gpy-agent"
+chmod +x "$SANDBOX/stubs/gpy-agent"
+PATH="$SANDBOX/stubs:$PATH"
 
 source zsh/gpy.zsh
 

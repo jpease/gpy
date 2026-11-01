@@ -369,7 +369,7 @@ mod tests {
         use crate::config::Config;
         use crate::formatter::SegmentPosition;
         use crate::formatter::directory_resolver::{DirectoryEnv, DirectoryResolver};
-        use crate::template::{RenderContext as TemplateContext, render};
+        use crate::template::{EvalContext, render};
 
         let config = Config::default();
         let theme_mgr =
@@ -389,7 +389,7 @@ mod tests {
             &theme,
             SegmentPosition::MIDDLE,
         );
-        let ctx = TemplateContext::new(&resolver)
+        let ctx = EvalContext::new(&resolver)
             .with_prev_colors(None, Some(Color::Named("blue".to_owned())));
         let spans = render(&format, &ctx).expect("render default directory");
         let visible: String = spans.iter().map(|s| s.text.as_str()).collect();
@@ -574,17 +574,17 @@ mod tests {
 
     #[test]
     fn prev_bg_transfers_across_a_two_segment_run() {
-        use crate::template::{Color, MapResolver, RenderContext as TemplateContext, render};
+        use crate::template::{Color, EvalContext, MapResolver, render};
 
         // Segment A renders with bg:blue. Its bg becomes the "previous bg" fed to B.
         let a_resolver = MapResolver::from_pairs([("x", "A")]);
-        let a_ctx = TemplateContext::new(&a_resolver);
+        let a_ctx = EvalContext::new(&a_resolver);
         let a_spans = render("[$x](bg:blue)", &a_ctx).unwrap();
         assert_eq!(encode_ansi(&a_spans), "\x1b[44mA\x1b[0m");
 
         // Segment B uses bg:prev_bg, fed Segment A's bg (blue).
         let b_resolver = MapResolver::from_pairs([("y", "B")]);
-        let b_ctx = TemplateContext::new(&b_resolver)
+        let b_ctx = EvalContext::new(&b_resolver)
             .with_prev_colors(None, Some(Color::Named("blue".to_owned())));
         let b_spans = render("[$y](bg:prev_bg)", &b_ctx).unwrap();
         assert_eq!(encode_ansi(&b_spans), "\x1b[44mB\x1b[0m");

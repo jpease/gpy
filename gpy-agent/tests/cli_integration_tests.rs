@@ -254,7 +254,10 @@ fn assert_config_get(key: &str, expected: &str) {
 fn test_cli_config_get_outputs_expected_values() {
     assert_config_get("agent.supervisor.enabled", "true");
     assert_config_get("agent.supervisor.check_interval_seconds", "30");
-    assert_config_get("ui.enabled_segments", "clock duration directory git");
+    assert_config_get(
+        "ui.enabled_segments",
+        "clock duration language directory git",
+    );
 }
 
 #[test]
@@ -849,52 +852,31 @@ fn test_fish_rendered_delimiter_when_is_last_git() {
     assert_delimiter_usage(&stdout, true, "git");
 }
 
-#[test]
-fn test_fish_rendered_delimiter_when_not_last_lang() {
+/// `oneshot lang` on a Rust project (language listed in the test config's
+/// `ui.enabled_segments`) must render a delimiter-closed segment.
+fn assert_lang_delimiter(is_last: bool) {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
-    let temp_path = temp_project.path();
-
-    let (exit_code, stdout, stderr) = run_gpy_agent(&[
-        "oneshot",
-        "lang",
-        "--cwd",
-        temp_path.to_string_lossy().as_ref(),
-        "--format",
-        "ansi",
-        "--not-last",
-    ]);
-
-    assert_eq!(exit_code, 0_i32, "Command failed: {stderr}");
-
-    if stdout.is_empty() {
-        return;
+    let cwd = temp_project.path().to_string_lossy().into_owned();
+    let mut args = vec!["oneshot", "lang", "--cwd", &cwd, "--format", "ansi"];
+    if !is_last {
+        args.push("--not-last");
     }
 
-    assert_delimiter_usage(&stdout, false, "language");
+    let (exit_code, stdout, stderr) = run_gpy_agent(&args);
+
+    assert_eq!(exit_code, 0_i32, "Command failed: {stderr}");
+    assert!(!stdout.is_empty(), "Output should not be empty");
+    assert_delimiter_usage(&stdout, is_last, "language");
+}
+
+#[test]
+fn test_fish_rendered_delimiter_when_not_last_lang() {
+    assert_lang_delimiter(false);
 }
 
 #[test]
 fn test_fish_rendered_delimiter_when_is_last_lang() {
-    let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
-    let temp_path = temp_project.path();
-
-    let (exit_code, stdout, stderr) = run_gpy_agent(&[
-        "oneshot",
-        "lang",
-        "--cwd",
-        temp_path.to_string_lossy().as_ref(),
-        "--format",
-        "ansi",
-        // No --not-last: is_last=true.
-    ]);
-
-    assert_eq!(exit_code, 0_i32, "Command failed: {stderr}");
-
-    if stdout.is_empty() {
-        return;
-    }
-
-    assert_delimiter_usage(&stdout, true, "language");
+    assert_lang_delimiter(true);
 }
 
 /// A quarantined/SIGKILLed binary used to export nothing, leaving Fish
@@ -1081,7 +1063,7 @@ fn test_theme_export_contains_enabled_segments_from_config() {
 
     assert_eq!(
         enabled_line.trim(),
-        "set -g __enabled_segments clock duration directory git",
+        "set -g __enabled_segments clock duration language directory git",
         "theme export should honour ui.enabled_segments from config"
     );
 }

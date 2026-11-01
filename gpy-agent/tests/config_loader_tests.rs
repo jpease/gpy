@@ -4,7 +4,7 @@
 #![allow(clippy::single_match_else)]
 
 use gpy_agent::config::loader::{load_config_from_file, parse_config_toml, save_config};
-use gpy_agent::config::schema::get_config_paths;
+use gpy_agent::config::location::get_config_paths;
 use gpy_agent::config::validation::validate_config;
 use gpy_agent::config::{Config, types};
 use std::fs;
@@ -509,7 +509,7 @@ fn config_template_icon_and_plugin_examples_are_present() {
 #[cfg(unix)]
 #[test]
 fn test_non_utf8_config_candidate_is_preserved() {
-    use gpy_agent::config::schema::config_candidates_for;
+    use gpy_agent::config::location::config_candidates_for;
     use gpy_agent::paths::Os;
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;

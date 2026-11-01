@@ -19,6 +19,9 @@ end
 
 set -l repo_root (path resolve (status dirname)/../..)
 init_test_env; or exit 1
+# The settings under test come from config.toml; an exported user override
+# would win over them.
+set -e GPY_AGENT_SUPERVISOR_ENABLED GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS
 mkdir -p $XDG_CONFIG_HOME/gpy $XDG_CACHE_HOME/gpy
 printf '%s\n' '[agent.supervisor]' 'enabled = true' 'check_interval_seconds = 7' 'max_restart_attempts = 1' >$XDG_CONFIG_HOME/gpy/config.toml
 start_test_agent; or die "agent did not start"

@@ -379,6 +379,7 @@ if [[ -x "$AGENT_BIN" ]]; then
     git_bg_seen="$(__gpy_run_git_bg_case 0)"
     [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:red" ]] || { echo "FAIL: language prev_bg is not the recorded git colour ($git_bg_seen)"; exit 1; }
     pass "segment after git receives the recorded git background"
+    # shellcheck disable=SC2154 # set by bash/core/constants.bash
     git_bg_seen="$(__gpy_run_git_bg_case "$__gpy_seg_status_oneshot")"
     clean_bg="${git_bg_seen##*clean:}"
     [[ "$(sed -n '1p' <<<"$git_bg_seen")" == "language:$clean_bg" ]] || { echo "FAIL: agent-free git render did not use the clean colour ($git_bg_seen)"; exit 1; }

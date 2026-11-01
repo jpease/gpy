@@ -62,7 +62,7 @@ theme = "default"
 display = "basename"
 # Path components kept when display = "truncated". Default: 3
 truncation_length = 3
-# Prefix shown before a truncated path (e.g. "…/"). Default: ""
+# Prefix shown before a truncated path (e.g. "…/"). Applies only to "truncated". Default: ""
 truncation_symbol = ""
 # Maximum displayed length of the rendered directory string
 max_length = 80
@@ -75,10 +75,10 @@ truncate_to_repo = false
 
 - `basename` shows only the current directory name
 - `abbreviated` shortens intermediate path components to their first character (a hidden directory keeps its leading dot plus one character, so `~/.config/fish` becomes `~/.c/fish`) while keeping the leaf directory
-- `truncated` keeps the last `ui.directory.truncation_length` path components, prefixed with `ui.directory.truncation_symbol`
+- `truncated` keeps the last `ui.directory.truncation_length` path components, prefixed with `ui.directory.truncation_symbol` (neither applies to other display modes)
 - `full` shows the whole path with your home directory shown as `~` (for example `~/work/project`)
 
-`ui.directory.max_length` is applied after that rendering step. For example, a `full` path can still be shortened with an ellipsis if it exceeds the configured maximum. At `max_length` values of `1`–`3` there isn't room for both the 3-character `"..."` ellipsis and any real path content, so the ellipsis is dropped and the raw last `max_length` characters are shown instead — the cap is always honored exactly.
+`ui.directory.max_length` is applied after that rendering step. For example, a `full` path can still be shortened with an ellipsis if it exceeds the configured maximum. A shortened path starts with a one-character `…` followed by the tail; at `max_length = 1` the ellipsis is dropped and the last character is shown. Wide characters (CJK, emoji) take two terminal columns, so a CJK path can be wider on screen than `max_length`.
 
 `ui.directory.truncate_to_repo` (default `false`) anchors the displayed path at
 the enclosing git repository root: the repo folder becomes the leading
@@ -93,8 +93,11 @@ repo) is not used as an anchor, so paths under it still show as `~/…`. The Sta
 **File:** `~/.config/gpy/themes/<name>.toml` (user themes) or the built-in
 `config/themes/*.toml` shipped with GPY.
 
-A theme file has exactly these sections: `[ui]` (the theme's name and a few
-display defaults), the four glyph tables `[ui.prompt_open]`,
+A theme file has exactly these sections: `[ui]` (the root prompt symbol
+`root_prompt_icon`/`root_prompt_color`, `two_line` and a few other display
+defaults; the non-root prompt symbol is `[segments.character]`
+`success_symbol`/`success_color`, and `ui.prompt_icon`/`ui.prompt_color` are
+deprecated), the four glyph tables `[ui.prompt_open]`,
 `[ui.prompt_close]`, `[ui.segment_open]`, `[ui.segment_close]`, an optional
 `[ui.recommended]` block that `gpy theme use --force` applies to
 `config.toml`, and one `[segments.<id>]` table per segment (`clock`,
@@ -207,7 +210,7 @@ Limit the displayed length of git branch names to prevent long branch names from
 
 ```toml
 [git]
-max_branch_length = 30  # Default: 0 (unlimited)
+max_branch_length = 30  # Default: 0 (unlimited; branch names are shown whole by default)
 ```
 
 When a branch name exceeds the configured length, it will be truncated with an ellipsis (…):

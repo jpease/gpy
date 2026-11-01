@@ -301,17 +301,18 @@ function _install_fish_files
     if test $clean_sync -eq 1
         rm -rf "$data_root/fish"
     end
-    set -l setup_log (mktemp)
-    "$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive 2>&1 | tee $setup_log
-    if test $pipestatus[1] -ne 0
-        rm -f $setup_log
+    # Capture in a variable (no temp file, no tee): the install must work with
+    # only the tools it already needs.
+    set -l setup_output ("$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive 2>&1)
+    set -l setup_status $status
+    set -q setup_output[1]; and printf '%s\n' $setup_output
+    if test $setup_status -ne 0
         echo "error: gpy setup failed"
         return 1
     end
     # `gpy setup` reports where it installed the Fish files; fall back to the
     # data root when a stand-in `gpy` prints nothing.
-    set -g gpy_dev_fish_dir (string replace -rf '^Installed fish files to (.*)$' '$1' <$setup_log)
-    rm -f $setup_log
+    set -g gpy_dev_fish_dir (string replace -rf '^Installed fish files to (.*)$' '$1' -- $setup_output)
     test -n "$gpy_dev_fish_dir"; or set -g gpy_dev_fish_dir "$data_root/fish"
 
     echo "Configuration installed to $gpy_config_dir"

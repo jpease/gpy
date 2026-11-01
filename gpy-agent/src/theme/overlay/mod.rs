@@ -2,7 +2,7 @@
 //! names a base theme and holds only the keys it changes.
 //!
 //! Every theme load from a name or a path goes through this module
-//! (`ThemeManager`, `config::loader::load_theme*`, `gpy theme validate`);
+//! (`ThemeManager`, `theme::load::load_theme*`, `gpy theme validate`);
 //! [`ThemeManager::builtin`](crate::theme::ThemeManager::builtin) stays full-only.
 //!
 //! - A file without `extends` is a full theme: its table, parsed once, goes

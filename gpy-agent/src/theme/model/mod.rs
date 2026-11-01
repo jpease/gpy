@@ -149,8 +149,9 @@ impl From<PluginSegmentTheme> for RawPluginSegmentTheme {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiTheme {
-    /// Prompt icon (default: "❯")
-    pub prompt_icon: types::Icon,
+    /// Deprecated: set `segments.character.success_symbol`; when set, overrides
+    /// only the shell-drawn fallback.
+    pub prompt_icon: Option<types::Icon>,
 
     /// Root prompt icon shown when running as root (default: "!❯!")
     pub root_prompt_icon: types::Icon,
@@ -164,13 +165,14 @@ pub struct UiTheme {
     /// Default segment close delimiter configuration (supports fg/bg colors)
     pub segment_close: Option<DelimiterConfig>,
 
-    /// Color for the prompt symbol (unset: `DEFAULT_UI_PROMPT_COLOR`)
+    /// Deprecated: set `segments.character.success_color`; when set, overrides
+    /// only the shell-drawn fallback.
     pub prompt_color: Option<types::ColorSpec>,
 
     /// Color for the root prompt symbol (unset: `DEFAULT_UI_ROOT_PROMPT_COLOR`)
     pub root_prompt_color: Option<types::ColorSpec>,
 
-    /// Opt-in two-line layout (prompt char on its own line). Exported as `__gpy_two_line`.
+    /// Two-line layout (prompt character on its own line); default false. Exported as `__gpy_two_line`.
     pub two_line: bool,
 
     /// Blank line before each prompt. Exported as `__gpy_add_newline`.
@@ -191,7 +193,7 @@ pub struct RecommendedUi {
     /// Recommended directory settings → `config.ui.directory.*`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory: Option<RecommendedDirectory>,
-    /// Recommended language-icon visibility → `config.ui.show_icons`.
+    /// Deprecated and ignored; `ui.show_icons` is set by `gpy setup`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_icons: Option<bool>,
     /// Recommended language-detection strategy → `config.language.detection_mode`.
@@ -222,7 +224,7 @@ pub struct RecommendedDirectory {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            prompt_icon: literal("❯"),
+            prompt_icon: None,
             root_prompt_icon: literal("!❯!"),
             prompt_open: None,
             prompt_close: None,

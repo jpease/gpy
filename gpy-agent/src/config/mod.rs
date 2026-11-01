@@ -6,14 +6,14 @@ pub mod defaults;
 pub mod discovery;
 pub mod language_icons;
 pub mod loader;
+pub mod location;
 pub mod manager;
 /// Configuration metadata for keys and descriptions.
 pub mod metadata;
 /// `[plugin.<segment>]` overrides for script plugin segments.
 pub mod plugin_segments;
-/// Recommended-layout reconciliation engine for `gpy theme use --force`.
+/// Recommended-layout application for `gpy theme use --force`.
 pub mod recommended_layout;
-pub mod schema;
 /// Shared matcher for `git.skip_paths`.
 pub mod skip_paths;
 /// Type-safe configuration primitives.
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 pub use defaults::{
     DEFAULT_PROMPT_CLOSE, DEFAULT_PROMPT_OPEN, DEFAULT_SEGMENT_CLOSE, DEFAULT_SEGMENT_OPEN,
-    DEFAULT_UI_PROMPT_COLOR, DEFAULT_UI_ROOT_PROMPT_COLOR,
+    DEFAULT_UI_ROOT_PROMPT_COLOR,
 };
 pub use language_icons::{LanguageIcons, LanguageTheme};
 

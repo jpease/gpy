@@ -27,7 +27,10 @@ done
 # render SHELL VALUE ERRFILE: the prompt SHELL draws after a failed command with
 # GPY_SHOW_STATUS=VALUE. Only the status tail is enabled, with a marker icon.
 render() {
-    local sh="$1" value="$2" err="$3"
+    local sh="$1" value="$2" err="$3" shell_bin
+    # An absolute path: CLEAN_PATH may drop the directory holding the shell itself
+    # (Homebrew keeps fish, zsh and gpy-agent together).
+    shell_bin="$(command -v "$sh")"
     local -a envs=(env -i PATH="$CLEAN_PATH" HOME="$TMP/home" TERM=dumb
         XDG_CONFIG_HOME="$TMP/config" XDG_CACHE_HOME="$TMP/cache" XDG_RUNTIME_DIR="$TMP/run"
         TMPDIR="$TMP" GPY_AGENT_SOCKET_PATH="$TMP/run/missing.sock"
@@ -35,7 +38,7 @@ render() {
     case "$sh" in
         bash)
             # shellcheck disable=SC2016 # expands in the child
-            "${envs[@]}" bash --noprofile --norc -c '
+            "${envs[@]}" "$shell_bin" --noprofile --norc -c '
                 source "$ROOT/bash/gpy.bash"
                 __icon_status_fail=STATUSFAIL __enabled_segments="" __gpy_two_line=0 __gpy_add_newline=0
                 unset __gpy_char_cache_key __gpy_char_cache_val
@@ -44,15 +47,16 @@ render() {
             ;;
         zsh)
             # shellcheck disable=SC2016 # expands in the child
-            "${envs[@]}" zsh -f -c '
+            "${envs[@]}" "$shell_bin" -f -c '
                 source "$ROOT/zsh/gpy.zsh"
                 __icon_status_fail=STATUSFAIL __enabled_segments=() __gpy_two_line=0 __gpy_add_newline=0
                 __gpy_char_cache_key="" __gpy_char_cache_val=""
-                __gpy_render_prompt 1' 2>"$err"
+                __gpy_render_prompt 1
+                print -rn -- "$__gpy_render_out"' 2>"$err"
             ;;
         fish)
             # shellcheck disable=SC2016 # expands in the child
-            "${envs[@]}" fish --no-config -c '
+            "${envs[@]}" "$shell_bin" --no-config -c '
                 source $ROOT/fish/core/init.fish
                 source $ROOT/fish/functions/fish_prompt.fish
                 set -g __icon_status_fail STATUSFAIL

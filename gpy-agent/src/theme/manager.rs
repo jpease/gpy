@@ -331,9 +331,7 @@ impl ThemeManager {
     /// Returns an error if a file of the chain can't be read or the theme
     /// can't be parsed.
     fn load_name(name: &str) -> Result<LoadedTheme> {
-        let top = resolve_top(name);
-        let path = top.path.clone();
-        overlay::load_link(top).map_err(|e| super::user_copy::annotate_load_error(&path, e))
+        crate::theme::load::load_top_annotated(resolve_top(name))
     }
 
     /// Re-arm the source watches from a non-watcher thread.
@@ -840,11 +838,11 @@ mod tests {
                 "ThemeManager::builtin(\"{name}\") should load a theme listed in BUILTIN_THEMES"
             );
 
-            // Site 2: `config::loader::load_theme_from_path`'s embedded-content
+            // Site 2: `theme::load::load_theme_from_path`'s embedded-content
             // fallback, exercised via a path that does not exist on disk.
             let synthetic_path = format!("/nonexistent/path/{name}.toml");
             assert!(
-                crate::config::loader::load_theme_from_path(std::path::Path::new(&synthetic_path))
+                crate::theme::load::load_theme_from_path(std::path::Path::new(&synthetic_path))
                     .is_ok(),
                 "load_theme_from_path should resolve embedded content for \"{name}\" via its BUILTIN_THEMES entry"
             );

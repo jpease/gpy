@@ -97,7 +97,7 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
 
 /// The config-file candidates, in resolution order.
 fn config_candidates() -> Vec<String> {
-    crate::config::schema::get_config_paths()
+    crate::config::location::get_config_paths()
         .iter()
         .map(|path| path.display().to_string())
         .collect()

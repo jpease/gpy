@@ -1,4 +1,4 @@
-//! TOML configuration schema and config-file resolution.
+//! Which `config.toml` is active: candidate order and resolution.
 
 use std::path::{Path, PathBuf};
 

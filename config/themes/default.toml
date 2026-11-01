@@ -2,8 +2,6 @@
 # Colors and icons for each prompt segment grouped under `[segments.*]`
 
 [ui]
-prompt_icon = "❯"
-prompt_color = "white"
 root_prompt_icon = "!❯!"
 root_prompt_color = "red"
 # Segments on one line, the prompt character on the next. Fish, Bash and Zsh
@@ -30,12 +28,11 @@ icon = ""
 icon_color = "match_bg"
 bg_color = "transparent"
 
-# Built-in defaults, so `gpy theme use default --force` restores GPY's
-# stock layout/display after another preset changed `config.ui` (round-trip).
+# The built-in layout, so `gpy theme use default --force` restores it after
+# another theme changed it.
 # Advisory only: never exported to shells; applied solely via --force.
 [ui.recommended]
 enabled_segments = ["clock", "duration", "language", "directory", "git"]
-show_icons = true
 # Stock GPY behavior: marker detection.
 language_detection = "markers"
 
@@ -43,6 +40,15 @@ language_detection = "markers"
 display = "basename"
 # Stock GPY behavior: no repo anchoring (clean round-trip from other presets).
 truncate_to_repo = false
+
+# Each pill segment repeats the same pill wrapper in its format string:
+#   1. open cap:  ([$sep_open](fg:$bg bg:default))
+#   2. body:      [ ... ]($style)
+#   3. gap:       ([$sep_gap]($style))
+#   4. close cap: ([$sep_close](fg:$bg bg:default))
+# The open and close caps draw powerline separators in the pill's background
+# color against the terminal default background, while the gap separates
+# adjacent segments.
 
 [segments.clock]
 # Agent-rendered, like every other segment. `$time` resolves to the requesting

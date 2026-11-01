@@ -21,9 +21,6 @@ where
 pub(crate) const DEFAULT_ENABLED_SEGMENTS: [&str; 5] =
     ["clock", "duration", "language", "directory", "git"];
 
-/// Prompt icon color exported when the theme sets no `ui.prompt_color`.
-pub const DEFAULT_UI_PROMPT_COLOR: &str = "green";
-
 /// Root prompt icon color exported when the theme sets no `ui.root_prompt_color`.
 pub const DEFAULT_UI_ROOT_PROMPT_COLOR: &str = "red";
 

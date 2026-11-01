@@ -292,11 +292,13 @@ gpy theme use text
 ```
 
 **Options:**
-- `--force` - Also apply the theme's recommended layout (`[ui.recommended]`:
-  segment order, directory display, language icons, ...) to `config.toml`,
-  preserving any setting you configured explicitly. Without it, a theme that
-  carries recommendations prints a `Re-run with --force to apply
-  recommended ...` hint and leaves your layout alone.
+- `--force` - Also apply every setting the theme recommends (`[ui.recommended]`:
+  segment order, directory display, language detection, palette, ...) to
+  `config.toml`, overwriting your current values, and print each change as
+  `old → new` (for example `ui.palette: nord → starship`). `ui.show_icons` is
+  never changed. Without it, a theme that carries recommendations prints a
+  `Re-run with --force to apply recommended ...` hint and leaves your layout
+  alone.
 
 **Output:**
 ```

@@ -1,6 +1,6 @@
 //! Configuration file loading, parsing, and comment-preserving saving.
 
-use super::{Config, GitIconSet, schema, validation};
+use super::{Config, GitIconSet, location, validation};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// Returns an error if the config file cannot be read or parsed.
 pub fn load_config() -> Result<Config> {
-    match schema::resolve_active_config(&schema::get_config_paths()) {
+    match location::resolve_active_config(&location::get_config_paths()) {
         Some((_, Some(existing))) => load_config_from_file(&existing),
         _ => Ok(Config::default()),
     }
@@ -22,7 +22,7 @@ pub fn load_config() -> Result<Config> {
 /// broken file. A missing, unreadable or unparsable file means enabled.
 #[must_use]
 pub fn agent_enabled() -> bool {
-    match schema::resolve_active_config(&schema::get_config_paths()) {
+    match location::resolve_active_config(&location::get_config_paths()) {
         Some((_, Some(existing))) => {
             std::fs::read_to_string(existing).map_or(true, |contents| agent_enabled_in(&contents))
         }
@@ -376,59 +376,6 @@ fn write_atomically(target: &Path, contents: &str) -> Result<()> {
         .map_err(|e| Error::config(format!("Failed to write config file: {e}")))
 }
 
-/// Load a theme by name (user, plugin, or builtin), fresh from disk, merging
-/// an overlay's chain.
-///
-/// # Errors
-/// Returns an error if the theme is unresolvable or fails to parse.
-pub fn load_theme(theme_name: &str) -> Result<crate::theme::ThemeConfig> {
-    load_named_theme(theme_name).map(|loaded| loaded.theme)
-}
-
-/// [`load_theme`], keeping the chain the theme was merged from so a later
-/// template check can name the file and line of a failing key
-/// ([`LoadedTheme::template_error`](crate::theme::LoadedTheme::template_error)).
-///
-/// # Errors
-/// Returns an error if the theme is unresolvable or fails to parse.
-pub fn load_named_theme(theme_name: &str) -> Result<crate::theme::LoadedTheme> {
-    // Same resolver as the daemon so oneshot agrees on plugin themes.
-    let top = crate::theme::overlay::resolve_top(theme_name).ok_or_else(|| {
-        Error::config(format!(
-            "theme '{theme_name}' not found (no user theme, plugin theme, or builtin matches this name)"
-        ))
-    })?;
-    let path = top.path.clone();
-    crate::theme::overlay::load_link(top)
-        .map_err(|error| crate::theme::user_copy::annotate_load_error(&path, error))
-}
-
-/// Load a theme from a path, falling back to the builtin with that stem.
-/// An overlay's `extends` resolves as for a user theme named after the stem,
-/// or, for a file in a plugin's `themes/` directory, as for that plugin.
-///
-/// This is the single funnel for theme load errors by path (CLI, `doctor`,
-/// `theme validate`); loads by name go through [`load_named_theme`] or
-/// `ThemeManager`, which annotate the same way. When the failing file is the
-/// user copy of an embedded builtin, the returned error already ends with
-/// [`user_copy::recovery_hint`](crate::theme::user_copy::recovery_hint) (it
-/// says the file overrides the builtin). Callers MUST NOT append the hint again.
-///
-/// # Errors
-/// Returns an error if the file can't be read or parsed, or matches no builtin.
-pub fn load_theme_from_path(path: &Path) -> Result<crate::theme::ThemeConfig> {
-    load_theme_file(path).map(|loaded| loaded.theme)
-}
-
-/// [`load_theme_from_path`], keeping the chain the theme was merged from.
-///
-/// # Errors
-/// Returns an error if the file can't be read or parsed, or matches no builtin.
-pub fn load_theme_file(path: &Path) -> Result<crate::theme::LoadedTheme> {
-    crate::theme::overlay::load_path(path)
-        .map_err(|error| crate::theme::user_copy::annotate_load_error(path, error))
-}
-
 #[cfg(test)]
 mod unknown_config_keys_tests {
     use super::unknown_config_keys;
@@ -473,41 +420,6 @@ mod remove_config_keys_tests {
             .and_then(|m| m.modified())
             .expect("mtime");
         assert_eq!(before, again, "no key present must write nothing");
-    }
-}
-
-#[cfg(test)]
-mod load_theme_from_path_tests {
-    use super::load_theme_from_path;
-    use std::path::Path;
-
-    #[test]
-    fn nonexistent_user_theme_path_falls_back_to_embedded_builtin() {
-        let sep = std::path::MAIN_SEPARATOR;
-        let fake_user_theme_path = format!("nonexistent-dir{sep}gpy{sep}themes{sep}default.toml");
-
-        let theme = load_theme_from_path(Path::new(&fake_user_theme_path))
-            .expect("embedded fallback must succeed");
-
-        // The bare default stub's `prompt_close` is empty; the builtin's is U+E0B4.
-        assert_eq!(
-            theme.ui.get_prompt_close_delimiter(),
-            "\u{e0b4}",
-            "expected the embedded `default` theme's real closing-cap icon, got the bare \
-             ThemeConfig::default() stub's empty one instead -- builtin-theme matching didn't fire"
-        );
-    }
-
-    #[test]
-    fn path_matching_no_builtin_theme_name_returns_an_error() {
-        let err = load_theme_from_path(Path::new("nonexistent-dir/not-a-real-theme.toml"))
-            .expect_err("a path matching no builtin theme name must error, not silently succeed");
-
-        let message = err.to_string();
-        assert!(
-            message.contains("not-a-real-theme"),
-            "error message must name the theme (its file stem), got: {message}"
-        );
     }
 }
 

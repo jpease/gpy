@@ -3,25 +3,29 @@
 # Every setting appears at its built-in default, commented out: a key you omit
 # falls back to that default, so an untouched copy changes nothing and keeps
 # following future default changes. Remove the leading `#` of a setting to
-# override it. Colours and segment templates live in theme files, not here.
-# Field-by-field reference: docs/user/configuration-reference.md
+# override it. Settings that should survive a theme switch (icons, segment list,
+# plugin options) are in config.toml; colours, shapes and templates are in the
+# theme. Field-by-field reference: docs/user/configuration-reference.md
 
 [ui]
 # Show glyphs: language icons, git icons and the powerline caps. false falls
 # back to text and flat blocks that render in any font.
 #show_icons = true
-# Theme file stem: default, text or starship, or any file under ~/.config/gpy/themes/
+# Theme file stem: default, text or starship, or any file under ~/.config/gpy/themes/.
+# Theme: the look (colours, shapes, templates). See docs/user/theme-customization.md#terms
 #theme = "default"
 # Palette file stem: default, starship, catppuccin-latte, catppuccin-frappe,
 # catppuccin-macchiato, catppuccin-mocha, gruvbox-dark-medium or nord, or any
-# file under ~/.config/gpy/palettes/
+# file under ~/.config/gpy/palettes/.
+# Palette: the named colours a theme uses. See docs/user/theme-customization.md#terms
 #palette = "default"
 # Segments to render, left to right. Built in: clock, duration, language,
 # directory, git, status (off by default); hostname and username are bundled
 # plugins, and plugin segments are listed too. The prompt character is always
 # drawn, styled by the theme's [segments.character], and is not listed.
 #enabled_segments = ["clock", "duration", "language", "directory", "git"]
-# Collapse each submitted prompt to clock, prompt icon and command (Fish 4.2+, Zsh)
+# Collapse each submitted prompt to clock, prompt symbol and command. Zsh and
+# Fish 4.2+; no effect in Bash or older Fish
 #transient_prompt = true
 # Let `gpy setup` move a file under ~/.config/gpy/themes/ that is an unedited
 # copy of a builtin theme as released up to 0.7.1 to <name>.toml.bak, so the builtin applies
@@ -30,13 +34,14 @@
 [ui.directory]
 # Display mode: basename, abbreviated, truncated, full
 #display = "basename"
-# Trailing path components kept when display = "truncated" (1-255)
+# Trailing path components kept when display = "truncated" (1-255; applies only to "truncated")
 #truncation_length = 3
-# Prefix shown before a truncated path (e.g. "…/")
+# Prefix shown before a truncated path (e.g. "…/"). Applies only to "truncated"
 #truncation_symbol = ""
-# Maximum path length to display, a character cap (1-1000)
+# Maximum path length to display, a character cap (1-1000). Counts characters;
+# wide characters (CJK, emoji) take two columns
 #max_length = 80
-# Anchor the path at the enclosing git repository root
+# Anchor the path at the enclosing git repository root (applies only to "truncated" and "full")
 #truncate_to_repo = false
 
 [agent]
@@ -68,9 +73,12 @@
 # Example: skip_paths = ["~/work/huge-monorepo", "/mnt/network-share"]
 #skip_paths = []
 # Maximum branch name length to display, 0-500 (0 = unlimited). Longer names
-# end in an ellipsis: "feature/very-long-branch-name" -> "feature/very-long-bra…"
+# end in an ellipsis: "feature/very-long-branch-name" -> "feature/very-long-bra…".
+# Branch names are shown whole by default; truncating hides information.
 #max_branch_length = 0
-# Maximum ahead/behind count to show (0 = unlimited); larger counts render as N+
+# Maximum ahead/behind count to show (0 = unlimited); larger counts render as N+.
+# This is a display cap: git still counts every commit, and counts above 100 show
+# as 100+. The cap keeps a stale branch from drawing a five-digit counter.
 #max_ahead_behind = 100
 # Watch the working tree, not just .git, so edits update the prompt instantly
 # (GPY_WATCH_WORKTREE overrides)
@@ -112,7 +120,8 @@
 # Which detected languages to show:
 #   "all"     every detected language
 #   "primary" only the dominant language (highest confidence)
-#   "3"       the top N languages by confidence (any number)
+#   "3"       the top N languages by confidence (any number; the prompt draws
+#             at most three; JSON output lists them all)
 #filter = "all"
 # Detection strategy: markers (default; require project marker files),
 # content (rank by file prevalence) or hybrid (content ranking gated by a

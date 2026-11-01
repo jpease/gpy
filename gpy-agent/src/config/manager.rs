@@ -2,7 +2,7 @@
 //! `Arc<Config>` and swaps it atomically when a valid edit lands; invalid
 //! edits keep the old config.
 
-use crate::config::schema::{get_config_paths, resolve_active_config};
+use crate::config::location::{get_config_paths, resolve_active_config};
 use crate::config::{Config, loader::load_config_from_file};
 use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::watcher::hot_reload::{HotReloadSlot, PollTarget};

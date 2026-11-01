@@ -17,9 +17,8 @@ fn test_doctor_accepts_starship_recommended_segments() {
         .expect("Failed to run gpy theme use starship --force");
     theme_use.assert_success("gpy theme use starship --force");
     assert!(
-        theme_use
-            .stdout
-            .contains("segment order (username, hostname"),
+        theme_use.stdout.contains("ui.enabled_segments: ")
+            && theme_use.stdout.contains("→ username hostname"),
         "starship layout should have been applied: {:?}",
         theme_use.stdout
     );

@@ -67,14 +67,15 @@ impl std::fmt::Display for Format {
 impl std::str::FromStr for Format {
     type Err = crate::Error;
 
+    /// Parses the CLI spelling and rejects unknown names. The IPC parser
+    /// (`ipc/protocol`) instead falls back to JSON for an unknown name, on
+    /// purpose: see `SCHEMA_EVOLUTION.md`.
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "json" => Ok(Self::Json),
-            "ansi" => Ok(Self::Ansi),
-            "bash-prompt" => Ok(Self::BashPrompt),
-            "zsh-prompt" => Ok(Self::ZshPrompt),
-            _ => Err(crate::Error::config(format!("Unknown format: {s}"))),
-        }
+        Self::value_variants()
+            .iter()
+            .copied()
+            .find(|format| format.as_str() == s)
+            .ok_or_else(|| crate::Error::config(format!("Unknown format: {s}")))
     }
 }
 
@@ -84,12 +85,7 @@ impl ValueEnum for Format {
     }
 
     fn to_possible_value(&self) -> Option<PossibleValue> {
-        Some(match self {
-            Self::Json => PossibleValue::new("json"),
-            Self::Ansi => PossibleValue::new("ansi"),
-            Self::BashPrompt => PossibleValue::new("bash-prompt"),
-            Self::ZshPrompt => PossibleValue::new("zsh-prompt"),
-        })
+        Some(PossibleValue::new(self.as_str()))
     }
 }
 
@@ -234,6 +230,9 @@ pub fn create_formatter(format: Format) -> Box<dyn Formatter> {
     }
 }
 
+/// The one ellipsis, for truncated branch names and directory paths.
+pub(crate) const ELLIPSIS: char = '…';
+
 /// Truncate to `max_length` chars (0 = unlimited), ending with `…`.
 #[must_use]
 pub(crate) fn truncate_branch(branch: &str, max_length: usize) -> String {
@@ -246,9 +245,10 @@ pub(crate) fn truncate_branch(branch: &str, max_length: usize) -> String {
         return branch.to_owned();
     }
 
+    // The ellipsis takes one character of the budget.
     let truncated_len = max_length.saturating_sub(1);
     let mut result: String = branch.chars().take(truncated_len).collect();
-    result.push('…');
+    result.push(ELLIPSIS);
     result
 }
 
@@ -334,5 +334,28 @@ mod tests {
             ctx.palette.get("accent"),
             Some(Color::Named("blue".to_owned()))
         );
+    }
+
+    #[test]
+    fn format_names_agree_across_serde_display_fromstr_and_clap() {
+        use super::Format;
+        use clap::ValueEnum;
+        let expected = [
+            (Format::Json, "json"),
+            (Format::Ansi, "ansi"),
+            (Format::BashPrompt, "bash-prompt"),
+            (Format::ZshPrompt, "zsh-prompt"),
+        ];
+        assert_eq!(Format::value_variants().len(), expected.len());
+        for (format, name) in expected {
+            assert_eq!(format.as_str(), name);
+            assert_eq!(format.to_string(), name);
+            assert_eq!(name.parse::<Format>().unwrap(), format);
+            assert_eq!(format.to_possible_value().unwrap().get_name(), name);
+            assert_eq!(
+                serde_json::to_string(&format).unwrap(),
+                format!("\"{name}\"")
+            );
+        }
     }
 }

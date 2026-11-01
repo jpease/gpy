@@ -21,8 +21,8 @@ mod env_guard;
 use cli_harness::CliTestEnv;
 use env_guard::EnvGuard;
 use gpy_agent::config::defaults::STARSHIP_THEME_CONTENT;
-use gpy_agent::config::loader;
 use gpy_agent::theme::ThemeManager;
+use gpy_agent::theme::load;
 use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
@@ -75,7 +75,7 @@ fn daemon_theme_manager_loads_a_self_named_overlay() {
 fn oneshot_loader_loads_a_self_named_overlay() {
     let (_temp, _env) = overlay_config();
 
-    let loaded = loader::load_named_theme("starship").expect("overlay loads for oneshot");
+    let loaded = load::load_named_theme("starship").expect("overlay loads for oneshot");
 
     assert_eq!(
         loaded.chain.to_string(),
@@ -85,7 +85,7 @@ fn oneshot_loader_loads_a_self_named_overlay() {
         loaded.theme.segments.directory.format.as_deref(),
         Some(OVERLAY_FORMAT)
     );
-    let theme = loader::load_theme("starship").expect("load_theme");
+    let theme = load::load_theme("starship").expect("load_theme");
     assert_eq!(
         theme.segments.directory.format.as_deref(),
         Some(OVERLAY_FORMAT)

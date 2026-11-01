@@ -41,7 +41,7 @@ display = "icon"
 show_icons = true
 theme = "default"
 directory.max_length = 80
-enabled_segments = ["clock", "duration", "directory", "git"]
+enabled_segments = ["clock", "duration", "language", "directory", "git"]
 "#;
 
 /// `PATH` with the cargo-built binaries prepended, so sibling lookups by bare name work in CI.

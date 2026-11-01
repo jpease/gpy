@@ -335,8 +335,8 @@ fn reconcile_never_scans_or_publishes_when_git_disabled() {
     );
     assert_eq!(
         daemon.watched_and_cached(),
-        (1, 0),
-        "the repo is watched (for language), but git must never scan it"
+        (0, 0),
+        "with git unlisted the repo is neither watched nor scanned"
     );
 }
 

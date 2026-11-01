@@ -1,17 +1,14 @@
 //! Oneshot request handling without the background agent (CLI non-daemon mode).
 
 use crate::Result;
-use crate::config::{
-    Config,
-    loader::{load_config, load_theme},
-};
+use crate::config::{Config, loader::load_config};
 use crate::formatter::{
     DirectoryEnv, Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
 };
 use crate::ipc::Response;
 use crate::language::detector::Detector;
 use crate::language::display::{DisplayRequest, Versions, display_info};
-use crate::theme::ThemeConfig;
+use crate::theme::{ThemeConfig, load::load_theme};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

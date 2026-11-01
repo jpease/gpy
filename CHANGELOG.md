@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** The theme export no longer exports `GPY_AGENT_*`, `GPY_GIT_*`, `GPY_LANGUAGE_*` and `GPY_UI_*` config values into the environment; scripts that read them should run `gpy config get <key>`. Run `gpy setup` after upgrading so your shell scripts match the agent. An exported `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` or `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` now overrides `config.toml`. Boolean `GPY_*` switches accept `1/true/yes/on` and `0/false/no/off`: `GPY_AGENT_ENABLED=off` now disables, and in all three shells `GPY_SHOW_STATUS=true` now shows the indicator (a one-time warning names each case). `GPY_AGENT_BINARY_PATH` and `GPY_VERBOSE` (both undocumented) are no longer read; use PATH and `GPY_DEBUG`.
+- **Breaking:** Shell integration files and bundled plugins move from `~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh}` and `~/.config/gpy/bundled-plugins` to `$XDG_DATA_HOME/gpy` (default `~/.local/share/gpy`). Run `gpy setup` once after upgrading; it updates your rc file and tells you which old directories to remove after restarting your shells. (#1155)
+- Zsh no longer turns off `prompt_bang` for the whole session, renders the prompt without a subshell, and no longer creates `gpy_relay_*` files in `$TMPDIR`.
+- The Bash integration starts fewer processes per agent request.
+- **Breaking:** `GPY_*` variables follow one rule (`docs/user/troubleshooting.md`): flags accept `1/true/yes/on` and `0/false/no/off`; an unrecognised value is ignored and logged once. `GPY_PROFILE` enables profiling only for a true spelling (`1`, `true`, `yes`, `on`); any other value (including `0`, an empty value, or a word such as `debug`) used to enable it and no longer does. An empty `GPY_DEBUG_LOG` no longer enables logging; set a file path. An unrecognised or empty `GPY_WATCH_WORKTREE` no longer forces worktree watching on; use a listed spelling.
+- **Breaking (library):** `watcher::DEFAULT_DEBOUNCE_MS` and `watcher::DEFAULT_THROTTLE_MS` are removed; the defaults now live in `env_config`.
+- **Breaking:** `ui.enabled_segments` is the only switch for a segment. `git.enabled` and `language.enabled` are deprecated; use `gpy disable git` / `gpy disable language` instead. A `false` value still hides the segment, and `gpy doctor` warns. The agent no longer watches or scans git, or detects languages, for an unlisted segment. `gpy disable git|language` removes the list entry, and `gpy enable` puts a built-in back at its default position.
+- **Breaking (library):** `GitSettings::is_enabled_for` is replaced by `Config::git_enabled_for`.
+  Deprecated spellings: config keys `git.enabled` and `language.enabled`, deprecated in the release that ships this change (for the umbrella removal task).
+- **Breaking:** the theme keys `ui.prompt_icon` and `ui.prompt_color` are deprecated. The shell-drawn prompt symbol now follows `[segments.character] success_symbol`/`success_color`, so it matches the agent-drawn one. A theme that sets the old keys keeps working for this release (`gpy theme validate` and `gpy doctor` warn). The `default` and `text` themes' fallback symbol is green instead of white.
+- **Breaking (library):** `config::DEFAULT_UI_PROMPT_COLOR` is removed, and `UiTheme.prompt_icon` is `Option<Icon>` instead of `Icon`.
+  Deprecated spellings: theme keys `ui.prompt_icon` and `ui.prompt_color`, deprecated in the release that ships this change (for the umbrella removal task).
+- **Breaking:** `gpy theme use <name> --force` applies every setting the theme recommends and prints each change as `old → new`. It no longer guesses which values you set by hand. A theme's `[ui.recommended] show_icons` is ignored and deprecated (`gpy setup` decides `ui.show_icons`).
+  Deprecated spellings: theme key `ui.recommended.show_icons`, deprecated in the release that ships this change (for the umbrella removal task).
+- A directory path shortened by `ui.directory.max_length` starts with `…` (one character), like a shortened branch name, instead of `...`.
+- **Breaking (library):** `config::loader::{load_theme, load_named_theme, load_theme_file, load_theme_from_path}` move to `theme::load` (`load_theme_from_path` is test-only), `config::schema` is renamed `config::location`, and `template::RenderContext` is renamed `template::EvalContext`.
 - **Breaking:** Fish no longer runs a background supervisor process; like Bash
   and Zsh it checks the agent on the prompt every
   `agent.supervisor.check_interval_seconds` and restarts it in the background.
@@ -35,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gpy config set` on a list key names the command or file to use. (#1164)
 - Six or more busy repositories no longer cause rewrites and prompt repaints
   of unchanged cache files (#1141).
 - The Bash integration passes the real exit status to an existing `EXIT` trap
@@ -96,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `gpy setup --check` checks the shell files and install path without changing anything; the installers run it before replacing binaries. (#1154)
+- `gpy theme validate` and `gpy doctor` warn about theme keys and sections that have no effect, about enabled segments with no `format`, and about control characters in a theme's git icons. `gpy palette use` warns about each segment the new palette would leave empty.
+- `gpy doctor` lists the effective agent tuning variables. (#1161)
 - `gpy doctor` warns when Bash or Fish has no IPC client (`socat` or
   `nc -U`) (#1175).
 - `gpy theme save --yes` skips the overwrite confirmation (#1177).

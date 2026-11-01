@@ -310,9 +310,9 @@ end
 set -l scenario_e_retry (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
     fish --no-config -i -c "
-        source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish
+        source $scenario_e_home/.local/share/gpy/fish/conf.d/gpy_init.fish
         echo 'return 0' >$scenario_e_home/.local/share/gpy/fish/core/init.fish
-        source $HOME/.local/share/gpy/fish/conf.d/gpy_init.fish
+        source $scenario_e_home/.local/share/gpy/fish/conf.d/gpy_init.fish
         __gpy_agent_enabled; and echo 'retry=[yes]'
     " </dev/null 2>/dev/null | string collect)
 

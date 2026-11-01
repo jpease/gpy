@@ -24,6 +24,10 @@ printf '%s\n' '#!/bin/sh' "echo \"\$*\" >> '$stub_log'" 'exit 0' >$tmp/gpy-agent
 chmod +x $tmp/gpy-agent
 set -gx PATH $tmp $PATH
 
+# The flags under test come from the cache file alone; an exported user value
+# would win over the config mirror (and is not what this test is about).
+set -e GPY_AGENT_ENABLED GPY_AGENT_SUPERVISOR_ENABLED GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS
+
 function die
     fail "$argv"
     exit 1

@@ -29,7 +29,7 @@ pub fn list() -> Result<()> {
 fn warn_segments_left_empty(theme_name: &str, name: &str) {
     use crate::config::validation::ValidationErrorKind;
 
-    let Ok(loaded) = config::loader::load_named_theme(theme_name) else {
+    let Ok(loaded) = crate::theme::load::load_named_theme(theme_name) else {
         return;
     };
     let palette = crate::palette::resolve::palette_by_name(name);

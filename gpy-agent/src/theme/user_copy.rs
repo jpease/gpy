@@ -82,8 +82,8 @@ pub fn recovery_hint(name: &str) -> String {
 /// full copy of an embedded builtin; any other error passes through unchanged.
 /// An overlay's error is its chain error and gets no hint.
 ///
-/// Every theme load path (`config::loader::load_theme_file`,
-/// `config::loader::load_named_theme` and `ThemeManager`'s load) applies this
+/// Every theme load path (`theme::load::load_theme_file`,
+/// `theme::load::load_named_theme` and `ThemeManager`'s load) applies this
 /// exactly once, so callers must not add the hint again.
 #[must_use]
 pub fn annotate_load_error(path: &Path, error: Error) -> Error {

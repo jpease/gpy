@@ -55,14 +55,14 @@ impl VariableResolver for MapResolver {
 }
 
 /// Evaluation context: variable resolver, palette, and previous-segment colors.
-pub struct RenderContext<'a> {
+pub struct EvalContext<'a> {
     resolver: &'a dyn VariableResolver,
     palette: Palette,
     prev_fg: Option<Color>,
     prev_bg: Option<Color>,
 }
 
-impl<'a> RenderContext<'a> {
+impl<'a> EvalContext<'a> {
     /// Create a context backed by `resolver`.
     #[must_use]
     pub fn new(resolver: &'a dyn VariableResolver) -> Self {
@@ -161,7 +161,7 @@ pub struct Span {
 ///
 /// # Errors
 /// Propagates parse and style errors.
-pub fn render(template: &str, ctx: &RenderContext<'_>) -> Result<Vec<Span>> {
+pub fn render(template: &str, ctx: &EvalContext<'_>) -> Result<Vec<Span>> {
     let ast = parse_cached(template)?;
     let mut spans: Vec<Span> = Vec::new();
     eval_nodes(&ast, &Style::default(), ctx, &mut spans)?;
@@ -175,7 +175,7 @@ pub fn render(template: &str, ctx: &RenderContext<'_>) -> Result<Vec<Span>> {
 fn eval_nodes(
     nodes: &[Node],
     inherited: &Style,
-    ctx: &RenderContext<'_>,
+    ctx: &EvalContext<'_>,
     out: &mut Vec<Span>,
 ) -> Result<()> {
     // First pass buffers each child so a whitespace-only literal can collapse
@@ -303,7 +303,7 @@ fn push_text(out: &mut Vec<Span>, text: &str, style: &Style, kind: SpanKind) {
 }
 
 /// Replace `$name`/`${name}` inside a raw style spec with resolved values.
-fn substitute_vars(spec: &str, ctx: &RenderContext<'_>) -> String {
+fn substitute_vars(spec: &str, ctx: &EvalContext<'_>) -> String {
     let Ok(nodes) = parse_cached(spec) else {
         return spec.to_owned();
     };
@@ -327,7 +327,7 @@ fn substitute_vars(spec: &str, ctx: &RenderContext<'_>) -> String {
 /// True if any variable reachable in `nodes` resolves to a non-empty value.
 ///
 /// `Some("")` counts as absent.
-fn any_var_nonempty(nodes: &[Node], ctx: &RenderContext<'_>) -> bool {
+fn any_var_nonempty(nodes: &[Node], ctx: &EvalContext<'_>) -> bool {
     nodes.iter().any(|node| match node {
         // Control-char-only values strip to empty at render time, so match that.
         Node::Var(name) => ctx
@@ -345,7 +345,7 @@ fn any_var_nonempty(nodes: &[Node], ctx: &RenderContext<'_>) -> bool {
 mod tests {
 
     use super::{
-        MapResolver, RenderContext, Span, VariableResolver, check_template_controls, render,
+        EvalContext, MapResolver, Span, VariableResolver, check_template_controls, render,
     };
     use crate::template::style::{Attr, Color, Style};
 
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn substitutes_variables() {
         let resolver = MapResolver::from_pairs([("branch", "main")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("on $branch", &ctx).unwrap();
         assert_eq!(text_of(&spans), "on main");
     }
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn missing_variable_renders_empty() {
         let resolver = MapResolver::default();
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("on $branch", &ctx).unwrap();
         assert_eq!(text_of(&spans), "on ");
     }
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn styled_group_applies_style() {
         let resolver = MapResolver::from_pairs([("branch", "main")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("[$branch](bold green)", &ctx).unwrap();
         assert_eq!(spans.len(), 1);
         let span = spans.first().unwrap();
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn conditional_hidden_when_all_empty() {
         let resolver = MapResolver::default();
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("on ($branch) end", &ctx).unwrap();
         assert_eq!(text_of(&spans), "on  end");
     }
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn conditional_shown_when_any_nonempty() {
         let resolver = MapResolver::from_pairs([("branch", "main")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("on ([$branch]) end", &ctx).unwrap();
         assert_eq!(text_of(&spans), "on main end");
     }
@@ -415,7 +415,7 @@ mod tests {
     fn whitespace_between_two_empty_groups_collapses() {
         // Whitespace between two empty groups collapses.
         let resolver = MapResolver::from_pairs([("branch", "main")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render(
             "[$branch](bright-black) [[(*)](218) ($ahead_behind)](cyan)",
             &ctx,
@@ -440,7 +440,7 @@ mod tests {
     fn whitespace_not_collapsed_when_only_one_neighbor_is_empty_group() {
         // Only one neighbor is an empty group, so the space renders.
         let resolver = MapResolver::from_pairs([("branch", "main")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("([$x]) $branch", &ctx).unwrap();
         assert_eq!(text_of(&spans), " main");
     }
@@ -449,7 +449,7 @@ mod tests {
     fn non_whitespace_literal_between_two_empty_groups_not_collapsed() {
         // Non-whitespace literals are never suppressed.
         let resolver = MapResolver::default();
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("([$a])-([$b])", &ctx).unwrap();
         assert_eq!(text_of(&spans), "-");
     }
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn style_spec_variable_indirection() {
         let resolver = MapResolver::from_pairs([("branch", "main"), ("style", "bold red")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("[$branch]($style)", &ctx).unwrap();
         let span = spans.first().unwrap();
         assert_eq!(span.style.fg, Some(Color::Named("red".to_owned())));
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn unstyled_group_uses_default_style() {
         let resolver = MapResolver::from_pairs([("x", "hello")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("[$x]", &ctx).unwrap();
         assert_eq!(spans.first().unwrap().text, "hello");
         assert_eq!(spans.first().unwrap().style, Style::default());
@@ -481,7 +481,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert("accent".to_owned(), Color::Rgb { r: 1, g: 2, b: 3 });
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver).with_palette(crate::template::Palette::new(map));
+        let ctx = EvalContext::new(&resolver).with_palette(crate::template::Palette::new(map));
         let spans = render("[$x](fg:accent)", &ctx).unwrap();
         assert_eq!(
             spans.first().unwrap().style.fg,
@@ -493,7 +493,7 @@ mod tests {
     fn resolves_prev_bg() {
         use crate::template::style::Color;
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver)
+        let ctx = EvalContext::new(&resolver)
             .with_prev_colors(None, Some(Color::Named("blue".to_owned())));
         let spans = render("[$x](fg:prev_bg)", &ctx).unwrap();
         assert_eq!(
@@ -515,7 +515,7 @@ mod tests {
             },
         )]));
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver)
+        let ctx = EvalContext::new(&resolver)
             .with_palette(palette)
             .with_prev_colors(None, Some(Color::Named("black".to_owned())));
         let spans = render("[X](fg:prev_bg)", &ctx).unwrap();
@@ -538,7 +538,7 @@ mod tests {
             Color::Ansi256(208),
         )]));
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver)
+        let ctx = EvalContext::new(&resolver)
             .with_palette(palette)
             .with_prev_colors(Some(Color::Palette("orange".to_owned())), None);
         let spans = render("[X](fg:prev_fg)", &ctx).unwrap();
@@ -554,7 +554,7 @@ mod tests {
             Color::Ansi256(208),
         )]));
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver)
+        let ctx = EvalContext::new(&resolver)
             .with_palette(palette)
             .with_prev_colors(None, Some(Color::Palette("orange".to_owned())));
         let spans = render("[X](fg:prev_bg)", &ctx).unwrap();
@@ -565,7 +565,7 @@ mod tests {
     fn prev_bg_unresolvable_falls_back_to_default() {
         use crate::template::style::Color;
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver)
+        let ctx = EvalContext::new(&resolver)
             .with_prev_colors(None, Some(Color::Palette("missing".to_owned())));
         let spans = render("[X](fg:prev_bg)", &ctx).unwrap();
         assert_eq!(
@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn unknown_palette_name_errors() {
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let err = render("[$x](fg:nonsuch)", &ctx).unwrap_err();
         assert!(matches!(
             err,
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn empty_string_variable_hides_conditional() {
         let resolver = EmptyResolver;
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("on ([$x]) end", &ctx).unwrap();
         assert_eq!(text_of(&spans), "on  end");
     }
@@ -614,7 +614,7 @@ mod tests {
             },
         );
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver).with_palette(crate::template::Palette::new(map));
+        let ctx = EvalContext::new(&resolver).with_palette(crate::template::Palette::new(map));
         let spans = render("[$x](fg:green)", &ctx).unwrap();
         assert_eq!(
             spans.first().unwrap().style.fg,
@@ -634,7 +634,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert("accent".to_owned(), Color::Rgb { r: 1, g: 2, b: 3 });
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver).with_palette(crate::template::Palette::new(map));
+        let ctx = EvalContext::new(&resolver).with_palette(crate::template::Palette::new(map));
         let spans = render("[$x](fg:green)", &ctx).unwrap();
         assert_eq!(
             spans.first().unwrap().style.fg,
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn explicit_palette_color_still_errors_when_absent() {
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let err = render("[$x](fg:nonsuch)", &ctx).unwrap_err();
         assert!(matches!(
             err,
@@ -658,7 +658,7 @@ mod tests {
         // ESC/OSC in data must not reach the span (escape injection).
         let evil = "\u{1b}]0;pwned\u{7}evil\u{7f}dir";
         let resolver = MapResolver::from_pairs([("path", evil)]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("$path", &ctx).unwrap();
         let rendered = text_of(&spans);
         assert!(
@@ -672,7 +672,7 @@ mod tests {
     fn control_only_variable_value_does_not_activate_conditional() {
         // Control-char-only value strips to empty, so the group stays empty.
         let resolver = MapResolver::from_pairs([("path", "\u{1b}\u{1b}\u{7f}")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("($path)", &ctx).unwrap();
         assert!(spans.is_empty(), "expected no spans, got {spans:?}");
     }
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn control_chars_in_literal_text_are_stripped_but_newline_kept() {
         let resolver = MapResolver::from_pairs([("path", "~")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("\u{1b}]0;title\u{7}[$path\r\n](bold red)>", &ctx).unwrap();
         assert_eq!(text_of(&spans), "]0;title~\n>");
         let [_, styled, ..] = spans.as_slice() else {
@@ -707,7 +707,7 @@ mod tests {
     fn unstyled_group_inside_styled_does_not_inherit_style() {
         // Inner unstyled `[$x]` gets the default style, not the outer one.
         let resolver = MapResolver::from_pairs([("x", "hi")]);
-        let ctx = RenderContext::new(&resolver);
+        let ctx = EvalContext::new(&resolver);
         let spans = render("[[$x]](bold red)", &ctx).unwrap();
         assert_eq!(spans.len(), 1_usize);
         assert_eq!(spans.first().unwrap().text, "hi");

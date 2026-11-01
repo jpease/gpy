@@ -23,6 +23,7 @@ mkdir -p "$EXPORT_DIR"
 # env_of SHELL FILE: the environment a child process of SHELL sees after it
 # sourced FILE, with a clean parent environment plus one marker.
 env_of() {
+    # shellcheck disable=SC2016 # expands in the child
     case "$1" in
         bash) env -i PATH="$PATH" HOME="$HOME" GPY_TEST_MARKER=1 bash --noprofile --norc -c 'source "$1"; env' _ "$2" ;;
         zsh) env -i PATH="$PATH" HOME="$HOME" GPY_TEST_MARKER=1 zsh -f -c 'source "$1"; env' _ "$2" ;;

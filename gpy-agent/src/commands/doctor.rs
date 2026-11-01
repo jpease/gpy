@@ -162,7 +162,7 @@ fn check_config_and_theme(
 ) -> bool {
     output::section("Configuration");
     output::step("Checking config file");
-    let active = config::schema::resolve_active_config(&config::schema::get_config_paths());
+    let active = config::location::resolve_active_config(&config::location::get_config_paths());
     let cfg = match loaded_config {
         Ok(cfg) => {
             output::ok("Valid");

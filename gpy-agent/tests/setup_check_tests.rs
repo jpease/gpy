@@ -37,7 +37,7 @@ fn complete_tree() -> TempDir {
     source
 }
 
-fn check_from(source: &Path, home: &Path, shell: &str, xdg_config_home: Option<&Path>) -> Output {
+fn check_from(source: &Path, home: &Path, shell: &str, xdg_data_home: Option<&Path>) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_gpy"));
     cmd.args(["setup", "--check", "--shell", shell, "--from"])
         .arg(source)
@@ -45,8 +45,8 @@ fn check_from(source: &Path, home: &Path, shell: &str, xdg_config_home: Option<&
         .env_clear()
         .env("HOME", home)
         .env("PATH", std::env::var_os("PATH").unwrap_or_default());
-    if let Some(dir) = xdg_config_home {
-        cmd.env("XDG_CONFIG_HOME", dir);
+    if let Some(dir) = xdg_data_home {
+        cmd.env("XDG_DATA_HOME", dir);
     }
     cmd.output().expect("failed to spawn gpy setup --check")
 }
@@ -111,9 +111,9 @@ fn check_refuses_an_unsourceable_install_path() {
     let home = TempDir::new().unwrap();
     let source = complete_tree();
     for hostile in ["quo\"te", "dol$lar", "back`tick", "back\\slash"] {
-        let config = home.path().join(hostile);
+        let data_home = home.path().join(hostile);
 
-        let output = check_from(source.path(), home.path(), "bash", Some(&config));
+        let output = check_from(source.path(), home.path(), "bash", Some(&data_home));
 
         assert!(!output.status.success(), "{hostile} must be refused");
         assert!(stderr(&output).contains("cannot be sourced"), "{hostile}");

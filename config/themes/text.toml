@@ -2,10 +2,10 @@
 # Text-oriented colors and icons grouped under `[segments.*]`
 
 [ui]
-prompt_icon = "❯"
-prompt_color = "white"
 root_prompt_icon = "!❯!"
 root_prompt_color = "red"
+# One line: segments and prompt character together
+two_line = false
 
 [ui.prompt_open]
 icon = "|"

@@ -8,7 +8,7 @@ Code references (`path:line`) are to commit `58e0984`.
 
 ## Context
 
-A theme name resolves to one file and nothing else is merged. `ThemeManager::resolve_path` (`gpy-agent/src/theme/manager.rs:626-647`) returns `<config>/themes/<name>.toml` when that joined path exists, else the winning plugin or builtin entry from `discover_available_themes` (`manager.rs:535-545`). Precedence is user > plugin > builtin (`config/discovery.rs:21-29`). Ties go to the later candidate (`discovery.rs:88-96`), and plugins are inserted sorted by id (`plugin/registry.rs:303-304`), so among plugins the lexically greatest id wins. `config::loader::load_theme_from_path` (`config/loader.rs:336-370`) reads that file, or the embedded builtin with the same stem. `theme::parse` (`theme/parse.rs:8-39`) parses the string, requires `[segments]` and `[ui]` and deserializes the whole `ThemeConfig`. On failure it re-parses the string for spans and runs #1084's per-key check on plugin tables (`parse.rs:41-52`, `theme/locate.rs`).
+A theme name resolves to one file and nothing else is merged. `ThemeManager::resolve_path` (`gpy-agent/src/theme/manager.rs:626-647`) returns `<config>/themes/<name>.toml` when that joined path exists, else the winning plugin or builtin entry from `discover_available_themes` (`manager.rs:535-545`). Precedence is user > plugin > builtin (`config/discovery.rs:21-29`). Ties go to the later candidate (`discovery.rs:88-96`), and plugins are inserted sorted by id (`plugin/registry.rs:303-304`), so among plugins the lexically greatest id wins. `theme::load::load_theme_from_path` reads that file, or the embedded builtin with the same stem. `theme::parse` (`theme/parse.rs:8-39`) parses the string, requires `[segments]` and `[ui]` and deserializes the whole `ThemeConfig`. On failure it re-parses the string for spans and runs #1084's per-key check on plugin tables (`parse.rs:41-52`, `theme/locate.rs`).
 
 So a user file named like a builtin replaces the builtin outright, and every user customisation is a fork. Ways forks are created today:
 
@@ -267,7 +267,7 @@ A depth-1 merge makes a one-key overlay drop its siblings (section 2). Without `
 
 ## Follow-up work items
 
-1. **Overlay loader.** A new `theme/overlay.rs`, used by every entry point: `ThemeManager::load_source`, `config::loader::load_theme(_from_path)` (`oneshot`), and `theme validate` by name and by path. `ThemeManager::builtin` stays full-only.
+1. **Overlay loader.** A new `theme/overlay.rs`, used by every entry point: `ThemeManager::load_source`, `theme::load::load_theme(_from_path)` (`oneshot`), and `theme validate` by name and by path. `ThemeManager::builtin` stays full-only.
    - The split of `theme::parse` into `parse_table` and `from_table`. A full theme runs `from_table` on the table already parsed and re-parses its text for spans only on failure. `from_table` returns validation failures as a structured `ValidationError`.
    - `extends`/`unset` parsing and checks, and the language-table canonicalisation.
    - Chain resolution: the "never itself" rule with a file's own name taken from its on-disk stem (exact, else ignoring case by `str::to_lowercase`, else an error for an overlay), exact stem matching, every candidate for a name, and plugin overlays resolving to the embedded builtin.

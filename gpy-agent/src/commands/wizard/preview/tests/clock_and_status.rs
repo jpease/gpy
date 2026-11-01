@@ -11,7 +11,7 @@ fn render_segment_clock_renders_fixed_demo_time() {
     );
     let theme = ThemeConfig::default();
     let facts = make_facts();
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let spans = render_segment("clock", &config, &theme, &facts, &ctx)
         .expect("clock should always render a demo");
@@ -346,7 +346,7 @@ fn preview_default_theme_pills_lead_with_one_space_when_first() {
     let facts = make_facts();
     {
         let (segment, content) = ("status", "\u{f058}");
-        let first = FormatterRenderContext::new(&config, &theme, SegmentPosition::FIRST);
+        let first = RenderContext::new(&config, &theme, SegmentPosition::FIRST);
         let first_text: String = render_segment(segment, &config, &theme, &facts, &first)
             .unwrap_or_else(|| panic!("{segment} renders with the default theme"))
             .iter()
@@ -357,7 +357,7 @@ fn preview_default_theme_pills_lead_with_one_space_when_first() {
             "{segment}: first pill must start with one space and no cap, got {first_text:?}"
         );
 
-        let middle = FormatterRenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let middle = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let middle_text: String = render_segment(segment, &config, &theme, &facts, &middle)
             .unwrap_or_else(|| panic!("{segment} renders with the default theme"))
             .iter()

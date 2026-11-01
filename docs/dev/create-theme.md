@@ -48,10 +48,12 @@ Example:
 
 ```toml
 [ui]
-prompt_icon = "❯"
 root_prompt_icon = "❯"
-prompt_color = "white"
 root_prompt_color = "red"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "white"
 
 [segments.directory]
 bg_color = "cyan"

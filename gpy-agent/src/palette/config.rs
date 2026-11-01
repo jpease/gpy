@@ -134,7 +134,7 @@ mod tests {
     use crate::formatter::encode_ansi;
     use crate::palette::manager::BUILTIN_PALETTES;
     use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES};
-    use crate::template::{Color, MapResolver, RenderContext, canonical_ansi_name, render};
+    use crate::template::{Color, EvalContext, MapResolver, canonical_ansi_name, render};
 
     #[test]
     fn parses_colors_table_and_ignores_unknown_keys() {
@@ -256,7 +256,7 @@ idx = \"42\"
                     canonical_ansi_name(&name).is_some(),
                     "'{name}' must be a named color"
                 );
-                let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
+                let ctx = EvalContext::new(&resolver).with_palette(palette.clone());
                 let spans = render(&format!("[x](fg:{name} bg:{name})"), &ctx)
                     .unwrap_or_else(|e| panic!("{palette_name}/{name}: {e}"));
                 let sgr = encode_ansi(&spans);
@@ -291,7 +291,7 @@ idx = \"42\"
             .expect("aliased keys must not fail palette loading");
 
         let resolver = MapResolver::from_pairs([("x", "x")]);
-        let ctx = RenderContext::new(&resolver).with_palette(cfg.to_template_palette());
+        let ctx = EvalContext::new(&resolver).with_palette(cfg.to_template_palette());
         let fg = |spelling: &str| {
             render(&format!("[$x](fg:{spelling})"), &ctx)
                 .unwrap()

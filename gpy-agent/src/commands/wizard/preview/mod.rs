@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::config::types::Icon;
 use crate::formatter::IsFirst;
 use crate::formatter::IsLast;
-use crate::formatter::RenderContext as FormatterRenderContext;
+use crate::formatter::RenderContext;
 use crate::formatter::SegmentPosition;
 use crate::formatter::character_resolver::CharacterResolver;
 use crate::formatter::directory_resolver::DirectoryResolver;
@@ -18,8 +18,8 @@ use crate::formatter::separator::Glyphs;
 use crate::formatter::status_resolver::{StatusResolver, status_symbol};
 use crate::plugin::BuiltinSegment;
 use crate::template::{
-    Attr, Color as TemplateColor, RenderContext as TemplateRenderContext, Span as TemplateSpan,
-    SpanKind, Style as TemplateStyle, VariableResolver, canonical_ansi_name,
+    Attr, Color as TemplateColor, EvalContext, Span as TemplateSpan, SpanKind,
+    Style as TemplateStyle, VariableResolver, canonical_ansi_name,
 };
 use crate::theme::{GitState, ThemeConfig};
 use ratatui::style::{Color as RatatuiColor, Modifier, Style as RatatuiStyle};
@@ -191,7 +191,7 @@ fn render_chain(
         let incoming_bg = prev_background.clone();
         let is_first = chain.is_empty();
         let position = SegmentPosition::new(IsLast::No, IsFirst::from(is_first));
-        let ctx = FormatterRenderContext::new(config, theme, position)
+        let ctx = RenderContext::new(config, theme, position)
             .with_palette(palette.clone())
             .with_prev_colors(incoming_fg.clone(), incoming_bg.clone());
 
@@ -217,7 +217,7 @@ fn render_chain(
     // just the last entry is equivalent to re-rendering the chain.
     if let Some(last_entry) = chain.last_mut() {
         let position = SegmentPosition::new(IsLast::Yes, IsFirst::from(last_entry.is_first));
-        let ctx = FormatterRenderContext::new(config, theme, position)
+        let ctx = RenderContext::new(config, theme, position)
             .with_palette(palette.clone())
             .with_prev_colors(
                 last_entry.incoming_fg.clone(),
@@ -241,7 +241,7 @@ fn render_chain(
             theme,
             SegmentPosition::LAST,
         );
-        let ctx = FormatterRenderContext::new(config, theme, SegmentPosition::LAST)
+        let ctx = RenderContext::new(config, theme, SegmentPosition::LAST)
             .with_palette(palette.clone())
             .with_prev_colors(prev_foreground, prev_background);
         if let Ok(spans) = crate::template::render(format, &template_ctx(&resolver, &ctx)) {
@@ -258,7 +258,7 @@ fn render_git_span(
     config: &Config,
     theme: &ThemeConfig,
     facts: &PreviewFacts,
-    ctx: &FormatterRenderContext<'_>,
+    ctx: &RenderContext<'_>,
 ) -> Option<Vec<TemplateSpan>> {
     let status = facts.repository_status.as_ref()?;
     let format = theme.segments.git.format.as_deref()?;
@@ -270,7 +270,7 @@ fn render_git_span(
 fn render_directory_span(
     config: &Config,
     theme: &ThemeConfig,
-    ctx: &FormatterRenderContext<'_>,
+    ctx: &RenderContext<'_>,
 ) -> Option<Vec<TemplateSpan>> {
     let format = theme.segments.directory.format.as_deref()?;
     let resolver = DirectoryResolver::new(
@@ -290,7 +290,7 @@ fn render_language_spans(
     config: &Config,
     theme: &ThemeConfig,
     facts: &PreviewFacts,
-    ctx: &FormatterRenderContext<'_>,
+    ctx: &RenderContext<'_>,
 ) -> Option<Vec<TemplateSpan>> {
     let format = theme.segments.language.format.as_deref()?;
     let selected = select_languages(config, theme, &facts.languages);
@@ -325,7 +325,7 @@ fn render_segment(
     config: &Config,
     theme: &ThemeConfig,
     facts: &PreviewFacts,
-    ctx: &FormatterRenderContext<'_>,
+    ctx: &RenderContext<'_>,
 ) -> Option<Vec<TemplateSpan>> {
     // Plugin segments render shell-side; not previewed.
     let Ok(builtin) = BuiltinSegment::try_from(segment) else {
@@ -504,9 +504,9 @@ fn clock_cap_span(
 /// Mirrors `prompt`'s `render_via_template` context plumbing.
 fn template_ctx<'a>(
     resolver: &'a dyn VariableResolver,
-    ctx: &FormatterRenderContext<'a>,
-) -> TemplateRenderContext<'a> {
-    TemplateRenderContext::new(resolver)
+    ctx: &RenderContext<'a>,
+) -> EvalContext<'a> {
+    EvalContext::new(resolver)
         .with_prev_colors(ctx.prev_fg.clone(), ctx.prev_bg.clone())
         .with_palette(ctx.palette.clone())
 }

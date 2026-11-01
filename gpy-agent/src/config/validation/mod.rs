@@ -424,7 +424,7 @@ mod tests {
                     template: "[$duration](fg:nonsuch)".to_owned(),
                     source: crate::template::render(
                         "[$duration](fg:nonsuch)",
-                        &crate::template::RenderContext::new(&NoopResolver)
+                        &crate::template::EvalContext::new(&NoopResolver)
                             .with_palette(crate::template::Palette::default()),
                     )
                     .unwrap_err(),

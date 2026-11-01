@@ -253,7 +253,7 @@ activation_accent = "#123456"
         "config must contain palette = activation-palette: {persisted_toml}"
     );
 
-    // 3. Explicit palette = "default": forced activation preserves explicit value and rejects
+    // 3. Explicit palette = "default": --force overwrites it with the recommended palette
     let explicit_config = "[ui]\ntheme = \"default\"\npalette = \"default\"\n";
     fs::write(env.config_path(), explicit_config).expect("Failed to write explicit config");
     let res_explicit = env
@@ -262,14 +262,18 @@ activation_accent = "#123456"
             &env_overrides,
         )
         .expect("Failed to run forced theme use with explicit palette");
-    assert_ne!(
-        res_explicit.exit_code, 0_i32,
-        "forced activation must reject when explicit default palette lacks accent"
+    res_explicit.assert_success("forced theme use over an explicit palette");
+    assert!(
+        res_explicit
+            .stdout
+            .contains("ui.palette: default → activation-palette"),
+        "change line must show the overwritten palette: {}",
+        res_explicit.stdout
     );
-    assert_eq!(
-        fs::read_to_string(env.config_path()).expect("read config"),
-        explicit_config,
-        "config must remain unchanged when forced activation fails due to explicit palette"
+    let overwritten = fs::read_to_string(env.config_path()).expect("read config");
+    assert!(
+        overwritten.contains("palette = \"activation-palette\""),
+        "forced activation must overwrite the explicit palette: {overwritten}"
     );
 }
 
@@ -309,31 +313,26 @@ fn test_theme_use_force_replaces_palette_from_outgoing_recommendation() {
         "palette must be replaced: {persisted}"
     );
     assert!(
-        res.stdout.contains("palette (nord)"),
-        "applied summary must name palette: {}",
+        res.stdout.contains("ui.palette:") && res.stdout.contains("→ nord"),
+        "change line must name palette: {}",
         res.stdout
     );
 
-    // Hand-set palette differing from the outgoing recommendation is preserved and reported.
+    // A hand-set palette is overwritten too, and the change line shows both values.
     fs::write(env.config_path(), "[ui]\npalette = \"nord\"\n").expect("write config");
-    let res_kept = env
+    let res_forced = env
         .run_gpy_with_env(&["theme", "use", "starship", "--force"], &env_overrides)
         .expect("Failed to run forced theme use starship");
-    res_kept.assert_success("forced theme use starship");
-    let kept = fs::read_to_string(env.config_path()).expect("read config");
+    res_forced.assert_success("forced theme use starship");
+    let forced = fs::read_to_string(env.config_path()).expect("read config");
     assert!(
-        kept.contains("palette = \"nord\""),
-        "user palette must be kept: {kept}"
+        forced.contains("palette = \"starship\""),
+        "palette must be overwritten: {forced}"
     );
-    let preserved_line = res_kept
-        .stdout
-        .lines()
-        .find(|line| line.contains("Preserved your explicit settings"))
-        .unwrap_or_default();
     assert!(
-        preserved_line.contains("palette (nord)"),
-        "preserved summary must name palette: {}",
-        res_kept.stdout
+        res_forced.stdout.contains("ui.palette: nord → starship"),
+        "change line must show old and new palette: {}",
+        res_forced.stdout
     );
 }
 
@@ -372,8 +371,8 @@ fn test_theme_use_force_applies_palette_after_prior_cli_writes() {
             "palette must be applied after {prior:?}: {persisted}"
         );
         assert!(
-            res.stdout.contains("palette (starship)"),
-            "applied summary after {prior:?}: {}",
+            res.stdout.contains("ui.palette:") && res.stdout.contains("→ starship"),
+            "change line after {prior:?}: {}",
             res.stdout
         );
         assert!(

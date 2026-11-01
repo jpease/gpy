@@ -44,7 +44,7 @@ fn render_segment_git_uses_state_precedence() {
 
     assert_eq!(GitState::from_status(&status), GitState::Conflicts);
 
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("git", &config, &theme, &facts, &ctx)
         .expect("git segment should render when format + status are present");
     assert!(
@@ -79,7 +79,7 @@ fn render_segment_language_uses_selected_display_symbol() {
         ..make_facts()
     };
 
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx)
         .expect("language segment should render when format + a language are present");
 
@@ -110,7 +110,7 @@ fn render_segment_language_draws_every_selected_language() {
         ..make_facts()
     };
 
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx)
         .expect("language segment should render");
     let text: String = spans.iter().map(|s| s.text.as_str()).collect();
@@ -142,7 +142,7 @@ fn render_segment_language_drops_versionless_language_when_show_versions_on() {
         ..make_facts()
     };
 
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let result = render_segment("language", &config, &theme, &facts, &ctx);
 
     assert!(
@@ -169,7 +169,7 @@ fn render_segment_language_keeps_versionless_language_when_show_versions_off() {
         ..make_facts()
     };
 
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx);
 
     assert!(
@@ -197,7 +197,7 @@ fn render_segment_language_hides_version_text_when_show_versions_off() {
         ..make_facts()
     };
 
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx)
         .expect("a versioned language with show_versions=false should still render");
 
@@ -220,7 +220,7 @@ fn render_segment_returns_none_when_no_format_configured() {
     assert!(theme.segments.directory.format.is_none());
 
     let facts = make_facts();
-    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
 
     let result = render_segment("directory", &config, &theme, &facts, &ctx);
 

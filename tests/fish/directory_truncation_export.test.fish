@@ -34,6 +34,10 @@ if test $status -ne 0
     exit 1
 end
 
+# A stale GPY_UI_DIRECTORY_* in the caller's environment (an older export's
+# leftovers) is not the export's doing; start without them.
+set -e GPY_UI_DIRECTORY_MAX_LENGTH GPY_UI_DIRECTORY_DISPLAY
+
 source fish/core/init.fish
 eval $export_output
 

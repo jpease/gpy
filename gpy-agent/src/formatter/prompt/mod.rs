@@ -115,9 +115,9 @@ fn render_via_template(
     dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
-    use crate::template::{RenderContext as TemplateContext, render};
+    use crate::template::{EvalContext, render};
 
-    let template_ctx = TemplateContext::new(resolver)
+    let template_ctx = EvalContext::new(resolver)
         .with_prev_colors(ctx.prev_fg.clone(), ctx.prev_bg.clone())
         .with_palette(ctx.palette.clone());
     let spans = render(format, &template_ctx)?;

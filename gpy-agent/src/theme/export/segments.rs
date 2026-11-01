@@ -2,11 +2,10 @@
 
 use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
-use crate::config::{
-    Config, DEFAULT_UI_PROMPT_COLOR, DEFAULT_UI_ROOT_PROMPT_COLOR, DelimiterConfig,
-};
+use crate::config::{Config, DEFAULT_UI_ROOT_PROMPT_COLOR, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
 use crate::shell::Shell;
+use crate::template::sanitize_control_chars;
 use crate::theme::model::{GitState, ThemeConfig};
 
 /// Render a boolean setting as the `1`/`0` the shell integration expects.
@@ -82,8 +81,11 @@ pub(super) fn append_global_assignments(
 }
 
 /// Prompt and root-prompt icons/colors plus the two-line layout flag.
-/// `__prompt_color`/`__root_prompt_color` fall back to
-/// [`DEFAULT_UI_PROMPT_COLOR`]/[`DEFAULT_UI_ROOT_PROMPT_COLOR`].
+/// `__icon_prompt`/`__prompt_color` follow `segments.character`'s
+/// `success_symbol`/`success_color` unless the deprecated `ui.prompt_icon`/
+/// `ui.prompt_color` is set; the symbol is stripped of control characters
+/// (`❯` if nothing is left) because the shells print it raw. `__root_prompt_color`
+/// falls back to [`DEFAULT_UI_ROOT_PROMPT_COLOR`].
 pub(super) fn append_prompt_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -91,17 +93,29 @@ pub(super) fn append_prompt_assignments(
 ) {
     let shell = colors.shell;
 
+    let character = &theme.segments.character;
+    let prompt_icon = theme.ui.prompt_icon.as_ref().map_or_else(
+        || {
+            let clean = sanitize_control_chars(&character.success_symbol);
+            if clean.is_empty() {
+                "❯".to_owned()
+            } else {
+                clean.into_owned()
+            }
+        },
+        |icon| icon.as_str().to_owned(),
+    );
     append_shell_assignment(
         output,
         shell,
-        ShellAssignment::local("__icon_prompt", theme.ui.prompt_icon.as_str()),
+        ShellAssignment::local("__icon_prompt", prompt_icon),
     );
 
     let prompt_color = theme
         .ui
         .prompt_color
         .as_deref()
-        .unwrap_or(DEFAULT_UI_PROMPT_COLOR);
+        .unwrap_or(&character.success_color);
     append_shell_assignment(
         output,
         shell,

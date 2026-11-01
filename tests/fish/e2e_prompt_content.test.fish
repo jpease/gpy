@@ -308,7 +308,7 @@ function test_directory_content --argument-names repo
     end
 
     write_config '[ui.directory]' 'display = "full"' 'max_length = 6'
-    if wait_directory $deep "...b/c"
+    if wait_directory $deep "…a/b/c"
         pass "directory: max_length = 6 keeps an ellipsis plus the tail"
     else
         fail "directory: max_length = 6 keeps an ellipsis plus the tail" "got '$__render_last'"

@@ -20,3 +20,6 @@ mod export_names_tests;
 
 #[cfg(test)]
 mod cfg_mirror_tests;
+
+#[cfg(test)]
+mod prompt_tests;

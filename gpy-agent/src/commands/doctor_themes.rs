@@ -1,7 +1,6 @@
 //! Doctor check for user theme files that shadow a builtin theme.
 
 use crate::commands::output;
-use crate::config;
 use crate::theme::user_copy;
 use std::path::Path;
 
@@ -53,7 +52,7 @@ fn check_override(name: &str, path: &Path, active_theme: Option<&str>) {
     }
     // A full copy's load error already carries `user_copy::recovery_hint`;
     // an overlay's is the chain error.
-    match config::loader::load_theme_file(path) {
+    match crate::theme::load::load_theme_file(path) {
         Ok(loaded) if loaded.chain.is_overlay() => {
             output::ok(format_args!("Loaded successfully ({})", loaded.chain));
         }

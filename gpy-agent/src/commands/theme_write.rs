@@ -12,7 +12,7 @@ use super::output;
 use super::theme_rebase::{header_only, message_of};
 use super::utils::read_config;
 use crate::config::discovery::{Source, validate_config_name};
-use crate::config::loader::load_named_theme;
+use crate::theme::load::load_named_theme;
 use crate::theme::user_copy::{self, builtin_content};
 use crate::theme::{ChainLink, LoadedTheme, ThemeChain, ThemeConfig, normalised_table, overlay};
 use crate::{Error, Result};

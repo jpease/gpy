@@ -5,7 +5,7 @@ use crate::config::DirectorySettings;
 use crate::config::types::DirectoryDisplay;
 use crate::formatter::chrome::SegmentChrome;
 use crate::formatter::separator::Glyphs;
-use crate::formatter::{Format, SegmentPosition};
+use crate::formatter::{ELLIPSIS, Format, SegmentPosition};
 use crate::ipc::Response;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
@@ -123,9 +123,6 @@ impl<'a> DirectoryResolver<'a> {
 
     /// Compute the display path: contract $HOME → ~, apply display mode, truncate.
     fn display_path(&self) -> String {
-        const ELLIPSIS: &str = "...";
-        const ELLIPSIS_LEN: usize = 3;
-
         let home_contracted = contract_home(&self.cwd, self.env.home.as_deref());
 
         let base = repo_anchored_for(self.env.repo.as_ref(), &self.config.ui.directory)
@@ -157,13 +154,14 @@ impl<'a> DirectoryResolver<'a> {
             return base;
         }
 
-        // A cap ≤ the ellipsis width can't fit "..." plus content: show the raw tail.
-        if max <= ELLIPSIS_LEN {
+        // A cap of 1 can't fit the ellipsis plus content: show the raw last character.
+        if max <= 1 {
             let skip = char_count.saturating_sub(max);
             return base.chars().skip(skip).collect();
         }
 
-        let tail_len = max.saturating_sub(ELLIPSIS_LEN);
+        // The ellipsis is one character of the cap.
+        let tail_len = max.saturating_sub(1);
         let skip = char_count.saturating_sub(tail_len);
         let tail: String = base.chars().skip(skip).collect();
         format!("{ELLIPSIS}{tail}")

@@ -118,16 +118,16 @@ fn unknown_variable_is_none() {
     assert_eq!(resolver.resolve("nonsuch"), None);
 }
 
-/// Caps ≤ `ELLIPSIS_LEN` (3) show the raw tail; larger caps get `"..."` + tail.
+/// A cap of 1 shows the last character; a cap `n ≥ 2` shows `…` plus the last `n − 1`.
 #[test]
 fn max_length_boundary_ascii_1_through_6() {
     let cases: [(usize, &str); 6] = [
         (1, "h"),
-        (2, "gh"),
-        (3, "fgh"),
-        (4, "...h"),
-        (5, "...gh"),
-        (6, "...fgh"),
+        (2, "…h"),
+        (3, "…gh"),
+        (4, "…fgh"),
+        (5, "…efgh"),
+        (6, "…defgh"),
     ];
     for (max, expected) in cases {
         let mut config = Config::default();
@@ -151,16 +151,16 @@ fn max_length_boundary_ascii_1_through_6() {
     }
 }
 
-/// CJK basename: the small-cap policy counts `char`s, not bytes.
+/// CJK basename: the cap counts `char`s, not bytes.
 #[test]
 fn max_length_boundary_unicode_1_through_6() {
     let cases: [(usize, &str); 6] = [
         (1, "九"),
-        (2, "八九"),
-        (3, "七八九"),
-        (4, "...九"),
-        (5, "...八九"),
-        (6, "...七八九"),
+        (2, "…九"),
+        (3, "…八九"),
+        (4, "…七八九"),
+        (5, "…六七八九"),
+        (6, "…五六七八九"),
     ];
     for (max, expected) in cases {
         let mut config = Config::default();
@@ -200,10 +200,10 @@ fn unicode_cjk_path_truncated_correctly() {
         &theme,
         SegmentPosition::new(IsLast::No, IsFirst::No),
     );
-    // Basename "一二三四五六七八九" (9 chars) → "...七八九"
+    // Basename "一二三四五六七八九" (9 chars) → "…五六七八九"
     let path = resolver.resolve("path").expect("path present");
     assert_eq!(path.chars().count(), 6, "got {path:?}");
-    assert!(path.starts_with("..."), "got {path:?}");
+    assert!(path.starts_with('…'), "got {path:?}");
 }
 
 #[test]

@@ -21,7 +21,7 @@ mod env_guard;
 use cli_harness::{CliCommandResult, CliTestEnv};
 use env_guard::EnvGuard;
 use gpy_agent::config::defaults::{DEFAULT_THEME_CONTENT, STARSHIP_THEME_CONTENT};
-use gpy_agent::config::loader::load_theme_file;
+use gpy_agent::theme::load::load_theme_file;
 use gpy_agent::theme::normalised_table;
 use serial_test::serial;
 use std::fs;

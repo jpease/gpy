@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{ValidationError, ValidationErrorKind};
-use crate::template::{Palette, RenderContext, VariableResolver, check_template_controls, render};
+use crate::template::{EvalContext, Palette, VariableResolver, check_template_controls, render};
 use crate::theme::ThemeConfig;
 
 /// Resolver that returns a non-empty placeholder for every variable, so all
@@ -90,7 +90,7 @@ fn validate_style_values(
     errors: &mut Vec<ValidationError>,
 ) {
     let resolver = PlaceholderResolver;
-    let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
+    let ctx = EvalContext::new(&resolver).with_palette(palette.clone());
     let mut entries: Vec<(&String, &String)> = styles.iter().collect();
     entries.sort_unstable();
     for (key, value) in entries {
@@ -121,7 +121,7 @@ fn validate_one(
     palette: &Palette,
 ) -> Result<(), ValidationError> {
     let resolver = PlaceholderResolver;
-    let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
+    let ctx = EvalContext::new(&resolver).with_palette(palette.clone());
     check_template_controls(format)
         .and_then(|()| render(format, &ctx).map(drop))
         .map_err(|error| ValidationError {

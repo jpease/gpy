@@ -8,13 +8,10 @@ use super::utils::{
 use super::validation::{self, Failure, FailureKind, ValidatableResource, ValidationReport};
 use crate::config::discovery::validate_config_name;
 use crate::config::loader::save_config;
-use crate::config::recommended_layout::{
-    PendingLayout, pending_layout, resolve_forced_detection, resolve_forced_palette,
-    user_set_layout_fields,
-};
+use crate::config::recommended_layout::{PendingLayout, pending_layout};
 use crate::{
     Error, Result, config,
-    theme::{LoadedTheme, RecommendedUi, ThemeConfig, ThemeManager, user_copy as theme_user_copy},
+    theme::{LoadedTheme, ThemeConfig, ThemeManager, user_copy as theme_user_copy},
 };
 use std::path::Path;
 
@@ -40,7 +37,7 @@ fn overlay_note(theme: &config::discovery::Discovered) -> Option<String> {
     if !theme_user_copy::is_overlay_file(path) {
         return None;
     }
-    Some(match config::loader::load_theme_file(path) {
+    Some(match crate::theme::load::load_theme_file(path) {
         Ok(loaded) => loaded.chain.iter().nth(1).map_or_else(
             || "overlay".to_owned(),
             |base| format!("extends {} {}", base.source, base.name),
@@ -51,69 +48,35 @@ fn overlay_note(theme: &config::discovery::Discovered) -> Option<String> {
 
 /// Switch to a different theme.
 ///
-/// With `force`, applies the theme's `[ui.recommended]` settings except fields
-/// the user set explicitly; without it, prints a hint listing what would change.
+/// With `force`, applies every `[ui.recommended]` setting the theme gives and
+/// prints each change as `old → new`; without it, prints a hint listing what
+/// would change.
 ///
 /// # Errors
 /// Returns an error if the theme doesn't exist or config cannot be saved.
 pub fn use_theme(name: &str, force: bool) -> Result<()> {
     validate_config_name("theme", name)?;
-    let loaded = config::loader::load_named_theme(name)?;
+    let loaded = crate::theme::load::load_named_theme(name)?;
     let theme = &loaded.theme;
 
     let path = active_config_path()?;
     let original = load_active_config(&path)?;
     let mut config = original.clone();
 
-    // An on-disk value equal to the outgoing theme's recommendation was written
-    // by a prior `--force`, not by hand, so it stays overwritable.
-    let outgoing_recommended = ThemeManager::new(config.ui.theme.as_str())
-        .ok()
-        .and_then(|outgoing| outgoing.get().ui.recommended.clone());
-
     config.ui.theme = config::types::ThemeName::try_from(name.to_owned()).map_err(Error::config)?;
 
-    let pending = pending_layout(theme.ui.recommended.as_ref(), &config.ui);
-    // Detection mode lives in config.language, outside PendingLayout.
-    let recommended_detection = theme
-        .ui
-        .recommended
-        .as_ref()
-        .and_then(|rec| rec.language_detection)
-        .filter(|mode| *mode != config.language.detection_mode);
-    let recommended_palette = theme
-        .ui
-        .recommended
-        .as_ref()
-        .and_then(|rec| rec.palette.clone());
+    let pending = pending_layout(theme.ui.recommended.as_ref(), &config);
 
     if force {
-        apply_forced_switch(
-            name,
-            &original,
-            &mut config,
-            &path,
-            &loaded,
-            pending,
-            recommended_detection,
-            recommended_palette,
-            outgoing_recommended.as_ref(),
-        )?;
+        apply_forced_switch(name, &original, &mut config, &path, &loaded, &pending)?;
     } else {
         validate_prospective_activation(&loaded, config.ui.palette.as_str())?;
         save_config(&path, &original, &config, &[])?;
 
         output::plain(format_args!("Switched to '{name}' theme"));
-        let detection_hint = recommended_detection.map(|_| "language detection".to_owned());
-        let parts: Vec<String> = pending
-            .field_names()
-            .into_iter()
-            .chain(detection_hint)
-            .collect();
-        if !parts.is_empty() {
+        if let Some(parts) = pending.field_names() {
             output::plain(format_args!(
-                "Re-run with --force to apply recommended {}",
-                parts.join(", ")
+                "Re-run with --force to apply recommended {parts}"
             ));
         }
     }
@@ -126,51 +89,29 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the updated config cannot be saved.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "independent inputs; a params struct would only rename them"
-)]
 fn apply_forced_switch(
     name: &str,
     original: &config::Config,
     config: &mut config::Config,
     path: &Path,
     loaded: &LoadedTheme,
-    pending: PendingLayout,
-    recommended_detection: Option<config::types::DetectionMode>,
-    recommended_palette: Option<config::types::PaletteName>,
-    outgoing_recommended: Option<&RecommendedUi>,
+    pending: &PendingLayout,
 ) -> Result<()> {
-    // Provenance comes from the raw TOML on disk, refined by the outgoing
-    // theme's recommendation.
-    let user_set = user_set_layout_fields(path);
-    let (applied, preserved) =
-        pending.partition_preserving(&config.ui, &user_set, outgoing_recommended);
-    applied.apply_to(&mut config.ui);
-    let (detection_applied, detection_preserved) = resolve_forced_detection(
-        config,
-        recommended_detection,
-        &user_set,
-        outgoing_recommended,
-    );
-    let (palette_applied, palette_preserved) =
-        resolve_forced_palette(config, recommended_palette, &user_set, outgoing_recommended);
+    let changes = pending.changes(config);
+    pending.apply_to(config);
     validate_prospective_activation(loaded, config.ui.palette.as_str())?;
     save_config(path, original, config, &[])?;
 
     output::plain(format_args!("Switched to '{name}' theme"));
-    print_summary(
-        "Applied recommended settings",
-        join_summary(applied.summary(), detection_applied),
-        palette_applied,
-    );
-    print_summary(
-        "Preserved your explicit settings",
-        join_summary(preserved.summary(), detection_preserved),
-        palette_preserved,
-    );
+    for change in &changes {
+        output::detail(format_args!(
+            "{}: {} → {}",
+            change.key, change.old, change.new
+        ));
+    }
     Ok(())
 }
+
 /// Validate prospective theme activation against the prospective active
 /// palette. A template error in an overlay names the file and line that set it.
 fn validate_prospective_activation(loaded: &LoadedTheme, palette_name: &str) -> Result<()> {
@@ -179,21 +120,6 @@ fn validate_prospective_activation(loaded: &LoadedTheme, palette_name: &str) -> 
     crate::config::validation::templates::validate_segment_templates(&loaded.theme, &palette)
         .map_err(|e| loaded.template_error(e))?;
     Ok(())
-}
-
-fn join_summary(base: Option<String>, extra: Option<String>) -> Option<String> {
-    let parts: Vec<String> = base.into_iter().chain(extra).collect();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("; "))
-    }
-}
-
-fn print_summary(prefix: &str, base: Option<String>, extra: Option<String>) {
-    if let Some(message) = join_summary(base, extra) {
-        output::plain(format_args!("{prefix}: {message}"));
-    }
 }
 
 /// Show current theme name.
@@ -337,12 +263,13 @@ fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
         .map_err(|error| Failure::new(FailureKind::UnknownName, error))?;
     // Load first: the loader gives the more specific parse errors; only a
     // name that loaded reaches discovery.
-    let loaded = config::loader::load_named_theme(theme_name).map_err(|error| {
-        match discovered_theme(theme_name) {
-            Some(theme) => classify_load_failure(error, theme.path.as_deref()),
-            None => Failure::new(FailureKind::UnknownName, error),
-        }
-    })?;
+    let loaded =
+        crate::theme::load::load_named_theme(theme_name).map_err(
+            |error| match discovered_theme(theme_name) {
+                Some(theme) => classify_load_failure(error, theme.path.as_deref()),
+                None => Failure::new(FailureKind::UnknownName, error),
+            },
+        )?;
     ensure_theme_discovered(theme_name)?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
@@ -355,7 +282,7 @@ fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
 }
 
 fn validate_theme_file(path: &Path) -> std::result::Result<(), Failure> {
-    let loaded = config::loader::load_theme_file(path)
+    let loaded = crate::theme::load::load_theme_file(path)
         .map_err(|error| classify_load_failure(error, Some(path)))?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
