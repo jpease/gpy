@@ -36,12 +36,12 @@ fn create_test_theme_toml(dir: &Path, theme_name: &str, content: &str) -> PathBu
     theme_path
 }
 
-// Minimal valid theme TOML
 const MINIMAL_THEME: &str = r##"
 [ui]
-prompt_icon = "❯"
 root_prompt_icon = "#"
 
+[segments.character]
+success_symbol = "❯"
 [segments.clock]
 bg_color = "blue"
 text_color = "white"
@@ -72,14 +72,14 @@ bg_color = "magenta"
 text_color = "white"
 "##;
 
-// Theme with custom colors for testing
 const CUSTOM_THEME: &str = r#"
 [ui]
-prompt_icon = "→"
 root_prompt_icon = "⚡"
-prompt_color = "cyan"
 root_prompt_color = "red"
 
+[segments.character]
+success_symbol = "→"
+success_color = "cyan"
 [segments.clock]
 bg_color = "magenta"
 text_color = "yellow"
@@ -117,9 +117,10 @@ text_color = "white"
 
 const PLUGIN_SEGMENT_THEME: &str = r##"
 [ui]
-prompt_icon = "→"
 root_prompt_icon = "⚡"
 
+[segments.character]
+success_symbol = "→"
 [segments.clock]
 bg_color = "black"
 text_color = "white"
@@ -194,7 +195,7 @@ fn test_theme_manager_loads_valid_theme() {
     let manager = ThemeManager::new("test").unwrap();
     let theme = manager.get();
 
-    assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+    assert_eq!(theme.segments.character.success_symbol, "❯");
     assert_eq!(theme.ui.root_prompt_icon, "#");
     assert_eq!(theme.segments.clock.bg_color, "blue");
     assert_eq!(theme.segments.directory.bg_color, "cyan");
@@ -214,9 +215,9 @@ fn test_theme_manager_loads_custom_theme() {
     let manager = ThemeManager::new("custom").unwrap();
     let theme = manager.get();
 
-    assert_eq!(theme.ui.prompt_icon.as_deref(), Some("→"));
+    assert_eq!(theme.segments.character.success_symbol, "→");
     assert_eq!(theme.ui.root_prompt_icon, "⚡");
-    assert_eq!(theme.ui.prompt_color.as_deref(), Some("cyan"));
+    assert_eq!(theme.segments.character.success_color, "cyan");
     assert_eq!(theme.ui.root_prompt_color.as_deref(), Some("red"));
     assert_eq!(theme.segments.clock.bg_color, "magenta");
     assert_eq!(theme.segments.clock.text_color, "yellow");
@@ -273,8 +274,6 @@ fn test_theme_manager_export_fish_format() {
     assert!(fish_output.contains("set -g __enabled_segments clock directory git"));
     assert!(fish_output.starts_with("set -g __gpy_export_version \"1\"\n"));
     assert!(fish_output.contains("set -g __gpy_cfg_agent_enabled \"1\""));
-    assert!(fish_output.contains("set -g __gpy_cfg_language_enabled \"0\""));
-    assert!(fish_output.contains("set -g __gpy_cfg_git_enabled \"1\""));
 }
 
 #[test]
@@ -292,7 +291,7 @@ fn test_theme_manager_reload() {
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+        assert_eq!(theme.segments.character.success_symbol, "❯");
         assert_eq!(theme.segments.clock.bg_color, "blue");
     }
 
@@ -304,7 +303,7 @@ fn test_theme_manager_reload() {
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("→"));
+        assert_eq!(theme.segments.character.success_symbol, "→");
         assert_eq!(theme.segments.clock.bg_color, "magenta");
     }
 }
@@ -320,8 +319,7 @@ fn test_disabled_git_removed_from_segment_list() {
 
     let manager = ThemeManager::new("disabled_git").unwrap();
     let mut config = gpy_agent::config::Config::default();
-    config.git.enabled = false;
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned()];
 
     let fish_output = manager.export(
         Shell::Fish,
@@ -331,7 +329,6 @@ fn test_disabled_git_removed_from_segment_list() {
 
     assert!(!fish_output.contains("clock directory git"));
     assert!(fish_output.contains("set -g __enabled_segments clock directory"));
-    assert!(fish_output.contains("set -g __gpy_cfg_git_enabled \"0\""));
 }
 
 #[test]
@@ -349,7 +346,7 @@ fn test_theme_manager_reload_keeps_old_on_error() {
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+        assert_eq!(theme.segments.character.success_symbol, "❯");
     }
 
     // Write invalid TOML
@@ -361,7 +358,7 @@ fn test_theme_manager_reload_keeps_old_on_error() {
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+        assert_eq!(theme.segments.character.success_symbol, "❯");
     }
 }
 
@@ -384,7 +381,7 @@ fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() 
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+        assert_eq!(theme.segments.character.success_symbol, "❯");
     }
 
     // Delete theme file
@@ -400,7 +397,7 @@ fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() 
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+        assert_eq!(theme.segments.character.success_symbol, "❯");
     }
 }
 
@@ -452,7 +449,10 @@ fn test_theme_manager_get_returns_arc_clone() {
     let theme2 = manager.get();
 
     // Both should have same content
-    assert_eq!(theme1.ui.prompt_icon, theme2.ui.prompt_icon);
+    assert_eq!(
+        theme1.segments.character.success_symbol,
+        theme2.segments.character.success_symbol
+    );
     assert_eq!(
         theme1.segments.clock.bg_color,
         theme2.segments.clock.bg_color
@@ -475,7 +475,7 @@ fn test_theme_manager_respects_xdg_config_home() {
     let manager = ThemeManager::new("xdg_test").unwrap();
     let theme = manager.get();
 
-    assert_eq!(theme.ui.prompt_icon.as_deref(), Some("→"));
+    assert_eq!(theme.segments.character.success_symbol, "→");
     assert_eq!(theme.segments.clock.bg_color, "magenta");
 }
 
@@ -500,7 +500,7 @@ fn test_theme_manager_loads_from_non_utf8_xdg_config_home() {
         xdg_path.join("gpy").join("themes")
     );
     let manager = ThemeManager::new("odd_bytes").unwrap();
-    assert_eq!(manager.get().ui.prompt_icon.as_deref(), Some("→"));
+    assert_eq!(manager.get().segments.character.success_symbol, "→");
 }
 
 #[test]
@@ -635,7 +635,7 @@ fn test_theme_hot_reload_triggers_on_file_change() {
 
     {
         let theme = manager.get();
-        assert_eq!(theme.ui.prompt_icon.as_deref(), Some("❯"));
+        assert_eq!(theme.segments.character.success_symbol, "❯");
         assert_eq!(theme.segments.clock.bg_color, "blue");
     }
 
@@ -649,7 +649,7 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     let reloaded = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
         fs::write(&theme_path, CUSTOM_THEME).unwrap();
         let theme = manager.get();
-        theme.ui.prompt_icon.as_deref() == Some("→") && theme.segments.clock.bg_color == "magenta"
+        theme.segments.character.success_symbol == "→" && theme.segments.clock.bg_color == "magenta"
     });
     assert!(reloaded, "theme should reload within timeout");
 
@@ -705,8 +705,10 @@ fn test_theme_change_sends_reload() {
     // Modify theme file
     let updated_theme = r#"
 [ui]
-prompt_icon = ">"
-prompt_color = "cyan"
+
+[segments.character]
+success_symbol = ">"
+success_color = "cyan"
 
 [segments.clock]
 bg_color = "red"
@@ -738,7 +740,7 @@ fail_text_color = "white"
         let signal_seen = doorbell.count() > initial_count;
         let theme = manager.get();
         signal_seen
-            && theme.ui.prompt_icon.as_deref() == Some(">")
+            && theme.segments.character.success_symbol == ">"
             && theme.segments.clock.bg_color == "red"
     });
     let final_count = doorbell.count();
@@ -754,7 +756,7 @@ fail_text_color = "white"
     );
 
     let theme = manager.get();
-    assert_eq!(theme.ui.prompt_icon.as_deref(), Some(">"));
+    assert_eq!(theme.segments.character.success_symbol, ">");
     assert_eq!(theme.segments.clock.bg_color, "red");
 
     // Stop watching
@@ -814,7 +816,6 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
         &config,
         &gpy_agent::template::Palette::default(),
     );
-    assert!(zsh_output.contains("typeset -g __gpy_cfg_git_enabled=\"0\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_id=\"k8s\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_bg_color=\"#073642\""));
     assert!(zsh_output.contains("typeset -g __color_k8s_prod_bg=\"#326ce5\""));
@@ -827,7 +828,6 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
         &config,
         &gpy_agent::template::Palette::default(),
     );
-    assert!(bash_output.contains("__gpy_cfg_git_enabled=\"0\""));
     assert!(bash_output.contains("__gpy_segment_k8s_id=\"k8s\""));
     assert!(bash_output.contains("__gpy_segment_k8s_bg_color=\"#073642\""));
     assert!(bash_output.contains("__color_k8s_prod_bg=\"#326ce5\""));
@@ -1012,14 +1012,15 @@ fn test_switch_theme_preserves_reload_notifications() {
     // The switch itself may already have requested a reload; clear its flag so
     // the assertion below observes the edit's reload.
     let _ = fs::remove_file(&reload_flag);
-    let updated_theme = CUSTOM_THEME.replace("prompt_color = \"cyan\"", "prompt_color = \"green\"");
+    let updated_theme =
+        CUSTOM_THEME.replace("success_color = \"cyan\"", "success_color = \"green\"");
     fs::write(&switched_path, updated_theme).expect("update switched theme");
 
     // Wait for the edit itself to land, not merely for *a* doorbell: any reload
     // raises the counter, so an unrelated reload could otherwise release the
     // wait before this edit has been read.
     let reloaded = wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
-        manager.get().ui.prompt_color.as_deref() == Some("green")
+        manager.get().segments.character.success_color == "green"
             && doorbell.count() > initial_count
             && reload_flag.exists()
     });
@@ -1278,11 +1279,10 @@ fn reload_hook_runs_after_swap_and_may_read_the_manager() {
         }
         let icon = manager_in_hook
             .get()
-            .ui
-            .prompt_icon
-            .as_deref()
-            .unwrap_or_default()
-            .to_owned();
+            .segments
+            .character
+            .success_symbol
+            .clone();
         observed_in_hook
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

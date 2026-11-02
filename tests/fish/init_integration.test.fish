@@ -55,12 +55,12 @@ else
     fail "fish_prompt output lacks the prompt character '$__icon_prompt': $prompt_output"
 end
 
-# Test 3: no gpy-prompt-* command or deprecated prompt-* wrapper wraps an
-# undefined function, which exits 127. Both are autoloaded from fish/functions.
+# Test 3: no gpy-prompt-* command wraps an undefined function, which exits
+# 127. All are autoloaded from fish/functions.
 echo ""
-echo "Test 3: gpy-prompt-* and prompt-* commands do not exit 127"
-set -l prompt_cmds (functions -n | string match -r '^(?:gpy-)?prompt-.*')
-for want in gpy-prompt-debug gpy-prompt-reload prompt-debug prompt-reload
+echo "Test 3: gpy-prompt-* commands do not exit 127"
+set -l prompt_cmds (functions -n | string match -r '^gpy-prompt-.*')
+for want in gpy-prompt-debug gpy-prompt-reload
     if contains -- $want $prompt_cmds
         pass "init makes $want available"
     else

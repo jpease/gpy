@@ -285,13 +285,11 @@ check_interval_seconds = 30
 max_restart_attempts = 5
 
 [git]
-enabled = true
 show_upstream = true
 timeout_seconds = 10
 skip_paths = []
 
 [language]
-enabled = true
 show_versions = true
 cache_ttl_hours = 24
 enabled_languages = []
@@ -349,13 +347,11 @@ check_interval_seconds = 30
 max_restart_attempts = 5
 
 [git]
-enabled = true
 show_upstream = true
 timeout_seconds = 10
 skip_paths = []
 
 [language]
-enabled = true
 show_versions = true
 cache_ttl_hours = 24
 enabled_languages = []
@@ -393,13 +389,11 @@ check_interval_seconds = 45
 max_restart_attempts = 3
 
 [git]
-enabled = true
 show_upstream = true
 timeout_seconds = 10
 skip_paths = []
 
 [language]
-enabled = true
 show_versions = true
 cache_ttl_hours = 24
 enabled_languages = []
@@ -657,7 +651,8 @@ fn test_cli_oneshot_git_error_renders_empty_prompt_segment() {
     for format in ["ansi", "bash-prompt", "zsh-prompt"] {
         let args = ["oneshot", "git", "--cwd", cwd, "--format", format];
         let outside_repo = run_gpy_agent(&args);
-        let git_disabled = run_gpy_agent_with_config("[git]\nenabled = false\n", &args);
+        let git_disabled =
+            run_gpy_agent_with_config("[ui]\nenabled_segments = [\"directory\"]\n", &args);
 
         for (case, (exit_code, stdout, stderr)) in [
             ("outside a repo", outside_repo),
@@ -963,8 +958,10 @@ fn test_theme_export_respects_xdg_config_home() {
 
     let theme_content = r#"
 [ui]
-prompt_icon = "🔧"
-prompt_color = "magenta"
+
+[segments.character]
+success_symbol = "🔧"
+success_color = "magenta"
 
 [segments.clock]
 bg_color = "bright_magenta"
@@ -1144,16 +1141,14 @@ timeout_seconds = 5
 live_updates = true
 
 [git]
-enabled = false
 
 [language]
-enabled = true
 
 [ui]
 show_icons = true
 theme = "default"
 directory.max_length = 80
-enabled_segments = ["clock", "directory", "git"]
+enabled_segments = ["clock", "directory"]
 "#;
 
     let (exit_code, stdout, stderr) =
@@ -1163,12 +1158,7 @@ enabled_segments = ["clock", "directory", "git"]
 
     assert!(
         stdout.contains("set -g __enabled_segments clock directory"),
-        "Git should be removed from enabled_segments when git.enabled=false, making directory last. Got: {stdout}"
-    );
-
-    assert!(
-        stdout.contains("set -g __gpy_cfg_git_enabled \"0\""),
-        "__gpy_cfg_git_enabled should be 0 when git.enabled=false. Got: {stdout}"
+        "Git should be absent from enabled_segments when unlisted, making directory last. Got: {stdout}"
     );
 }
 
@@ -1176,18 +1166,14 @@ enabled_segments = ["clock", "directory", "git"]
 fn test_config_hot_reload_git_toggle_full_scenario() {
     const CONFIG_GIT_ENABLED: &str = r#"
 [git]
-enabled = true
 
 [ui]
 enabled_segments = ["clock", "directory", "git"]
 "#;
 
     const CONFIG_GIT_DISABLED: &str = r#"
-[git]
-enabled = false
-
 [ui]
-enabled_segments = ["clock", "directory", "git"]
+enabled_segments = ["clock", "directory"]
 "#;
 
     let (exit_code, stdout_enabled, stderr) =
@@ -1200,10 +1186,6 @@ enabled_segments = ["clock", "directory", "git"]
         stdout_enabled.contains("set -g __enabled_segments clock directory git"),
         "Git should be included when enabled. Got: {stdout_enabled}"
     );
-    assert!(
-        stdout_enabled.contains("set -g __gpy_cfg_git_enabled \"1\""),
-        "__gpy_cfg_git_enabled should be 1 when enabled. Got: {stdout_enabled}"
-    );
 
     let (disabled_exit_code, stdout_disabled, disabled_stderr) =
         run_gpy_agent_with_config(CONFIG_GIT_DISABLED, &["theme", "export", "--shell", "fish"]);
@@ -1214,10 +1196,6 @@ enabled_segments = ["clock", "directory", "git"]
     assert!(
         stdout_disabled.contains("set -g __enabled_segments clock directory"),
         "Git should be removed when disabled. Got: {stdout_disabled}"
-    );
-    assert!(
-        stdout_disabled.contains("set -g __gpy_cfg_git_enabled \"0\""),
-        "__gpy_cfg_git_enabled should be 0 when disabled. Got: {stdout_disabled}"
     );
 
     assert!(

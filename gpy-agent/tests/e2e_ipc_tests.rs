@@ -150,7 +150,7 @@ async fn test_e2e_skip_paths() -> Result<()> {
     let escaped = skip_path_str.replace('\\', "\\\\");
     std::fs::write(
         &config_path,
-        format!("[git]\nenabled = true\nskip_paths = [\"{escaped}\"]\n"),
+        format!("[git]\nskip_paths = [\"{escaped}\"]\n"),
     )?;
 
     let config_manager =

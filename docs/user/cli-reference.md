@@ -562,7 +562,7 @@ gpy theme validate ~/.config/gpy/themes/mytheme.toml
 **Failure output (example):**
 ```
 ✗ theme validate failed
-   reason: Configuration error: Invalid color 'not-a-color' for field ui.prompt_color in theme /home/user/.config/gpy/themes/mytheme.toml
+   reason: Configuration error: Invalid color 'not-a-color' for field ui.root_prompt_color in theme /home/user/.config/gpy/themes/mytheme.toml
    remediation:
    - Use named colors, ANSI 0-255, or #RRGGBB values.
 ```
@@ -815,7 +815,7 @@ The imported palette is written to `~/.config/gpy/palettes/<name>.toml`. If the 
 
 Enable a prompt segment.
 
-A segment renders when it is listed in `ui.enabled_segments`. `gpy enable` edits only that list: a built-in goes back at its default position (before the next built-in that is listed, else at the end), and a plugin segment is appended. When `config.toml` still has the deprecated `git.enabled` / `language.enabled` key, `gpy enable git` / `gpy enable language` removes it.
+A segment renders when it is listed in `ui.enabled_segments`. `gpy enable` edits only that list: a built-in goes back at its default position (before the next built-in that is listed, else at the end), and a plugin segment is appended.
 
 **Valid Segments:**
 - `git` - Git repository status
@@ -864,7 +864,7 @@ Disabled clock segment
 
 List all available segments and their current status.
 
-Shows which segments the prompt will actually render (`x`) and which it won't ( ). A segment shows `x` when it is listed in `ui.enabled_segments` (a deprecated `git.enabled = false` / `language.enabled = false` still hides it). `gpy config wizard` starts its segment checkboxes from the same rule.
+Shows which segments the prompt will actually render (`x`) and which it won't ( ). A segment shows `x` when it is listed in `ui.enabled_segments`. `gpy config wizard` starts its segment checkboxes from the same rule.
 
 Each row also names the segment's owner: `gpy-core` for the built-in segments, or the plugin id with `(bundled)` or `(user)` for a plugin's segments. `default` marks a segment that a fresh config enables (`ui.enabled_segments` by default).
 
@@ -920,7 +920,6 @@ gpy config show git
 # ==================
 
 [git]
-enabled = true
 icon_set = "unicode"
 max_ahead_behind = 100
 max_branch_length = 0
@@ -987,7 +986,7 @@ Uses dot-notation to specify the configuration key.
 
 **Example:**
 ```bash
-gpy config get git.enabled
+gpy config get git.show_upstream
 gpy config get ui.theme
 gpy config get language.show_versions
 ```
@@ -1400,8 +1399,8 @@ commands.
 | `gpy-agent start [--socket <path>] [--quiet]` | Start the daemon in the background (idempotent; replaces an agent whose version or protocol differs, leaves a busy one alone) and print one outcome line with its PID. `--socket` overrides the socket path, mainly for tests; `--quiet` prints nothing on success. |
 | `gpy-agent stop [--socket <path>] [--quiet]` / `gpy-agent status [--socket <path>]` | Same behaviour and exit codes as the `gpy` equivalents above. |
 | `gpy-agent restart [--socket <path>] [--quiet]` | Stop the agent (a failed stop is a `warn:` line, not an abort), then start it; prints the stop line and the start line and exits with `start`'s code. |
-| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. The old name `status` for `exit-status` is deprecated and prints a warning on stderr. |
-| `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). The old `--format` flag for the shell is deprecated and prints a warning on stderr. |
+| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. |
+| `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
 | `gpy-agent config reload [--socket <path>]` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 
 ---
@@ -1412,10 +1411,8 @@ Functions the integration defines in Fish, Bash and Zsh (not executables).
 
 | Command | Effect |
 |---|---|
-| `gpy-prompt-reload` | Re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file, which a stopped agent leaves stale), so it works whether the agent is running, disabled or stopped. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. An invalid `config.toml` applies the built-in defaults, shows the agent's `Warning: [Config loading] …` line and returns 0. In Fish, `prompt-reload` is its deprecated former name. |
+| `gpy-prompt-reload` | Re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file, which a stopped agent leaves stale), so it works whether the agent is running, disabled or stopped. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. An invalid `config.toml` applies the built-in defaults, shows the agent's `Warning: [Config loading] …` line and returns 0. |
 | `gpy-prompt-debug [validate\|benchmark\|cache\|vars]` | Fish only: the Fish integration's debug helper. |
-
-`prompt-reload` and `prompt-debug` (Fish) are deprecated; use `gpy-prompt-reload` and `gpy-prompt-debug` instead.
 
 In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug commands.
 

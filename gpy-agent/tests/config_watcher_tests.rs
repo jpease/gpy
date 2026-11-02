@@ -22,7 +22,6 @@ async fn config_watcher_detects_language_toggle() {
     fs::write(
         &config_path,
         r#"[language]
-enabled = true
 show_versions = true
 
 [ui]
@@ -43,7 +42,6 @@ enabled_segments = ["clock","directory","language","git"]
     fs::write(
         &config_path,
         r#"[language]
-enabled = true
 show_versions = false
 
 [ui]

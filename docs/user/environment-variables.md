@@ -65,7 +65,7 @@ Read by the agent. Each is off, or at the default shown, unless set.
 | Variable | Default | Effect |
 |---|---|---|
 | `GPY_PROFILE` | off | A true value logs `[PROFILE] <operation>: <ms>` lines for timed operations to stderr and the debug log. |
-| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. An empty value leaves logging off and warns once. |
+| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. |
 | `GPY_DISABLE_WATCHER` | off | A true value skips the git/language file watcher at agent startup. See [below](#gpy_disable_watcher). |
 | `GPY_THEME_WATCH_POLL_MS` | off | Positive integer: also poll the active theme's files on this interval. `0` or unset: notifications only. |
 | `GPY_CONFIG_WATCH_POLL_MS` | off | The same for `config.toml`, floored at the 1-second config debounce. The fix when editing the file never applies until `gpy restart`. |
@@ -120,19 +120,3 @@ Four timers decide how stale a segment can be:
 - **Agent, 30 s and 150 ms.** The agent reuses its git status for 30 s from its last full scan, and never recomputes it within 150 ms of its previous update of any kind. Neither value is tunable.
 - **Repaint signals, 150 ms.** `GPY_SIGURG_THROTTLE_MS` limits repaint signals only; it does not change the 150 ms status cooldown.
 - **Reconcile, 45 s.** `GPY_RECONCILE_INTERVAL_SECS` sets how often the agent rescans every watched repository to catch events the watcher missed.
-
----
-
-## Deprecated
-
-The first three are read by the Fish integration only; they still take effect and warn once at the first prompt. The others are ignored, and Fish warns about each one that is set.
-
-| Variable | Use instead |
-|---|---|
-| `GPY_SHOW_LANGUAGES` | `gpy enable language` / `gpy disable language` |
-| `GPY_MINIMAL_SEGMENTS` | `gpy enable <name>` / `gpy disable <name>` |
-| `GPY_TEST_SEGMENTS` | `gpy enable <name>` / `gpy disable <name>` |
-| `GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS` | Ignored with a warning; use `[agent.supervisor]` in `config.toml`. |
-| `GPY_SUPERVISOR_LONG_BACKOFF_SECONDS` | Ignored with a warning; use `[agent.supervisor]` in `config.toml`. |
-| `GPY_AGENT_AUTOSTART_MAX_ATTEMPTS` | Ignored with a warning; use `[agent.supervisor]` in `config.toml`. |
-| `GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS` | Ignored with a warning; use `[agent.supervisor]` in `config.toml`. |

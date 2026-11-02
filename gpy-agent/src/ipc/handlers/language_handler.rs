@@ -315,11 +315,10 @@ mod tests {
         handler.detect(&path, false, None, forwarded)
     }
 
-    /// `language` missing from `ui.enabled_segments` skips detection even with `language.enabled = true`.
+    /// `language` missing from `ui.enabled_segments` skips detection.
     #[test]
     fn unlisted_language_segment_skips_detection() {
         let mut config = Config::default();
-        assert!(config.language.enabled);
         config
             .ui
             .enabled_segments

@@ -94,7 +94,7 @@ fn theme_failures_get_the_hint_for_their_kind() {
     let bad_value = dir.join("bad-value.toml");
     std::fs::write(
         &bad_value,
-        "[ui]\nprompt_icon = \"x\"\nprompt_color = \"not-a-color\"\n[segments]\n",
+        "[segments.character]\nsuccess_color = \"not-a-color\"\n",
     )
     .expect("write theme");
     let bad_syntax = dir.join("bad-syntax.toml");

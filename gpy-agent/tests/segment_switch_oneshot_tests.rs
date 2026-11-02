@@ -1,6 +1,5 @@
 //! `gpy-agent oneshot` honours `ui.enabled_segments` as the only segment
-//! switch: an unlisted `git` or `language` does no work even when its
-//! deprecated `*.enabled` flag is `true`.
+//! switch: an unlisted `git` or `language` does no work.
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
@@ -12,10 +11,8 @@ use common::git::git_init;
 
 #[test]
 fn oneshot_git_with_git_unlisted_reports_disabled() {
-    let env = CliTestEnv::with_config(
-        "[git]\nenabled = true\n\n[ui]\nenabled_segments = [\"clock\", \"directory\"]\n",
-    )
-    .expect("create isolated CLI test env");
+    let env = CliTestEnv::with_config("[ui]\nenabled_segments = [\"clock\", \"directory\"]\n")
+        .expect("create isolated CLI test env");
     let repo = env.root().join("repo");
     std::fs::create_dir_all(&repo).expect("create repo dir");
     git_init(&repo);
@@ -33,10 +30,8 @@ fn oneshot_git_with_git_unlisted_reports_disabled() {
 
 #[test]
 fn oneshot_lang_with_language_unlisted_reports_nothing() {
-    let env = CliTestEnv::with_config(
-        "[language]\nenabled = true\n\n[ui]\nenabled_segments = [\"clock\", \"directory\"]\n",
-    )
-    .expect("create isolated CLI test env");
+    let env = CliTestEnv::with_config("[ui]\nenabled_segments = [\"clock\", \"directory\"]\n")
+        .expect("create isolated CLI test env");
     let project = env.root().join("project");
     std::fs::create_dir_all(&project).expect("create project dir");
     std::fs::write(project.join("Cargo.toml"), "[package]\nname = \"x\"\n").expect("marker");

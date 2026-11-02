@@ -102,15 +102,14 @@ pub(super) fn ui_refresh_required(
 }
 
 /// Whether a `[git]` change needs cached git prompts re-rendered and a reload repaint.
-/// `timeout_seconds` and `watch_worktree` only affect later scans. `enabled` and
-/// `skip_paths` decide which repos may show git at all: the regeneration this
-/// triggers deletes the git caches of repos they newly exclude.
+/// `timeout_seconds` and `watch_worktree` only affect later scans. `skip_paths`
+/// decides which repos may show git at all: the regeneration this
+/// triggers deletes the git caches of repos it newly excludes.
 pub(super) fn git_refresh_required(
     old: &crate::config::GitSettings,
     new: &crate::config::GitSettings,
 ) -> bool {
     let crate::config::GitSettings {
-        enabled: old_enabled,
         show_upstream: old_show_upstream,
         timeout_seconds: _old_timeout_seconds,
         skip_paths: old_skip_paths,
@@ -122,7 +121,6 @@ pub(super) fn git_refresh_required(
         stash_enabled: old_stash_enabled,
     } = old;
     let crate::config::GitSettings {
-        enabled: new_enabled,
         show_upstream: new_show_upstream,
         timeout_seconds: _new_timeout_seconds,
         skip_paths: new_skip_paths,
@@ -134,8 +132,7 @@ pub(super) fn git_refresh_required(
         stash_enabled: new_stash_enabled,
     } = new;
 
-    old_enabled != new_enabled
-        || old_skip_paths != new_skip_paths
+    old_skip_paths != new_skip_paths
         || old_show_upstream != new_show_upstream
         || old_max_branch_length != new_max_branch_length
         || old_max_ahead_behind != new_max_ahead_behind
@@ -150,7 +147,6 @@ pub(super) fn language_refresh_required(
     new: &crate::config::LanguageSettings,
 ) -> bool {
     let crate::config::LanguageSettings {
-        enabled: old_enabled,
         show_versions: old_show_versions,
         cache_ttl_hours: _old_cache_ttl_hours,
         enabled_languages: old_enabled_languages,
@@ -161,7 +157,6 @@ pub(super) fn language_refresh_required(
         icons: old_icons,
     } = old;
     let crate::config::LanguageSettings {
-        enabled: new_enabled,
         show_versions: new_show_versions,
         cache_ttl_hours: _new_cache_ttl_hours,
         enabled_languages: new_enabled_languages,
@@ -172,8 +167,7 @@ pub(super) fn language_refresh_required(
         icons: new_icons,
     } = new;
 
-    old_enabled != new_enabled
-        || old_show_versions != new_show_versions
+    old_show_versions != new_show_versions
         || old_enabled_languages != new_enabled_languages
         || old_display != new_display
         || old_filter != new_filter

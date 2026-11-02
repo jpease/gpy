@@ -2,15 +2,7 @@ use super::*;
 
 #[test]
 fn new_reflects_config_theme_and_palette() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
+    let config = make_config("default", "default", &["directory"]);
     let state = test_state(config);
 
     assert_eq!(state.selected_theme(), "default");
@@ -19,15 +11,7 @@ fn new_reflects_config_theme_and_palette() {
 
 #[test]
 fn initial_theme_and_palette_reflect_startup_config() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
+    let config = make_config("default", "default", &["directory"]);
     let state = test_state(config);
 
     assert_eq!(state.initial_theme(), "default");
@@ -36,15 +20,7 @@ fn initial_theme_and_palette_reflect_startup_config() {
 
 #[test]
 fn initial_theme_stays_fixed_after_selection_changes() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
 
     let Some(other) = state
@@ -63,48 +39,18 @@ fn initial_theme_stays_fixed_after_selection_changes() {
 }
 
 #[test]
-fn new_reflects_flag_and_list_membership_for_git_and_language() {
-    // Rendering needs both list membership and the flag; each has only one.
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: false,
-            language: true,
-        },
-        &["directory", "git"],
-    );
+fn new_reflects_list_membership_for_git_and_language() {
+    let config = make_config("default", "default", &["directory", "git"]);
     let state = test_state(config);
 
-    assert!(!state.is_segment_enabled("git"));
+    assert!(state.is_segment_enabled("git"));
     assert!(!state.is_segment_enabled("language"));
     assert!(state.is_segment_enabled("directory"));
-
-    let both = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["language", "directory", "git"],
-    );
-    let both_state = test_state(both);
-    assert!(both_state.is_segment_enabled("git"));
-    assert!(both_state.is_segment_enabled("language"));
 }
 
 #[test]
 fn select_theme_ignores_unknown_name() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
 
     state.select_theme("does-not-exist");
@@ -114,15 +60,7 @@ fn select_theme_ignores_unknown_name() {
 
 #[test]
 fn select_theme_updates_known_name() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
 
     let maybe_other = state
@@ -144,15 +82,7 @@ fn select_theme_updates_known_name() {
 
 #[test]
 fn toggle_segment_is_idempotent_pair() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
+    let config = make_config("default", "default", &["directory"]);
     let mut state = test_state(config);
 
     let original = state.is_segment_enabled("directory");

@@ -257,7 +257,7 @@ mod tests {
 
     fn invalid_color() -> Error {
         ValidationError {
-            field_path: "ui.prompt_color".to_owned(),
+            field_path: "ui.root_prompt_color".to_owned(),
             kind: ValidationErrorKind::InvalidColor {
                 value: "nonsuch".to_owned(),
                 theme: "t".to_owned(),

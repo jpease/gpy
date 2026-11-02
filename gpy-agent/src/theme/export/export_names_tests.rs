@@ -37,7 +37,7 @@ fn builtin_export_names_cover_everything_the_builtin_emitter_writes() {
     for expected in [
         "__color_git_clean_bg",
         "__icon_status_fail",
-        "__gpy_cfg_git_enabled",
+        "__gpy_cfg_agent_enabled",
     ] {
         assert!(builtin.contains(expected), "missing `{expected}`");
     }

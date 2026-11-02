@@ -519,7 +519,7 @@ mod tests {
     fn test_config_manager_start_stop_watching() {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let config_path = temp.path().join("config.toml");
-        std::fs::write(&config_path, "[git]\nenabled = true\n").expect("write config");
+        std::fs::write(&config_path, "[git]\nshow_upstream = true\n").expect("write config");
         let manager = ConfigManager::from_path(&config_path).expect("manager");
 
         manager
@@ -548,16 +548,16 @@ mod tests {
         let theme_path = themes.join("mine.toml");
         std::fs::write(&theme_path, "[ui]\n").expect("write theme");
         let config_path = temp.path().join("gpy").join("config.toml");
-        std::fs::write(&config_path, "[git]\nenabled = true\n").expect("write config");
+        std::fs::write(&config_path, "[git]\nshow_upstream = true\n").expect("write config");
 
         let manager = ConfigManager::from_path(&config_path).expect("manager");
         let reloads = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&reloads);
         // FSEvents may replay the fixture writes made just before the stream
         // started, firing reloads of unchanged content. Count only reloads that
-        // change `git.enabled`: the config edit does, a theme edit never could.
+        // change `git.show_upstream`: the config edit does, a theme edit never could.
         manager.set_reload_callback(Arc::new(move |old: &Config, new: &Config| {
-            if old.git.enabled != new.git.enabled {
+            if old.git.show_upstream != new.git.show_upstream {
                 counted.fetch_add(1, Ordering::SeqCst);
             }
             Ok(())
@@ -570,10 +570,10 @@ mod tests {
         std::fs::write(&theme_path, "[ui]\n# edited\n").expect("edit theme");
         // Several flushes of the 100ms debounce, so a theme reload would land.
         std::thread::sleep(Duration::from_millis(1500));
-        std::fs::write(&config_path, "[git]\nenabled = false\n").expect("edit config");
+        std::fs::write(&config_path, "[git]\nshow_upstream = false\n").expect("edit config");
         let mut applied = false;
         for _ in 0_i32..500_i32 {
-            if !manager.get().git.enabled {
+            if !manager.get().git.show_upstream {
                 applied = true;
                 break;
             }
@@ -602,18 +602,21 @@ mod tests {
 
         let temp = tempfile::TempDir::new().expect("tempdir");
         let config_path = temp.path().join("config.toml");
-        std::fs::write(&config_path, "[git]\nenabled = true \n").expect("write config");
+        std::fs::write(&config_path, "[git]\nshow_upstream = true \n").expect("write config");
 
         let manager = ConfigManager::from_path(&config_path).expect("manager");
-        assert!(manager.get().git.enabled, "git should be enabled initially");
+        assert!(
+            manager.get().git.show_upstream,
+            "git should be enabled initially"
+        );
 
         let (tx, rx) = std::sync::mpsc::channel();
         manager.set_reload_callback(Arc::new(move |_old: &Config, new: &Config| {
-            let _ = tx.send(new.git.enabled);
+            let _ = tx.send(new.git.show_upstream);
             Ok(())
         }));
         manager.spawn_poll_thread(Duration::from_millis(10), Duration::from_millis(10));
-        write_file_atomically(&config_path, "[git]\nenabled = false\n");
+        write_file_atomically(&config_path, "[git]\nshow_upstream = false\n");
 
         let mut reloaded = false;
         while let Ok(enabled) = rx.recv_timeout(Duration::from_secs(30)) {
@@ -628,7 +631,7 @@ mod tests {
             reloaded,
             "poll fallback must detect a rewrite that changes content but not length"
         );
-        assert!(!manager.get().git.enabled);
+        assert!(!manager.get().git.show_upstream);
     }
 
     #[test]
@@ -683,20 +686,23 @@ theme = "other"
 
         let temp = tempfile::TempDir::new().expect("tempdir");
         let config_path = temp.path().join("config.toml");
-        std::fs::write(&config_path, "[git]\nenabled = true\n").expect("write config");
+        std::fs::write(&config_path, "[git]\nshow_upstream = true\n").expect("write config");
 
         let manager = ConfigManager::from_path(&config_path).expect("manager");
-        assert!(manager.get().git.enabled, "git should be enabled initially");
+        assert!(
+            manager.get().git.show_upstream,
+            "git should be enabled initially"
+        );
 
         let (tx, rx) = std::sync::mpsc::channel();
         manager.set_reload_callback(Arc::new(move |_old: &Config, new: &Config| {
-            let _ = tx.send(new.git.enabled);
+            let _ = tx.send(new.git.show_upstream);
             Ok(())
         }));
         // Poll thread only: deterministic regardless of FSEvents.
         manager.spawn_poll_thread(Duration::from_millis(10), Duration::from_millis(10));
 
-        write_file_atomically(&config_path, "[git]\nenabled = false\n");
+        write_file_atomically(&config_path, "[git]\nshow_upstream = false\n");
 
         let mut reloaded = false;
         while let Ok(enabled) = rx.recv_timeout(Duration::from_secs(30)) {
@@ -711,7 +717,7 @@ theme = "other"
             reloaded,
             "poll fallback should reload the config with no watcher running"
         );
-        assert!(!manager.get().git.enabled);
+        assert!(!manager.get().git.show_upstream);
     }
 
     /// The CLI's `reload_now` and the watcher's reload both fire per change;

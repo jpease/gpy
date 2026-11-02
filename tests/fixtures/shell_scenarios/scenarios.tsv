@@ -138,14 +138,13 @@ script-timeout	golden-ascii	slow	0	-	-	down	-	-	-	prompt!~=late
 script-cap	golden-ascii	big	0	-	-	down	-	-	-	prompt!~=bigstart
 script-variant	golden-script-variant	variant	0	-	-	down	-	-	-	prompt~=vtext
 script-breaker	golden-ascii	slow	0	-	renders3	down	-	-	-	prompt!~=late gpy_stderr=1
-# --- env > config: an exported GPY_* user value wins over config.toml; config-only flags drop the segment
+# --- env > config: an exported GPY_* user value wins over config.toml
 # an exported GPY_AGENT_ENABLED=0 disables the agent even when config.toml enables it
 env-disable-wins	default	directory	0	GPY_AGENT_ENABLED=0	-	down	repo	[agent]\nenabled = true	-	starts=0 registers=0
-# `[git] enabled = false` hides the git segment end to end. The export already drops a disabled git from
-# __enabled_segments, so no request is sent whatever the segment reader does: this row checks the end
-# result only (tests/*/segment_enabled_mirror.test.* pin the reader)
-env-git-disabled	default	git	0	-	-	up	repo	[git]\nenabled = false	-	prompt!~=main ipc.git=0 oneshots=-
-# the same for `[language] enabled = false` (the wire op is `lang`; an absent ipc.<op> counts as 0, so ipc.language=0 would be vacuous)
-env-language-disabled	default	language	0	-	-	up	repo	[language]\nenabled = false	-	ipc.lang=0 oneshots=-
-# positive control: without the [git] table the git segment draws
+# a prompt without `git` in ui.enabled_segments draws no git segment and the agent is never asked for git
+# status (the export drops git from __enabled_segments, so no request is sent whatever the segment reader does)
+env-git-unlisted	default	directory	0	-	-	up	repo	-	-	prompt!~=main ipc.git=0 oneshots=-
+# the same for language (the wire op is `lang`; an absent ipc.<op> counts as 0, so ipc.language=0 would be vacuous)
+env-language-unlisted	default	directory	0	-	-	up	repo	-	-	ipc.lang=0 oneshots=-
+# positive control: with `git` listed the git segment draws
 env-git-enabled	default	git	0	-	-	up	repo	-	-	prompt~=main

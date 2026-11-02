@@ -240,7 +240,7 @@ fn symlink_config_into_dotfiles(h: &Harness) {
 fn edit_symlinked_config_target(h: &Harness) {
     fs::write(
         h.dotfiles_dir().join("gpy-config.toml"),
-        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\n\n[git]\nenabled = false\n"),
+        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\ntransient_prompt = false\n"),
     )
     .expect("write symlink target");
 }
@@ -250,7 +250,7 @@ fn retarget_symlinked_config(h: &Harness) {
     let other = dotfiles.join("other-config.toml");
     fs::write(
         &other,
-        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\n\n[git]\nenabled = false\n"),
+        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\ntransient_prompt = false\n"),
     )
     .expect("write second target");
     let staged = dotfiles.join("staged-link");
@@ -359,12 +359,12 @@ impl Harness {
         .expect("write palette");
     }
 
-    fn write_config(&self, theme: &str, git_enabled: bool) {
-        Self::write_config_at(&self.config_path(), theme, git_enabled);
+    fn write_config(&self, theme: &str, transient_prompt: bool) {
+        Self::write_config_at(&self.config_path(), theme, transient_prompt);
     }
 
-    fn write_config_at(path: &Path, theme: &str, git_enabled: bool) {
-        fs::write(path, Self::config_toml(theme, git_enabled)).expect("write config");
+    fn write_config_at(path: &Path, theme: &str, transient_prompt: bool) {
+        fs::write(path, Self::config_toml(theme, transient_prompt)).expect("write config");
     }
 
     /// The active config (theme `active`, git on) followed by `extra` TOML.
@@ -376,9 +376,9 @@ impl Harness {
         .expect("write config");
     }
 
-    fn config_toml(theme: &str, git_enabled: bool) -> String {
+    fn config_toml(theme: &str, transient_prompt: bool) -> String {
         format!(
-            "[ui]\ntheme = \"{theme}\"\npalette = \"{ACTIVE_PALETTE}\"\n\n[git]\nenabled = {git_enabled}\n"
+            "[ui]\ntheme = \"{theme}\"\npalette = \"{ACTIVE_PALETTE}\"\ntransient_prompt = {transient_prompt}\n"
         )
     }
 

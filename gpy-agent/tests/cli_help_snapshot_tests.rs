@@ -137,9 +137,9 @@ fn gpy_command_tree_lists_public_commands_and_hides_internal_ones() {
     }
 }
 
-/// `gpy lang` is deprecated and hidden: not listed, but still runnable.
+/// The removed `lang` group is an unknown subcommand (clap exit 2).
 #[test]
-fn deprecated_lang_group_is_hidden_but_still_runs() {
+fn removed_lang_group_is_an_unknown_subcommand() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
     let top = help_of(&env, &[]);
     assert!(
@@ -148,7 +148,7 @@ fn deprecated_lang_group_is_hidden_but_still_runs() {
     );
 
     let result = env.run_gpy(&["lang", "versions", "on"]).expect("spawn gpy");
-    result.assert_success("gpy lang versions on");
+    assert_eq!(result.exit_code, 2_i32, "{result:?}");
 }
 
 /// clap does not wrap help, so a long about makes one long `Commands:` line.

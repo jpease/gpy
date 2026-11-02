@@ -75,10 +75,8 @@ fn test_enable_disable_segment() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"
@@ -141,12 +139,12 @@ fn test_enable_hostname_segment() {
 
 #[test]
 fn test_enable_git_adds_to_enabled_segments_when_absent() {
-    // `git.enabled = true` alone does not render git; `gpy enable git`
-    // must also list it so the export (the shells' render list) includes it.
+    // Listing `[git]` alone does not render git; `gpy enable git`
+    // must list it so the export (the shells' render list) includes it.
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     fs::write(
         env.config_path(),
-        "[git]\nenabled = true\n\n[ui]\nenabled_segments = [\"directory\"]\n",
+        "[git]\n\n[ui]\nenabled_segments = [\"directory\"]\n",
     )
     .expect("Failed to write config");
 
@@ -192,7 +190,7 @@ fn test_disable_then_enable_git_restores_fish_export() {
 }
 
 #[test]
-fn test_lang_versions_toggle() {
+fn test_config_set_language_show_versions() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let config_path = env.config_path();
     let config_content = r#"
@@ -200,10 +198,8 @@ fn test_lang_versions_toggle() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 show_versions = false
 
 [ui]
@@ -213,19 +209,9 @@ enabled_segments = ["language", "directory", "git"]
     fs::write(&config_path, config_content).expect("Failed to write config");
 
     let output = env
-        .run_gpy(&["lang", "versions", "on"])
-        .expect("Failed to run gpy lang versions on");
-    output.assert_success("gpy lang versions on");
-    assert_eq!(
-        output
-            .stderr
-            .lines()
-            .filter(|line| line.starts_with("warn: 'gpy lang versions' is deprecated; use "))
-            .count(),
-        1_usize,
-        "exactly one deprecation line on stderr: {}",
-        output.stderr
-    );
+        .run_gpy(&["config", "set", "language.show_versions", "true"])
+        .expect("Failed to run gpy config set");
+    output.assert_success("gpy config set language.show_versions true");
     let shown = env
         .run_gpy(&["config", "get", "language.show_versions"])
         .expect("Failed to run gpy config get");
@@ -248,10 +234,8 @@ fn test_segment_enable_disable_round_trip() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"

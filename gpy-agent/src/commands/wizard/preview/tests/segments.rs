@@ -20,13 +20,7 @@ fn precedence_status() -> RepositoryStatus {
 
 #[test]
 fn render_segment_git_uses_state_precedence() {
-    let config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&[]);
     let mut theme = ThemeConfig::default();
     theme.segments.git.format = Some("[$branch]($style)".to_owned());
 
@@ -63,13 +57,7 @@ fn make_lang(name: &str, version: Option<&str>, color: &str) -> crate::ipc::Lang
 
 #[test]
 fn render_segment_language_uses_selected_display_symbol() {
-    let mut config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: true,
-        },
-    );
+    let mut config = make_config(&[]);
     config.language.display = crate::config::types::LanguageDisplay::Text;
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
@@ -91,13 +79,7 @@ fn render_segment_language_uses_selected_display_symbol() {
 
 #[test]
 fn render_segment_language_draws_every_selected_language() {
-    let mut config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: true,
-        },
-    );
+    let mut config = make_config(&[]);
     config.language.display = crate::config::types::LanguageDisplay::Text;
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
@@ -123,13 +105,7 @@ fn render_segment_language_draws_every_selected_language() {
 
 #[test]
 fn render_segment_language_drops_versionless_language_when_show_versions_on() {
-    let config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: true,
-        },
-    );
+    let config = make_config(&[]);
     assert!(
         config.language.show_versions,
         "test relies on show_versions defaulting to true"
@@ -153,13 +129,7 @@ fn render_segment_language_drops_versionless_language_when_show_versions_on() {
 
 #[test]
 fn render_segment_language_keeps_versionless_language_when_show_versions_off() {
-    let mut config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: true,
-        },
-    );
+    let mut config = make_config(&[]);
     config.language.show_versions = false;
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
@@ -181,13 +151,7 @@ fn render_segment_language_keeps_versionless_language_when_show_versions_off() {
 #[test]
 fn render_segment_language_hides_version_text_when_show_versions_off() {
     // Must hide even a detected version; suppression is in the resolver.
-    let mut config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: true,
-        },
-    );
+    let mut config = make_config(&[]);
     config.language.show_versions = false;
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol $version]($style)".to_owned());
@@ -209,13 +173,7 @@ fn render_segment_language_hides_version_text_when_show_versions_off() {
 
 #[test]
 fn render_segment_returns_none_when_no_format_configured() {
-    let config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&[]);
     let theme = ThemeConfig::default();
     assert!(theme.segments.directory.format.is_none());
 
@@ -232,13 +190,7 @@ fn render_segment_returns_none_when_no_format_configured() {
 
 #[test]
 fn render_preview_line_threads_prev_colors_between_segments() {
-    let config = make_config(
-        &["duration"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["duration"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();
@@ -265,13 +217,7 @@ fn render_preview_line_threads_prev_colors_between_segments() {
 
 #[test]
 fn render_preview_line_skips_disabled_segments() {
-    let config = make_config(
-        &["duration"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["duration"]);
     let mut state = test_state(config.clone());
     state.toggle_segment("duration"); // starts enabled, toggle off
 
@@ -296,13 +242,7 @@ fn render_preview_line_skips_disabled_segments() {
 
 #[test]
 fn render_preview_line_follows_enabled_segments_order() {
-    let config = make_config(
-        &["directory", "clock"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["directory", "clock"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();
@@ -325,13 +265,7 @@ fn render_preview_line_follows_enabled_segments_order() {
 #[test]
 fn render_preview_line_only_last_chain_segment_gets_closing_cap() {
     // Same trailing `$sep_close` shape as the real default theme.
-    let config = make_config(
-        &["duration", "directory"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["duration", "directory"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();
@@ -373,13 +307,7 @@ fn render_preview_line_only_last_chain_segment_gets_closing_cap() {
 
 #[test]
 fn render_preview_line_only_first_chain_segment_suppresses_opening_cap() {
-    let config = make_config(
-        &["duration", "directory"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["duration", "directory"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();
@@ -420,13 +348,7 @@ fn render_preview_line_only_first_chain_segment_suppresses_opening_cap() {
 fn render_preview_line_first_segment_position_not_identity_determines_cap() {
     // Clock renders first here, so duration must keep its opening cap: the
     // suppression is by chain position, not segment identity.
-    let config = make_config(
-        &["clock", "duration", "directory"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["clock", "duration", "directory"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();

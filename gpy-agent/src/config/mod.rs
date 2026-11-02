@@ -53,20 +53,13 @@ pub struct Config {
 
 impl Config {
     /// The single rule for whether segment `name` renders and whether the agent
-    /// does its work: it is listed in `ui.enabled_segments`. For `git` and
-    /// `language` the deprecated `git.enabled` / `language.enabled` flag, when
-    /// `false`, also removes the segment, so existing files render as before.
+    /// does its work: it is listed in `ui.enabled_segments`.
     ///
     /// Compares strings directly (no allocation, no `BuiltinSegment` parse)
     /// because [`Self::git_enabled_for`] runs on every git request.
     #[must_use]
     pub fn segment_enabled(&self, name: &str) -> bool {
         self.ui.enabled_segments.iter().any(|s| s == name)
-            && match name {
-                "git" => self.git.enabled,
-                "language" => self.language.enabled,
-                _ => true,
-            }
     }
 
     /// The segments that render, in `ui.enabled_segments` order; every entry
@@ -148,13 +141,7 @@ impl Default for SupervisorSettings {
 /// Git-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent toggles, not a state machine"
-)]
 pub struct GitSettings {
-    /// Enable git status detection
-    pub enabled: bool,
     /// Show ahead/behind counts
     pub show_upstream: bool,
     /// Git subprocess timeout (seconds); also bounds the IPC wait for fresh status.
@@ -180,7 +167,6 @@ pub struct GitSettings {
 impl Default for GitSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
             show_upstream: true,
             timeout_seconds: types::GitTimeout::default(),
             skip_paths: Vec::new(),
@@ -340,8 +326,6 @@ impl GitIcons {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LanguageSettings {
-    /// Enable language detection
-    pub enabled: bool,
     /// Enable version detection
     pub show_versions: bool,
     /// Language version, mise and virtualenv lookup cache TTL in hours
@@ -363,7 +347,6 @@ pub struct LanguageSettings {
 impl Default for LanguageSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
             show_versions: true,
             cache_ttl_hours: types::CacheTtlHours::default(),
             enabled_languages: Vec::new(),
@@ -505,27 +488,16 @@ mod tests {
     fn segment_enabled_requires_listing() {
         let config = listing(&["directory"]);
         assert!(config.segment_enabled("directory"));
-        assert!(!config.segment_enabled("git"), "flag true but unlisted");
+        assert!(!config.segment_enabled("git"), "unlisted");
         assert!(!config.segment_enabled("language"));
         assert!(!config.segment_enabled("clock"));
     }
 
     #[test]
-    fn deprecated_flag_false_removes_listed_segment() {
-        let mut config = listing(&["language", "directory", "git"]);
-        config.git.enabled = false;
-        config.language.enabled = false;
-        assert!(!config.segment_enabled("git"));
-        assert!(!config.segment_enabled("language"));
-        assert!(config.segment_enabled("directory"));
-    }
-
-    #[test]
     fn effective_segments_keeps_order() {
-        let mut config = listing(&["git", "clock", "language", "directory"]);
-        config.language.enabled = false;
+        let config = listing(&["git", "clock", "language", "directory"]);
         let effective: Vec<&str> = config.effective_segments().collect();
-        assert_eq!(effective, ["git", "clock", "directory"]);
+        assert_eq!(effective, ["git", "clock", "language", "directory"]);
     }
 
     #[test]
@@ -533,10 +505,6 @@ mod tests {
         assert!(!listing(&["clock", "directory"]).any_agent_segment_enabled());
         assert!(listing(&["git"]).any_agent_segment_enabled());
         assert!(listing(&["language"]).any_agent_segment_enabled());
-        let mut flags_off = listing(&["git", "language"]);
-        flags_off.git.enabled = false;
-        flags_off.language.enabled = false;
-        assert!(!flags_off.any_agent_segment_enabled());
     }
 
     #[test]

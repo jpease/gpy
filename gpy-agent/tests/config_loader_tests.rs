@@ -40,14 +40,13 @@ fn is_setting(text: &str) -> bool {
 #[test]
 fn test_config_default_enabled() {
     let config = Config::default();
-    assert!(config.language.enabled);
+    assert!(config.agent.enabled);
 }
 
 #[test]
 fn test_parse_empty_toml() {
     let config = parse_config_toml("").expect("parse empty toml");
     assert!(config.agent.enabled);
-    assert!(config.language.enabled);
     assert_eq!(config.agent.timeout_seconds.get(), 5);
 }
 
@@ -65,7 +64,6 @@ fn test_config_template_agent_values() {
 #[test]
 fn test_config_template_git_values() {
     let config = parse_config_toml(&template_settings()).unwrap();
-    assert!(config.git.enabled);
     assert!(config.git.show_upstream);
     assert_eq!(config.git.timeout_seconds.get(), 10);
 }
@@ -73,7 +71,6 @@ fn test_config_template_git_values() {
 #[test]
 fn test_config_template_language_values() {
     let config = parse_config_toml(&template_settings()).unwrap();
-    assert!(config.language.enabled);
     assert!(config.language.show_versions);
     assert_eq!(config.language.cache_ttl_hours.get(), 24);
     assert_eq!(config.language.enabled_languages, Vec::<String>::new());
@@ -353,7 +350,7 @@ theme = "text"
     assert_eq!(config.ui.theme.as_str(), "text");
 
     assert_eq!(config.agent.timeout_seconds.get(), 5); // default
-    assert!(config.git.enabled); // default
+    assert!(config.git.show_upstream); // default
 }
 
 #[test]

@@ -3,8 +3,6 @@
 # shows seconds, so the clock spec exercises every branch.
 
 [ui]
-prompt_icon = ">"
-prompt_color = "cyan"
 two_line = true
 
 [ui.prompt_open]
@@ -26,6 +24,10 @@ bg_color = "transparent"
 icon = "]"
 icon_color = "white"
 bg_color = "transparent"
+
+[segments.character]
+success_symbol = ">"
+success_color = "cyan"
 
 [segments.clock]
 text_color = "black"

@@ -67,10 +67,10 @@ impl TestConfig {
         self
     }
 
-    /// Disable the git segment.
+    /// Disable the git segment by unlisting it.
     #[must_use]
-    pub const fn with_git_disabled(mut self) -> Self {
-        self.config.git.enabled = false;
+    pub fn with_git_disabled(mut self) -> Self {
+        self.config.ui.enabled_segments.retain(|name| name != "git");
         self
     }
 }

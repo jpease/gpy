@@ -195,7 +195,6 @@ mod tests {
                 truncation_symbol: None,
                 truncate_to_repo: None,
             }),
-            show_icons: None,
             language_detection: Some(DetectionMode::default()),
             palette: Some(PaletteName::default()),
         };
@@ -224,7 +223,6 @@ mod tests {
                 truncation_symbol: None,
                 truncate_to_repo: None,
             }),
-            show_icons: None,
             language_detection: Some(config.language.detection_mode),
             palette: Some(ui.palette.clone()),
         };
@@ -254,7 +252,6 @@ mod tests {
                 truncation_symbol: None,
                 truncate_to_repo: None,
             }),
-            show_icons: None,
             language_detection: Some(DetectionMode::Markers),
             palette: Some(PaletteName::new("starship".to_owned()).expect("valid")),
         };
@@ -279,7 +276,6 @@ mod tests {
                 truncation_symbol: None,
                 truncate_to_repo: None,
             }),
-            show_icons: None,
             language_detection: None,
             palette: Some(PaletteName::new("starship".to_owned()).expect("valid")),
         };

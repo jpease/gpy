@@ -15,9 +15,7 @@ pub(super) const GOLDEN_THEME_NAME: &str = "night$owl\"";
 /// and a trailing backslash so the goldens pin escaping.
 const GOLDEN_THEME_TOML: &str = r##"
 [ui]
-prompt_icon = "➜$p"
 root_prompt_icon = "#`r`"
-prompt_color = "magenta"
 root_prompt_color = "yellow"
 two_line = true
 
@@ -40,6 +38,10 @@ bg_color = "black"
 icon = ""
 icon_color = "black"
 bg_color = "white"
+
+[segments.character]
+success_symbol = "➜$p"
+success_color = "magenta"
 
 [segments.clock]
 format = "[$time]($style)"
@@ -109,8 +111,8 @@ icon_color = "black"
 bg_color = "white"
 "##;
 
-/// A config moving every exported setting off its default; disables `language`
-/// but keeps `git` to pin both arms of the enabled-segment filter.
+/// A config moving every exported setting off its default; leaves `language`
+/// unlisted but keeps `git`, pinning both arms of the enabled-segment list.
 const GOLDEN_CONFIG_TOML: &str = r#"
 [agent]
 enabled = false
@@ -123,17 +125,15 @@ check_interval_seconds = 45
 max_restart_attempts = 9
 
 [git]
-enabled = true
 show_upstream = false
 max_branch_length = 17
 
 [language]
-enabled = false
 show_versions = false
 
 [ui]
 show_icons = false
-enabled_segments = ["clock", "username", "hostname", "directory", "git", "language", "duration", "status"]
+enabled_segments = ["clock", "username", "hostname", "directory", "git", "duration", "status"]
 
 [ui.directory]
 display = "truncated"

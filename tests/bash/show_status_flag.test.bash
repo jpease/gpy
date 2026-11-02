@@ -4,8 +4,7 @@
 #
 # GPY_SHOW_STATUS follows the shared boolean table in all three shells: `true`
 # shows the exit-status indicator and `off` hides it, in the shell-drawn tail
-# (agent down). `true` prints the one-time old-meaning warning (it used to
-# hide the indicator); `off` prints none.
+# (agent down). Neither prints a warning.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -85,7 +84,6 @@ for sh in bash zsh fish; do
         *STATUSFAIL*) pass "$sh: GPY_SHOW_STATUS=true shows the indicator" ;;
         *) fail "$sh: GPY_SHOW_STATUS=true did not show the indicator: $out" ;;
     esac
-    check "$sh: GPY_SHOW_STATUS=true prints the old-meaning warning once" "1" "$(warnings "$err")"
 
     out="$(render "$sh" off "$err")"
     case "$out" in

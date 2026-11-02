@@ -80,13 +80,6 @@ enum Commands {
     /// List all available segments
     Segments,
 
-    /// Language detection configuration (deprecated)
-    #[command(hide = true)]
-    Lang {
-        #[command(subcommand)]
-        action: LangAction,
-    },
-
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -364,17 +357,6 @@ enum PluginAction {
     },
 }
 
-/// Language configuration actions
-#[derive(Subcommand, Debug)]
-enum LangAction {
-    /// Toggle version display (on/off)
-    Versions {
-        /// Enable or disable version display
-        #[arg(value_parser = ["on", "off"])]
-        toggle: String,
-    },
-}
-
 /// Configuration actions
 #[derive(Subcommand, Debug)]
 enum ConfigAction {
@@ -390,7 +372,7 @@ enum ConfigAction {
     },
     /// Get a config value
     Get {
-        /// Config key using dot-notation (e.g., "git.enabled")
+        /// Config key using dot-notation (e.g., "`git.show_upstream`")
         key: String,
     },
     /// Set a config value
@@ -513,24 +495,6 @@ fn run_plugin(action: PluginAction) -> Result<()> {
         PluginAction::Remove { id } => commands::plugin_install::remove(&id)?,
     }
     Ok(())
-}
-
-/// Dispatch a (deprecated) `gpy lang` subcommand.
-///
-/// # Errors
-/// Returns the error from setting the config key.
-fn run_lang(action: LangAction) -> Result<()> {
-    match action {
-        LangAction::Versions { toggle } => {
-            commands::output::warn_stderr(
-                "'gpy lang versions' is deprecated; use 'gpy config set language.show_versions true|false' instead",
-            );
-            commands::config::set(
-                "language.show_versions",
-                if toggle == "on" { "true" } else { "false" },
-            )
-        }
-    }
 }
 
 /// Dispatch a config subcommand.
@@ -673,7 +637,6 @@ fn run(command: Commands) -> Result<ExitCode> {
         Commands::Enable { segment } => commands::segments::enable(&segment)?,
         Commands::Disable { segment } => commands::segments::disable(&segment)?,
         Commands::Segments => commands::segments::list()?,
-        Commands::Lang { action } => run_lang(action)?,
         Commands::Config { action } => run_config(action)?,
         Commands::Doctor => commands::doctor::run()?,
         Commands::Debug { action } => run_debug(action)?,

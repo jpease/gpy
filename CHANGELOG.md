@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** removed spellings that were deprecated in 0.9.0: the config keys `git.enabled` and `language.enabled` (use `gpy disable git` / `gpy disable language`), the theme keys `ui.prompt_icon`, `ui.prompt_color` and `[ui.recommended] show_icons` (use `[segments.character] success_symbol`/`success_color`), the Fish functions `prompt-reload` and `prompt-debug` (use `gpy-prompt-reload` / `gpy-prompt-debug`), the Fish variables `GPY_SHOW_LANGUAGES`, `GPY_MINIMAL_SEGMENTS` and `GPY_TEST_SEGMENTS`, `gpy lang versions on|off` (use `gpy config set language.show_versions`), `gpy-agent oneshot status` (use `oneshot exit-status`), `gpy-agent theme export --format` (use `--shell`), and the migration from the old shell and bundled-plugin directories (run `gpy setup` on 0.9.x first, or remove the old trees by hand). A `config.toml` or theme that still sets a removed key is reported by `gpy doctor` as unknown and the key has no effect. The warnings for the old meanings of `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_SHOW_STATUS`, `GPY_PROFILE` and an empty `GPY_DEBUG_LOG` are gone; the new meanings are unchanged.
+
 ## [0.9.0] - 2026-11-01
 
 ### Changed

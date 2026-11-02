@@ -13,7 +13,7 @@ const fn flag(value: bool) -> &'static str {
     if value { "1" } else { "0" }
 }
 
-/// The seven config mirrors a shell reads, as non-exported `__gpy_cfg_*` values: `1`/`0` flags or integers.
+/// The five config mirrors a shell reads, as non-exported `__gpy_cfg_*` values: `1`/`0` flags or integers.
 /// Never exported: `GPY_*` names are user overrides only.
 fn config_export_assignments(config: &Config) -> Vec<ShellAssignment> {
     let agent = &config.agent;
@@ -28,11 +28,6 @@ fn config_export_assignments(config: &Config) -> Vec<ShellAssignment> {
         ShellAssignment::local(
             "__gpy_cfg_supervisor_max_restarts",
             supervisor.max_restart_attempts.to_string(),
-        ),
-        ShellAssignment::local("__gpy_cfg_git_enabled", flag(config.segment_enabled("git"))),
-        ShellAssignment::local(
-            "__gpy_cfg_language_enabled",
-            flag(config.segment_enabled("language")),
         ),
         ShellAssignment::local(
             "__gpy_cfg_transient_prompt",
@@ -82,10 +77,9 @@ pub(super) fn append_global_assignments(
 
 /// Prompt and root-prompt icons/colors plus the two-line layout flag.
 /// `__icon_prompt`/`__prompt_color` follow `segments.character`'s
-/// `success_symbol`/`success_color` unless the deprecated `ui.prompt_icon`/
-/// `ui.prompt_color` is set; the symbol is stripped of control characters
-/// (`❯` if nothing is left) because the shells print it raw. `__root_prompt_color`
-/// falls back to [`DEFAULT_UI_ROOT_PROMPT_COLOR`].
+/// `success_symbol`/`success_color`; the symbol is stripped of control
+/// characters (`❯` if nothing is left) because the shells print it raw.
+/// `__root_prompt_color` falls back to [`DEFAULT_UI_ROOT_PROMPT_COLOR`].
 pub(super) fn append_prompt_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -94,32 +88,23 @@ pub(super) fn append_prompt_assignments(
     let shell = colors.shell;
 
     let character = &theme.segments.character;
-    let prompt_icon = theme.ui.prompt_icon.as_ref().map_or_else(
-        || {
-            let clean = sanitize_control_chars(&character.success_symbol);
-            if clean.is_empty() {
-                "❯".to_owned()
-            } else {
-                clean.into_owned()
-            }
-        },
-        |icon| icon.as_str().to_owned(),
-    );
+    let clean = sanitize_control_chars(&character.success_symbol);
+    let symbol = if clean.is_empty() {
+        "❯".to_owned()
+    } else {
+        clean.into_owned()
+    };
     append_shell_assignment(
         output,
         shell,
-        ShellAssignment::local("__icon_prompt", prompt_icon),
+        ShellAssignment::local("__icon_prompt", symbol),
     );
 
-    let prompt_color = theme
-        .ui
-        .prompt_color
-        .as_deref()
-        .unwrap_or(&character.success_color);
+    let symbol_color = &character.success_color;
     append_shell_assignment(
         output,
         shell,
-        ShellAssignment::local("__prompt_color", colors.resolve(prompt_color)),
+        ShellAssignment::local("__prompt_color", colors.resolve(symbol_color)),
     );
 
     append_shell_assignment(

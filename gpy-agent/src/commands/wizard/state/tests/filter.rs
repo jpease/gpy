@@ -2,15 +2,7 @@ use super::*;
 
 #[test]
 fn filtered_indices_is_identity_when_query_empty() {
-    let state = test_state(make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    ));
+    let state = test_state(make_config("default", "default", &[]));
 
     let indices = state.filtered_indices(Section::Segments);
 
@@ -22,15 +14,7 @@ fn filtered_indices_is_identity_when_query_empty() {
 
 #[test]
 fn filtered_indices_narrows_to_matching_items() {
-    let state = test_state(make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    ));
+    let state = test_state(make_config("default", "default", &[]));
 
     let indices = state.filtered_indices(Section::Segments);
     let has_match = indices.into_iter().any(|i| {
@@ -48,15 +32,7 @@ fn filtered_indices_narrows_to_matching_items() {
 
 #[test]
 fn move_cursor_down_steps_through_filtered_list_only() {
-    let mut state = test_state(make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    ));
+    let mut state = test_state(make_config("default", "default", &[]));
     state.next_section();
     state.next_section();
     assert_eq!(state.focus(), Section::Segments);
@@ -73,15 +49,7 @@ fn move_cursor_down_steps_through_filtered_list_only() {
 }
 
 fn segments_focused_state() -> WizardState {
-    let mut state = test_state(make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    ));
+    let mut state = test_state(make_config("default", "default", &[]));
     state.next_section();
     state.next_section();
     assert_eq!(state.focus(), Section::Segments);
@@ -183,15 +151,7 @@ fn clear_filter_restores_full_list_and_keeps_cursor_item_highlighted() {
 
 #[test]
 fn filter_query_is_shared_across_sections_and_persists_across_tab() {
-    let mut state = test_state(make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    ));
+    let mut state = test_state(make_config("default", "default", &[]));
     assert_eq!(state.focus(), Section::Theme);
 
     state.push_filter_char('d');
@@ -216,15 +176,7 @@ fn filter_query_is_shared_across_sections_and_persists_across_tab() {
 
 #[test]
 fn push_filter_char_narrows_every_section_not_just_focused() {
-    let mut state = test_state(make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    ));
+    let mut state = test_state(make_config("default", "default", &[]));
     assert_eq!(state.focus(), Section::Theme);
 
     for c in "dir".chars() {

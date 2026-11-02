@@ -14,7 +14,7 @@ cd "$ROOT" || exit 1
 shell_e2e_init "$ROOT"
 
 # Every config mirror gets a non-default value so it would show up if exported.
-printf '[agent]\nenabled = false\n\n[agent.supervisor]\nenabled = false\ncheck_interval_seconds = 45\nmax_restart_attempts = 9\n\n[git]\nenabled = false\n\n[language]\nenabled = false\n\n[ui]\ntransient_prompt = false\n' \
+printf '[agent]\nenabled = false\n\n[agent.supervisor]\nenabled = false\ncheck_interval_seconds = 45\nmax_restart_attempts = 9\n\n[ui]\ntransient_prompt = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
 
 EXPORT_DIR="$SHELL_E2E_ROOT/exports"
@@ -42,7 +42,7 @@ for sh in bash zsh fish; do
         continue
     fi
     # The mirrors really are in the file, so the empty result below means something.
-    for mirror in agent_enabled supervisor_enabled supervisor_check_interval supervisor_max_restarts git_enabled language_enabled transient_prompt; do
+    for mirror in agent_enabled supervisor_enabled supervisor_check_interval supervisor_max_restarts transient_prompt; do
         grep -q "__gpy_cfg_$mirror" "$file" || fail "$sh: the export lacks __gpy_cfg_$mirror"
     done
     seen="$(env_of "$sh" "$file" | sed -n 's/^\(GPY_[A-Za-z0-9_]*\)=.*/\1/p; s/^\(__gpy_[A-Za-z0-9_]*\)=.*/\1/p' | sort | paste -sd' ' -)"

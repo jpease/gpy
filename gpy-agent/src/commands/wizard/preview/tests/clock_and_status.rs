@@ -2,13 +2,7 @@ use super::*;
 
 #[test]
 fn render_segment_clock_renders_fixed_demo_time() {
-    let config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&[]);
     let theme = ThemeConfig::default();
     let facts = make_facts();
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -170,13 +164,7 @@ fn line_text(line: &Line<'_>) -> String {
 
 #[test]
 fn preview_always_renders_character_line() {
-    let config = make_config(
-        &["duration"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["duration"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();
@@ -196,13 +184,7 @@ fn preview_always_renders_character_line() {
 
 #[test]
 fn preview_renders_status_as_chain_pill() {
-    let config = make_config(
-        &["duration", "status"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["duration", "status"]);
     let state = test_state(config.clone());
 
     let mut theme = ThemeConfig::default();
@@ -237,13 +219,7 @@ fn preview_draws_no_private_use_caps_when_icons_are_off() {
         .expect("default theme should always load")
         .get();
     let render = |show_icons: bool| {
-        let mut config = make_config(
-            &["clock", "duration", "directory"],
-            GitLanguageFlags {
-                git: false,
-                language: false,
-            },
-        );
+        let mut config = make_config(&["clock", "duration", "directory"]);
         config.ui.show_icons = show_icons;
         let state = test_state(config.clone());
         render_preview_line(&state, &config, &theme, &Palette::default(), &make_facts())
@@ -270,13 +246,7 @@ fn preview_draws_no_private_use_caps_when_icons_are_off() {
 
 #[test]
 fn preview_status_pill_uses_fail_variant_and_theme_fallback_icon() {
-    let config = make_config(
-        &["status"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["status"]);
     let state = test_state(config.clone());
     let theme = ThemeConfig::default();
     let mut facts = make_facts();
@@ -301,13 +271,7 @@ fn preview_status_pill_drops_private_use_icon_when_icons_are_off() {
         .expect("default theme should always load")
         .get();
     let render = |show_icons: bool, success: bool| {
-        let mut config = make_config(
-            &["status"],
-            GitLanguageFlags {
-                git: false,
-                language: false,
-            },
-        );
+        let mut config = make_config(&["status"]);
         config.ui.show_icons = show_icons;
         let state = test_state(config.clone());
         let mut facts = make_facts();
@@ -336,13 +300,7 @@ fn preview_default_theme_pills_lead_with_one_space_when_first() {
     let theme = crate::theme::ThemeManager::builtin("default")
         .expect("default theme should always load")
         .get();
-    let config = make_config(
-        &[],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&[]);
     let facts = make_facts();
     {
         let (segment, content) = ("status", "\u{f058}");
@@ -373,13 +331,7 @@ fn preview_default_theme_pills_lead_with_one_space_when_first() {
 /// A `format` on the status segment drives the preview pill, in the failure color too.
 #[test]
 fn preview_status_format_uses_the_outcome_colors() {
-    let config = make_config(
-        &["status"],
-        GitLanguageFlags {
-            git: false,
-            language: false,
-        },
-    );
+    let config = make_config(&["status"]);
     let state = test_state(config.clone());
     let mut theme = ThemeConfig::default();
     theme.segments.status.format = Some("[ $symbol]($style)".to_owned());

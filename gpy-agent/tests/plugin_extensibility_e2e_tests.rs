@@ -43,10 +43,8 @@ fn write_config(root: &std::path::Path, theme: &str, segments: &[&str]) {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "{theme}"
@@ -91,7 +89,9 @@ end
     fs::write(
         plugin_dir.join("themes").join("community.toml"),
         r##"[ui]
-prompt_icon = ">"
+
+[segments.character]
+success_symbol = ">"
 
 [segments.clock]
 bg_color = "black"

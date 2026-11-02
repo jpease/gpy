@@ -9,7 +9,7 @@ mkdir -p $config_dir
 set -l config_path "$config_dir/config.toml"
 
 # Initial config: language enabled with versions shown
-printf "[language]\nenabled = true\nshow_versions = true\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
+printf "[language]\nshow_versions = true\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
 
 set -lx XDG_CONFIG_HOME $temp_root
 set -lx XDG_CACHE_HOME "$temp_root/cache"
@@ -32,24 +32,15 @@ if not string match -q '*1.23*' -- $rendered
     exit 1
 end
 
-echo "Reload config with language disabled"
-printf "[language]\nenabled = false\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
+echo "Reload config with language unlisted"
+printf "[language]\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"git\"]\n" >$config_path
 # Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
 gpy-agent theme export --shell fish 2>/dev/null | source
 
-# The reload must hand the config's language.enabled to the shell as the
-# non-exported mirror; the prompt never renders a segment whose detect fails.
-if test "$__gpy_cfg_language_enabled" != 0
-    fail "Expected __gpy_cfg_language_enabled=0 after the reload, got '$__gpy_cfg_language_enabled'"
-    exit 1
-end
-if set -qx __gpy_cfg_language_enabled
-    fail "__gpy_cfg_language_enabled must not be exported"
-    exit 1
-end
-
-if segment_language_detect
-    fail "Language segment should not detect when disabled"
+# The reload must hand the new segment list to the shell: the prompt renders
+# only the segments listed in __enabled_segments.
+if contains language $__enabled_segments
+    fail "Expected language to leave __enabled_segments after the reload, got '$__enabled_segments'"
     exit 1
 end
 

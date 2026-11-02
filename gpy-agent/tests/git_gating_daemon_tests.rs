@@ -1,6 +1,6 @@
 //! Real-daemon checks that every Git entry point — direct requests and
 //! background work (reconcile ticks, registration scans) — honors
-//! `git.enabled` and `git.skip_paths`, including skip roots that appear or
+//! `git.skip_paths` and the `git` entry of `ui.enabled_segments`, including skip roots that appear or
 //! change while the agent runs, and reloads that newly exclude a repo.
 
 #![cfg(unix)]
@@ -192,11 +192,17 @@ fn git_cache_files(env: &CliTestEnv, repo_name: &str) -> Vec<PathBuf> {
     files
 }
 
+/// `config.toml` body that unlists the git segment.
+const GIT_UNLISTED: &str = "[ui]\nenabled_segments = [\"directory\"]\n";
+
 fn write_config(env: &CliTestEnv, git_section: &str) {
-    env.write_config(&format!(
-        "[agent]\nlive_updates = true\n\n[git]\n{git_section}\n"
-    ))
-    .expect("write config");
+    write_config_with(env, &format!("[git]\n{git_section}\n"));
+}
+
+/// Writes `body` (TOML tables) after the `[agent]` table.
+fn write_config_with(env: &CliTestEnv, body: &str) {
+    env.write_config(&format!("[agent]\nlive_updates = true\n\n{body}"))
+        .expect("write config");
 }
 
 /// The `.reload` doorbell flag the agent raises for `client`.
@@ -229,7 +235,7 @@ fn assert_reload_drops_then_restores_git_caches(
 
     let flag = reload_flag(env, &client);
     let _ = std::fs::remove_file(&flag);
-    write_config(env, excluding);
+    write_config_with(env, excluding);
     daemon.reload_config();
     assert_eq!(
         git_cache_files(env, repo_name),
@@ -258,7 +264,7 @@ fn reload_disabling_git_deletes_cached_git_prompts() {
     let env = CliTestEnv::new().expect("cli env");
     // Deep enough that the repo's cache key is chunked into directories.
     let repo = create_repo(&env, &format!("{}/longkeyrepo", "d".repeat(120)));
-    assert_reload_drops_then_restores_git_caches(&env, &repo, "longkeyrepo", "enabled = false");
+    assert_reload_drops_then_restores_git_caches(&env, &repo, "longkeyrepo", GIT_UNLISTED);
 }
 
 #[test]
@@ -269,7 +275,7 @@ fn reload_skipping_a_repo_deletes_its_cached_git_prompts() {
         &env,
         &repo,
         "nowskipped",
-        &format!("skip_paths = [\"{}\"]", repo.display()),
+        &format!("[git]\nskip_paths = [\"{}\"]\n", repo.display()),
     );
 }
 
@@ -322,7 +328,7 @@ fn reconcile_never_scans_or_publishes_a_skipped_repo() {
 fn reconcile_never_scans_or_publishes_when_git_disabled() {
     let env = CliTestEnv::new().expect("cli env");
     let repo = create_repo(&env, "disabledrepo");
-    write_config(&env, "enabled = false");
+    write_config_with(&env, GIT_UNLISTED);
 
     let daemon = Daemon::start(&env);
     let _client = daemon.register_client(&repo);
@@ -331,7 +337,7 @@ fn reconcile_never_scans_or_publishes_when_git_disabled() {
     assert_eq!(
         git_cache_files(&env, "disabledrepo"),
         Vec::<PathBuf>::new(),
-        "git.enabled = false must keep reconcile from publishing git caches"
+        "an unlisted git segment must keep reconcile from publishing git caches"
     );
     assert_eq!(
         daemon.watched_and_cached(),

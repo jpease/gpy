@@ -20,8 +20,7 @@ Every key, its type, default and range: [Configuration Reference](configuration-
 A theme file has exactly these sections: `[ui]` (the root prompt symbol
 `root_prompt_icon`/`root_prompt_color`, `two_line` and other display keys, all
 listed in [Theme Customization](theme-customization.md#theme-ui-keys); the non-root prompt symbol is `[segments.character]`
-`success_symbol`/`success_color`, and `ui.prompt_icon`/`ui.prompt_color` are
-deprecated), the four glyph tables `[ui.prompt_open]`,
+`success_symbol`/`success_color`), the four glyph tables `[ui.prompt_open]`,
 `[ui.prompt_close]`, `[ui.segment_open]`, `[ui.segment_close]`, an optional
 `[ui.recommended]` block that `gpy theme use --force` applies to
 `config.toml`, and one `[segments.<id>]` table per segment (`clock`,
@@ -78,15 +77,9 @@ export GPY_DISABLE_WATCHER=1   # Bash, Zsh
 set -gx GPY_DISABLE_WATCHER 1  # Fish
 ```
 
-To hide the language segment, turn it off in `config.toml` rather than in
-the shell: segment flags (`[language] enabled`, `[git] enabled`) are
-config-only, and no `GPY_LANGUAGE_ENABLED` or `GPY_GIT_ENABLED` variable is
-read.
-
-```toml
-[language]
-enabled = false
-```
+To hide the language segment, turn it off in the config rather than in the
+shell: `gpy disable language` removes it from `ui.enabled_segments`. No
+`GPY_LANGUAGE_ENABLED` or `GPY_GIT_ENABLED` variable is read.
 
 ### Debug Logging
 

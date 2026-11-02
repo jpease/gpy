@@ -139,21 +139,6 @@ fn print_unknown_config_keys(path: &std::path::Path) {
             format_args!("Unknown key in {}: {key} (ignored)", path.display()),
         );
     }
-    for key in ["git", "language"] {
-        if raw
-            .get(key)
-            .and_then(|table| table.get("enabled"))
-            .is_some()
-        {
-            output::detail_status(
-                1,
-                Status::Warn,
-                format_args!(
-                    "`{key}.enabled` is deprecated; use `gpy disable {key}` / `gpy enable {key}` instead, and remove the key"
-                ),
-            );
-        }
-    }
 }
 
 fn check_config_and_theme(

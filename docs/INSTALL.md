@@ -350,18 +350,6 @@ source is the data root (the installers' `~/.local/bin/gpy` finds
 the completions and version stamps and wires the rc file. Nothing in an rc file
 is touched until the files are in place.
 
-**Moving from an earlier layout.** Releases up to 0.8 installed Fish into
-`~/.config/fish/gpy` and Zsh and Bash into `~/.config/gpy/{zsh,bash}`, with the
-bundled plugins in `~/.config/gpy/bundled-plugins`. Run `gpy setup` once after
-upgrading: it rewrites your rc block to the new path, re-points the `fish_prompt`
-link, and prints, for each old directory, `The GPY files in <dir> are no longer
-used; remove them after restarting your open shells: rm -rf '<dir>'`. It never
-deletes them itself, because open shells still load files from them. A block you
-edited by hand is left as it is, and setup tells you the path to change it to.
-Until you run it, the old bundled plugin directory keeps serving `username` and
-`hostname` (a fallback that goes away in a later release). `gpy uninstall`
-removes the old locations too.
-
 ## Verifying Your Download
 
 Every release publishes a `.sha256` sidecar next to each downloadable file, an
@@ -647,8 +635,6 @@ gpy-agent stop
 rm -f ~/.local/bin/gpy-agent ~/.local/bin/gpy ~/.local/bin/gpy-agent.backup.* ~/.local/bin/gpy.backup.*
 rm -rf ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish
 rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/gpy"   # shell files, completions and bundled plugins
-# Older layouts (releases up to 0.8) also left these:
-rm -rf ~/.config/fish/gpy ~/.config/gpy/bash ~/.config/gpy/zsh ~/.config/gpy/bundled-plugins
 # rm -rf ~/.config/gpy  # your config, themes, palettes and plugins are kept unless you delete them
 rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-~/.cache}/gpy"          # cache; socket, shells/
 # Remove the "# >>> gpy-init >>>" ... "# <<< gpy-init <<<" block from

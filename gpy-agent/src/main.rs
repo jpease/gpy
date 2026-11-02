@@ -96,9 +96,6 @@ enum ThemeCommands {
         /// Shell to export for ('fish', 'zsh', or 'bash'; case-insensitive).
         #[arg(long, value_name = "SHELL", ignore_case = true, default_value_t = Shell::Fish)]
         shell: Shell,
-        /// Deprecated spelling of `--shell`.
-        #[arg(long, hide = true, ignore_case = true, conflicts_with = "shell")]
-        format: Option<Shell>,
     },
 }
 
@@ -171,15 +168,6 @@ enum OneshotCommands {
         #[command(flatten)]
         segment: SegmentArgs,
     },
-    /// Deprecated spelling of `exit-status`.
-    #[command(name = "status", hide = true)]
-    StatusDeprecated {
-        /// Last command exit code (0 = success, non-zero = failure).
-        #[arg(long, default_value_t = 0_i32, allow_negative_numbers = true)]
-        exit_code: i32,
-        #[command(flatten)]
-        segment: SegmentArgs,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -197,11 +185,6 @@ fn install_panic_handler() {
     gpy_agent::error::install_broken_pipe_hook(|panic_info| {
         gpy_agent::warn_log!("agent", "PANIC: {:?}", panic_info);
     });
-}
-
-/// Warn on stderr that `old` is deprecated in favour of `new`.
-fn warn_deprecated(old: &str, new: &str) {
-    gpy_agent::commands::output::warn_stderr(format!("'{old}' is deprecated; use '{new}' instead"));
 }
 
 /// Request fields every `oneshot` subcommand shares.
@@ -250,8 +233,7 @@ impl From<OneshotCommands> for OneshotRequest {
                 success: Some(exit_code == 0_i32),
                 ..base_oneshot_request(OneshotKind::Character, String::new(), segment)
             },
-            OneshotCommands::ExitStatus { exit_code, segment }
-            | OneshotCommands::StatusDeprecated { exit_code, segment } => Self {
+            OneshotCommands::ExitStatus { exit_code, segment } => Self {
                 success: Some(exit_code == 0_i32),
                 ..base_oneshot_request(OneshotKind::ExitStatus, String::new(), segment)
             },
@@ -265,9 +247,6 @@ impl From<OneshotCommands> for OneshotRequest {
 /// Returns the render error, which `main` prints as one `Error:` line.
 fn handle_oneshot_command(command: OneshotCommands) -> Result<()> {
     gpy_agent::git::native::NativeGitBackend::disable_untracked_cache_setup();
-    if matches!(command, OneshotCommands::StatusDeprecated { .. }) {
-        warn_deprecated("gpy-agent oneshot status", "gpy-agent oneshot exit-status");
-    }
     let request = OneshotRequest::from(command);
 
     println!("{}", handle_oneshot_request(&request)?);
@@ -328,11 +307,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Commands::Status { socket } => return Ok(agent_report::status(socket.as_deref())),
         Commands::Theme {
-            command: ThemeCommands::Export { shell, format },
-        } => export_theme(format.map_or(shell, |deprecated| {
-            warn_deprecated("gpy-agent theme export --format", "--shell");
-            deprecated
-        }))?,
+            command: ThemeCommands::Export { shell },
+        } => export_theme(shell)?,
         Commands::Oneshot { command } => handle_oneshot_command(command)?,
         Commands::Config {
             command: ConfigCommands::Reload { socket },

@@ -48,7 +48,6 @@ check_interval_seconds = 15  # Check more often on a flaky machine
 max_restart_attempts = 3     # Give up sooner to avoid restart-looping
 
 [git]
-enabled = true
 show_upstream = true
 timeout_seconds = 3          # Lower it in CI containers with fast local repos
 skip_paths = ["/mnt/network-share", "/home/me/vendor"]  # Skip git status in slow/irrelevant trees
@@ -63,7 +62,6 @@ stash = "$"                  # Override a single glyph independent of icon_set
 detached = "@"
 
 [language]
-enabled = true
 show_versions = true
 cache_ttl_hours = 6          # Refresh version info more often
 enabled_languages = ["rust", "python", "node"]  # Only show these; an empty list shows all
@@ -122,7 +120,6 @@ Controls git status detection: what's computed, how it's capped, and which icons
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `enabled` | bool | `true` | — | Deprecated: use `gpy disable git` / `gpy enable git` (`ui.enabled_segments`). Still loads: `false` removes a listed `git` segment, so no git calls are made. `gpy doctor` warns when it is present. |
 | `show_upstream` | bool | `true` | — | Shows ahead/behind commit counts relative to the upstream branch. |
 | `timeout_seconds` | integer | `10` | `1`–`600` | Time budget for one git status: every git subprocess it runs (status, stash count, branch fallback, untracked-cache setup) shares it, and a subprocess still running when it ends is killed. The IPC handler also uses it (plus a small margin) as the ceiling it waits for a fresh status before falling back to stale/cached data. |
 | `skip_paths` | array of strings | `[]` | must be absolute (`/...`) or home-relative (`~/...`) paths | Directories whose repositories get no git detection — useful for huge monorepos or slow network mounts. A repository is skipped when its root (the directory holding `.git`) is at or under an entry, so an entry can name a repository or a directory of repositories. An entry inside a repository (below its root) does not skip that repository, not even for prompts in that subdirectory. Entries are matched component-wise after `~` expansion and symlink resolution, so `~/x`, `/tmp/x` and `/private/tmp/x` all work (`/tmp/foo` does not skip `/tmp/foobar`). The running agent re-resolves entries every few seconds, so a skipped directory or symlink created, removed or retargeted after startup takes effect without a restart. Skipped repositories get no git status, no instant-prompt cache and no background refresh (watcher events or the periodic reconcile), and `gpy-agent oneshot git` returns the disabled error. Skipped repositories are not watched either: a new or removed language shows within 30 s, but a changed version in a project file (`.tool-versions`, `rust-toolchain.toml`, `.python-version`) shows only after `language.cache_ttl_hours` (default 24 h). A running agent stops watching a newly skipped repository at the next config reload or when its shells change directory. |
@@ -164,7 +161,6 @@ Version probes run the tool in the project directory with the agent's environmen
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `enabled` | bool | `true` | — | Deprecated: use `gpy disable language` / `gpy enable language` (`ui.enabled_segments`). Still loads: `false` removes a listed `language` segment. `gpy doctor` warns when it is present. |
 | `show_versions` | bool | `true` | — | Enables version detection/display (e.g., `node 20.11.0`) alongside the language name/icon. |
 | `cache_ttl_hours` | integer | `24` | `1`–`720` | How long language version, mise and virtualenv lookups are cached. A tool upgrade that changes no version file shows after this period. |
 | `enabled_languages` | array of strings | `[]` | any known language identifier | Restricts detection to this list; empty means detect all supported languages. Shown space-separated in `gpy config get`. |

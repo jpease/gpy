@@ -1,7 +1,6 @@
 //! Integration tests for where `gpy setup` installs: the release layout
 //! (`fish/`, `bash/`, `zsh/`, `plugins/`) under `$XDG_DATA_HOME/gpy`, found
-//! again as a source by a bare `gpy setup`, plus the migration away from the
-//! old locations under `$XDG_CONFIG_HOME`.
+//! again as a source by a bare `gpy setup`.
 
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
@@ -12,7 +11,6 @@ mod setup_harness;
 
 use setup_harness::{assert_ok, block_count, repo_root, setup};
 use std::fs;
-use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -55,62 +53,6 @@ fn run_setup(
         cmd.env(key, value);
     }
     cmd.output().expect("failed to spawn gpy setup")
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for dirent in fs::read_dir(from).unwrap() {
-        let entry = dirent.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
-}
-
-/// A GPY block as an earlier release wrote it.
-fn block(body: &str) -> String {
-    format!("\n# >>> gpy-init >>>\n# GPY shell integration\n{body}\n# <<< gpy-init <<<\n")
-}
-
-fn guarded(gpy_bash: &Path) -> String {
-    format!(
-        "case $- in\n    *i*) source \"{}\" ;;\nesac",
-        gpy_bash.display()
-    )
-}
-
-/// An 0.8-style install of `shell`: the tree under `$XDG_CONFIG_HOME`, stamped.
-fn old_tree(home: &Path, shell: &str) -> PathBuf {
-    let dir = if shell == "fish" {
-        home.join(".config/fish/gpy")
-    } else {
-        home.join(".config/gpy").join(shell)
-    };
-    copy_dir(&repo_root().join(shell), &dir);
-    fs::write(dir.join(".gpy-version"), "0.8.0\n").unwrap();
-    dir
-}
-
-fn old_fish_block(old: &Path) -> String {
-    block(&format!(
-        "if status is-interactive\n    source \"{}\"\nend",
-        old.join("conf.d/gpy_init.fish").display()
-    ))
-}
-
-fn files_named(dir: &Path, needle: &str) -> Vec<PathBuf> {
-    fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| path.to_string_lossy().contains(needle))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 #[test]
@@ -252,166 +194,6 @@ fn checkout_build_prefers_the_checkout_over_the_data_root() {
 }
 
 #[test]
-fn setup_migrates_an_0_8_layout_without_deleting() {
-    let home = TempDir::new().unwrap();
-    let h = home.path();
-    let old_fish = old_tree(h, "fish");
-    let old_zsh = old_tree(h, "zsh");
-    let old_bash = old_tree(h, "bash");
-    fs::write(
-        h.join(".zshrc"),
-        block(&format!("source \"{}\"", old_zsh.join("gpy.zsh").display())),
-    )
-    .unwrap();
-    fs::write(
-        h.join(".bashrc"),
-        block(&format!(
-            "source \"{}\"",
-            old_bash.join("gpy.bash").display()
-        )),
-    )
-    .unwrap();
-    fs::write(
-        h.join(".config/fish/config.fish"),
-        old_fish_block(&old_fish),
-    )
-    .unwrap();
-    let functions = h.join(".config/fish/functions");
-    fs::create_dir_all(&functions).unwrap();
-    symlink(
-        old_fish.join("functions/fish_prompt.fish"),
-        functions.join("fish_prompt.fish"),
-    )
-    .unwrap();
-
-    let output = setup(h, &["--shell", "zsh"]);
-
-    assert_ok(&output);
-    let root = data(h);
-    let zshrc = fs::read_to_string(h.join(".zshrc")).unwrap();
-    assert_eq!(block_count(&h.join(".zshrc")), 1);
-    assert!(
-        zshrc.contains(&root.join("zsh/gpy.zsh").display().to_string()),
-        "{zshrc}"
-    );
-    let bashrc = fs::read_to_string(h.join(".bashrc")).unwrap();
-    assert_eq!(block_count(&h.join(".bashrc")), 1);
-    assert!(
-        bashrc.contains(&guarded(&root.join("bash/gpy.bash"))),
-        "{bashrc}"
-    );
-    let config_fish = fs::read_to_string(h.join(".config/fish/config.fish")).unwrap();
-    assert_eq!(block_count(&h.join(".config/fish/config.fish")), 1);
-    assert!(
-        config_fish.contains(&root.join("fish/conf.d/gpy_init.fish").display().to_string()),
-        "{config_fish}"
-    );
-    assert_eq!(
-        fs::read_link(functions.join("fish_prompt.fish")).unwrap(),
-        root.join("fish/functions/fish_prompt.fish")
-    );
-    assert!(
-        files_named(&functions, ".backup.").is_empty(),
-        "no backup of GPY's own link"
-    );
-    for old in [&old_fish, &old_zsh, &old_bash] {
-        assert!(
-            old.join(".gpy-version").is_file(),
-            "{} is not deleted",
-            old.display()
-        );
-        let hint = format!(
-            "The GPY files in {dir} are no longer used; remove them after restarting your open shells: rm -rf '{dir}'",
-            dir = old.display()
-        );
-        assert!(stdout(&output).contains(&hint), "{}", stdout(&output));
-    }
-}
-
-#[test]
-fn bash_migration_accepts_the_guarded_and_unguarded_bodies() {
-    for guarded_body in [false, true] {
-        let home = TempDir::new().unwrap();
-        let h = home.path();
-        let old_bash = old_tree(h, "bash");
-        let entry = old_bash.join("gpy.bash");
-        let body = if guarded_body {
-            guarded(&entry)
-        } else {
-            format!("source \"{}\"", entry.display())
-        };
-        fs::write(h.join(".bashrc"), format!("export A=1\n{}", block(&body))).unwrap();
-
-        assert_ok(&setup(h, &["--shell", "bash"]));
-
-        let bashrc = fs::read_to_string(h.join(".bashrc")).unwrap();
-        assert_eq!(block_count(&h.join(".bashrc")), 1, "{bashrc}");
-        assert!(bashrc.starts_with("export A=1\n"), "{bashrc}");
-        assert!(
-            bashrc.contains(&guarded(&data(h).join("bash/gpy.bash"))),
-            "{bashrc}"
-        );
-        assert!(!bashrc.contains(&entry.display().to_string()), "{bashrc}");
-    }
-}
-
-#[test]
-fn fish_prompt_link_into_old_tree_is_replaced_without_backup() {
-    let home = TempDir::new().unwrap();
-    let h = home.path();
-    let old_fish = old_tree(h, "fish");
-    let functions = h.join(".config/fish/functions");
-    fs::create_dir_all(&functions).unwrap();
-    symlink(
-        old_fish.join("functions/fish_prompt.fish"),
-        functions.join("fish_prompt.fish"),
-    )
-    .unwrap();
-
-    // The chosen shell is not Fish: the link is still re-pointed.
-    assert_ok(&setup(h, &["--shell", "zsh"]));
-
-    assert_eq!(
-        fs::read_link(functions.join("fish_prompt.fish")).unwrap(),
-        data(h).join("fish/functions/fish_prompt.fish")
-    );
-    assert_eq!(files_named(&functions, ".backup.").len(), 0_usize);
-    assert!(old_fish.join("functions/fish_prompt.fish").is_file());
-}
-
-#[test]
-fn edited_rc_block_is_kept_and_reported() {
-    let home = TempDir::new().unwrap();
-    let h = home.path();
-    let old_zsh = old_tree(h, "zsh");
-    let edited = format!("source \"{}\" # mine", old_zsh.join("gpy.zsh").display());
-    fs::write(h.join(".zshrc"), block(&edited)).unwrap();
-
-    let output = setup(h, &["--shell", "zsh"]);
-
-    assert_ok(&output);
-    assert!(
-        fs::read_to_string(h.join(".zshrc"))
-            .unwrap()
-            .contains(&edited)
-    );
-    let out = stdout(&output);
-    assert!(out.contains("Your edited GPY block in"), "{out}");
-    assert!(
-        out.contains(&format!("still loads {}", old_zsh.display())),
-        "{out}"
-    );
-    assert!(
-        out.contains(&format!(
-            "change it to {}",
-            data(h).join("zsh/gpy.zsh").display()
-        )),
-        "{out}"
-    );
-    assert!(old_zsh.join("gpy.zsh").is_file());
-}
-
-#[test]
 fn completions_only_for_wired_shells() {
     let home = TempDir::new().unwrap();
     let h = home.path();
@@ -450,32 +232,4 @@ fn doctor_lists_shells_by_rc_block() {
     assert!(report.contains("Checking zsh integration"), "{report}");
     assert!(!report.contains("Checking bash integration"), "{report}");
     assert!(!report.contains("Checking fish integration"), "{report}");
-}
-
-#[test]
-fn bundled_root_falls_back_to_the_old_location() {
-    let home = TempDir::new().unwrap();
-    let old_root = home.path().join(".config/gpy/bundled-plugins");
-    copy_dir(&repo_root().join("plugins"), &old_root);
-
-    let list = |dir: &Path| {
-        let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
-            .arg("segments")
-            .current_dir(dir)
-            .env_clear()
-            .env("HOME", dir)
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .output()
-            .expect("failed to spawn gpy segments");
-        stdout(&output)
-    };
-
-    assert!(
-        list(home.path()).contains("username"),
-        "the old root still serves username"
-    );
-
-    // Once the data root has its own `plugins`, the old root is ignored.
-    fs::create_dir_all(data(home.path()).join("plugins")).unwrap();
-    assert!(!list(home.path()).contains("username"));
 }

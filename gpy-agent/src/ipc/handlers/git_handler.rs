@@ -498,13 +498,12 @@ mod tests {
         );
     }
 
-    /// `git` missing from `ui.enabled_segments` disables Git even with `git.enabled = true`.
+    /// `git` missing from `ui.enabled_segments` disables Git.
     #[test]
     fn unlisted_git_segment_is_feature_disabled() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let git_root = init_dirty_repo(&temp_dir);
         let mut config = crate::config::Config::default();
-        assert!(config.git.enabled);
         config
             .ui
             .enabled_segments

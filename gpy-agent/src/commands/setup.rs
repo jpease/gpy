@@ -7,7 +7,6 @@
 
 use super::rc_block::{BlockChange, ensure_block, has_block};
 use super::setup_install::{InstallMode, install_bundled_plugins, install_files, preflight};
-use super::setup_migrate::{migrate_old_layout, old_rc_bodies};
 use crate::commands::init::{self, InitOptions};
 use crate::paths::{self, Os};
 use crate::shell::Shell;
@@ -457,10 +456,9 @@ fn install(
 
     let (rc_file, rc_block_added) = match shell {
         Shell::Fish => wire_fish(env, &config_home, &shell_dir)?,
-        Shell::Zsh => wire_zsh(env, &config_home, &shell_dir)?,
-        Shell::Bash => wire_bash(env, &config_home, &shell_dir)?,
+        Shell::Zsh => wire_zsh(env, &shell_dir)?,
+        Shell::Bash => wire_bash(env, &shell_dir)?,
     };
-    migrate_old_layout(env, &config_home, &root);
     Ok(Outcome {
         shell_dir,
         rc_file,
@@ -477,15 +475,6 @@ fn is_in_place(source_root: &Path, root: &DataRoot) -> bool {
 /// Where `gpy setup` installs `shell`'s scripts under the data root.
 pub(super) fn shell_dir_for(root: &DataRoot, shell: Shell) -> PathBuf {
     root.0.join(shell.as_str())
-}
-
-/// Where releases before the data-root move installed `shell`'s scripts.
-/// Deprecated: removed together with `migrate_old_layout`.
-pub(super) fn legacy_shell_dir_for(config_home: &Path, shell: Shell) -> PathBuf {
-    match shell {
-        Shell::Fish => config_home.join("fish").join("gpy"),
-        Shell::Zsh | Shell::Bash => config_home.join("gpy").join(shell.as_str()),
-    }
 }
 
 /// The rc file `gpy setup` wires for `shell`.
@@ -517,33 +506,25 @@ pub(super) fn zsh_rc_body(shell_dir: &Path) -> String {
 /// Wire Fish: rc block in `config.fish` plus the `fish_prompt` symlink.
 fn wire_fish(env: &Environment, config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let config = rc_file_for(env, Shell::Fish)?;
-    let legacy = legacy_shell_dir_for(config_home, Shell::Fish);
     let added = ensure_and_report(
         &config,
         RC_BLOCK_HEADER,
         &fish_rc_body(shell_dir),
-        &old_rc_bodies(config_home, Shell::Fish),
+        &[],
         "so it loads the files in the data directory",
     )?;
     let fish_dir = config_home.join("fish");
     link_fish_prompt(
         &fish_dir.join("functions/fish_prompt.fish"),
         &shell_dir.join("functions/fish_prompt.fish"),
-        &legacy,
     )?;
     Ok((config, added))
 }
 
-/// Whether `link` is a symlink pointing into `dir`.
-pub(super) fn links_into(link: &Path, dir: &Path) -> bool {
-    fs::read_link(link).is_ok_and(|target| target.starts_with(dir))
-}
-
 /// Make `target` a symlink to `source`. An old regular-file copy of GPY's
-/// prompt, or a link into the old tree `legacy`, is replaced; anything else
-/// is moved aside first.
+/// prompt is replaced; anything else is moved aside first.
 #[cfg(unix)]
-pub(super) fn link_fish_prompt(target: &Path, source: &Path, legacy: &Path) -> Result<()> {
+pub(super) fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
     if fs::read_link(target).is_ok_and(|current| current == source) {
         return Ok(());
     }
@@ -551,7 +532,7 @@ pub(super) fn link_fish_prompt(target: &Path, source: &Path, legacy: &Path) -> R
         fs::create_dir_all(parent)?;
     }
     if let Ok(meta) = target.symlink_metadata() {
-        if (meta.is_file() && is_gpy_prompt_copy(target)) || links_into(target, legacy) {
+        if meta.is_file() && is_gpy_prompt_copy(target) {
             fs::remove_file(target)?;
         } else {
             let now = std::time::SystemTime::now()
@@ -587,18 +568,18 @@ pub(super) fn is_gpy_prompt_copy(path: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-pub(super) fn link_fish_prompt(_target: &Path, _source: &Path, _legacy: &Path) -> Result<()> {
+pub(super) fn link_fish_prompt(_target: &Path, _source: &Path) -> Result<()> {
     Err(Error::invalid("shell integration needs a Unix shell"))
 }
 
 /// Wire Zsh: rc block in `$ZDOTDIR/.zshrc` or `~/.zshrc`.
-fn wire_zsh(env: &Environment, config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
+fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let rc = rc_file_for(env, Shell::Zsh)?;
     let added = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,
         &zsh_rc_body(shell_dir),
-        &old_rc_bodies(config_home, Shell::Zsh),
+        &[],
         "so it loads the files in the data directory",
     )?;
     Ok((rc, added))
@@ -665,12 +646,11 @@ pub(super) fn ensure_and_report(
 }
 
 /// Wire Bash: rc block in `~/.bashrc`, plus a login-shell loader.
-fn wire_bash(env: &Environment, config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
+fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     let home = env.home()?;
     let rc = rc_file_for(env, Shell::Bash)?;
     let gpy_bash = shell_dir.join("gpy.bash");
-    let mut legacy_bodies = legacy_bash_rc_bodies(&gpy_bash);
-    legacy_bodies.extend(old_rc_bodies(config_home, Shell::Bash));
+    let legacy_bodies = legacy_bash_rc_bodies(&gpy_bash);
     let added = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,
@@ -916,7 +896,7 @@ mod tests {
         let (target, source) = prompt_fixture(dir.path());
         let original = "function fish_prompt; echo mine; end\n";
         fs::write(&target, original).unwrap();
-        link_fish_prompt(&target, &source, Path::new("/nonexistent/legacy")).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
         assert_eq!(fs::read_link(&target).unwrap(), source);
         let backups = prompt_backups(&target);
         assert_eq!(backups.len(), 1);
@@ -951,7 +931,7 @@ mod tests {
         fs::create_dir_all(dotfiles.parent().unwrap()).unwrap();
         fs::write(&dotfiles, "function fish_prompt; end\n").unwrap();
         std::os::unix::fs::symlink(&dotfiles, &target).unwrap();
-        link_fish_prompt(&target, &source, Path::new("/nonexistent/legacy")).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
         assert_eq!(fs::read_link(&target).unwrap(), source);
         let backups = prompt_backups(&target);
         assert_eq!(backups.len(), 1);
@@ -966,7 +946,7 @@ mod tests {
         let (target, source) = prompt_fixture(dir.path());
         let original = "# Tried GPY once; kept my own. See __enabled_segments.\nfunction fish_prompt\n    printf \"mine> \"\nend\n";
         fs::write(&target, original).unwrap();
-        link_fish_prompt(&target, &source, Path::new("/nonexistent/legacy")).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
         assert_eq!(fs::read_link(&target).unwrap(), source);
         let backups = prompt_backups(&target);
         assert_eq!(backups.len(), 1);
@@ -986,7 +966,7 @@ mod tests {
             "function fish_prompt\n    for segment in $__enabled_segments\n        if functions -q segment_{$segment}_render\n            segment_{$segment}_render\n        end\n    end\nend\n",
         )
         .unwrap();
-        link_fish_prompt(&target, &source, Path::new("/nonexistent/legacy")).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
         assert_eq!(fs::read_link(&target).unwrap(), source);
         assert_eq!(prompt_backups(&target), Vec::<PathBuf>::new());
     }

@@ -25,13 +25,11 @@ check_interval_seconds = 30
 max_restart_attempts = 5
 
 [git]
-enabled = true
 show_upstream = true
 timeout_seconds = 10
 skip_paths = []
 
 [language]
-enabled = true
 show_versions = true
 cache_ttl_hours = 24
 enabled_languages = []

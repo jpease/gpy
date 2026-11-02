@@ -1,8 +1,7 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 # gpy-prompt-debug and gpy-prompt-reload are autoloaded from fish/functions,
-# not parsed at startup; the deprecated prompt-debug and prompt-reload wrappers
-# print one notice per shell; init.fish adds the functions directory to
+# not parsed at startup; init.fish adds the functions directory to
 # fish_function_path once, even when an absolute entry for it already exists
 # through a symlinked spelling and init.fish is sourced by a relative path.
 
@@ -29,27 +28,15 @@ echo "--- autoloaded from fish/functions ---"
 # file) as its source.
 set -l out (run_child '
     source fish/core/init.fish
-    for name in gpy-prompt-debug gpy-prompt-reload prompt-debug prompt-reload __gpy_debug_paths
+    for name in gpy-prompt-debug gpy-prompt-reload __gpy_debug_paths
         functions -q $name; and echo "$name=autoloadable"
         echo "$name="(functions --details -- $name | string replace -r "^.*/" "")
     end
 ')
-for name in gpy-prompt-debug gpy-prompt-reload prompt-debug prompt-reload __gpy_debug_paths
+for name in gpy-prompt-debug gpy-prompt-reload __gpy_debug_paths
     check "$name is available" "$name=autoloadable" (string match "$name=autoloadable" -- $out)
     check "$name comes from its own file" "$name=$name.fish" (string match "$name=*.fish" -- $out)
 end
-
-echo "--- deprecated wrappers print once per shell ---"
-set out (run_child '
-    source fish/core/init.fish
-    prompt-reload
-    prompt-reload
-    prompt-debug
-    prompt-debug
-')
-check "prompt-reload prints its notice once" 1 (count (string match "gpy: prompt-reload is deprecated; use gpy-prompt-reload instead" -- $out))
-check "prompt-debug prints its notice once" 1 (count (string match "gpy: prompt-debug is deprecated; use gpy-prompt-debug instead" -- $out))
-check "prompt-debug still works through the wrapper" 2 (count (string match "Usage: gpy-prompt-debug*" -- $out))
 
 echo "--- fish_function_path ---"
 set out (run_child '

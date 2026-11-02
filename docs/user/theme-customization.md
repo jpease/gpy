@@ -110,7 +110,7 @@ text_color = "#f1faee"
 
 **Change the prompt symbol:**
 
-The prompt symbol is `[segments.character]`: `success_symbol` and `success_color` (and `error_symbol`/`error_color` after a failed command). Shells that draw the symbol themselves, for example while the agent is down, use the same two values. `ui.root_prompt_icon` and `ui.root_prompt_color` are the separate, root-only symbol. `ui.prompt_icon` and `ui.prompt_color` are deprecated: they only override the shell-drawn fallback, so set the `segments.character` keys instead.
+The prompt symbol is `[segments.character]`: `success_symbol` and `success_color` (and `error_symbol`/`error_color` after a failed command). Shells that draw the symbol themselves, for example while the agent is down, use the same two values. `ui.root_prompt_icon` and `ui.root_prompt_color` are the separate, root-only symbol.
 
 ```toml
 [segments.character]
@@ -163,8 +163,7 @@ gpy theme use mytheme
 - a `[segments.<id>]` section that no built-in segment, bundled plugin (`username`, `hostname`) or installed plugin provides (usually a typo such as `[segments.gitt]`);
 - a `[segments.language]` colour key that is not `<lang>_bg_color` or `<lang>_text_color` (`rust_bgcolor` is ignored);
 - an enabled `directory`, `duration`, `git` or `language` segment with no `format`, which renders nothing (for example after `unset = ["segments.git.format"]`);
-- a control character in a git icon override (`staged_icon`, `unstaged_icon`, `untracked_icon`, `conflicts_icon`, `stash_icon`), which is removed when the segment is drawn;
-- a theme that sets the deprecated `ui.prompt_icon` or `ui.prompt_color` (set `segments.character.success_symbol` or `success_color` instead).
+- a control character in a git icon override (`staged_icon`, `unstaged_icon`, `untracked_icon`, `conflicts_icon`, `stash_icon`), which is removed when the segment is drawn.
 
 `gpy palette use` checks the active theme's segment templates against the new palette and warns about each segment that would render empty, then switches anyway.
 
@@ -255,7 +254,7 @@ gpy palette show             # print the active palette name
 
 Only three themes ship in the box: `default`, `starship`, `text`. `text` is a plain-ASCII/Unicode fallback for terminals without a patched font — see [Configuration Examples: Switch to Nerd Font icons](configuration-examples.md#goal-switch-to-nerd-font-icons).
 
-`gpy theme use <name>` also accepts `--force`: it applies every *recommended* setting of that theme (segment layout, directory display, language detection mode, palette) on top of your current config, overwriting your values, and prints each change as `old → new` (for example `ui.palette: nord → starship`). To undo a change, set the old value back with `gpy config set` (or `gpy enable`/`gpy disable` for the segment list). `--force` never changes `ui.show_icons`, which `gpy setup` detects; a theme's `[ui.recommended] show_icons` is deprecated and ignored. Without `--force`, switching themes leaves everything else as-is.
+`gpy theme use <name>` also accepts `--force`: it applies every *recommended* setting of that theme (segment layout, directory display, language detection mode, palette) on top of your current config, overwriting your values, and prints each change as `old → new` (for example `ui.palette: nord → starship`). To undo a change, set the old value back with `gpy config set` (or `gpy enable`/`gpy disable` for the segment list). `--force` never changes `ui.show_icons`, which `gpy setup` detects. Without `--force`, switching themes leaves everything else as-is.
 
 Before writing changes, `gpy theme use` validates the candidate theme's segment format templates against the prospective active palette. If any format template fails validation (unsupported syntax or an unknown color role not present in the prospective palette), activation fails and your current `config.toml` is preserved untouched.
 
@@ -316,9 +315,7 @@ Every key a theme accepts under `[ui]`. These are theme keys, not `config.toml` 
 | `root_prompt_color` | color | Color of the root prompt symbol. |
 | `prompt_open`, `prompt_close` | glyph table | Delimiters drawn at the start and end of the whole prompt; each takes `fg`/`bg` colors (`[ui.prompt_open]`, `[ui.prompt_close]`). |
 | `segment_open`, `segment_close` | glyph table | Default delimiters drawn around each segment, with `fg`/`bg` colors (`[ui.segment_open]`, `[ui.segment_close]`). |
-| `prompt_icon` | string | Deprecated; use `[segments.character] success_symbol` / `success_color` instead. |
-| `prompt_color` | color | Deprecated; use `[segments.character] success_symbol` / `success_color` instead. |
-| `recommended` | table | `[ui.recommended]`: settings the theme suggests (`enabled_segments`, `directory`, `language_detection`, `palette`), applied to `config.toml` only by `gpy theme use <name> --force`. `[ui.recommended] show_icons` is deprecated and ignored; `ui.show_icons` is set by `gpy setup`. |
+| `recommended` | table | `[ui.recommended]`: settings the theme suggests (`enabled_segments`, `directory`, `language_detection`, `palette`), applied to `config.toml` only by `gpy theme use <name> --force`. |
 
 `default` and `starship` set `two_line`, and every bundled theme sets the root prompt keys: [`config/themes/`](../../config/themes/).
 

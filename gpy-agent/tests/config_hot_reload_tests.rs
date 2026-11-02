@@ -67,7 +67,6 @@ enabled = true
 live_updates = true
 
 [git]
-enabled = true
 
 [ui]
 enabled_segments = ["clock", "directory", "git"]
@@ -77,7 +76,10 @@ enabled_segments = ["clock", "directory", "git"]
 
     let manager = ConfigManager::from_path(&config_path).expect("create manager");
     let config = manager.get();
-    assert!(config.git.enabled, "git should be enabled initially");
+    assert!(
+        config.segment_enabled("git"),
+        "git should be listed initially"
+    );
 
     let shell_dir = TempDir::new().expect("create shell dir");
     let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
@@ -96,28 +98,24 @@ enabled = true
 live_updates = true
 
 [git]
-enabled = false
 
 [ui]
-enabled_segments = ["clock", "directory", "git"]
+enabled_segments = ["clock", "directory"]
 "#,
     )
     .expect("write updated config");
 
     manager.reload_now().expect("reload config");
     let new_config = manager.get();
-    assert!(!new_config.git.enabled, "git should be disabled now");
+    assert!(
+        !new_config.segment_enabled("git"),
+        "git should be unlisted now"
+    );
 
     // Disabling git must request a reload.
     registry.notify_reload();
 
-    assert_reload_delivered(
-        &doorbell,
-        &shell_dir,
-        initial_count,
-        "git.enabled changes to false",
-    )
-    .await;
+    assert_reload_delivered(&doorbell, &shell_dir, initial_count, "git is unlisted").await;
 }
 
 #[cfg(unix)]
@@ -132,7 +130,6 @@ async fn test_reload_sent_when_git_enabled() {
         &config_path,
         r#"
 [git]
-enabled = false
 
 [ui]
 enabled_segments = ["clock", "directory"]
@@ -141,7 +138,7 @@ enabled_segments = ["clock", "directory"]
     .expect("write initial config");
 
     let manager = ConfigManager::from_path(&config_path).expect("create manager");
-    assert!(!manager.get().git.enabled);
+    assert!(!manager.get().segment_enabled("git"));
 
     let shell_dir = TempDir::new().expect("create shell dir");
     let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
@@ -153,7 +150,6 @@ enabled_segments = ["clock", "directory"]
         &config_path,
         r#"
 [git]
-enabled = true
 
 [ui]
 enabled_segments = ["clock", "directory", "git"]
@@ -162,17 +158,11 @@ enabled_segments = ["clock", "directory", "git"]
     .expect("write updated config");
 
     manager.reload_now().expect("reload");
-    assert!(manager.get().git.enabled);
+    assert!(manager.get().segment_enabled("git"));
 
     registry.notify_reload();
 
-    assert_reload_delivered(
-        &doorbell,
-        &shell_dir,
-        initial_count,
-        "git.enabled changes to true",
-    )
-    .await;
+    assert_reload_delivered(&doorbell, &shell_dir, initial_count, "git is listed again").await;
 }
 
 /// With git disabled, the theme export drops "git" from `__enabled_segments`.
@@ -183,8 +173,7 @@ fn test_theme_export_updates_enabled_segments_when_git_disabled() {
     use gpy_agent::theme::ThemeManager;
 
     let mut config = Config::default();
-    config.git.enabled = false;
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned()];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(
@@ -195,16 +184,11 @@ fn test_theme_export_updates_enabled_segments_when_git_disabled() {
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory"),
-        "Git should be removed from enabled_segments when git.enabled=false. Got: {fish_output}"
+        "Git should be absent from enabled_segments when unlisted. Got: {fish_output}"
     );
     assert!(
         !fish_output.contains("clock directory git"),
-        "Enabled segments should not include git when disabled. Got: {fish_output}"
-    );
-
-    assert!(
-        fish_output.contains("set -g __gpy_cfg_git_enabled \"0\""),
-        "__gpy_cfg_git_enabled should be 0 when git.enabled=false. Got: {fish_output}"
+        "Enabled segments should not include git when unlisted. Got: {fish_output}"
     );
 }
 
@@ -215,7 +199,6 @@ fn test_theme_export_includes_git_when_enabled() {
     use gpy_agent::theme::ThemeManager;
 
     let mut config = Config::default();
-    config.git.enabled = true;
     config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
@@ -227,12 +210,7 @@ fn test_theme_export_includes_git_when_enabled() {
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory git"),
-        "Git should be included in enabled_segments when git.enabled=true. Got: {fish_output}"
-    );
-
-    assert!(
-        fish_output.contains("set -g __gpy_cfg_git_enabled \"1\""),
-        "__gpy_cfg_git_enabled should be 1 when git.enabled=true. Got: {fish_output}"
+        "Git should be included in enabled_segments when listed. Got: {fish_output}"
     );
 }
 
@@ -243,13 +221,7 @@ fn test_theme_export_updates_enabled_segments_when_language_disabled() {
     use gpy_agent::theme::ThemeManager;
 
     let mut config = Config::default();
-    config.language.enabled = false;
-    config.ui.enabled_segments = vec![
-        "clock".to_owned(),
-        "language".to_owned(),
-        "directory".to_owned(),
-        "git".to_owned(),
-    ];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(
@@ -260,14 +232,12 @@ fn test_theme_export_updates_enabled_segments_when_language_disabled() {
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory git"),
-        "Language should be removed from enabled_segments when language.enabled=false. Got: {fish_output}"
+        "Language should be absent from enabled_segments when unlisted. Got: {fish_output}"
     );
     assert!(
         !fish_output.contains("__enabled_segments clock language directory git"),
-        "Enabled segments should not include language when disabled. Got: {fish_output}"
+        "Enabled segments should not include language when unlisted. Got: {fish_output}"
     );
-
-    assert!(fish_output.contains("set -g __gpy_cfg_language_enabled \"0\""),);
 }
 
 #[test]
@@ -277,14 +247,7 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
     use gpy_agent::theme::ThemeManager;
 
     let mut config = Config::default();
-    config.git.enabled = false;
-    config.language.enabled = false;
-    config.ui.enabled_segments = vec![
-        "clock".to_owned(),
-        "language".to_owned(),
-        "directory".to_owned(),
-        "git".to_owned(),
-    ];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned()];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(
@@ -295,15 +258,7 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory"),
-        "Both git and language should be removed when disabled. Got: {fish_output}"
-    );
-    assert!(
-        fish_output.contains("set -g __gpy_cfg_git_enabled \"0\""),
-        "__gpy_cfg_git_enabled should be 0. Got: {fish_output}"
-    );
-    assert!(
-        fish_output.contains("set -g __gpy_cfg_language_enabled \"0\""),
-        "__gpy_cfg_language_enabled should be 0. Got: {fish_output}"
+        "Both git and language should be absent when unlisted. Got: {fish_output}"
     );
 }
 
@@ -320,7 +275,6 @@ async fn test_config_watcher_triggers_reload_on_git_toggle() {
         &config_path,
         r#"
 [git]
-enabled = true
 
 [ui]
 enabled_segments = ["clock", "directory", "git"]
@@ -333,13 +287,15 @@ enabled_segments = ["clock", "directory", "git"]
         .start_watching(Duration::from_millis(100))
         .expect("start watching");
 
-    assert!(manager.get().git.enabled, "git should be enabled initially");
+    assert!(
+        manager.get().segment_enabled("git"),
+        "git should be listed initially"
+    );
 
     fs::write(
         &config_path,
         r#"
 [git]
-enabled = false
 
 [ui]
 enabled_segments = ["clock", "directory"]
@@ -348,13 +304,13 @@ enabled_segments = ["clock", "directory"]
     .expect("write updated config");
 
     let reloaded = wait_until_async(Duration::from_secs(6), Duration::from_millis(50), || {
-        !manager.get().git.enabled
+        !manager.get().segment_enabled("git")
     })
     .await;
 
     assert!(
         reloaded,
-        "Config watcher should detect git.enabled toggle and reload config"
+        "Config watcher should detect the git segment being unlisted and reload config"
     );
 
     manager.stop_watching();
@@ -376,10 +332,8 @@ async fn test_reload_sent_when_disabling_multiple_features() {
 live_updates = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 ",
     )
     .expect("write initial config");
@@ -393,16 +347,13 @@ enabled = true
 
     fs::write(
         &config_path,
-        r"
+        r#"
 [agent]
 live_updates = false
 
-[git]
-enabled = false
-
-[language]
-enabled = false
-",
+[ui]
+enabled_segments = ["clock", "directory"]
+"#,
     )
     .expect("write updated config");
 
@@ -431,7 +382,6 @@ async fn test_reload_sent_when_language_display_changes() {
         &config_path,
         r#"
 [language]
-enabled = true
 display = "icon"
 "#,
     )
@@ -448,7 +398,6 @@ display = "icon"
         &config_path,
         r#"
 [language]
-enabled = true
 display = "text"
 "#,
     )
@@ -484,7 +433,6 @@ async fn test_reload_sent_when_language_icons_change() {
         &config_path,
         r"
 [language]
-enabled = true
 ",
     )
     .expect("write initial config");
@@ -500,7 +448,6 @@ enabled = true
         &config_path,
         r#"
 [language]
-enabled = true
 
 [language.icons]
 rust = "🦀"
@@ -532,14 +479,14 @@ python = "🐍"
     .await;
 }
 
-/// Re-applies `trigger` every 200 ms until `git.enabled == want` or 10 s pass.
+/// Re-applies `trigger` every 200 ms until `git.show_upstream == want` or 10 s pass.
 /// A watch has no "armed" signal, so repeat the idempotent change; 200 ms exceeds the 100 ms debounce.
 /// `want` or 10 s pass.
 #[cfg(unix)]
-async fn wait_for_git_enabled(manager: &ConfigManager, want: bool, trigger: impl Fn()) -> bool {
+async fn wait_for_show_upstream(manager: &ConfigManager, want: bool, trigger: impl Fn()) -> bool {
     wait_until_async(Duration::from_secs(10), Duration::from_millis(200), || {
         trigger();
-        manager.get().git.enabled == want
+        manager.get().git.show_upstream == want
     })
     .await
 }
@@ -560,7 +507,7 @@ async fn symlinked_config_file_hot_reloads() {
     fs::create_dir_all(&dir_b).expect("create dirB");
     let target = dir_a.join("gpy-config.toml");
     let link = dir_b.join("config.toml");
-    fs::write(&target, "[git]\nenabled = true\n").expect("write target");
+    fs::write(&target, "[git]\n").expect("write target");
     std::os::unix::fs::symlink(&target, &link).expect("symlink config");
 
     let manager = ConfigManager::from_path(&link).expect("create manager");
@@ -569,16 +516,15 @@ async fn symlinked_config_file_hot_reloads() {
         .expect("start watching");
 
     let write_through_link =
-        || fs::write(&link, "[git]\nenabled = false\n").expect("write through link");
+        || fs::write(&link, "[git]\nshow_upstream = false\n").expect("write through link");
     assert!(
-        wait_for_git_enabled(&manager, false, write_through_link).await,
+        wait_for_show_upstream(&manager, false, write_through_link).await,
         "a write through the symlink should hot-reload"
     );
 
-    let write_target =
-        || fs::write(&target, "[git]\nenabled = true\n").expect("write target directly");
+    let write_target = || fs::write(&target, "[git]\n").expect("write target directly");
     assert!(
-        wait_for_git_enabled(&manager, true, write_target).await,
+        wait_for_show_upstream(&manager, true, write_target).await,
         "a write to the symlink target should hot-reload"
     );
 
@@ -603,8 +549,8 @@ async fn symlinked_config_retarget_hot_reloads() {
     let first = dir_a.join("gpy-config.toml");
     let second = dir_c.join("other-config.toml");
     let link = dir_b.join("config.toml");
-    fs::write(&first, "[git]\nenabled = true\n").expect("write first target");
-    fs::write(&second, "[git]\nenabled = false\n").expect("write second target");
+    fs::write(&first, "[git]\n").expect("write first target");
+    fs::write(&second, "[git]\nshow_upstream = false\n").expect("write second target");
     std::os::unix::fs::symlink(&first, &link).expect("symlink config");
 
     let manager = ConfigManager::from_path(&link).expect("create manager");
@@ -618,15 +564,14 @@ async fn symlinked_config_retarget_hot_reloads() {
         fs::rename(&staged, &link).expect("retarget link");
     };
     assert!(
-        wait_for_git_enabled(&manager, false, retarget).await,
+        wait_for_show_upstream(&manager, false, retarget).await,
         "retargeting the symlink should hot-reload"
     );
 
     // Keep writing until the watcher has re-armed the new target's directory.
-    let edit_new_target =
-        || fs::write(&second, "[git]\nenabled = true\n").expect("edit new target");
+    let edit_new_target = || fs::write(&second, "[git]\n").expect("edit new target");
     assert!(
-        wait_for_git_enabled(&manager, true, edit_new_target).await,
+        wait_for_show_upstream(&manager, true, edit_new_target).await,
         "an edit to the new target should hot-reload"
     );
 

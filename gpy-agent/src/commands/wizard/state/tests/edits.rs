@@ -1,29 +1,13 @@
 use super::*;
 
 fn clean_state() -> WizardState {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
+    let config = make_config("default", "default", &["directory"]);
     test_state(config)
 }
 
 #[test]
 fn directory_display_defaults_to_the_config_value() {
-    let mut config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
+    let mut config = make_config("default", "default", &["directory"]);
     config.ui.directory.display = crate::config::types::DirectoryDisplay::Truncated;
     let state = test_state(config);
 
@@ -78,15 +62,7 @@ fn directory_display_edit_marks_dirty_and_reaches_apply_to() {
 
 #[test]
 fn language_display_defaults_to_the_config_value() {
-    let mut config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &["directory"],
-    );
+    let mut config = make_config("default", "default", &["directory"]);
     config.language.display = crate::config::types::LanguageDisplay::Text;
     let state = test_state(config);
 

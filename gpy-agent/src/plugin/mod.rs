@@ -22,8 +22,8 @@ pub use manifest::{
     SegmentName, SegmentTokenCollision, first_token_collision,
 };
 pub use registry::{
-    BUNDLED_PLUGINS_DIR_NAME, DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource,
-    bundled_plugins_dir, discover_plugins, user_plugins_dir,
+    DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource, bundled_plugins_dir,
+    discover_plugins, user_plugins_dir,
 };
 pub use script::{
     CacheScope, EnvName, Extension, InputName, RESERVED_SETTING_KEYS, ScanName, ScriptPath,
