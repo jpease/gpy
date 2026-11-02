@@ -6,7 +6,7 @@ GPY is a personal project with one release line. Security fixes land on the late
 
 | Version | Supported |
 | ------- | --------- |
-| 0.8.x   | Yes       |
+| 0.9.x   | Yes       |
 
 ## Reporting a Vulnerability
 

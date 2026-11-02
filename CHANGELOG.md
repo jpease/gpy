@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-01
+
 ### Changed
 - Library API: `language::version::ReleaseSource` is renamed `VersionSource`; `detect_language_release[_at]` → `detect_version[_at]`; `lookup_language_release_at` → `lookup_version_at`.
 - Library API: `cache::get_theme_export_cache_path` → `fish_theme_export_path`; `cache::theme_export::theme_export_dir` is removed (use `paths::gpy_cache_dir`); the four `*Source`/`Discovered*` palette and theme aliases are removed (use `config::discovery::{Source, Discovered}`).
@@ -1054,7 +1056,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jpease/gpy/releases/tag/v0.9.0
 [0.8.0]: https://github.com/jpease/gpy/releases/tag/v0.8.0
 [0.7.1]: https://github.com/jpease/gpy/releases/tag/v0.7.1
 [0.6.0]: https://github.com/jpease/gpy/releases/tag/v0.6.0
