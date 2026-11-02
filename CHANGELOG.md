@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-01
+
 ### Changed
 - **Breaking:** removed spellings that were deprecated in 0.9.0: the config keys `git.enabled` and `language.enabled` (use `gpy disable git` / `gpy disable language`), the theme keys `ui.prompt_icon`, `ui.prompt_color` and `[ui.recommended] show_icons` (use `[segments.character] success_symbol`/`success_color`), the Fish functions `prompt-reload` and `prompt-debug` (use `gpy-prompt-reload` / `gpy-prompt-debug`), the Fish variables `GPY_SHOW_LANGUAGES`, `GPY_MINIMAL_SEGMENTS` and `GPY_TEST_SEGMENTS`, `gpy lang versions on|off` (use `gpy config set language.show_versions`), `gpy-agent oneshot status` (use `oneshot exit-status`), `gpy-agent theme export --format` (use `--shell`), and the migration from the old shell and bundled-plugin directories (run `gpy setup` on 0.9.x first, or remove the old trees by hand). A `config.toml` or theme that still sets a removed key is reported by `gpy doctor` as unknown and the key has no effect. The warnings for the old meanings of `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_SHOW_STATUS`, `GPY_PROFILE` and an empty `GPY_DEBUG_LOG` are gone; the new meanings are unchanged.
 
@@ -1059,7 +1061,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/jpease/gpy/releases/tag/v0.10.0
 [0.9.0]: https://github.com/jpease/gpy/releases/tag/v0.9.0
 [0.8.0]: https://github.com/jpease/gpy/releases/tag/v0.8.0
 [0.7.1]: https://github.com/jpease/gpy/releases/tag/v0.7.1
