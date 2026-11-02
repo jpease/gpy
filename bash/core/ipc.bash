@@ -37,26 +37,13 @@ __gpy_supervisor_enabled() {
     [[ "${__gpy_cfg_supervisor_enabled-}" != 0 ]]
 }
 
-# Runs once per shell, after the theme loads: names the flag values whose
-# meaning changed, and logs unrecognised ones under GPY_DEBUG.
+# Runs once per shell, after the theme loads: logs unrecognised flag values
+# under GPY_DEBUG.
 __gpy_warn_flag_values() {
     local __gpy_wf_name __gpy_wf_value __gpy_wf_state
     for __gpy_wf_name in GPY_AGENT_ENABLED GPY_AGENT_SUPERVISOR_ENABLED GPY_SHOW_STATUS; do
         __gpy_wf_value="${!__gpy_wf_name-}"
         [[ -n "$__gpy_wf_value" ]] || continue
-        if [[ "$__gpy_wf_name" == GPY_SHOW_STATUS ]]; then
-            case "$__gpy_wf_value" in
-                [Tt][Rr][Uu][Ee] | [Yy][Ee][Ss] | [Oo][Nn])
-                    echo "gpy: GPY_SHOW_STATUS=$__gpy_wf_value now shows the status indicator (it used to hide it); set GPY_SHOW_STATUS=1 or unset it" >&2
-                    ;;
-            esac
-        else
-            case "$__gpy_wf_value" in
-                [Nn][Oo] | [Oo][Ff][Ff])
-                    echo "gpy: $__gpy_wf_name=$__gpy_wf_value now disables it (it used to leave it on); set $__gpy_wf_name=0 to silence this" >&2
-                    ;;
-            esac
-        fi
         __gpy_flag_value "$__gpy_wf_value" unrecognised __gpy_wf_state
         if [[ "$__gpy_wf_state" == unrecognised && "${GPY_DEBUG-}" == 1 ]]; then
             echo "gpy[flags]: debug: $__gpy_wf_name=$__gpy_wf_value is not a boolean; ignoring it" >&2

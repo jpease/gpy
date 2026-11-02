@@ -51,20 +51,12 @@ function __gpy_supervisor_max_restarts --description 'Supervisor restart attempt
 end
 
 # Runs once per shell, after the theme loads (see __gpy_warn_flag_values_once):
-# names the flag values whose meaning changed, and logs unrecognised ones
-# under GPY_DEBUG.
+# logs unrecognised flag values under GPY_DEBUG.
 function __gpy_warn_flag_values --description 'One-time warnings for GPY_* flag values'
     for name in GPY_AGENT_ENABLED GPY_AGENT_SUPERVISOR_ENABLED GPY_SHOW_STATUS
         set -q $name; or continue
         set -l value "$$name"
         test -n "$value"; or continue
-        if test "$name" = GPY_SHOW_STATUS
-            if string match -qri -- '\A(true|yes|on)\z' "$value"
-                echo "gpy: GPY_SHOW_STATUS=$value now shows the status indicator (it used to hide it); set GPY_SHOW_STATUS=1 or unset it" >&2
-            end
-        else if string match -qri -- '\A(no|off)\z' "$value"
-            echo "gpy: $name=$value now disables it (it used to leave it on); set $name=0 to silence this" >&2
-        end
         if test (__gpy_flag_value "$value" unrecognised) = unrecognised
             __gpy_log_debug flags "$name=$value is not a boolean; ignoring it"
         end

@@ -1,4 +1,4 @@
-//! Renamed `gpy-agent` subcommands and flags and their deprecated spellings.
+//! Renamed `gpy-agent` subcommands and flags.
 #![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
 #![allow(clippy::expect_used, reason = "test code may panic on failure")]
 #![allow(clippy::panic, reason = "test code may panic on failure")]
@@ -20,52 +20,28 @@ fn run(env: &CliTestEnv, args: &[&str], code: i32) -> common::cli_harness::CliCo
 }
 
 #[test]
-fn deprecated_oneshot_status_matches_exit_status() {
+fn oneshot_exit_status_renders_the_pill() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
     let tail = ["--exit-code", "1", "--format", "ansi"];
-    let renamed = run(
+    let result = run(
         &env,
         &[&["oneshot", "exit-status"][..], &tail].concat(),
         0_i32,
     );
-    let old = run(&env, &[&["oneshot", "status"][..], &tail].concat(), 0_i32);
 
-    assert!(!renamed.stdout.is_empty(), "the pill renders: {renamed:?}");
-    assert_eq!(old.stdout, renamed.stdout, "same bytes on stdout");
-    assert!(
-        !renamed.stderr.contains("deprecated"),
-        "the new name is silent: {renamed:?}"
-    );
-    assert_eq!(
-        old.stderr.trim_end(),
-        "warn: 'gpy-agent oneshot status' is deprecated; use 'gpy-agent oneshot exit-status' instead",
-        "{old:?}"
-    );
+    assert!(!result.stdout.is_empty(), "the pill renders: {result:?}");
+    assert!(result.stderr.is_empty(), "silent on stderr: {result:?}");
+    run(&env, &[&["oneshot", "status"][..], &tail].concat(), 2_i32);
 }
 
 #[test]
-fn deprecated_theme_export_format_matches_shell() {
+fn theme_export_shell_selects_the_shell() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let renamed = run(&env, &["theme", "export", "--shell", "bash"], 0_i32);
-    let old = run(&env, &["theme", "export", "--format", "bash"], 0_i32);
+    let result = run(&env, &["theme", "export", "--shell", "bash"], 0_i32);
 
-    assert!(!renamed.stdout.is_empty(), "the export prints: {renamed:?}");
-    assert_eq!(old.stdout, renamed.stdout, "same stdout");
-    assert!(
-        !renamed.stderr.contains("deprecated"),
-        "`--shell` is silent: {renamed:?}"
-    );
-    assert_eq!(
-        old.stderr.trim_end(),
-        "warn: 'gpy-agent theme export --format' is deprecated; use '--shell' instead",
-        "{old:?}"
-    );
-
-    run(
-        &env,
-        &["theme", "export", "--shell", "bash", "--format", "zsh"],
-        2_i32,
-    );
+    assert!(!result.stdout.is_empty(), "the export prints: {result:?}");
+    assert!(result.stderr.is_empty(), "silent on stderr: {result:?}");
+    run(&env, &["theme", "export", "--format", "bash"], 2_i32);
 }
 
 /// The text after the flag column of the `--socket` line in `gpy-agent <args>

@@ -533,16 +533,6 @@ impl WizardState {
         config.language.display = self.selected_language_display;
         config.language.show_versions = self.selected_language_show_versions;
 
-        // A selected git/language renders even if a deprecated flag was
-        // `false`: set it in memory (the save path removes it from the file).
-        // Deselecting only removes the list entry; the wizard writes no flag.
-        if self.is_segment_enabled(BuiltinSegment::Git.as_str()) {
-            config.git.enabled = true;
-        }
-        if self.is_segment_enabled(BuiltinSegment::Language.as_str()) {
-            config.language.enabled = true;
-        }
-
         // Keep existing order; unoffered names stay, new built-ins go to their
         // canonical position and new plugin names append.
         config.ui.enabled_segments.retain(|name| {

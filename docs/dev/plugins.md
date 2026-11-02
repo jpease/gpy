@@ -96,10 +96,8 @@ renderer, IPC request or `gpy-agent oneshot` mode for either.
 
 - **Where they live.** Discovery reads the bundled root from
   `$GPY_BUNDLED_PLUGIN_DIR`, default `$XDG_DATA_HOME/gpy/plugins`
-  (`~/.local/share/gpy/plugins`). For one minor release, when that directory
-  does not exist but the old `$XDG_CONFIG_HOME/gpy/bundled-plugins` does (a
-  package upgrade with no `gpy setup` since), the old directory is used. A user
-  plugin with the same id in `plugins/` overrides a bundled one.
+  (`~/.local/share/gpy/plugins`). A user plugin with the same id in `plugins/`
+  overrides a bundled one.
 - **How they get there.** Release archives (`gpy-release.tar.gz`,
   `gpy-release.zip`) and `gpy-shell-files.tar.gz` carry `plugins/`, and the
   Homebrew formula installs it under `share/gpy/plugins`. `gpy setup` (run by
@@ -108,8 +106,7 @@ renderer, IPC request or `gpy-agent oneshot` mode for either.
   tree and clears the group and world write bits, because script segments
   refuse a script that others can write (see [Trust](#trust)). When the
   source already is the data root (the installers' layout), setup only clears
-  the write bits. `gpy uninstall` removes the bundled root, and the old
-  `bundled-plugins` directory too.
+  the write bits. `gpy uninstall` removes the bundled root.
 - **Settings.** Both are configured under `config.toml`
   `[plugin.hostname]` (`show_always`, `trim_at`) and `[plugin.username]`
   (`show_always`), not in the theme.

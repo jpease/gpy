@@ -1,8 +1,4 @@
 function segment_git_detect
-    if test "$__gpy_cfg_git_enabled" = 0
-        return 1
-    end
-
     # Reuses the render-scoped memoized git root shared with the cache read.
     test -n "$(__gpy_memoized_git_root $PWD)"
 end

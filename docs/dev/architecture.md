@@ -838,7 +838,7 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
 
 **Currently supported** (no restart required):
 - Theme changes (colors, glyphs, segment styling)
-- Config changes (`ui.enabled_segments`; `git.enabled`/`language.enabled` are deprecated segment switches replaced by it)
+- Config changes (`ui.enabled_segments`)
 - Git status updates (cross-terminal via file watcher)
 - Clock updates (every minute)
 
@@ -854,7 +854,7 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
    - Variable change handler calls `force-repaint`
    - No direct `commandline -f` calls from signal handlers (causes timing issues)
 
-2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like removing `git` from `ui.enabled_segments`, or the deprecated `git.enabled = false`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`__gpy_cfg_git_enabled`, `__enabled_segments`) so segments can correctly determine which is last.
+2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like removing `git` from `ui.enabled_segments`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`__enabled_segments`) so segments can correctly determine which is last.
 
 3. **Theme Loading Must Use Pipe-to-Source**:
    ```fish
@@ -892,7 +892,7 @@ Hot-reload tests:
    - `test_theme_export_delimiter_selection_after_git_disabled` - Verifies delimiter selection
    - `test_config_hot_reload_git_toggle_full_scenario` - End-to-end config toggle
 
-These tests cover the bug where disabling `git.enabled` sent no reload notification, so Fish kept stale segment lists and wrong delimiters.
+These tests cover the bug where unlisting `git` from `ui.enabled_segments` sent no reload notification, so Fish kept stale segment lists and wrong delimiters.
 
 ---
 

@@ -4,8 +4,6 @@
 # Fish swaps in the time, so every spec variant has to match the agent's.
 
 [ui]
-prompt_icon = "❯"
-prompt_color = "white"
 two_line = true
 
 [ui.prompt_open]
@@ -27,6 +25,10 @@ bg_color = "transparent"
 icon = ""
 icon_color = "match_bg"
 bg_color = "transparent"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "white"
 
 [segments.clock]
 format = "([$sep_open](fg:$bg bg:default))[ $time]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"

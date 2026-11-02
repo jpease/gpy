@@ -4,8 +4,6 @@
 # only: every shell maps them to the same SGR codes.
 
 [ui]
-prompt_icon = ">"
-prompt_color = "cyan"
 root_prompt_icon = "#"
 root_prompt_color = "yellow"
 two_line = true
@@ -29,6 +27,10 @@ bg_color = "transparent"
 icon = "]"
 icon_color = "white"
 bg_color = "transparent"
+
+[segments.character]
+success_symbol = ">"
+success_color = "cyan"
 
 [segments.clock]
 text_color = "white"

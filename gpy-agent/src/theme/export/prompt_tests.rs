@@ -1,9 +1,8 @@
-//! `__icon_prompt`/`__prompt_color`: derived from `segments.character`, with the
-//! deprecated `ui.prompt_*` keys as overrides.
+//! `__icon_prompt`/`__prompt_color`: derived from `segments.character`.
 
 use super::theme_to_shell::{PluginExports, theme_to_shell};
 use crate::config::Config;
-use crate::config::types::{ColorSpec, Icon};
+use crate::config::types::ColorSpec;
 use crate::shell::Shell;
 use crate::template::Palette;
 use crate::theme::model::ThemeConfig;
@@ -31,7 +30,7 @@ fn assigned(export: &str, name: &str) -> String {
 }
 
 #[test]
-fn prompt_symbol_export_follows_character_theme_when_ui_unset() {
+fn prompt_symbol_export_follows_character_theme() {
     let mut theme = ThemeConfig::default();
     theme.segments.character.success_symbol = "λ".to_owned();
     theme.segments.character.success_color = ColorSpec::new("cyan").expect("color");
@@ -40,19 +39,6 @@ fn prompt_symbol_export_follows_character_theme_when_ui_unset() {
 
     assert_eq!(assigned(&export, "__icon_prompt"), "λ");
     assert_eq!(assigned(&export, "__prompt_color"), "cyan");
-}
-
-#[test]
-fn deprecated_ui_prompt_color_still_overrides_fallback() {
-    let mut theme = ThemeConfig::default();
-    theme.segments.character.success_color = ColorSpec::new("cyan").expect("color");
-    theme.ui.prompt_color = Some(ColorSpec::new("magenta").expect("color"));
-    theme.ui.prompt_icon = Some(Icon::new("»").expect("icon"));
-
-    let export = bash_export(&theme);
-
-    assert_eq!(assigned(&export, "__prompt_color"), "magenta");
-    assert_eq!(assigned(&export, "__icon_prompt"), "»");
 }
 
 #[test]

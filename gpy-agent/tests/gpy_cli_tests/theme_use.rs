@@ -20,8 +20,10 @@ enabled_segments = ["clock", "duration"]
 
     let custom_theme = r##"
 [ui]
-prompt_icon = "❯"
-prompt_color = "white"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "white"
 
 [segments.clock]
 text_color = "white"

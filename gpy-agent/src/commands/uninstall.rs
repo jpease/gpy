@@ -6,9 +6,7 @@
 use super::lifecycle;
 use super::output;
 use super::rc_block::{has_start, remove_blocks};
-use super::setup::{
-    DataRoot, Environment, SHELLS, VERSION_STAMP, legacy_shell_dir_for, shell_dir_for,
-};
+use super::setup::{DataRoot, Environment, SHELLS, shell_dir_for};
 use super::setup_install::{fish_completions_dir, plugins_target};
 use crate::shell::Shell;
 use crate::{Error, Result, paths};
@@ -180,24 +178,11 @@ fn build_plan(env: &Environment) -> Result<Plan> {
         .into_iter()
         .map(|shell| shell_dir_for(&data_root, shell))
         .collect();
-    // Deprecated: the pre-data-root locations, removed only when GPY stamped them.
-    integration.extend(
-        SHELLS
-            .into_iter()
-            .map(|shell| legacy_shell_dir_for(&config_home, shell))
-            .filter(|dir| dir.join(VERSION_STAMP).is_file()),
-    );
     let completions = fish_completions_dir(&config_home);
     integration.push(completions.join("gpy.fish"));
     integration.push(completions.join("gpy-dynamic.fish"));
     integration.push(fish_dir.join("conf.d").join("gpy_init.fish"));
     integration.push(plugins_target(&data_root));
-    // Deprecated: the pre-data-root bundled plugin root, never stamped.
-    integration.push(
-        config_home
-            .join("gpy")
-            .join(crate::plugin::BUNDLED_PLUGINS_DIR_NAME),
-    );
 
     let mut candidates = vec![
         home.join(".bashrc"),
@@ -472,19 +457,14 @@ fn restore_fish_prompt(config_home: &Path, root: &DataRoot, tally: &mut Tally) {
         .join("fish")
         .join("functions")
         .join("fish_prompt.fish");
-    // GPY's prompt link goes into the current Fish tree, or the pre-data-root one.
-    let own_dirs = [
-        shell_dir_for(root, Shell::Fish),
-        legacy_shell_dir_for(config_home, Shell::Fish),
-    ];
+    // GPY's prompt link goes into the Fish tree under the data root.
+    let own_dir = shell_dir_for(root, Shell::Fish);
 
     if let Ok(meta) = prompt.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            if fs::read_link(&prompt).is_ok_and(|target| {
-                own_dirs
-                    .iter()
-                    .any(|dir| target == dir.join("functions").join("fish_prompt.fish"))
-            }) {
+            if fs::read_link(&prompt)
+                .is_ok_and(|target| target == own_dir.join("functions").join("fish_prompt.fish"))
+            {
                 tally.remove(&prompt);
             } else {
                 output::plain("fish_prompt.fish is a symlink GPY did not create; leaving it alone");
@@ -496,7 +476,7 @@ fn restore_fish_prompt(config_home: &Path, root: &DataRoot, tally: &mut Tally) {
     if exists(&prompt) {
         return;
     }
-    let Some(backup) = newest_backup(&prompt, &own_dirs) else {
+    let Some(backup) = newest_backup(&prompt, &own_dir) else {
         return;
     };
     match fs::rename(&backup, &prompt) {
@@ -535,7 +515,7 @@ fn is_backup_stamp(stamp: &str) -> bool {
 
 /// The newest `<prompt>.backup.<stamp>` beside `prompt`. A symlink into
 /// GPY's own shell tree never qualifies.
-fn newest_backup(prompt: &Path, own_dirs: &[PathBuf]) -> Option<PathBuf> {
+fn newest_backup(prompt: &Path, own_dir: &Path) -> Option<PathBuf> {
     let dir = prompt.parent()?;
     let prefix = format!("{}.backup.", prompt.file_name()?.to_string_lossy());
     let mut best: Option<(String, PathBuf)> = None;
@@ -549,9 +529,7 @@ fn newest_backup(prompt: &Path, own_dirs: &[PathBuf]) -> Option<PathBuf> {
             continue;
         };
         if meta.file_type().is_symlink() {
-            if fs::read_link(&path)
-                .is_ok_and(|target| own_dirs.iter().any(|own| target.starts_with(own)))
-            {
+            if fs::read_link(&path).is_ok_and(|target| target.starts_with(own_dir)) {
                 continue;
             }
         } else if !meta.is_file() {

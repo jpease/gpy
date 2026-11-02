@@ -5,7 +5,7 @@
 817 gpy-agent/src/formatter/prompt/tests.rs
 1000 gpy-agent/src/theme/export/tests.rs
 1263 gpy-agent/src/watcher/multi_repo/tests.rs
-1616 gpy-agent/tests/cli_integration_tests.rs
+1594 gpy-agent/tests/cli_integration_tests.rs
 1175 gpy-agent/tests/language_tests.rs
 1864 gpy-agent/tests/multi_repo_integration_tests.rs
 1307 gpy-agent/tests/theme_manager_tests.rs

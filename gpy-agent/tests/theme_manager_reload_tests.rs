@@ -52,7 +52,7 @@ fn install_plugin_theme(config_home: &Path) -> PathBuf {
     user_themes.join("community.toml")
 }
 
-fn prompt_icon(manager: &ThemeManager) -> String {
+fn prompt_symbol(manager: &ThemeManager) -> String {
     manager.get().segments.character.success_symbol.clone()
 }
 
@@ -67,24 +67,24 @@ fn reload_follows_a_user_override_above_plugin_and_builtin_themes() {
     let override_path = install_plugin_theme(temp_dir.path());
 
     let plugin = ThemeManager::new("community").unwrap();
-    assert_eq!(prompt_icon(&plugin), "P");
+    assert_eq!(prompt_symbol(&plugin), "P");
     assert!(!plugin.reload().unwrap(), "nothing changed on disk");
     fs::write(&override_path, icon_theme("U")).unwrap();
     assert!(plugin.reload().unwrap(), "the override replaces the plugin");
-    assert_eq!(prompt_icon(&plugin), "U");
+    assert_eq!(prompt_symbol(&plugin), "U");
     fs::write(&override_path, icon_theme("E")).unwrap();
     assert!(plugin.reload().unwrap(), "an in-place edit is a change");
-    assert_eq!(prompt_icon(&plugin), "E");
+    assert_eq!(prompt_symbol(&plugin), "E");
     assert!(
         !plugin.reload().unwrap(),
         "reloading an applied edit is not a change"
     );
     fs::remove_file(&override_path).unwrap();
     assert!(plugin.reload().unwrap(), "removal falls back to the plugin");
-    assert_eq!(prompt_icon(&plugin), "P");
+    assert_eq!(prompt_symbol(&plugin), "P");
 
     let builtin = ThemeManager::new("default").unwrap();
-    let builtin_icon = prompt_icon(&builtin);
+    let builtin_icon = prompt_symbol(&builtin);
     assert!(!builtin.reload().unwrap(), "the builtin never changes");
     let builtin_override = override_path.with_file_name("default.toml");
     fs::write(&builtin_override, icon_theme("U")).unwrap();
@@ -92,13 +92,13 @@ fn reload_follows_a_user_override_above_plugin_and_builtin_themes() {
         builtin.reload().unwrap(),
         "the override replaces the builtin"
     );
-    assert_eq!(prompt_icon(&builtin), "U");
+    assert_eq!(prompt_symbol(&builtin), "U");
     fs::remove_file(&builtin_override).unwrap();
     assert!(
         builtin.reload().unwrap(),
         "removal falls back to the builtin"
     );
-    assert_eq!(prompt_icon(&builtin), builtin_icon);
+    assert_eq!(prompt_symbol(&builtin), builtin_icon);
 }
 
 /// A read-only config tree (no user themes dir, none creatable) costs only
@@ -123,7 +123,7 @@ fn watching_survives_an_uncreatable_user_themes_dir() {
     let followed = started.is_ok()
         && wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
             fs::write(&plugin_path, icon_theme("Q")).unwrap();
-            prompt_icon(&manager) == "Q"
+            prompt_symbol(&manager) == "Q"
         });
     manager.stop_watching();
     fs::set_permissions(&gpy_dir, fs::Permissions::from_mode(0o700)).unwrap();
@@ -155,7 +155,7 @@ fn watcher_follows_a_user_override_above_a_plugin_theme() {
     let wait_for_icon = |icon: &str, apply: &dyn Fn()| {
         wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
             apply();
-            prompt_icon(&manager) == icon
+            prompt_symbol(&manager) == icon
         })
     };
     assert!(
@@ -214,14 +214,14 @@ fn watcher_reloads_edits_to_an_overlay_and_its_plugin_base() {
         manager.chain_for_test().to_string(),
         "mine (user) → community (plugin:acme)"
     );
-    assert_eq!(prompt_icon(&manager), "P");
+    assert_eq!(prompt_symbol(&manager), "P");
     assert_eq!(root_prompt_icon(&manager), "1");
     manager.start_watching(Duration::from_millis(50)).unwrap();
 
     // A watch has no "armed" signal: re-apply each idempotent edit until seen.
     let base_edited = wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
         fs::write(&base_path, icon_theme("Q")).unwrap();
-        prompt_icon(&manager) == "Q"
+        prompt_symbol(&manager) == "Q"
     });
     let overlay_edited = wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
         fs::write(&overlay_path, overlay_theme("community", "2")).unwrap();
@@ -231,7 +231,7 @@ fn watcher_reloads_edits_to_an_overlay_and_its_plugin_base() {
     assert!(base_edited, "an edit to the plugin base must reload");
     assert!(overlay_edited, "an edit to the overlay must reload");
     assert_eq!(
-        prompt_icon(&manager),
+        prompt_symbol(&manager),
         "Q",
         "the overlay is still merged over the edited base"
     );
@@ -251,7 +251,7 @@ fn an_overlay_appearing_over_the_active_builtin_switches_the_source() {
     let overlay_path = user_themes.join("default.toml");
 
     let manager = ThemeManager::new("default").unwrap();
-    let builtin_icon = prompt_icon(&manager);
+    let builtin_icon = prompt_symbol(&manager);
     assert_eq!(manager.chain_for_test().to_string(), "default (builtin)");
     manager.start_watching(Duration::from_millis(50)).unwrap();
 
@@ -268,7 +268,7 @@ fn an_overlay_appearing_over_the_active_builtin_switches_the_source() {
     assert!(appeared, "an overlay over the active builtin must reload");
     assert_eq!(switched_chain, "default (user) → default (builtin)");
     assert_eq!(
-        prompt_icon(&manager),
+        prompt_symbol(&manager),
         builtin_icon,
         "the overlay inherits the builtin's other keys"
     );
@@ -294,7 +294,7 @@ fn a_plugin_providing_a_self_named_base_appearing_and_disappearing_reloads() {
     .unwrap();
 
     let manager = ThemeManager::new("default").unwrap();
-    let builtin_icon = prompt_icon(&manager);
+    let builtin_icon = prompt_symbol(&manager);
     assert_eq!(
         manager.chain_for_test().to_string(),
         "default (user) → default (builtin)"
@@ -304,7 +304,7 @@ fn a_plugin_providing_a_self_named_base_appearing_and_disappearing_reloads() {
 
     let plugin_dir = install_acme_theme(temp_dir.path(), "default", &icon_theme("P"));
     let installed = wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        prompt_icon(&manager) == "P"
+        prompt_symbol(&manager) == "P"
     });
     let installed_chain = manager.chain_for_test().to_string();
     // Uninstall by removing its files, not its watched directories, which a
@@ -312,7 +312,7 @@ fn a_plugin_providing_a_self_named_base_appearing_and_disappearing_reloads() {
     fs::remove_file(plugin_dir.join("themes").join("default.toml")).unwrap();
     fs::remove_file(plugin_dir.join("plugin.toml")).unwrap();
     let removed = wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        prompt_icon(&manager) == builtin_icon
+        prompt_symbol(&manager) == builtin_icon
     });
     let removed_chain = manager.chain_for_test().to_string();
     manager.stop_watching();

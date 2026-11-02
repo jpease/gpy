@@ -1,7 +1,7 @@
 //! Opt-in operation timing, enabled by setting `GPY_PROFILE` to a true flag
 //! value (`1`, `true`, `yes`, `on`).
 
-use crate::env_config::{self, PROFILE};
+use crate::env_config::PROFILE;
 use crate::warn_log;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -11,27 +11,7 @@ static PROFILE_ENABLED: OnceLock<bool> = OnceLock::new();
 /// Whether profiling is on (`GPY_PROFILE` set to a true flag value); read once and cached for the process.
 #[must_use]
 pub fn is_profile_enabled() -> bool {
-    *PROFILE_ENABLED.get_or_init(|| {
-        if PROFILE.flag() {
-            return true;
-        }
-        // Any other value used to enable profiling; say so once.
-        if let Some(raw) = PROFILE
-            .raw()
-            .map(|value| value.to_string_lossy().into_owned())
-            && matches!(
-                env_config::parse_flag(Some(&raw)),
-                env_config::Reading::Value(false) | env_config::Reading::Unset
-            )
-        {
-            env_config::warn_once(
-                "GPY_PROFILE",
-                &format!("GPY_PROFILE={raw} no longer enables profiling; use 1 to enable"),
-                true,
-            );
-        }
-        false
-    })
+    *PROFILE_ENABLED.get_or_init(|| PROFILE.flag())
 }
 
 /// Scope guard: on drop, logs `name` and the elapsed milliseconds when profiling is enabled.

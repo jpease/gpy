@@ -3,8 +3,6 @@
 # segment templates, so every segment is drawn by the shell itself.
 
 [ui]
-prompt_icon = "❯"
-prompt_color = "brgreen"
 root_prompt_icon = "!❯!"
 root_prompt_color = "red"
 two_line = true
@@ -28,6 +26,10 @@ bg_color = "transparent"
 icon = ""
 icon_color = "match_bg"
 bg_color = "transparent"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "brgreen"
 
 [segments.clock]
 text_color = "white"

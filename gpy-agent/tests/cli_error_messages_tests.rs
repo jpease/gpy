@@ -30,7 +30,7 @@ const MISTAKES: &[MistakeCase] = &[
         names: "nope.key",
     },
     MistakeCase {
-        args: &["config", "set", "git.enabled", "maybe"],
+        args: &["config", "set", "git.show_upstream", "maybe"],
         names: "maybe",
     },
 ];

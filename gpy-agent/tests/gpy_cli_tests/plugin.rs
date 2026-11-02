@@ -10,10 +10,8 @@ fn test_enable_discovered_plugin_segment() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"

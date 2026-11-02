@@ -406,7 +406,7 @@ fn test_theme_migrate_keeps_a_setting_already_in_config_toml() {
 #[test]
 fn test_theme_migrate_reports_a_theme_that_still_fails_and_keeps_the_backup() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
-    let theme = "[ui]\nprompt_icon = \"❯\"\nprompt_color = \"not-a-color\"\n\n[segments.hostname]\nshow_always = true\n";
+    let theme = "[ui]\n\n[segments.character]\nsuccess_color = \"not-a-color\"\n\n[segments.hostname]\nshow_always = true\n";
     write_theme_file(&env, "custom", theme);
 
     let output = env

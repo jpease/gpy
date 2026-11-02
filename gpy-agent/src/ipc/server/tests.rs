@@ -89,9 +89,10 @@ fn notify_clients_respects_agent_live_updates_flag() {
 }
 
 #[test]
-fn hot_reload_git_enabled_blocks_requests() {
+fn hot_reload_git_segment_blocks_requests() {
     let config_dir = TempDir::new().expect("config dir");
-    let config_manager = config_manager_with(config_dir.path(), "[git]\nenabled = true\n");
+    let config_manager =
+        config_manager_with(config_dir.path(), "[ui]\nenabled_segments = [\"git\"]\n");
     let handle = EndpointHandle::new(endpoint_deps(
         Path::new("/tmp/hot-reload-git.sock"),
         render_deps(Arc::clone(&config_manager)),
@@ -116,7 +117,7 @@ fn hot_reload_git_enabled_blocks_requests() {
     reload_config(
         &config_manager,
         config_dir.path(),
-        "[git]\nenabled = false\n",
+        "[ui]\nenabled_segments = [\"directory\"]\n",
     );
 
     assert!(matches!(
@@ -142,7 +143,8 @@ fn build_test_endpoint(
     crate::security::SafePath,
     TempDir,
 ) {
-    let config_manager = config_manager_with(config_dir, "[language]\nenabled = true\n");
+    let config_manager =
+        config_manager_with(config_dir, "[ui]\nenabled_segments = [\"language\"]\n");
     let handle = EndpointHandle::new(endpoint_deps(
         Path::new(sock_name),
         render_deps(Arc::clone(&config_manager)),
@@ -154,7 +156,7 @@ fn build_test_endpoint(
 }
 
 #[test]
-fn hot_reload_language_enabled_updates_responses() {
+fn hot_reload_language_segment_updates_responses() {
     let config_dir = TempDir::new().expect("config dir");
     let (config_manager, handle, path, _project) =
         build_test_endpoint("/tmp/hot-reload-lang.sock", config_dir.path());
@@ -172,7 +174,7 @@ fn hot_reload_language_enabled_updates_responses() {
     reload_config(
         &config_manager,
         config_dir.path(),
-        "[language]\nenabled = false\n",
+        "[ui]\nenabled_segments = [\"directory\"]\n",
     );
 
     let message = Message::LanguageDetect {

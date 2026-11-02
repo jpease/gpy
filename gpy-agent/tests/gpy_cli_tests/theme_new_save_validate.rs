@@ -11,10 +11,8 @@ fn test_theme_show_with_config() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"
@@ -176,7 +174,8 @@ fn test_theme_save_named_existing_theme_declined_leaves_file_unchanged() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let themes_dir = env.themes_dir();
     let target_path = themes_dir.join("custom.toml");
-    let marker_content = "# pre-existing custom marker\n[ui]\nprompt_icon = \"x\"\n[segments]\n";
+    let marker_content =
+        "# pre-existing custom marker\n[ui]\nroot_prompt_icon = \"x\"\n[segments]\n";
     fs::write(&target_path, marker_content).expect("Failed to seed pre-existing theme");
 
     let output = env
@@ -250,7 +249,8 @@ fn test_theme_save_named_existing_theme_accepted_overwrites_file() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let themes_dir = env.themes_dir();
     let target_path = themes_dir.join("custom.toml");
-    let marker_content = "# pre-existing custom marker\n[ui]\nprompt_icon = \"x\"\n[segments]\n";
+    let marker_content =
+        "# pre-existing custom marker\n[ui]\nroot_prompt_icon = \"x\"\n[segments]\n";
     fs::write(&target_path, marker_content).expect("Failed to seed pre-existing theme");
 
     let output = env
@@ -355,8 +355,10 @@ fn test_theme_validate_file_reports_actionable_error() {
     let theme_path = env.root().join("broken.toml");
     let broken_theme = r#"
 [ui]
-prompt_icon = "❯"
-prompt_color = "not-a-color"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "not-a-color"
 
 [segments]
 "#;
