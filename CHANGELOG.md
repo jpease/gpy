@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The agent no longer keeps showing stale untracked files from git's untracked cache. After an index write it compares the cached status with an uncached walk and, on a mismatch, reports the correct result and has git discard the stale cache. (#1204)
+
 ## [0.10.0] - 2026-11-01
 
 ### Changed
