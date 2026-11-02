@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-01
+
+### Fixed
+- The agent no longer keeps showing stale untracked files from git's untracked cache. After an index write it compares the cached status with an uncached walk and, on a mismatch, reports the correct result and has git discard the stale cache. (#1204)
+
 ## [0.10.0] - 2026-11-01
 
 ### Changed
@@ -1061,7 +1066,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/jpease/gpy/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jpease/gpy/releases/tag/v0.10.0
 [0.9.0]: https://github.com/jpease/gpy/releases/tag/v0.9.0
 [0.8.0]: https://github.com/jpease/gpy/releases/tag/v0.8.0

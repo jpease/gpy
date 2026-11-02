@@ -268,14 +268,7 @@ impl NativeGitBackend {
         let _t = Timer::new("native_get_status_v2");
         Self::ensure_untracked_cache(repo_path, deadline);
 
-        // `-z`: NUL-terminated records with unescaped paths.
-        let output = run_git_until(
-            repo_path,
-            &["status", "--porcelain=v2", "--branch", "-z"],
-            deadline,
-        )?;
-
-        let mut parsed = parser::parse_v2_records(&output, max_ahead_behind);
+        let mut parsed = untracked_guard::status(repo_path, max_ahead_behind, deadline)?;
         let Some(branch_head) = parsed.branch.take() else {
             return Err(Error::git("git status printed no branch header".to_owned()));
         };
@@ -588,6 +581,20 @@ fn run_git_until<S: AsRef<OsStr>>(
     args: &[S],
     deadline: Instant,
 ) -> Result<String> {
+    run_git_env_until(repo_path, args, &[], deadline)
+}
+
+/// [`run_git_until`] with extra environment variables for the child.
+///
+/// # Errors
+///
+/// Same as [`run_git_until`].
+fn run_git_env_until<S: AsRef<OsStr>>(
+    repo_path: &Path,
+    args: &[S],
+    envs: &[(&str, &str)],
+    deadline: Instant,
+) -> Result<String> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
         return Err(Error::git(
@@ -601,6 +608,7 @@ fn run_git_until<S: AsRef<OsStr>>(
     }
     command
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .envs(envs.iter().copied())
         .arg("-C")
         .arg(repo_path)
         .args(args)
@@ -663,6 +671,9 @@ fn git_output_to_string(output: &std::process::Output) -> Result<String> {
         .to_owned())
 }
 
+/// Guard against git's stale untracked cache (#1204).
+mod untracked_guard;
+
 #[cfg(test)]
 mod tests;
 
@@ -674,3 +685,6 @@ mod pathspec_tests;
 mod ttl_tests;
 #[cfg(test)]
 mod untracked_cache_tests;
+#[cfg(test)]
+#[cfg(unix)]
+mod untracked_guard_tests;
