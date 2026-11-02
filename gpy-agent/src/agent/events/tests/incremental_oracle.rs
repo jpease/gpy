@@ -187,6 +187,12 @@ fn apply_random_op(rng: &mut Rng, repo: &Path, previous: &mut usize) -> (Vec<Pat
 fn incremental_refresh_matches_full_git_status_oracle() {
     for seed in 1..=24_u64 {
         let (_tmp, repo) = create_temp_repo();
+        // git's untracked cache trusts a directory listing while the
+        // directory's mtime stays in the same whole second. A root change in
+        // the second the listing was cached, then an index write in a later
+        // second (`git add`), makes every full `git status` replay the stale
+        // listing until the root changes again. Off, so git is an exact oracle.
+        assert!(git_in(&repo, &["config", "core.untrackedCache", "false"]));
         fs::create_dir_all(repo.join("src")).expect("src dir");
         fs::write(repo.join("a.txt"), "a\n").expect("seed a.txt");
         fs::write(repo.join("src/lib.txt"), "lib\n").expect("seed lib");
