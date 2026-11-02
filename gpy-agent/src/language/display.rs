@@ -150,10 +150,6 @@ pub fn display_info(
     versions: Versions,
 ) -> Result<Vec<LanguageInfo>, ColdVersion> {
     let settings = request.settings;
-    if !settings.enabled {
-        return Ok(Vec::new());
-    }
-
     let displayed =
         select_display_languages(request.detected, &request.theme.segments.language, settings);
     let version_slots = if settings.show_versions {
@@ -570,24 +566,6 @@ mod tests {
         let selected = select_display_languages(&detected, &theme.segments.language, &language_cfg);
         let names: Vec<&str> = selected.iter().map(|lang| lang.name.as_str()).collect();
         assert_eq!(names, vec!["alpha"]);
-    }
-
-    #[test]
-    fn display_info_is_empty_when_languages_are_disabled() {
-        let detected = sample_detected_languages();
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            enabled: false,
-            ..LanguageSettings::default()
-        };
-
-        let info = display_info(
-            &DisplayRequest::new(&detected, &theme, &language_cfg),
-            Versions::Probe,
-        )
-        .expect("a disabled segment never probes");
-
-        assert_eq!(info, Vec::new());
     }
 
     #[test]

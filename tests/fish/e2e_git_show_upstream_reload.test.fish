@@ -44,7 +44,7 @@ function test_git_show_upstream_reload
     set -l config_path "$config_dir/config.toml"
 
     # Write initial config with show_upstream = true
-    printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nenabled = true\nshow_upstream = true\n" >"$config_path"
+    printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nshow_upstream = true\n" >"$config_path"
 
     # Set environment for test
     set -gx XDG_CONFIG_HOME "$config_root"
@@ -137,7 +137,7 @@ function test_git_show_upstream_reload
     end
 
     # Change config to show_upstream = false
-    printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nenabled = true\nshow_upstream = false\n" >"$config_path"
+    printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nshow_upstream = false\n" >"$config_path"
 
     # Wait for the reload to land: ahead drops to 0 when upstream is skipped.
     poll_until 6 __oneshot_ahead_is "$work_repo" 0
@@ -176,7 +176,7 @@ function test_git_show_upstream_reload
     end
 
     # Re-enable show_upstream and verify it hot-reloads
-    printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nenabled = true\nshow_upstream = true\n" >"$config_path"
+    printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nshow_upstream = true\n" >"$config_path"
 
     # Wait for the reload to land: ahead returns to 2 once upstream is re-enabled.
     poll_until 6 __oneshot_ahead_is "$work_repo" 2

@@ -288,7 +288,7 @@ fn instant_cache_recovery_write_triggers_repaint_on_unchanged_status() {
     let rings = count_rings(&mut ctx);
     let mut config = Config::default();
     // The language side channel notifies on its own thread; it would race the counts.
-    config.language.enabled = false;
+    config.ui.enabled_segments.retain(|name| name != "language");
 
     let baseline_notifications = rung(&rings);
     assert_eq!(baseline_notifications, 0, "no refresh has run yet");

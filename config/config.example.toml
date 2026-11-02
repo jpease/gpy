@@ -61,8 +61,6 @@
 #max_restart_attempts = 5
 
 [git]
-# Deprecated: use ui.enabled_segments (gpy enable/disable). Enable git status detection
-#enabled = true
 # Show ahead/behind commit counts
 #show_upstream = true
 # Git command timeout in seconds (1-600)
@@ -104,8 +102,6 @@
 #in_progress = "↻"
 
 [language]
-# Deprecated: use ui.enabled_segments (gpy enable/disable). Enable programming language detection
-#enabled = true
 # Show language versions
 #show_versions = true
 # Language version, mise and virtualenv lookup cache TTL in hours (1-720)

@@ -157,7 +157,7 @@ mod tests {
     use super::parse;
 
     const THEME: &str = r#"[ui]
-prompt_icon = "❯"
+root_prompt_icon = "❯"
 
 [segments.clock]
 bg_color = "blue"
@@ -193,7 +193,7 @@ show_always = true
 
     #[test]
     fn invalid_plugin_value_after_valid_plugin_table_reports_its_own_key() {
-        let theme = "[ui]\nprompt_icon = \"x\"\n\n[segments.aws]\nbg_color = \"blue\"\n\n[segments.hostname]\nicon = \"h\"\n  text_color = \"not-a-colour\"\n";
+        let theme = "[ui]\nroot_prompt_icon = \"x\"\n\n[segments.aws]\nbg_color = \"blue\"\n\n[segments.hostname]\nicon = \"h\"\n  text_color = \"not-a-colour\"\n";
         let message = parse(theme, "t").unwrap_err().to_string();
         assert!(
             message.contains("segments.hostname.text_color (line 9, column 3)"),
@@ -203,7 +203,7 @@ show_always = true
 
     #[test]
     fn invalid_builtin_value_keeps_serde_location() {
-        let theme = "[ui]\nprompt_icon = \"x\"\n\n[segments.username]\nbg_color = \"blue\"\n\n[segments.clock]\nbg_color = \"not-a-colour\"\n";
+        let theme = "[ui]\nroot_prompt_icon = \"x\"\n\n[segments.username]\nbg_color = \"blue\"\n\n[segments.clock]\nbg_color = \"not-a-colour\"\n";
         let message = parse(theme, "t").unwrap_err().to_string();
         assert!(message.contains("line 8, column 12"), "{message}");
     }

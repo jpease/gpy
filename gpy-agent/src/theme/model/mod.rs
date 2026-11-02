@@ -149,10 +149,6 @@ impl From<PluginSegmentTheme> for RawPluginSegmentTheme {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiTheme {
-    /// Deprecated: set `segments.character.success_symbol`; when set, overrides
-    /// only the shell-drawn fallback.
-    pub prompt_icon: Option<types::Icon>,
-
     /// Root prompt icon shown when running as root (default: "!❯!")
     pub root_prompt_icon: types::Icon,
 
@@ -164,10 +160,6 @@ pub struct UiTheme {
     pub segment_open: Option<DelimiterConfig>,
     /// Default segment close delimiter configuration (supports fg/bg colors)
     pub segment_close: Option<DelimiterConfig>,
-
-    /// Deprecated: set `segments.character.success_color`; when set, overrides
-    /// only the shell-drawn fallback.
-    pub prompt_color: Option<types::ColorSpec>,
 
     /// Color for the root prompt symbol (unset: `DEFAULT_UI_ROOT_PROMPT_COLOR`)
     pub root_prompt_color: Option<types::ColorSpec>,
@@ -193,9 +185,6 @@ pub struct RecommendedUi {
     /// Recommended directory settings → `config.ui.directory.*`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory: Option<RecommendedDirectory>,
-    /// Deprecated and ignored; `ui.show_icons` is set by `gpy setup`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub show_icons: Option<bool>,
     /// Recommended language-detection strategy → `config.language.detection_mode`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_detection: Option<types::DetectionMode>,
@@ -224,13 +213,11 @@ pub struct RecommendedDirectory {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            prompt_icon: None,
             root_prompt_icon: literal("!❯!"),
             prompt_open: None,
             prompt_close: None,
             segment_open: None,
             segment_close: None,
-            prompt_color: None,
             root_prompt_color: None,
             two_line: false,
             add_newline: true,
@@ -899,7 +886,7 @@ mod tests {
         let theme = crate::theme::parse(
             r#"
 [ui]
-prompt_icon = "::"
+root_prompt_icon = "::"
 
 [segments.git]
 show_branch = false

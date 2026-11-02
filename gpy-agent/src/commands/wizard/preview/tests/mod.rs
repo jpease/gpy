@@ -16,19 +16,10 @@ fn make_facts() -> PreviewFacts {
     }
 }
 
-/// Avoids two bool params (`max-fn-params-bools`).
-#[derive(Clone, Copy)]
-struct GitLanguageFlags {
-    git: bool,
-    language: bool,
-}
-
-fn make_config(enabled_segments: &[&str], flags: GitLanguageFlags) -> Config {
+fn make_config(enabled_segments: &[&str]) -> Config {
     let mut config = Config::default();
     config.ui.theme = ThemeName::new("default".to_owned()).expect("valid theme name");
     config.ui.palette = PaletteName::new("default".to_owned()).expect("valid palette name");
-    config.git.enabled = flags.git;
-    config.language.enabled = flags.language;
     config.ui.enabled_segments = enabled_segments.iter().map(|s| (*s).to_owned()).collect();
     config
 }

@@ -65,7 +65,10 @@ fn self_named_overlay_load_error_is_the_chain_error_not_the_fork_hint() {
 #[test]
 fn full_copy_load_error_keeps_the_fork_hint() {
     let env = env();
-    let stale = DEFAULT_THEME_CONTENT.replace("[ui]", "[ui]\nprompt_color = \"nonsuch\"");
+    let stale = DEFAULT_THEME_CONTENT.replace(
+        "[segments.character]",
+        "[segments.character]\nsuccess_color = \"nonsuch\"",
+    );
     write_theme(&env, "default", &stale);
 
     let result = env

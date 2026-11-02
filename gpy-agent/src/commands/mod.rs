@@ -50,8 +50,6 @@ pub mod segments;
 pub mod setup;
 /// `gpy setup` step that stages and swaps in the installed shell trees.
 mod setup_install;
-/// `gpy setup` step that moves an old-layout install over to the data root.
-mod setup_migrate;
 /// `gpy setup` step that retires unedited copies of builtin themes.
 mod setup_themes;
 /// Theme management commands.

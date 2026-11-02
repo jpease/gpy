@@ -4,13 +4,11 @@ use crate::shell::Shell;
 use crate::template::Palette;
 use crate::theme::model::ThemeConfig;
 
-const MIRRORS: [&str; 7] = [
+const MIRRORS: [&str; 5] = [
     "__gpy_cfg_agent_enabled",
     "__gpy_cfg_supervisor_enabled",
     "__gpy_cfg_supervisor_check_interval",
     "__gpy_cfg_supervisor_max_restarts",
-    "__gpy_cfg_git_enabled",
-    "__gpy_cfg_language_enabled",
     "__gpy_cfg_transient_prompt",
 ];
 

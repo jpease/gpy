@@ -36,6 +36,7 @@ set -g BRANCH_GLYPH (printf '\xee\x82\xa0')
 
 set -g __render_last ""
 set -g __show_icons true
+set -g __segments '["directory", "git", "language"]'
 
 # SGR colour escapes and the default theme's powerline chevrons
 # (U+E0B0..U+E0BF) both go, leaving the text a person reads. `string` inside
@@ -133,7 +134,7 @@ function write_config
         '[ui]' \
         "show_icons = $__show_icons" \
         'theme = "default"' \
-        'enabled_segments = ["directory", "git", "language"]' \
+        "enabled_segments = $__segments" \
         $argv >$XDG_CONFIG_HOME/gpy/config.toml
     if test -S "$GPY_AGENT_SOCKET_PATH"
         gpy-agent config reload >/dev/null 2>&1
@@ -265,11 +266,12 @@ function test_language_content
     printf 'home = /nonexistent\nversion = 3.99.7\n' >$py/.venv/pyvenv.cfg
     assert_render "language: python with the version read from the project venv" $py "python 3.99.7" ""
 
-    # `[language] enabled = false` reaches the shell as __gpy_cfg_language_enabled=0
-    # through the theme export, and segment_language_detect then hides the
-    # segment. (GPY_LANGUAGE_ENABLED is not read: the flag is config-only.)
-    write_config '[language]' 'enabled = false' 'display = "text"' 'show_versions = true'
-    assert_render "language: [language] enabled = false hides the segment" $py "❯" "python|3.99.7"
+    # A language segment that is not listed in `ui.enabled_segments` reaches the
+    # shell through the theme export (__enabled_segments) and is not drawn.
+    set -g __segments '["directory", "git"]'
+    write_config '[language]' 'display = "text"' 'show_versions = true'
+    assert_render "language: unlisting the segment hides it" $py "❯" "python|3.99.7"
+    set -g __segments '["directory", "git", "language"]'
 end
 
 # ---- 3. directory ---------------------------------------------------------------

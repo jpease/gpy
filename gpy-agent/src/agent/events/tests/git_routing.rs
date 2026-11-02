@@ -511,7 +511,7 @@ fn git_events_are_skipped_when_git_disabled() {
     let (_tmp, repo) = create_temp_repo();
     let ctx = make_agent_context();
     let mut config = Config::default();
-    config.git.enabled = false;
+    config.ui.enabled_segments.retain(|name| name != "git");
 
     let head_path = repo.join(".git/HEAD");
     let event = DebouncedEvent {

@@ -38,7 +38,6 @@ function __gpy_register_with_agent
     set -g attempts (math $attempts + 1)
     return 1
 end
-function __gpy_retire_legacy_supervisor; end
 
 function __date_calls
     test -f $tmp/date.calls; or begin

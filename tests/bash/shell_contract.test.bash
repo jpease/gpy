@@ -214,9 +214,8 @@ run_shell() {
             shell_e2e_start_agent || return 1
             local -a proxy_args=(--upstream "$sandbox/r.sock")
             [[ "$row_agent" == slow ]] && proxy_args+=(--slow "$SLOW_REPLY_SECONDS")
-            # A row whose config disables git has no git status to prepare: the agent refuses it.
-            if [[ "$row_prime" == - && "$row_cwd" == repo && ",$row_segments," == *,git,* &&
-                "$row_config" != *'[git]\nenabled = false'* ]]; then
+            # A row that does not list git has no git status to prepare: the agent refuses it.
+            if [[ "$row_prime" == - && "$row_cwd" == repo && ",$row_segments," == *,git,* ]]; then
                 # The contract is a cold SHELL cache: prepare git status outside the observed
                 # IPC log, then remove every instant entry before listening.
                 proxy_args+=(--prepare-git "$sandbox/repo"

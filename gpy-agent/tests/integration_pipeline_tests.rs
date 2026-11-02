@@ -263,12 +263,12 @@ async fn test_language_detection_integration() {
 #[test]
 fn test_config_writes_its_settings() {
     let test_config = TestConfig::new().with_git_disabled();
-    assert!(!test_config.config().git.enabled);
+    assert!(!test_config.config().segment_enabled("git"));
     test_config.write();
 
     let contents = std::fs::read_to_string(test_config.path()).unwrap();
-    assert!(contents.contains("[git]"));
-    assert!(contents.contains("enabled = false"));
+    assert!(contents.contains("enabled_segments"));
+    assert!(!contents.contains("\"git\""));
 }
 
 #[test]

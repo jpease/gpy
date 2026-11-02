@@ -19,7 +19,6 @@ fn test_agent_defaults() {
 #[test]
 fn test_git_defaults() {
     let config = Config::default();
-    assert!(config.git.enabled);
     assert!(config.git.show_upstream);
     assert_eq!(config.git.timeout_seconds.get(), 10);
 }
@@ -27,7 +26,6 @@ fn test_git_defaults() {
 #[test]
 fn test_language_defaults() {
     let config = Config::default();
-    assert!(config.language.enabled);
     assert!(config.language.show_versions);
     assert_eq!(config.language.cache_ttl_hours.get(), 24);
     assert_eq!(config.language.enabled_languages, Vec::<String>::new());
@@ -69,7 +67,6 @@ fn test_agent_config_creation() {
 #[test]
 fn test_git_config_creation() {
     let git_config = GitSettings {
-        enabled: false,
         show_upstream: false,
         timeout_seconds: types::GitTimeout::new(20).unwrap(),
         skip_paths: Vec::new(),
@@ -81,7 +78,6 @@ fn test_git_config_creation() {
         stash_enabled: true,
     };
 
-    assert!(!git_config.enabled);
     assert!(!git_config.show_upstream);
     assert_eq!(git_config.timeout_seconds.get(), 20);
 }
@@ -89,7 +85,6 @@ fn test_git_config_creation() {
 #[test]
 fn test_language_config_creation() {
     let language_config = LanguageSettings {
-        enabled: false,
         show_versions: false,
         cache_ttl_hours: types::CacheTtlHours::new(48).unwrap(),
         enabled_languages: vec!["rust".to_owned(), "python".to_owned()],
@@ -100,7 +95,6 @@ fn test_language_config_creation() {
         icons: LanguageIcons::default(),
     };
 
-    assert!(!language_config.enabled);
     assert!(!language_config.show_versions);
     assert_eq!(language_config.cache_ttl_hours.get(), 48);
     assert_eq!(language_config.enabled_languages, vec!["rust", "python"]);
@@ -134,8 +128,11 @@ fn test_config_cloning() {
     let cloned_config = config.clone();
 
     assert_eq!(config.agent.enabled, cloned_config.agent.enabled);
-    assert_eq!(config.git.enabled, cloned_config.git.enabled);
-    assert_eq!(config.language.enabled, cloned_config.language.enabled);
+    assert_eq!(config.git.show_upstream, cloned_config.git.show_upstream);
+    assert_eq!(
+        config.language.show_versions,
+        cloned_config.language.show_versions
+    );
     assert_eq!(config.ui.theme, cloned_config.ui.theme);
 }
 
@@ -204,7 +201,6 @@ fn test_agent_config_boundary_values() {
 #[test]
 fn test_language_config_empty_languages() {
     let language_config = LanguageSettings {
-        enabled: true,
         show_versions: true,
         cache_ttl_hours: types::CacheTtlHours::new(1).unwrap(),
         enabled_languages: vec![], // Empty list should work
@@ -229,7 +225,6 @@ fn test_language_config_multiple_languages() {
     ];
 
     let language_config = LanguageSettings {
-        enabled: true,
         show_versions: true,
         cache_ttl_hours: types::CacheTtlHours::new(24).unwrap(),
         enabled_languages: languages,
@@ -282,8 +277,8 @@ fn test_config_sections_independence() {
 
     config.agent.enabled = false;
 
-    assert!(config.git.enabled);
-    assert!(config.language.enabled);
+    assert!(config.git.show_upstream);
+    assert!(config.language.show_versions);
     assert!(config.ui.show_icons);
 }
 

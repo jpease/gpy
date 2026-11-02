@@ -1,6 +1,4 @@
 __gpy_segment_language_detect() {
-    [[ "${__gpy_cfg_language_enabled-}" != 0 ]] || return 1
-
     # Ancestor walk via parameter expansion only; markers come from the agent's export.
     # shellcheck disable=SC2154 # exported by `theme export`, unset until the agent has run
     [[ -n "${__gpy_lang_marker_files[*]-}" ]] || return 0

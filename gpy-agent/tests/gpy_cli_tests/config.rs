@@ -68,8 +68,8 @@ fn test_config_show_all_equals_concatenated_sections() {
 
 #[test]
 fn test_config_get_value() {
-    let output =
-        run_gpy_command(&["config", "get", "git.enabled"]).expect("Failed to run gpy config get");
+    let output = run_gpy_command(&["config", "get", "git.show_upstream"])
+        .expect("Failed to run gpy config get");
 
     let trimmed = output.trim();
     assert!(
@@ -87,11 +87,9 @@ fn test_config_set_and_get() {
 enabled = true
 
 [git]
-enabled = true
 max_branch_length = 0
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"
@@ -236,28 +234,4 @@ directory.max_length = 80
             || nonexistent_output.stderr.contains("not found"),
         "Should reject non-existent key"
     );
-}
-
-#[test]
-fn config_set_deprecated_flag_warns_once_on_stderr() {
-    let env = CliTestEnv::new().expect("create isolated CLI test env");
-
-    let result = env
-        .run_gpy(&["config", "set", "git.enabled", "false"])
-        .expect("spawn gpy");
-
-    result.assert_success("gpy config set git.enabled false");
-    let deprecated: Vec<&str> = result
-        .stderr
-        .lines()
-        .filter(|line| line.contains("deprecated"))
-        .collect();
-    assert_eq!(deprecated.len(), 1, "one deprecation line: {result:?}");
-    assert!(
-        deprecated
-            .iter()
-            .all(|line| line.contains("gpy disable git")),
-        "{result:?}"
-    );
-    assert!(!result.stdout.contains("deprecated"), "{result:?}");
 }

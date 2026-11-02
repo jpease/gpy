@@ -309,8 +309,8 @@ mod tests {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let path = temp.path().join("watched.toml");
 
-        let enabled = "[git]\nenabled = true \n";
-        let disabled = "[git]\nenabled = false\n";
+        let enabled = "[git]\nshow_upstream = true \n";
+        let disabled = "[git]\nshow_upstream = false\n";
         assert_eq!(
             enabled.len(),
             disabled.len(),

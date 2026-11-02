@@ -156,10 +156,8 @@ fn test_doctor_checks_config() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"
@@ -251,10 +249,8 @@ fn test_doctor_basic_checks() {
 enabled = true
 
 [git]
-enabled = true
 
 [language]
-enabled = true
 
 [ui]
 theme = "default"
@@ -290,8 +286,10 @@ fn test_doctor_with_invalid_theme() {
         themes_dir.join("broken.toml"),
         r#"
 [ui]
-prompt_icon = "❯"
-prompt_color = "invalid-color"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "invalid-color"
 "#,
     )
     .expect("Failed to write broken theme");
@@ -328,8 +326,10 @@ fn test_doctor_with_broken_segment_template() {
         themes_dir.join("badtemplate.toml"),
         r#"
 [ui]
-prompt_icon = "❯"
-prompt_color = "white"
+
+[segments.character]
+success_symbol = "❯"
+success_color = "white"
 
 [segments.git]
 format = "on [$branch(green)"
@@ -410,9 +410,9 @@ fn doctor_lists_agent_tuning_and_warns_on_ignored_env() {
 }
 
 #[test]
-fn doctor_warns_on_deprecated_segment_flags() {
+fn doctor_warns_on_an_unknown_config_key() {
     let env = CliTestEnv::with_config(
-        "[agent]\nenabled = false\n\n[git]\nenabled = false\n\n[ui]\nenabled_segments = [\"directory\", \"git\"]\n",
+        "[agent]\nenabled = false\n\n[git]\nenabledd = false\n\n[ui]\nenabled_segments = [\"directory\", \"git\"]\n",
     )
     .expect("Failed to create isolated CLI test environment");
 
@@ -422,15 +422,11 @@ fn doctor_warns_on_deprecated_segment_flags() {
     let warnings: Vec<&str> = output
         .stdout
         .lines()
-        .filter(|line| line.contains("`git.enabled` is deprecated"))
+        .filter(|line| line.contains("Unknown key") && line.contains("git.enabledd"))
         .collect();
-    assert_eq!(warnings.len(), 1, "one deprecation warning: {output:?}");
+    assert_eq!(warnings.len(), 1, "one unknown-key warning: {output:?}");
     assert!(
-        warnings.iter().all(|line| line.contains("gpy disable git")),
-        "{output:?}"
-    );
-    assert!(
-        !output.stdout.contains("`language.enabled` is deprecated"),
+        warnings.iter().all(|line| line.contains("(ignored)")),
         "{output:?}"
     );
 }

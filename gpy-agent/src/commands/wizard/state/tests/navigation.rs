@@ -16,15 +16,7 @@ fn section_prev_wraps_the_other_direction() {
 
 #[test]
 fn theme_cursor_starts_at_selected_theme_index() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let state = test_state(config);
 
     let expected = state
@@ -38,15 +30,7 @@ fn theme_cursor_starts_at_selected_theme_index() {
 
 #[test]
 fn palette_cursor_starts_at_selected_palette_index() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let state = test_state(config);
 
     let expected = state
@@ -60,15 +44,7 @@ fn palette_cursor_starts_at_selected_palette_index() {
 
 #[test]
 fn move_cursor_down_advances_within_focused_section() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     state.next_section(); // Theme -> Palette
     state.next_section(); // Palette -> Segments
@@ -86,15 +62,7 @@ fn move_cursor_down_advances_within_focused_section() {
 
 #[test]
 fn move_cursor_up_retreats_within_focused_section() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     state.next_section();
     state.next_section();
@@ -110,15 +78,7 @@ fn move_cursor_up_retreats_within_focused_section() {
 
 #[test]
 fn move_cursor_down_clamps_at_list_end() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     state.next_section();
     state.next_section();
@@ -134,15 +94,7 @@ fn move_cursor_down_clamps_at_list_end() {
 
 #[test]
 fn move_cursor_up_clamps_at_zero() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     state.next_section();
     state.next_section();
@@ -156,15 +108,7 @@ fn move_cursor_up_clamps_at_zero() {
 
 #[test]
 fn move_cursor_only_affects_focused_section() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     assert_eq!(state.focus(), Section::Theme);
 
@@ -179,15 +123,7 @@ fn move_cursor_only_affects_focused_section() {
 
 #[test]
 fn activate_cursor_selects_theme_at_cursor_when_theme_focused() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     assert_eq!(state.focus(), Section::Theme);
 
@@ -204,15 +140,7 @@ fn activate_cursor_selects_theme_at_cursor_when_theme_focused() {
 
 #[test]
 fn activate_cursor_selects_palette_at_cursor_when_palette_focused() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     state.next_section();
     assert_eq!(state.focus(), Section::Palette);
@@ -230,15 +158,7 @@ fn activate_cursor_selects_palette_at_cursor_when_palette_focused() {
 
 #[test]
 fn activate_cursor_toggles_segment_at_cursor_when_segments_focused() {
-    let config = make_config(
-        "default",
-        "default",
-        GitLanguageFlags {
-            git: true,
-            language: true,
-        },
-        &[],
-    );
+    let config = make_config("default", "default", &[]);
     let mut state = test_state(config);
     state.next_section();
     state.next_section();

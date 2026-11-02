@@ -505,35 +505,6 @@ fn uninstall_after_new_layout_keeps_the_fish_config_dir() {
     assert!(is_absent(&env.root().join(".local/share/gpy/fish")));
 }
 
-#[test]
-fn uninstall_removes_stamped_old_trees() {
-    let env = CliTestEnv::new().unwrap();
-    let config = env.xdg_config_home();
-    let old_fish = config.join("fish/gpy");
-    let old_zsh = config.join("gpy/zsh");
-    let old_bash = config.join("gpy/bash");
-    let old_plugins = config.join("gpy/bundled-plugins");
-    for dir in [&old_fish, &old_zsh, &old_bash, &old_plugins] {
-        fs::create_dir_all(dir).unwrap();
-    }
-    fs::write(old_fish.join(".gpy-version"), "0.8.0\n").unwrap();
-    fs::write(old_zsh.join(".gpy-version"), "0.8.0\n").unwrap();
-    fs::write(old_bash.join("notes.txt"), "not stamped\n").unwrap();
-    fs::write(old_plugins.join("keep.txt"), "removed anyway\n").unwrap();
-    setup_shell(&env, "zsh");
-
-    uninstall(&env, &["--yes"]).assert_success("gpy uninstall --yes");
-
-    assert!(is_absent(&old_fish));
-    assert!(is_absent(&old_zsh));
-    assert!(is_absent(&old_plugins));
-    assert!(
-        old_bash.join("notes.txt").is_file(),
-        "an unstamped dir is not GPY's"
-    );
-    assert!(is_absent(&env.root().join(".local/share/gpy/zsh")));
-}
-
 /// `gpy uninstall` on a pty, answering the prompt with `answer`; returns the
 /// exit code.
 fn uninstall_on_pty(env: &CliTestEnv, answer: &[u8]) -> u32 {

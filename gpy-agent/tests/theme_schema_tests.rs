@@ -32,8 +32,10 @@ fn load_theme_supports_segment_hierarchy() {
         "schema-test",
         r#"
 [ui]
-prompt_icon = "::"
-prompt_color = "yellow"
+
+[segments.character]
+success_symbol = "::"
+success_color = "yellow"
 
 [segments.directory]
 bg_color = "magenta"
@@ -47,7 +49,7 @@ text_color = "white"
     );
 
     let theme = load::load_theme_from_path(&theme_path).expect("load theme");
-    assert_eq!(theme.ui.prompt_icon.as_deref(), Some("::"));
+    assert_eq!(theme.segments.character.success_symbol, "::");
     assert_eq!(theme.segments.directory.bg_color, "magenta");
     assert_eq!(theme.segments.duration.icon.as_deref(), Some("X"));
     assert!(theme.segments.plugin.is_empty());
@@ -62,7 +64,9 @@ fn load_theme_supports_plugin_segment_styling() {
         "plugin-style",
         r##"
 [ui]
-prompt_icon = ">"
+
+[segments.character]
+success_symbol = ">"
 
 [segments.clock]
 bg_color = "black"
@@ -111,7 +115,7 @@ fn plugin_segment_theme_rejects_untyped_keys() {
         let theme_path = write_theme(
             &xdg_config,
             "plugin-untyped",
-            &format!("[ui]\nprompt_icon = \">\"\n\n[segments.k8s]\n{key} = {value}\n"),
+            &format!("[ui]\nroot_prompt_icon = \">\"\n\n[segments.k8s]\n{key} = {value}\n"),
         );
         let err = load::load_theme_from_path(&theme_path)
             .expect_err("untyped plugin key must fail")
@@ -129,8 +133,10 @@ fn theme_export_emits_new_schema_variables() {
         "export-test",
         r#"
 [ui]
-prompt_icon = ">"
-prompt_color = "green"
+
+[segments.character]
+success_symbol = ">"
+success_color = "green"
 
 [segments.clock]
 bg_color = "black"
@@ -259,10 +265,6 @@ fn starship_preset_recommends_full_ui_layout() {
         Some(true),
         "starship preset should recommend truncate_to_repo for parity"
     );
-    assert!(
-        recommended.show_icons.is_none(),
-        "show_icons is deprecated and not recommended"
-    );
 }
 
 #[test]
@@ -294,7 +296,6 @@ fn default_preset_recommends_the_builtin_defaults() {
         Some(stock.language.detection_mode)
     );
     assert_eq!(recommended.palette, None);
-    assert_eq!(recommended.show_icons, None);
 
     let text = load::load_theme_from_path(Path::new("text.toml")).expect("text theme should load");
     assert!(
@@ -613,7 +614,7 @@ fn load_theme_missing_segments_errors() {
     let broken = write_theme(
         &xdg_config,
         "missing-segments",
-        "[ui]\nprompt_icon = \">\"\n",
+        "[ui]\nroot_prompt_icon = \">\"\n",
     );
 
     let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
@@ -633,7 +634,7 @@ fn load_theme_invalid_color_errors() {
     let broken = write_theme(
         &xdg_config,
         "invalid-color",
-        "[ui]\nprompt_icon = \">\"\n\n[segments.clock]\nbg_color = \"not-a-color\"\ntext_color = \"white\"\n",
+        "[ui]\nroot_prompt_icon = \">\"\n\n[segments.clock]\nbg_color = \"not-a-color\"\ntext_color = \"white\"\n",
     );
 
     let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
@@ -651,7 +652,7 @@ fn load_theme_invalid_icon_errors() {
     let broken = write_theme(
         &xdg_config,
         "invalid-icon",
-        "[ui]\nprompt_icon = \"\\u0007\"\n\n[segments.clock]\nbg_color = \"black\"\ntext_color = \"white\"\n",
+        "[ui]\nroot_prompt_icon = \"\\u0007\"\n\n[segments.clock]\nbg_color = \"black\"\ntext_color = \"white\"\n",
     );
 
     let err = load::load_theme_from_path(&broken).expect_err("theme load should fail");
@@ -670,7 +671,9 @@ fn load_theme_invalid_plugin_color_errors() {
         &xdg_config,
         "invalid-plugin-color",
         r#"[ui]
-prompt_icon = ">"
+
+[segments.character]
+success_symbol = ">"
 
 [segments.clock]
 bg_color = "black"

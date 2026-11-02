@@ -1,5 +1,4 @@
 __gpy_segment_git_detect() {
-    [[ "${__gpy_cfg_git_enabled-}" != 0 ]] || return 1
     local root
     __gpy_find_git_root "$PWD" root
 }

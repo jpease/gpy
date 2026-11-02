@@ -2,9 +2,11 @@
 # carry a newline mid-segment, which every shell must draw as a line break.
 
 [ui]
-prompt_icon = ">"
-prompt_color = "white"
 two_line = false
+
+[segments.character]
+success_symbol = ">"
+success_color = "white"
 
 [segments.directory]
 format = "[ dir\n$path]($style)"

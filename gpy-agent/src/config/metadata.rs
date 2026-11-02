@@ -136,15 +136,6 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         description: "Maximum restart attempts before giving up",
     },
     ConfigKeyMeta {
-        key: "git.enabled",
-        get: |c| c.git.enabled.to_string(),
-        set: Some(|c, v| {
-            c.git.enabled = parse_bool_field(v, "git.enabled")?;
-            Ok(())
-        }),
-        description: "Deprecated: use `gpy disable git` / `gpy enable git` (ui.enabled_segments)",
-    },
-    ConfigKeyMeta {
         key: "git.show_upstream",
         get: |c| c.git.show_upstream.to_string(),
         set: Some(|c, v| {
@@ -226,15 +217,6 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
     git_icon_key!(stash, Stash, "Stash indicator"),
     git_icon_key!(detached, Detached, "Detached-HEAD indicator"),
     git_icon_key!(in_progress, InProgress, "In-progress operation indicator"),
-    ConfigKeyMeta {
-        key: "language.enabled",
-        get: |c| c.language.enabled.to_string(),
-        set: Some(|c, v| {
-            c.language.enabled = parse_bool_field(v, "language.enabled")?;
-            Ok(())
-        }),
-        description: "Deprecated: use `gpy disable language` / `gpy enable language` (ui.enabled_segments)",
-    },
     ConfigKeyMeta {
         key: "language.show_versions",
         get: |c| c.language.show_versions.to_string(),

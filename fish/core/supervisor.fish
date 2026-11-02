@@ -1,11 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Live supervisor, not merely a live (possibly recycled) PID.
-function __gpy_is_supervisor_pid --argument-names pid
-    string match -qr '^\d+$' -- "$pid"; or return 1
-    ps -o command= -p $pid 2>/dev/null | string match -q '*__gpy_agent_supervisor_loop*'
-end
-
 # 0: healthy. 1: unreachable (no socket, nothing listening). 2: connected but
 # no valid reply, which a briefly stalled agent also produces. Runs on the
 # prompt, so it waits no longer than the prompt's IPC budget.
@@ -27,27 +21,6 @@ function __gpy_start_agent_detached --description 'Run gpy-agent start in the ba
     "$agent_binary" start >/dev/null 2>&1 &
     disown $last_pid 2>/dev/null
     return 0
-end
-
-# A loop left running by an earlier version exits only when its pidfile
-# changes, so stop it once.
-function __gpy_retire_legacy_supervisor --description 'Stop a detached supervisor loop left by an earlier version'
-    set -l pidfile (__gpy_runtime_root)/supervisor.pid
-    test -f "$pidfile"; or return 0
-    set -l pid (cat "$pidfile" 2>/dev/null)
-    if __gpy_is_supervisor_pid "$pid"
-        kill -TERM $pid 2>/dev/null
-    end
-    rm -f "$pidfile"
-    return 0
-end
-
-function __gpy_warn_deprecated_supervisor_knobs --description 'Warn once about removed supervisor tunables still exported'
-    for name in GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS GPY_SUPERVISOR_LONG_BACKOFF_SECONDS GPY_AGENT_AUTOSTART_MAX_ATTEMPTS GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS
-        if set -q $name
-            echo "gpy: $name is deprecated and has no effect; use [agent.supervisor] in config.toml" >&2
-        end
-    end
 end
 
 # Returns 0 when the agent is reachable and speaks this protocol; otherwise it
@@ -99,8 +72,6 @@ function __gpy_supervisor_on_prompt --on-event fish_prompt --description 'Start 
 
     if not set -q __gpy_supervisor_initialized
         set -g __gpy_supervisor_initialized 1
-        __gpy_warn_deprecated_supervisor_knobs
-        __gpy_retire_legacy_supervisor
         # The probe just made counts as the first check.
         set -g __gpy_supervisor_last_check_time (__gpy_now_seconds)
         if __gpy_ensure_agent_started

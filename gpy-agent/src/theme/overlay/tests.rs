@@ -199,7 +199,7 @@ fn self_named_overlay_prefers_a_plugin_theme_to_the_builtin() {
     fixture.plugin(
         "acme",
         "starship",
-        "[ui]\nprompt_icon = \"A\"\n[segments]\n",
+        "[ui]\nroot_prompt_icon = \"A\"\n[segments]\n",
     );
     fixture.user("starship", "extends = \"starship\"\n");
 
@@ -209,7 +209,7 @@ fn self_named_overlay_prefers_a_plugin_theme_to_the_builtin() {
         chain_text(&loaded),
         "starship (user) → starship (plugin:acme)"
     );
-    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("A"));
+    assert_eq!(loaded.theme.ui.root_prompt_icon.as_str(), "A");
 }
 
 #[test]
@@ -236,7 +236,10 @@ fn user_to_plugin_to_builtin_chain_skips_user_files_below_the_plugin() {
         "acme",
         "extends = \"starship\"\n[segments.clock]\ntime_format = \"24\"\n",
     );
-    fixture.user("mine", "extends = \"acme\"\n[ui]\nprompt_icon = \"M\"\n");
+    fixture.user(
+        "mine",
+        "extends = \"acme\"\n[ui]\nroot_prompt_icon = \"M\"\n",
+    );
 
     let loaded = fixture.load("mine").expect("chain loads");
 
@@ -244,7 +247,7 @@ fn user_to_plugin_to_builtin_chain_skips_user_files_below_the_plugin() {
         chain_text(&loaded),
         "mine (user) → acme (plugin:acme) → starship (builtin)"
     );
-    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("M"));
+    assert_eq!(loaded.theme.ui.root_prompt_icon.as_str(), "M");
     assert_eq!(
         loaded.theme.segments.clock.time_format.as_deref(),
         Some("24")
@@ -258,13 +261,21 @@ fn user_to_plugin_to_builtin_chain_skips_user_files_below_the_plugin() {
 #[test]
 fn lexically_greatest_plugin_wins_a_name() {
     let mut fixture = Fixture::new();
-    fixture.plugin("alpha", "shared", "[ui]\nprompt_icon = \"a\"\n[segments]\n");
-    fixture.plugin("beta", "shared", "[ui]\nprompt_icon = \"b\"\n[segments]\n");
+    fixture.plugin(
+        "alpha",
+        "shared",
+        "[ui]\nroot_prompt_icon = \"a\"\n[segments]\n",
+    );
+    fixture.plugin(
+        "beta",
+        "shared",
+        "[ui]\nroot_prompt_icon = \"b\"\n[segments]\n",
+    );
     fixture.user("mine", "extends = \"shared\"\n");
 
     let loaded = fixture.load("mine").expect("chain loads");
 
-    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("b"));
+    assert_eq!(loaded.theme.ui.root_prompt_icon.as_str(), "b");
 }
 
 #[test]
@@ -484,14 +495,14 @@ fn a_full_theme_is_a_chain_of_one_and_ignores_unset() {
     let fixture = Fixture::new();
     fixture.user(
         "full",
-        "unset = [\"ui\"]\n[ui]\nprompt_icon = \"F\"\n[segments]\n",
+        "unset = [\"ui\"]\n[ui]\nroot_prompt_icon = \"F\"\n[segments]\n",
     );
 
     let loaded = fixture.load("full").expect("full theme loads");
 
     assert!(!loaded.chain.is_overlay());
     assert_eq!(chain_text(&loaded), "full (user)");
-    assert_eq!(loaded.theme.ui.prompt_icon.as_deref(), Some("F"));
+    assert_eq!(loaded.theme.ui.root_prompt_icon.as_str(), "F");
     assert!(loaded.fingerprint.is_some());
 }
 

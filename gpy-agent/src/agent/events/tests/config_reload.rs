@@ -35,7 +35,10 @@ fn config_reload_disables_and_reenables_watcher() {
 
     let original = Config::default();
     let mut git_disabled = original.clone();
-    git_disabled.git.enabled = false;
+    git_disabled
+        .ui
+        .enabled_segments
+        .retain(|name| name != "git");
     apply(&original, &git_disabled);
     expect_watcher_state(
         &watcher_slot,
@@ -44,7 +47,10 @@ fn config_reload_disables_and_reenables_watcher() {
     );
 
     let mut disabled = git_disabled.clone();
-    disabled.language.enabled = false;
+    disabled
+        .ui
+        .enabled_segments
+        .retain(|name| name != "language");
     apply(&git_disabled, &disabled);
     expect_watcher_state(
         &watcher_slot,
@@ -53,12 +59,12 @@ fn config_reload_disables_and_reenables_watcher() {
     );
 
     let mut reenabled = disabled.clone();
-    reenabled.git.enabled = true;
+    reenabled.ui.enabled_segments = original.ui.enabled_segments.clone();
     apply(&disabled, &reenabled);
     expect_watcher_state(
         &watcher_slot,
         true,
-        "watcher should be recreated when git.enabled returns to true",
+        "watcher should be recreated when git is listed again",
     );
 
     let mut no_live_updates = reenabled.clone();
@@ -155,7 +161,10 @@ fn config_reload_notifies_on_language_toggles() {
     );
 
     let mut toggled_enabled = toggled.clone();
-    toggled_enabled.language.enabled = !toggled.language.enabled;
+    toggled_enabled
+        .ui
+        .enabled_segments
+        .retain(|name| name != "language");
     let before_enabled = rung(&rings);
     handle_config_reload(
         &ctx,
@@ -169,7 +178,7 @@ fn config_reload_notifies_on_language_toggles() {
     let after_enabled = rung(&rings);
     assert!(
         after_enabled > before_enabled,
-        "toggling language.enabled should trigger notification"
+        "unlisting language should trigger notification"
     );
 
     // A real builtin theme: unresolvable theme names are a hard error.

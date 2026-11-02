@@ -1,8 +1,4 @@
 function segment_language_detect
-    if test "$__gpy_cfg_language_enabled" = 0
-        return 1
-    end
-
     # A memoized .git root is itself a marker: skip the walk.
     set -l memoized_root (__gpy_memoized_git_root $PWD)
     if test -n "$memoized_root"
