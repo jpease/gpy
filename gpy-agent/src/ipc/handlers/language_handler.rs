@@ -5,7 +5,7 @@ use crate::ipc::single_flight::{JobGuard, SharedJob, SingleFlight};
 use crate::ipc::{LanguageInfo, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
-use crate::language::display::{DisplayRequest, Versions, display_info};
+use crate::language::display::{DisplayRequest, Versions, background_display_info, display_info};
 use crate::language::venv::PythonVenv;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -238,13 +238,8 @@ impl LanguageHandler {
     ) {
         let config = deps.config_manager.get();
         let theme = deps.theme_manager.get();
-        // A background job, so a cold version is probed here. No request
-        // context, so prev_bg is None; reuse the stashed venv.
-        let stashed_venv = crate::language::venv::stashed_project_venv(repo_root);
-        let request = DisplayRequest::new(detected, &theme, &config.language)
-            .with_cwd(Some(repo_root))
-            .with_venv(stashed_venv.as_ref());
-        let languages = display_info(&request, Versions::Probe).unwrap_or_default();
+        // No request context, so prev_bg is None.
+        let languages = background_display_info(detected, &theme, &config.language, repo_root);
         Self::publish_languages(deps, repo_root, &languages, None);
     }
 

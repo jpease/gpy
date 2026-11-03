@@ -7,7 +7,7 @@ use crate::config::{LanguageSettings, LanguageTheme};
 use crate::debug_log;
 use crate::ipc::LanguageInfo;
 use crate::language::detector::DetectedLanguage;
-use crate::language::venv::PythonVenv;
+use crate::language::venv::{PythonVenv, stashed_project_venv};
 use crate::language::version::{ColdVersion, ProbePolicy, VersionSource, get_version_detectors};
 use crate::theme::ThemeConfig;
 use std::collections::HashSet;
@@ -167,6 +167,23 @@ pub fn display_info(
             color: language_color(&detected_lang.name, &request.theme.segments.language),
         })
         .collect())
+}
+
+/// Display entries for a background render of `root`, off the request path:
+/// probes cold versions and uses the venv the shell last forwarded for `root`,
+/// if any.
+#[must_use]
+pub fn background_display_info(
+    detected: &[DetectedLanguage],
+    theme: &ThemeConfig,
+    settings: &LanguageSettings,
+    root: &Path,
+) -> Vec<LanguageInfo> {
+    let stashed_venv = stashed_project_venv(root);
+    let request = DisplayRequest::new(detected, theme, settings)
+        .with_cwd(Some(root))
+        .with_venv(stashed_venv.as_ref());
+    display_info(&request, Versions::Probe).unwrap_or_default()
 }
 
 /// `name`'s themed colour, else white.
