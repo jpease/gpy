@@ -93,13 +93,15 @@ jobs:
           # Not step `env:`: Windows env vars do not reach WSL without WSLENV.
           RUSTUP_VERSION=1.29.1
           RUSTUP_INIT_SHA256=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
-          rustup_init="$(mktemp)"
+          # rustup picks its mode from the executable's name: it must be rustup-init.
+          rustup_dir="$(mktemp -d)"
+          rustup_init="${rustup_dir}/rustup-init"
           curl --proto '=https' --tlsv1.2 -fsSL -o "$rustup_init" \
             "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init"
           echo "${RUSTUP_INIT_SHA256}  ${rustup_init}" | sha256sum -c -
           chmod +x "$rustup_init"
           "$rustup_init" -y --profile minimal --default-toolchain none
-          rm -f "$rustup_init"
+          rm -rf "$rustup_dir"
           . "$HOME/.cargo/env"
           cd "$HOME/gpy/gpy-agent"
           rustup toolchain install
