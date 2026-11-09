@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - A `__gpy_agent_supervisor_loop` process left by GPY 0.8 or older is no longer stopped at the first Fish prompt (that cleanup was removed in 0.10.0); `gpy uninstall` still stops it.
+- Turning `agent.live_updates` on in a running agent now starts the clock repaint and reconcile scans at once instead of after the next 60-second maintenance tick.
 
 ## [0.10.1] - 2026-11-01
 

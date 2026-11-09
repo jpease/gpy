@@ -410,10 +410,10 @@ The graph is acyclic: each layer depends only on lower layers.
 - tokio multi-thread runtime (`Runtime::new()`, `agent/lifecycle/start.rs`).
 - `Agent::start_background` (`agent/mod.rs`) runs one 5-branch `tokio::select!`:
   `server_task` (the spawned IPC server stopped), `shutdown_signal`
-  (SIGINT/SIGTERM), `clock_timer` (1 s, gated on `agent.live_updates`),
+  (SIGINT/SIGTERM), `clock_timer` (1 s; a tick is a no-op while `agent.live_updates` is off),
   `pruning_timer` (60 s: prune dead clients, re-nudge shells) and
   `reconcile_timer` (45 s `RECONCILE_INTERVAL_SECS`,
-  `GPY_RECONCILE_INTERVAL_SECS` override, gated on `live_updates`).
+  `GPY_RECONCILE_INTERVAL_SECS` override; a tick is a no-op while `live_updates` is off).
 - Git and language work runs in `spawn_blocking`.
 
 ### Watcher threads
@@ -632,7 +632,7 @@ Prompt redraws (calls segment_git_render again)
 ### Clock Timer
 
 ```
-1 s tick (clock_timer, while agent.live_updates is on)
+1 s tick (clock_timer; no-op while agent.live_updates is off)
   ↓
 handle_clock_tick() → skip unless the clock segment is enabled
   ↓
