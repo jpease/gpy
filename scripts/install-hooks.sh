@@ -26,7 +26,7 @@ Installs the repository git hooks via prek:
 See .pre-commit-config.yaml. Run once per clone.
 
 Options:
-  --uninstall    Remove the prek shims and any custom hooksPath.
+  --uninstall    Remove the prek hook shims (pre-commit, pre-push).
 EOF
 }
 
@@ -36,10 +36,13 @@ case "${1:-}" in
         exit 0
         ;;
     --uninstall)
-        if command -v prek >/dev/null 2>&1; then
-            echo "Uninstalling prek hooks..."
-            prek uninstall "${PREK_HOOK_FLAGS[@]}"
+        if ! command -v prek >/dev/null 2>&1; then
+            echo "FAIL: prek not found; install it with 'cargo install prek'" >&2
+            exit 1
         fi
+        echo "Uninstalling prek hooks..."
+        prek uninstall "${PREK_HOOK_FLAGS[@]}"
+        echo "ok: git hooks removed"
         exit 0
         ;;
     "")

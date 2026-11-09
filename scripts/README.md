@@ -85,4 +85,4 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `smoke-release.sh` | Install and run the binaries a release is about to publish, in a sandboxed `HOME`. |
 | `test-fresh-install.sh` | Install into a stock `ubuntu:24.04` container and render a prompt per shell. |
 | `wsl-smoke.sh [--contract \| --contract-only]` | Inside WSL: font detection via `gpy setup`, `gpy-agent oneshot git` on Linux and Windows-drive repos, and optionally the cross-shell contract suite. `GPY_AGENT_BIN` and `GPY_WSL_DRVFS_DIR` override paths. |
-| `install-hooks.sh [--uninstall]` | Install (or remove) the prek git hooks from `.pre-commit-config.yaml`. |
+| `install-hooks.sh [--uninstall]` | Install (or remove, failing without `prek`) the prek hook shims from `.pre-commit-config.yaml`. |

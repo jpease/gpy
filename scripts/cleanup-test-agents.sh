@@ -69,4 +69,4 @@ echo "Cleanup complete"
 
 echo
 echo "=== System Status ==="
-echo "Running gpy-agent processes: $(pgrep -c gpy-agent 2>/dev/null || echo 0)"
+echo "Running gpy-agent processes: $(pgrep gpy-agent 2>/dev/null | wc -l | tr -d ' ')"
