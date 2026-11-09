@@ -524,6 +524,8 @@ __gpy_read_instant_cache() {
             __gpy_ric_ttl="${GPY_LANGUAGE_CACHE_TTL_SECONDS:-30}"
         fi
         [[ "$__gpy_ric_ttl" =~ ^[0-9]+$ ]] || __gpy_ric_ttl="$__gpy_ric_default_ttl"
+        # `10#`: a zero-padded value (08) is decimal, not an octal error.
+        __gpy_ric_ttl=$((10#$__gpy_ric_ttl))
         (( __gpy_ric_now - __gpy_ric_mtime >= __gpy_ric_ttl )) && __gpy_ric_status=$((__gpy_ric_status + 2))
     fi
 
