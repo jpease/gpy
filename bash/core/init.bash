@@ -152,11 +152,13 @@ __gpy_keep_arm_hook_last() {
     done
     [[ "$pc" == "$hook" || "$pc" == *[\;[:space:]]"$hook" ]] && return 0
     pc="${pc//; $hook/}"
+    pc="${pc//$'\n'$hook/}"
     while [[ "$pc" == *[\;[:space:]] ]]; do
         pc="${pc%?}"
     done
     # shellcheck disable=SC2178
-    PROMPT_COMMAND="${pc:+$pc; }$hook"
+    # Newline, not ';': the user's string may end in '&'.
+    PROMPT_COMMAND="${pc:+$pc$'\n'}$hook"
 }
 
 # Millisecond delta between EPOCHREALTIME strings into OUT_VAR. The decimal
@@ -532,7 +534,10 @@ __gpy_debug_trap() {
         # The first DEBUG after arming is the user's command or, on an empty
         # Enter or Ctrl-C, the first PROMPT_COMMAND command.
         local pc="${PROMPT_COMMAND-}"
-        [[ "$BASH_COMMAND" == "${pc%%;*}" ]] || __gpy_g_ran=1
+        # The first command ends at `;` or, since the arm hook joins with a
+        # newline, at the first newline.
+        pc="${pc%%;*}"
+        [[ "$BASH_COMMAND" == "${pc%%$'\n'*}" ]] || __gpy_g_ran=1
         __gpy_preexec
     fi
 

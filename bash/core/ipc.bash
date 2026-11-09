@@ -109,8 +109,16 @@ __gpy_home() {
     printf -v "$out_var" '%s' "$__gpy_home_value"
 }
 
+# A relative override resolves once against the directory the integration loads
+# in, like the agent's `paths::absolutize` against its launch directory; the
+# export keeps every child the shell spawns on the same socket file.
+if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" && "$GPY_AGENT_SOCKET_PATH" != /* ]]; then
+    export GPY_AGENT_SOCKET_PATH="$PWD/$GPY_AGENT_SOCKET_PATH"
+fi
+
 # An $XDG_* variable counts only when non-empty and absolute (XDG spec).
-# Rust counterpart: `SocketPath::resolve`.
+# Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
+# once at load, like `paths::absolutize`.
 __gpy_ipc_endpoint_into() {
     local __gpy_ie_home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
@@ -211,12 +219,29 @@ __gpy_theme_export_cache_path() {
     return 1
 }
 
-# Milliseconds to seconds for `timeout` (150 -> "0.150"), fork-free.
+# Escape PATH for socat's address parser into OUT_VAR: `\ , : ! ' "` are special
+# there, and a runtime root can contain any of them. Backslash goes first so the
+# escapes added after it are not doubled.
+__gpy_socat_escape_into() {
+    local __gpy_se_p="$1" __gpy_se_bs=$'\\' __gpy_se_sq="'" __gpy_se_dq='"'
+    __gpy_se_p=${__gpy_se_p//"$__gpy_se_bs"/"$__gpy_se_bs$__gpy_se_bs"}
+    __gpy_se_p=${__gpy_se_p//,/"$__gpy_se_bs,"}
+    __gpy_se_p=${__gpy_se_p//:/"$__gpy_se_bs:"}
+    __gpy_se_p=${__gpy_se_p//!/"$__gpy_se_bs!"}
+    __gpy_se_p=${__gpy_se_p//"$__gpy_se_sq"/"$__gpy_se_bs$__gpy_se_sq"}
+    __gpy_se_p=${__gpy_se_p//"$__gpy_se_dq"/"$__gpy_se_bs$__gpy_se_dq"}
+    printf -v "$2" '%s' "$__gpy_se_p"
+}
+
+# Milliseconds to seconds for `timeout` (150 -> "0.150", never below 0.001),
+# fork-free.
 __gpy_ms_to_secs() {
     local ms="$1" out_var="$2"
     # A non-numeric override must not break `$(( ))`; `10#` stops octal.
     [[ "$ms" =~ ^[0-9]+$ ]] || ms=150
     ms=$((10#$ms))
+    # timeout(1) treats 0 as "no limit"; 1 ms is the smallest honoured budget.
+    ((ms > 0)) || ms=1
     printf -v "$out_var" '%d.%03d' "$(( ms / 1000 ))" "$(( ms % 1000 ))"
 }
 
@@ -293,7 +318,9 @@ __gpy_send_json() {
     [[ -S "$__gpy_sj_socket_path" ]] || return 1
 
     if command -v socat &>/dev/null; then
-        IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; socat -t "$__gpy_sj_timeout_secs" - "UNIX-CONNECT:$__gpy_sj_socket_path" 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
+        local __gpy_sj_socat_addr
+        __gpy_socat_escape_into "$__gpy_sj_socket_path" __gpy_sj_socat_addr
+        IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; socat -t "$__gpy_sj_timeout_secs" - "UNIX-CONNECT:$__gpy_sj_socat_addr" 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
         __gpy_sj_read_status=$?
     # nc -w takes whole seconds only; `timeout` tightens the bound when present.
     elif __gpy_ipc_client_available; then

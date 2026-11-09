@@ -82,6 +82,16 @@ exit'
     expect "$label, both sides" BEF "1 42"
     expect "$label, both sides" AFT "1 42"
 
+    # An entry ending in `&` must not turn the joined PROMPT_COMMAND into `&;`.
+    run_child "$bin" 'PROMPT_COMMAND='"'"'echo "AMP=$?"; : &'"'" '' 'false
+(exit 42)
+exit'
+    expect "$label, entry ending in &" AMP "1 42"
+    if [[ "$CHILD_OUT" == *"syntax error"* ]]; then
+        fail "$label, entry ending in &: syntax error"
+        printf '%s\n' "$CHILD_OUT"
+    fi
+
     # The first prompt cycle also carries the status of the last rc command.
     run_child "$bin" 'PROMPT_COMMAND='"'"'echo "DS=$?"'"'" '(exit 7)' 'exit'
     expect "$label, first prompt" DS "7" 1

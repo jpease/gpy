@@ -25,7 +25,7 @@ Every `GPY_*` flag accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, cas
 
 ### GPY_AGENT_SOCKET_PATH
 
-Overrides the socket path alone; the runtime root is unchanged. Every command and every shell must see the same value, so export it before the shell integration loads. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](cli-reference.md#gpy-start)).
+Overrides the socket path alone; the runtime root is unchanged. Every command and every shell must see the same value, so export it before the shell integration loads. A relative value is resolved against the directory the shell integration loads in; the shell exports the absolute form so every command it runs sees the same path. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](cli-reference.md#gpy-start)).
 
 `gpy debug paths` prints what the path variables resolve to on the current machine.
 
