@@ -56,18 +56,15 @@ struct BlockSpan {
 
 /// Append a `gpy-init` block to `rc`, creating it when missing; `false` when
 /// a block is already there. A file this call creates gets [`CREATED_NOTE`].
-pub(super) fn append_block(rc: &Path, header: &str, body: &str) -> Result<bool> {
+pub(super) fn append_block(
+    rc: &Path,
+    existing: Option<&[u8]>,
+    header: &str,
+    body: &str,
+) -> Result<bool> {
     use std::io::Write;
 
-    let existing = match fs::read_to_string(rc) {
-        Ok(text) => Some(text),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => return Err(err.into()),
-    };
-    if existing
-        .as_deref()
-        .is_some_and(|text| text.lines().any(|line| line == BLOCK_START))
-    {
+    if existing.is_some_and(has_start) {
         return Ok(false);
     }
     if let Some(parent) = rc.parent() {
@@ -101,14 +98,14 @@ pub(super) fn ensure_block(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => return Err(err.into()),
     };
-    let Some(bytes) = raw.filter(|candidate| has_start(candidate)) else {
-        return Ok(if append_block(rc, header, body)? {
+    let Some(bytes) = raw.as_deref().filter(|candidate| has_start(candidate)) else {
+        return Ok(if append_block(rc, raw.as_deref(), header, body)? {
             BlockChange::Added
         } else {
             BlockChange::Unchanged
         });
     };
-    let Some(span) = find_block(&bytes) else {
+    let Some(span) = find_block(bytes) else {
         return Ok(BlockChange::Unchanged);
     };
     let (Some(head), Some(current), Some(tail)) = (
@@ -118,23 +115,47 @@ pub(super) fn ensure_block(
     ) else {
         return Ok(BlockChange::Unchanged);
     };
-    let trimmed = current.strip_suffix(b"\n").unwrap_or(current);
-    if trimmed == body.as_bytes() {
+    if body_lines_match(current, body) {
         return Ok(BlockChange::Unchanged);
     }
     if !legacy_bodies
         .iter()
-        .any(|legacy| legacy.as_bytes() == trimmed)
+        .any(|legacy| body_lines_match(current, legacy))
     {
         return Ok(BlockChange::KeptEdited);
     }
+    let eol: &[u8] = if current
+        .split_inclusive(|byte| *byte == b'\n')
+        .next()
+        .is_some_and(|line| line.ends_with(b"\r\n"))
+    {
+        b"\r\n"
+    } else {
+        b"\n"
+    };
     let mut updated = Vec::with_capacity(bytes.len().saturating_add(body.len()));
     updated.extend_from_slice(head);
-    updated.extend_from_slice(body.as_bytes());
-    updated.push(b'\n');
+    for line in body.split('\n') {
+        updated.extend_from_slice(line.as_bytes());
+        updated.extend_from_slice(eol);
+    }
     updated.extend_from_slice(tail);
     crate::fs_util::write_atomically(rc, &updated)?;
     Ok(BlockChange::Upgraded)
+}
+
+/// Whether the block body `current` holds the lines of `body`, ignoring each
+/// line's `\r\n` or `\n` ending so a CRLF file matches.
+fn body_lines_match(current: &[u8], body: &str) -> bool {
+    let mut have = current.split_inclusive(|byte| *byte == b'\n').map(trim_eol);
+    let mut want = body.split('\n').map(str::as_bytes);
+    loop {
+        match (have.next(), want.next()) {
+            (None, None) => return true,
+            (Some(left), Some(right)) if left == right => {}
+            _ => return false,
+        }
+    }
 }
 
 /// Remove every complete `gpy-init` block from `rc`, with the blank line (or,
@@ -334,8 +355,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rc = dir.path().join("rc");
 
-        assert!(append_block(&rc, "hdr", "body").unwrap());
-        assert!(!append_block(&rc, "hdr", "body").unwrap());
+        assert!(append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap());
+        assert!(!append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap());
 
         let text = fs::read_to_string(&rc).unwrap();
         assert_eq!(text.matches(BLOCK_START).count(), 1);
@@ -348,7 +369,7 @@ mod tests {
         let rc = dir.path().join("rc");
         fs::write(&rc, "export A=1\n").unwrap();
 
-        assert!(append_block(&rc, "hdr", "body").unwrap());
+        assert!(append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap());
 
         let text = fs::read_to_string(&rc).unwrap();
         assert!(text.starts_with("export A=1\n"));
@@ -386,6 +407,60 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&rc).unwrap(),
             format!("{before}{CURRENT}\n{after}")
+        );
+    }
+
+    #[test]
+    fn append_block_appends_to_a_non_utf8_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        let original = b"export A=1 # caf\xe9\n";
+        fs::write(&rc, original).unwrap();
+
+        let change = ensure_block(&rc, "hdr", CURRENT, &legacy()).unwrap();
+
+        assert_eq!(change, BlockChange::Added);
+        let bytes = fs::read(&rc).unwrap();
+        assert!(bytes.starts_with(original));
+        assert_eq!(
+            bytes
+                .split(|byte| *byte == b'\n')
+                .filter(|line| *line == BLOCK_START.as_bytes())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn ensure_block_treats_a_crlf_current_block_as_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        let text = format!(
+            "export A=1\r\n{BLOCK_START}\r\n# hdr\r\n{}\r\n{BLOCK_END}\r\n",
+            CURRENT.replace('\n', "\r\n")
+        );
+        fs::write(&rc, &text).unwrap();
+
+        let change = ensure_block(&rc, "hdr", CURRENT, &legacy()).unwrap();
+
+        assert_eq!(change, BlockChange::Unchanged);
+        assert_eq!(fs::read(&rc).unwrap(), text.as_bytes());
+    }
+
+    #[test]
+    fn ensure_block_upgrades_a_crlf_legacy_block_keeping_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        let head = format!("export A=1\r\n{BLOCK_START}\r\n# hdr\r\n");
+        let tail = format!("{BLOCK_END}\r\nalias b=2\r\n");
+        fs::write(&rc, format!("{head}{LEGACY}\r\n{tail}")).unwrap();
+
+        let change = ensure_block(&rc, "hdr", CURRENT, &legacy()).unwrap();
+
+        assert_eq!(change, BlockChange::Upgraded);
+        assert_eq!(
+            fs::read(&rc).unwrap(),
+            format!("{head}{}\r\n{tail}", CURRENT.replace('\n', "\r\n")).into_bytes()
         );
     }
 
@@ -469,7 +544,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rc = dir.path().join("rc");
         fs::write(&rc, "export A=1\n").unwrap();
-        append_block(&rc, "hdr", "body").unwrap();
+        append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap();
 
         let outcome = remove_blocks(&rc).unwrap();
 
@@ -482,7 +557,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rc = dir.path().join("rc");
         fs::write(&rc, "export A=1").unwrap();
-        append_block(&rc, "hdr", "body").unwrap();
+        append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap();
 
         remove_blocks(&rc).unwrap();
 
@@ -518,7 +593,7 @@ mod tests {
     fn remove_blocks_deletes_a_created_file_left_empty() {
         let dir = tempfile::tempdir().unwrap();
         let rc = dir.path().join("rc");
-        append_block(&rc, "hdr", "body").unwrap();
+        append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap();
 
         let outcome = remove_blocks(&rc).unwrap();
 

@@ -681,7 +681,8 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         .find(|path| path.exists())
         .cloned()
         .unwrap_or_else(|| home.join(".profile"));
-    let loads_bashrc = fs::read_to_string(&login).is_ok_and(|text| sources_bashrc(&text));
+    let loads_bashrc =
+        fs::read(&login).is_ok_and(|bytes| sources_bashrc(&String::from_utf8_lossy(&bytes)));
     if !loads_bashrc
         && ensure_block(&login, BASH_LOGIN_HEADER, BASH_LOGIN_LOADER, &[])? == BlockChange::Added
     {
@@ -756,7 +757,7 @@ fn print_next_steps(shell: Shell, rc_file: &Path, login_shell: Option<&str>) {
     crate::commands::output::blank();
     crate::commands::output::plain(format_args!(
         "Next: restart your shell with `exec {shell}`, or `source {}`.",
-        rc_file.display()
+        super::utils::shell_quote(rc_file)
     ));
     crate::commands::output::plain("Check the result any time with `gpy doctor`.");
     if is_stock_macos_bash(shell, login_shell, cfg!(target_os = "macos")) {

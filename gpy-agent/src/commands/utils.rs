@@ -139,6 +139,13 @@ pub fn reload_agent_and_notify() {
 #[cfg(not(unix))]
 pub fn reload_agent_and_notify() {}
 
+/// `path` single-quoted for pasting into a POSIX shell, so spaces, `$` and
+/// backticks stay literal.
+pub(super) fn shell_quote(path: &Path) -> String {
+    let path_str = path.to_string_lossy();
+    format!("'{}'", path_str.replace('\'', "'\"'\"'"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

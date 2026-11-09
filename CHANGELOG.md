@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `gpy setup` no longer fails with `stream did not contain valid UTF-8` on an rc file (or `.profile`) that is not UTF-8 and has no GPY block yet; it appends the block as it does for any other file.
+- `gpy setup` recognises its block in an rc file with CRLF line endings: an up-to-date block is left alone instead of being reported as edited, and an older block is upgraded in place keeping CRLF.
+- The `Next: ... source <rc>` hint after `gpy setup` quotes the rc path.
+
 ## [0.10.1] - 2026-11-01
 
 ### Fixed
