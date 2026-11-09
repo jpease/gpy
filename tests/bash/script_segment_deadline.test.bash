@@ -249,9 +249,17 @@ load1() {
 }
 
 # pgrep -c is not on macOS; the [s] keeps grep from matching itself.
+# The count is polled for up to 3 s: a killed script can take a moment to leave
+# the process table on a loaded runner, while a leaked one sleeps for 9 s.
 # shellcheck disable=SC2009
 survivors() {
-    ps -axo command= | grep -c "[s]leep $MARK"
+    local n=0
+    for _ in {1..30}; do
+        n=$(ps -axo command= | grep -c "[s]leep $MARK")
+        [[ "$n" == 0 ]] && break
+        sleep 0.1
+    done
+    echo "$n"
 }
 
 # run_shell LABEL CMD...: RUNS due prompts in CMD, timed from here.
