@@ -12,6 +12,8 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=scripts/lib/bench-common.sh
+. "$SCRIPT_DIR/lib/bench-common.sh"
 
 MODE="${GPY_PERF_CANARY_MODE:-warn}"
 # Quoted default: unquoted, `@{upstream}`'s `}` ends the expansion early.
@@ -149,20 +151,6 @@ check_environment_noise() {
   return "$noisy"
 }
 
-to_ns() {
-  awk -v value="$1" -v unit="$2" '
-    BEGIN {
-      mult = 0;
-      if (unit == "ns") mult = 1;
-      else if (unit == "us" || unit == "µs") mult = 1000;
-      else if (unit == "ms") mult = 1000000;
-      else if (unit == "s") mult = 1000000000;
-      else exit 2;
-      printf "%.0f", value * mult;
-    }
-  '
-}
-
 parse_benchmark_ns() {
   local output="$1"
   local benchmark="$2"
@@ -177,7 +165,7 @@ parse_benchmark_ns() {
 
   value="$(printf '%s\n' "$line" | awk -F'time:[[:space:]]*' '{print $2}' | awk -F'[][]' '{print $2}' | awk '{print $3}')"
   unit="$(printf '%s\n' "$line" | awk -F'time:[[:space:]]*' '{print $2}' | awk -F'[][]' '{print $2}' | awk '{print $4}')"
-  to_ns "$value" "$unit"
+  bench_to_ns "$value" "$unit"
 }
 
 run_canary_bench() {

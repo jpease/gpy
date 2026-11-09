@@ -38,17 +38,10 @@ check_budget() {
   time_val_float=$(echo "$time_and_unit" | awk '{print $1}')
   time_unit=$(echo "$time_and_unit" | awk '{print $2}')
 
-  local time_val_int
-  time_val_int=$(printf "%.0f" "$time_val_float")
   local measured_ns
-
-  case "$time_unit" in
-    "ns") measured_ns=$time_val_int ;;
-    "us"|"µs") measured_ns=$((time_val_int * 1000)) ;;
-    "ms") measured_ns=$((time_val_int * 1000000)) ;;
-    "s")  measured_ns=$((time_val_int * 1000000000)) ;;
-    *) echo "Error: Unknown time unit '$time_unit' for metric '$metric_name'."; return 1 ;;
-  esac
+  if ! measured_ns=$(bench_to_ns "$time_val_float" "$time_unit"); then
+    echo "Error: Unknown time unit '$time_unit' for metric '$metric_name'."; return 1
+  fi
 
   local tolerance_multiplier=$((100 + TOLERANCE_PCT))
   local budget_with_tolerance=$((budget_ns * tolerance_multiplier / 100))

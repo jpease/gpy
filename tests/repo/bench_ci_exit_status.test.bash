@@ -6,9 +6,10 @@
 # it did print has every budgeted benchmark within budget, and still writes
 # its summary. It rebuilds the release agent first, lists the benchmark IDs
 # before measuring and fails when two bench targets register the same one,
-# runs cargo bench without `--workspace` (there is no workspace), and exits 2 before benchmarking when
-# jq, the budget file or a budget key is missing. A stub cargo stands in for
-# the real one, so nothing is built.
+# runs cargo bench without `--workspace` (there is no workspace), converts the
+# Criterion median to nanoseconds exactly (1.49 ms is not checked as 1 ms), and
+# exits 2 before benchmarking when jq, the budget file or a budget key is
+# missing. A stub cargo stands in for the real one, so nothing is built.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -28,8 +29,8 @@ touch "$TMP/tree/gpy-agent/target/release/gpy-agent"
 
 # Logs its arguments. `bench -- --list` prints only the IDs in STUB_BENCH_LIST
 # (default: the nine budgeted ones, each once) and exits 0. Any other `bench`
-# prints every budgeted benchmark at 1 ns and exits with the status the test
-# asks for.
+# prints every budgeted benchmark at 1 ns (ipc_roundtrip: STUB_IPC_TIME) and
+# exits with the status the test asks for.
 cat >"$TMP/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >>"$STUB_CARGO_LOG"
@@ -43,7 +44,11 @@ if [[ " $* " == *" --list "* ]]; then
     exit 0
 fi
 for name in $budgeted; do
-    printf '%s time:   [1.0000 ns 1.0000 ns 1.0000 ns]\n' "$name"
+    if [[ "$name" == ipc_roundtrip ]]; then
+        printf '%s time:   [%s]\n' "$name" "${STUB_IPC_TIME:-1.0000 ns 1.0000 ns 1.0000 ns}"
+    else
+        printf '%s time:   [1.0000 ns 1.0000 ns 1.0000 ns]\n' "$name"
+    fi
 done
 exit "$STUB_CARGO_STATUS"
 EOF
@@ -51,7 +56,7 @@ chmod +x "$TMP/bin/cargo"
 
 run_bench() {
     rm -f "$TMP/tree/bench-results.json" "$TMP/cargo.log"
-    STUB_BENCH_LIST="${STUB_BENCH_LIST:-}" STUB_CARGO_LOG="$TMP/cargo.log" STUB_CARGO_STATUS="$1" PATH="$TMP/bin:$PATH" \
+    STUB_BENCH_LIST="${STUB_BENCH_LIST:-}" STUB_IPC_TIME="${STUB_IPC_TIME:-}" STUB_CARGO_LOG="$TMP/cargo.log" STUB_CARGO_STATUS="$1" PATH="$TMP/bin:$PATH" \
         bash "$TMP/tree/scripts/bench.sh" --ci >"$TMP/out" 2>&1
 }
 
@@ -120,6 +125,49 @@ if [[ "$(jq -r .failures "$TMP/tree/bench-results.json" 2>/dev/null)" == 1 ]]; t
     pass "the summary still records the duplicate-id failure"
 else
     fail "bench-results.json does not record exactly one failure for the duplicate id"
+fi
+
+# A 1 ms budget at 0% tolerance: the median is compared unrounded.
+jq '.budgets.ipc_latency.max_ms = 1 | .regression_thresholds.measurement_variance_percent = 0' \
+    "$ROOT/benchmarks/perf-budgets.json" >"$TMP/tight.json"
+
+if STUB_IPC_TIME="1.4000 ms 1.4900 ms 1.5800 ms" PERF_BUDGETS_FILE="$TMP/tight.json" run_bench 0; then
+    fail "a 1.49 ms median passed a 1 ms budget"
+else
+    pass "median over budget is not rounded down"
+fi
+if grep -qF 'Measured: 1490000 ns' "$TMP/out"; then
+    pass "the measured median is reported in exact nanoseconds"
+else
+    fail "no 'Measured: 1490000 ns': $(grep Measured "$TMP/out")"
+fi
+if [[ "$(jq -r .failures "$TMP/tree/bench-results.json" 2>/dev/null)" == 1 ]]; then
+    pass "the over-budget median records one failure"
+else
+    fail "bench-results.json does not record exactly one failure for the 1.49 ms median"
+fi
+
+if STUB_IPC_TIME="0.9000 ms 0.9990 ms 1.1000 ms" PERF_BUDGETS_FILE="$TMP/tight.json" run_bench 0; then
+    pass "median under budget passes"
+else
+    fail "a 0.999 ms median failed a 1 ms budget: $(tail -n 20 "$TMP/out")"
+fi
+if grep -qF 'Measured: 999000 ns' "$TMP/out"; then
+    pass "a sub-millisecond median is reported exactly"
+else
+    fail "no 'Measured: 999000 ns': $(grep Measured "$TMP/out")"
+fi
+
+# A UTF-8 locale is where macOS awk misread the unit, so run this case in one.
+if LC_ALL=en_US.UTF-8 STUB_IPC_TIME="1.4000 s 1.5000 s 1.6000 s" PERF_BUDGETS_FILE="$TMP/tight.json" run_bench 0; then
+    fail "a 1.5 s median passed a 1 ms budget"
+else
+    pass "seconds over budget fail"
+fi
+if grep -qF 'Measured: 1500000000 ns' "$TMP/out"; then
+    pass "seconds are scaled before rounding"
+else
+    fail "no 'Measured: 1500000000 ns': $(grep Measured "$TMP/out")"
 fi
 
 # expect_config_error LABEL EXPECTED_TEXT [VAR=VALUE...]: bench.sh exits 2,
