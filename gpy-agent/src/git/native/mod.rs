@@ -284,13 +284,12 @@ impl NativeGitBackend {
 
     /// Get the repository state (merging, rebasing, etc.); any git query
     /// (reftable pseudorefs) finishes by `deadline`.
+    ///
+    /// A rebase (apply or merge) wins over a `MERGE_HEAD` left by a conflicting
+    /// `--rebase-merges` step, as in git's `wt-status`.
     #[must_use]
     pub fn get_repo_state(repo_path: &Path, deadline: Instant) -> Option<RepositoryState> {
         let git_dir = Self::resolve_git_dir(repo_path);
-
-        if git_dir.join("MERGE_HEAD").exists() {
-            return Some(RepositoryState::Merging);
-        }
 
         let rebase_apply = git_dir.join("rebase-apply");
         if rebase_apply.join("applying").exists() {
@@ -300,6 +299,10 @@ impl NativeGitBackend {
 
         if git_dir.join("rebase-merge").exists() || rebase_apply.exists() {
             return Some(RepositoryState::Rebasing);
+        }
+
+        if git_dir.join("MERGE_HEAD").exists() {
+            return Some(RepositoryState::Merging);
         }
 
         let reftable = git_dir.join("reftable").is_dir();
@@ -681,6 +684,8 @@ mod tests;
 mod branch_head_tests;
 #[cfg(test)]
 mod pathspec_tests;
+#[cfg(test)]
+mod repo_state_tests;
 #[cfg(test)]
 mod ttl_tests;
 #[cfg(test)]

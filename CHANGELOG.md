@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `__gpy_agent_supervisor_loop` process left by GPY 0.8 or older is no longer stopped at the first Fish prompt (that cleanup was removed in 0.10.0); `gpy uninstall` still stops it.
 - Turning `agent.live_updates` on in a running agent now starts the clock repaint and reconcile scans at once instead of after the next 60-second maintenance tick.
 - `gpy-agent start` no longer unlinks a socket it could not connect to (permission errors, a full backlog) and forks a duplicate; it reports the socket as unverifiable. `gpy-agent stop` removes a stale socket only under the start lock and only while the path still holds the socket it probed.
+- A `git rebase --rebase-merges` stopped on a conflicting merge step shows `REBASING N/M`, not `MERGING N/M`; the rebase directories now take precedence over the `MERGE_HEAD` the step leaves behind, as in `git status`.
 
 ## [0.10.1] - 2026-11-01
 
