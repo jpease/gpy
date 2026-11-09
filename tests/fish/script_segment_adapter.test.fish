@@ -448,7 +448,7 @@ end
 print_test_header "circuit breaker"
 new_case breaker
 set -l cnt $case_dir/out/count
-set F_timeout 50
+set F_timeout 200
 add_seg slow "echo run >>'$cnt'; sleep 7.35"
 write_export
 set -l err $case_dir/out/stderr

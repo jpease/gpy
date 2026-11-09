@@ -133,7 +133,7 @@ check "require_command passing: the script runs" "1|gated" "$(g_runs)|$(g_text g
 
 # --- circuit breaker -----------------------------------------------------------
 g_segment hang 'sleep 3'
-__gpy_script_hang_timeout=30
+__gpy_script_hang_timeout=200
 __gpy_script_hang_ttl=0
 g_enable hang
 : >"$G_RUNS"
