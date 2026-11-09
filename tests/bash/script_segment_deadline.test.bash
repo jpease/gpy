@@ -13,7 +13,9 @@
 # Fish run in a Bash child) holds a 500 ms hung script and a 100 ms script
 # that catches TERM and keeps running, in both orders. The short one must get
 # TERM by its own deadline (not the long one), then the grace (its TERM
-# handler runs) and KILL soon after. Hang-type bounds, always enforced: TERM
+# handler runs) and KILL soon after. Hang-type bounds, always enforced (a miss
+# is retried, 3 attempts, because a stalled shared runner misses once in a
+# while where a serial reader misses every time): TERM
 # and KILL both before the long segment's deadline, which a reader waiting on
 # the long segment misses. Strict bounds: TERM within T + 150 ms, KILL within
 # the 50 ms grace + 100 ms of it, and 25 ms of the grace seen between the two.
@@ -338,10 +340,11 @@ fi
 # and the death of catch.sh, both timed from the start of the batch child.
 MIX_SHORT_MS=100
 MIX_LONG_MS=500
+MIX_ATTEMPTS=3
 mkfifo "$T/tick"
 exec {tick}<>"$T/tick"
 run_mixed() {
-    local label="$1" bash="$2" first="$3" t0 now tt="" tk="" pid="" bp out left
+    local label="$1" bash="$2" first="$3" attempt="$4" t0 now tt="" tk="" pid="" bp out left
     local -a segs
     local -a short=(mix_short "$MIX_SHORT_MS" "" "$T/plug/bin/catch.sh" "" 0)
     local -a long=(mix_long "$MIX_LONG_MS" "" "$T/plug/bin/hung.sh" "" 0)
@@ -371,6 +374,14 @@ run_mixed() {
     done
     wait "$bp"
     out="$(<"$T/mix.out")"
+    # A serial reader misses the long deadline every time; a stalled shared runner
+    # (macOS CI saw TERM or KILL at 506-577 ms) does not. Retry before failing.
+    if ((attempt < MIX_ATTEMPTS && (${tt:-0} >= MIX_LONG_MS * 1000 || ${tk:-0} >= MIX_LONG_MS * 1000))); then
+        printf 'NOTE: %s: TERM at %s ms, KILL at %s ms, past the %s ms deadline; retrying (attempt %s of %s)\n' \
+            "$label" "$((${tt:-0} / 1000))" "$((${tk:-0} / 1000))" "$MIX_LONG_MS" "$attempt" "$MIX_ATTEMPTS"
+        pkill -KILL -f "sleep $MARK" 2>/dev/null
+        return 1
+    fi
     if [[ -z "$tt" ]]; then
         fail "$label: the ${MIX_SHORT_MS} ms segment never ran its TERM handler (no grace before KILL)"
     elif ((tt < MIX_SHORT_MS * 1000 || tt >= MIX_LONG_MS * 1000)); then
@@ -419,12 +430,17 @@ run_mixed() {
         fail "$label: $left script process(es) survived"
         pkill -KILL -f "sleep $MARK" 2>/dev/null
     fi
+    return 0
 }
 
 for first in long short; do
-    run_mixed "Mixed timeouts, Bash $BASH_VERSION" "$BASH" "$first"
+    for attempt in $(seq 1 "$MIX_ATTEMPTS"); do
+        run_mixed "Mixed timeouts, Bash $BASH_VERSION" "$BASH" "$first" "$attempt" && break
+    done
     if [[ -n "$bash32" && "$("$bash32" -c 'echo $BASH_VERSION')" != "$BASH_VERSION" ]]; then
-        run_mixed "Mixed timeouts, Bash $("$bash32" -c 'echo $BASH_VERSION')" "$bash32" "$first"
+        for attempt in $(seq 1 "$MIX_ATTEMPTS"); do
+            run_mixed "Mixed timeouts, Bash $("$bash32" -c 'echo $BASH_VERSION')" "$bash32" "$first" "$attempt" && break
+        done
     fi
 done
 exec {tick}<&-
