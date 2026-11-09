@@ -1302,7 +1302,8 @@ symlink, device, FIFO or socket is refused, and the files its manifests name
 must exist. The copy gets modes the script trust check accepts (directories
 0755, files 0644, or 0755 when the source file is owner-executable; never
 group or other writable), then is loaded to confirm it works; a copy that does
-not load is removed. Plugin code never runs.
+not load is removed. That includes a plugin dropped because another user
+plugin with a smaller id already provides one of its segment names. Plugin code never runs.
 
 `--force` replaces an installed user plugin with the same id (the old
 directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
