@@ -93,6 +93,12 @@ end
 
 _refuse_to_shadow_package_install; or exit 1
 
+# A relative CARGO_TARGET_DIR is resolved by cargo against gpy-agent/, where
+# the build runs; pin it so _release_dir looks in the same place.
+if set -q CARGO_TARGET_DIR; and test -n "$CARGO_TARGET_DIR"; and not string match -q '/*' -- "$CARGO_TARGET_DIR"
+    set -gx CARGO_TARGET_DIR (path resolve -- "gpy-agent/$CARGO_TARGET_DIR")
+end
+
 function _check_repo_root
     if not test -d gpy-agent
         echo "error: gpy-agent directory not found"

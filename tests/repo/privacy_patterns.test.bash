@@ -70,12 +70,22 @@ expect_clean "synthetic macOS user" 'For example /Users/alice/work/project'
 expect_clean "synthetic linux user" 'For example /home/user/project'
 expect_clean "short synthetic user" 'let root = Path::new("/home/u/dev/x/myrepo");'
 expect_clean "underscored synthetic user" 'For example /home/user_name/project'
+expect_clean "allowlisted user before a quote" 'let p = "/home/user_name";'
+expect_clean "allowlisted user before a paren" 'See [cfg](/Users/alice).'
+expect_clean "dotfile directory is not a user" 'XDG_CONFIG_HOME=/srv/home/.config'
+expect_clean "sentence period after an allowlisted user" 'Run it from /home/user.'
+# shellcheck disable=SC2016
+expect_clean "placeholder is not a user" 'cd /home/$USER/src'
 
 # (c) the allowlist matches whole path components, not prefixes.
 echo "--- allowlist must not leak via prefix matching ---"
 expect_flagged "megan vs me" 'Config lives at /Users/megan/.config/gpy.'
 expect_flagged "ursula vs u" 'Config lives at /Users/ursula/.config/gpy.'
 expect_flagged "foobar vs foo" 'Config lives at /Users/foobar/.config/gpy.'
+expect_flagged "dotted user vs me" 'Config lives at /Users/me.smith/.config/gpy.'
+expect_flagged "dotted user vs user" 'Run from /home/user.name/src.'
+expect_flagged "dotted user vs u" 'Run from /home/u.k/src.'
+expect_flagged "plus-sign user vs me" 'Run from /Users/me+work/src.'
 expect_flagged "username vs user" 'Config lives at /home/username/.config/gpy.'
 
 # (d) untracked files are out of scope: the gate guards published history.

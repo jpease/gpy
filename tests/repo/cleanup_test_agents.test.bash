@@ -52,6 +52,7 @@ echo "$CLEANUP_OUT"
 echo "--------------------------------------"
 
 assert_true "cleanup script exits 0" "[[ $CLEANUP_STATUS -eq 0 ]]"
+assert_true "status line is printed once with a single number" "[[ \"\$(printf '%s\\n' \"\$CLEANUP_OUT\" | grep -c '^Running gpy-agent processes: [0-9][0-9]*\$')\" -eq 1 && \"\$(printf '%s\\n' \"\$CLEANUP_OUT\" | tail -n 1)\" != 0 ]]"
 assert_true "cleanup completes in under 5s (took ${ELAPSED_S}s)" "[[ $ELAPSED_S -lt 5 ]]"
 
 assert_true "unrelated decoy socket survives cleanup" "[[ -S '$DECOY_SOCK' ]]"

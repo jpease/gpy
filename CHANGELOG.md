@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy config wizard` no longer asks `Discard changes and quit?` when every theme option was toggled back to its starting value.
 - In `gpy config wizard`, selecting a theme that fails to load no longer discards the unsaved edits of the theme you stay on.
 - `gpy theme diff` no longer reports a copy as identical when it differs only in line endings or a missing final newline; the diff shows those lines and prints `\ No newline at end of file` like `diff -u`.
+- The manual removal checklist in `docs/INSTALL.md` no longer deletes a `fish_prompt.fish` that is not GPY's symlink; it applies the same guard as `gpy uninstall` and restores the newest backup only when the prompt is gone.
+- `install.sh` and `install-oneline.sh` accept `GPY_SHELL` case-insensitively and treat a blank value as unset, matching `gpy setup`; `GPY_SHELL=Zsh` no longer installs the binaries without shell integration.
+- `scripts/bench.sh --ci` converts Criterion medians to nanoseconds before rounding; a `1.49 ms` result is no longer checked against the budget as `1 ms`.
+- `scripts/check-privacy-patterns.sh` matches the whole home-directory component, so a dotted home directory such as `me.smith` is no longer accepted as the allowlisted example user `me`.
+- Contributor scripts: `test-fresh-install.sh` runs under macOS bash 3.2, `cleanup-test-agents.sh` prints the agent count once, `install-hooks.sh --uninstall` fails when `prek` is missing and no longer claims to reset `core.hooksPath`, and `install-dev.fish` honours a relative `CARGO_TARGET_DIR`.
 
 ### Changed
 - A `__gpy_agent_supervisor_loop` process left by GPY 0.8 or older is no longer stopped at the first Fish prompt (that cleanup was removed in 0.10.0); `gpy uninstall` still stops it.

@@ -67,7 +67,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `test-fish.sh` | Build the debug binaries and run `tests/fish/*.test.fish`; `just test-shell` and `just check-shell fish` run it. |
 | `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the `rust-toolchain.toml` pin; names the override on a mismatch. |
 | `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
-| `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
+| `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. The user allowlist matches a whole path component, so a dotted user such as `me.smith` is not the example user `me`. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
 | `check-platforms.sh [--worktree \| <rev>]` | Compile `<rev>` (default `HEAD`; `--worktree` adds uncommitted changes) in a Docker container: Linux `cargo clippy` (the same two passes as `just lint`) and Windows (mingw) `cargo check` for `--lib`, `--locked`, `--profile test --tests`. Exit 1 on a failure, 2 when Docker is unreachable. `just check-platforms`. |
 | `check-new-allows.py [--staged \| <base-rev>]` | Fail when a change adds an `allow` attribute without `reason = "..."`; existing allows are not checked. Run at pre-commit (`--staged`) and by the `new-allows` job in `pr-gate.yml`. |
@@ -85,4 +85,4 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `smoke-release.sh` | Install and run the binaries a release is about to publish, in a sandboxed `HOME`. |
 | `test-fresh-install.sh` | Install into a stock `ubuntu:24.04` container and render a prompt per shell. |
 | `wsl-smoke.sh [--contract \| --contract-only]` | Inside WSL: font detection via `gpy setup`, `gpy-agent oneshot git` on Linux and Windows-drive repos, and optionally the cross-shell contract suite. `GPY_AGENT_BIN` and `GPY_WSL_DRVFS_DIR` override paths. |
-| `install-hooks.sh [--uninstall]` | Install (or remove) the prek git hooks from `.pre-commit-config.yaml`. |
+| `install-hooks.sh [--uninstall]` | Install (or remove, failing without `prek`) the prek hook shims from `.pre-commit-config.yaml`. |

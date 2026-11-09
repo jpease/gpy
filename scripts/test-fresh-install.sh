@@ -28,7 +28,7 @@ for arg in "$@"; do
 done
 
 echo "==> Building $image (release build of $version inside the container)"
-docker build "${build_args[@]}" --build-arg "GPY_RELEASE_VERSION=$version" \
+docker build ${build_args[@]+"${build_args[@]}"} --build-arg "GPY_RELEASE_VERSION=$version" \
     -f tests/docker/Dockerfile.fresh-install -t "$image" .
 
 echo "==> Fresh install and first prompts in a clean container"

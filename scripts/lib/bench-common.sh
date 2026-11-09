@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by scripts/bench.sh and scripts/ci-bench.sh: the performance budgets,
+# Sourced by scripts/bench.sh, scripts/ci-bench.sh and scripts/perf-canary.sh: the performance budgets,
 # the release agent they measure and the log helpers. The caller sets
 # PROJECT_ROOT first.
 #
@@ -19,6 +19,22 @@ bench_info() { echo "info: $1"; }
 bench_pass() { echo "PASS: $1"; }
 bench_warn() { echo "warn: $1"; }
 bench_fail() { echo "FAIL: $1"; }
+
+# bench_to_ns VALUE UNIT: Criterion's "1.4900 ms" as integer nanoseconds,
+# rounded once after scaling. Returns 2 on an unknown unit. The unit is mapped
+# in the shell: macOS awk (20200816) in a UTF-8 locale compares a unit against
+# a multi-byte literal such as "µs" wrongly and read "s" as microseconds.
+bench_to_ns() {
+  local mult
+  case "$2" in
+    ns) mult=1 ;;
+    us | µs) mult=1000 ;;
+    ms) mult=1000000 ;;
+    s) mult=1000000000 ;;
+    *) return 2 ;;
+  esac
+  awk -v value="$1" -v mult="$mult" 'BEGIN { printf "%.0f", value * mult }'
+}
 
 # bench_load_budgets VAR=PATH[*SCALE]...
 #

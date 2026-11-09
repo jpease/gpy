@@ -185,7 +185,7 @@ one-line installer to `sh`; run `install.sh` from an extracted archive with
 fish, zsh or bash, or no `$SHELL`) they install the binaries only, edit no shell
 files, and ask you to re-run with `GPY_SHELL=fish`, `zsh` or `bash`.
 
-- **`GPY_SHELL`**: Override shell detection
+- **`GPY_SHELL`**: Override shell detection. It is case-insensitive; a blank value is treated as unset.
   ```bash
   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | GPY_SHELL=fish sh
   ```
@@ -629,7 +629,7 @@ restored.
 
 ### Manual Removal Checklist
 
-To remove GPY manually instead, this is everything `gpy uninstall` touches:
+To remove GPY manually instead, this is everything `gpy uninstall` touches, with the same guards:
 
 ```bash
 gpy-agent stop
@@ -637,13 +637,15 @@ rm -f ~/.local/bin/gpy-agent ~/.local/bin/gpy ~/.local/bin/gpy-agent.backup.* ~/
 rm -rf ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish
 rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/gpy"   # shell files, completions and bundled plugins
 # rm -rf ~/.config/gpy  # your config, themes, palettes and plugins are kept unless you delete them
-rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-~/.cache}/gpy"          # cache; socket, shells/
+rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-$HOME/.cache}/gpy"          # cache; socket, shells/
 # Remove the "# >>> gpy-init >>>" ... "# <<< gpy-init <<<" block from
 # ~/.config/fish/config.fish, ${ZDOTDIR:-~}/.zshrc, ~/.zshrc, ~/.bashrc, ~/.bash_profile, ~/.bash_login, and ~/.profile
-# Fish prompt: if a GPY symlink, remove it and restore the newest backup if desired
-rm -f ~/.config/fish/functions/fish_prompt.fish
-# Restore newest backup if present:
-# mv ~/.config/fish/functions/fish_prompt.fish.backup.<newest_stamp> ~/.config/fish/functions/fish_prompt.fish
+# Fish prompt: remove it only if it is GPY's own symlink (what `gpy uninstall` does)
+f=~/.config/fish/functions/fish_prompt.fish
+[ -L "$f" ] && [ "$(readlink "$f")" = "${XDG_DATA_HOME:-$HOME/.local/share}/gpy/fish/functions/fish_prompt.fish" ] && rm -f "$f"
+# A regular-file copy of GPY's prompt from an old release: `gpy uninstall` detects it; otherwise read the file before deleting it
+# Restore the newest backup only when nothing is left at $f:
+[ -e "$f" ] || [ -L "$f" ] || { b=$(ls -1 "$f".backup.[0-9]*_[0-9]* 2>/dev/null | tail -n 1); [ -n "$b" ] && mv "$b" "$f"; }
 
 exec fish  # or zsh, bash
 ```

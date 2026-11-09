@@ -37,6 +37,7 @@ Usage: bash install.sh [-h|--help]
 Installs the release archive it was extracted from. Takes no other options.
 Configure with environment variables:
   GPY_SHELL=fish|zsh|bash  Shell to wire up (default: basename of $SHELL).
+                           Case-insensitive; a blank value means unset.
                            Any other shell installs the binaries only.
   GPY_NERD_FONT=1|0|unknown  Set the icon style without asking.
 EOF
@@ -197,12 +198,17 @@ INSTALL_DIR="$HOME/.local/bin"
 
 # Decide the shell as `gpy setup` does: GPY_SHELL, then the basename of $SHELL.
 # Never guess; an unsupported shell gets the binaries only.
-shell_name="${GPY_SHELL:-${SHELL##*/}}"
+# GPY_SHELL is case-insensitive and blank counts as unset, as in `gpy setup`.
+gpy_shell_raw="${GPY_SHELL:-}"
+gpy_shell="$(printf '%s' "$gpy_shell_raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+shell_name="${gpy_shell:-${SHELL##*/}}"
 case "$shell_name" in
     fish|zsh|bash) wire_shell=1 ;;
     *)
         wire_shell=0
-        warn "Unsupported shell '$shell_name'${GPY_SHELL:+ (from GPY_SHELL)}: installing the binaries only. For shell integration re-run with GPY_SHELL=fish, zsh or bash"
+        # Quote what the user typed when it came from GPY_SHELL.
+        shell_shown="${gpy_shell:+$gpy_shell_raw}"
+        warn "Unsupported shell '${shell_shown:-$shell_name}'${gpy_shell:+ (from GPY_SHELL)}: installing the binaries only. For shell integration re-run with GPY_SHELL=fish, zsh or bash"
         ;;
 esac
 
@@ -234,7 +240,7 @@ fi
 if [ "$wire_shell" = 1 ]; then
     CURRENT_STEP="gpy setup (shell integration; binaries are already installed)"
     info "Installing shell integration..."
-    "$INSTALL_DIR/gpy" setup --from "$(pwd)"
+    "$INSTALL_DIR/gpy" setup --shell "$shell_name" --from "$(pwd)"
 fi
 
 # Restart so an old daemon picks up the new binary; `start` is a no-op when the
