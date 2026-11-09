@@ -174,6 +174,9 @@ in `config.toml` are invalid: `start` prints `Agent disabled in config
 before binding its socket, the line carries the daemon's own error, such as a
 cache directory it could not create and why. When `start` cannot tell whether
 an agent already owns the socket, it leaves the socket alone and exits `1`.
+A socket `start` cannot connect to for a reason other than refusal (for example a
+permission error) is left alone and `start` fails with `could not verify whether
+the GPY agent … is running`.
 The daemon runs in `/`, so it never keeps the
 directory you started it from (or its volume) busy; a relative `--socket`,
 [`GPY_AGENT_SOCKET_PATH`](environment-variables.md#gpy_agent_socket_path), `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
@@ -217,7 +220,9 @@ and still exits `0`.
 
 A socket file with nothing listening is a leftover, not a running agent: `stop`
 removes it, prints `Agent not running; removed stale socket <path>.` and exits
-`0`. If an agent is there but cannot be stopped (it does not answer the
+`0`. If the socket's directory is being started into at the same moment
+(`<socket>.lock` held), `stop` waits for it and leaves a socket that was rebound
+meanwhile. If an agent is there but cannot be stopped (it does not answer the
 shutdown request, or still answers after the shutdown wait), `stop` prints one
 `Error:` line on stderr naming the socket (and `kill <pid>` when the agent
 reported its PID) and exits `1`.

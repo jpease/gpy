@@ -360,3 +360,37 @@ fn wait_for_agent_shutdown_reports_still_responding_on_timeout() {
         "must wait the full bounded budget before giving up, took {elapsed:?}"
     );
 }
+
+/// A socket the client cannot connect to (`EACCES`) says nothing about the
+/// agent: start must leave it alone instead of unlinking it and forking.
+#[test]
+fn a_socket_the_client_cannot_connect_to_is_indeterminate() {
+    use super::inspect_socket;
+    use crate::agent::lifecycle::{SocketCheck, StartOutcome};
+    use crate::ipc::socket_identity::SocketIdentity;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // Root bypasses socket permissions.
+    if nix::unistd::geteuid().is_root() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let socket_path = tmp.path().join("locked.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket_path).expect("bind socket");
+    std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o000))
+        .expect("chmod socket");
+    let identity = SocketIdentity::at(&socket_path).expect("stat socket");
+    let client = client_at(&socket_path);
+
+    assert!(
+        client.ping().is_err(),
+        "an EACCES connect is a local failure"
+    );
+    let check = inspect_socket(&client, &mut |_| {});
+
+    assert!(
+        matches!(check, SocketCheck::Done(StartOutcome::Unverifiable)),
+        "got {check:?}"
+    );
+    assert_eq!(SocketIdentity::at(&socket_path).ok(), Some(identity));
+}

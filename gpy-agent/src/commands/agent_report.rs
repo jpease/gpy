@@ -14,6 +14,8 @@ use crate::paths::SocketPath;
 use crate::{Error, Result, VERSION};
 use std::path::Path;
 use std::process::ExitCode;
+#[cfg(unix)]
+use std::time::Duration;
 
 /// What `gpy-agent status` found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,6 +231,63 @@ fn start_agent(socket: &SocketPath, quiet: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Longest a stop waits for a start in progress on the same socket.
+#[cfg(unix)]
+const STOP_LOCK_WAIT_MAX: Duration = Duration::from_secs(10);
+
+/// The socket file a stop probed, captured before the shutdown request.
+#[cfg(unix)]
+type ProbedSocket = Option<crate::ipc::socket_identity::SocketIdentity>;
+/// Native Windows has no socket to identify.
+#[cfg(not(unix))]
+type ProbedSocket = ();
+
+#[cfg(unix)]
+fn probed_socket(socket_path: &Path) -> ProbedSocket {
+    crate::ipc::socket_identity::SocketIdentity::at(socket_path).ok()
+}
+
+#[cfg(not(unix))]
+const fn probed_socket(_socket_path: &Path) -> ProbedSocket {}
+
+/// Remove the stale socket `probed` under the start lock. Returns `false`
+/// when the socket is not provably stale, so the caller reports a failed stop.
+///
+/// # Errors
+/// Returns an error if the start lock cannot be taken.
+#[cfg(unix)]
+fn remove_stale_socket(
+    client: &AgentClient,
+    socket_path: &Path,
+    probed: ProbedSocket,
+) -> Result<bool> {
+    let Some(identity) = probed else {
+        return Ok(false);
+    };
+    let _lock = crate::fs_util::lock_beside(socket_path, STOP_LOCK_WAIT_MAX).map_err(|e| {
+        Error::agent(format!(
+            "cannot take start lock for {}: {e}",
+            socket_path.display()
+        ))
+    })?;
+    // Re-check under the lock: a `start` that held it may have bound a new socket.
+    if !client.socket_is_stale() {
+        return Ok(false);
+    }
+    crate::agent::lifecycle::remove_socket_if_unchanged(socket_path, identity);
+    Ok(true)
+}
+
+/// Native Windows never reports a stale socket (`AgentClient::socket_is_stale`).
+#[cfg(not(unix))]
+fn remove_stale_socket(
+    _client: &AgentClient,
+    _socket_path: &Path,
+    _probed: ProbedSocket,
+) -> Result<bool> {
+    Ok(false)
+}
+
 /// The error for an agent that is still running after a stop.
 fn did_not_stop(pid: Option<u32>, socket_path: &Path) -> Error {
     let socket = socket_path.display();
@@ -256,6 +315,7 @@ fn stop_agent(socket: &SocketPath, quiet: bool) -> Result<()> {
     // One client, so one runtime, for the whole stop. It is current-thread
     // and dropped on return, so `restart` forks with none alive.
     let client = AgentClient::new(socket)?;
+    let probed = probed_socket(socket_path);
     // Learn the PID before the shutdown so the outcome can name it; any
     // answer but a status skips the lookup.
     let pid = match client.probe_status() {
@@ -281,13 +341,9 @@ fn stop_agent(socket: &SocketPath, quiet: bool) -> Result<()> {
         // Only a refused connection proves the socket is stale; an
         // accepted-but-silent one is a live agent.
         Err(_) if client.socket_is_stale() => {
-            std::fs::remove_file(socket_path).or_else(|remove_err| {
-                if remove_err.kind() == std::io::ErrorKind::NotFound {
-                    Ok(())
-                } else {
-                    Err(remove_err)
-                }
-            })?;
+            if !remove_stale_socket(&client, socket_path, probed)? {
+                return Err(did_not_stop(pid, socket_path));
+            }
             say(
                 quiet,
                 format!(

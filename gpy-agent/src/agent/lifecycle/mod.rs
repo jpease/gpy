@@ -20,6 +20,8 @@ mod unsupported;
 pub use client::AgentClient;
 #[cfg(unix)]
 pub use liveness::inspect_socket;
+#[cfg(unix)]
+pub(crate) use liveness::remove_socket_if_unchanged;
 pub use outcome::{
     ProtocolMismatch, SocketCheck, StartNotice, StartOutcome, StatusProbe, protocol_mismatch,
 };
