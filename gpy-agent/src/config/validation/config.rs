@@ -73,12 +73,24 @@ pub fn validate_config(config: &crate::config::Config) -> Result<()> {
     Ok(())
 }
 
+/// Canonical spelling of a language identifier; unknown names pass through.
+fn canonical_language(name: &str) -> String {
+    crate::language::metadata::get_canonical_name(name)
+        .unwrap_or(name)
+        .to_owned()
+}
+
 /// Rewrite user-spelled names into the canonical form every consumer (export,
 /// shells, doctor, `config get`) compares against, then validate.
 ///
 /// `ui.enabled_segments` entries are trimmed and lowercased via [`SegmentName`],
 /// so `"Directory"` and `" git "` load as `directory` and `git`. Repeats keep
 /// only their first occurrence, so `["git", "Git"]` renders git once.
+///
+/// `language.enabled_languages` entries and `[language.icons]` keys become the
+/// canonical language name (`rs` → `rust`, `golang` → `go`); unknown names are
+/// kept as written. When several icon keys name one language, the key already
+/// spelled canonically wins, else the alphabetically first alias.
 ///
 /// # Errors
 /// Returns an error if any configuration value is invalid.
@@ -92,6 +104,27 @@ pub fn normalize_config(config: &mut crate::config::Config) -> Result<()> {
         }
     }
     config.ui.enabled_segments = canonical;
+
+    let mut languages: Vec<String> = Vec::with_capacity(config.language.enabled_languages.len());
+    for entry in &config.language.enabled_languages {
+        let name = canonical_language(entry);
+        if !languages.contains(&name) {
+            languages.push(name);
+        }
+    }
+    config.language.enabled_languages = languages;
+
+    let mut icons: Vec<_> = std::mem::take(&mut config.language.icons.icons)
+        .into_iter()
+        .collect();
+    icons.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, icon) in icons {
+        let language = canonical_language(&key);
+        if key == language || !config.language.icons.icons.contains_key(&language) {
+            config.language.icons.icons.insert(language, icon);
+        }
+    }
+
     validate_config(config)
 }
 
@@ -142,6 +175,40 @@ mod tests {
 
         config.ui.enabled_segments = vec!["K8S-Ctx".to_owned(), " k8s_ctx".to_owned()];
         assert!(normalize_config(&mut config).is_err());
+    }
+
+    #[test]
+    fn normalize_config_canonicalizes_language_aliases() {
+        let icon = |s: &str| crate::config::types::Icon::new(s).unwrap();
+        let mut config = crate::config::Config::default();
+        config.language.enabled_languages = vec![
+            "golang".to_owned(),
+            "TS".to_owned(),
+            "rs".to_owned(),
+            "rust".to_owned(),
+        ];
+        let input = &mut config.language.icons.icons;
+        input.insert("rs".to_owned(), icon("A"));
+        input.insert("rust".to_owned(), icon("B"));
+        input.insert("js".to_owned(), icon("C"));
+        input.insert("ts".to_owned(), icon("D"));
+        normalize_config(&mut config).unwrap();
+        assert_eq!(config.language.enabled_languages, ["go", "node", "rust"]);
+        let icons = &config.language.icons.icons;
+        assert_eq!(icons.len(), 2);
+        assert_eq!(icons["rust"], icon("B"));
+        assert_eq!(icons["node"], icon("C"));
+    }
+
+    #[test]
+    fn normalize_config_keeps_unknown_language_names() {
+        let mut config = crate::config::Config::default();
+        config.language.enabled_languages = vec!["cobol".to_owned()];
+        let icon = crate::config::types::Icon::new("C").unwrap();
+        config.language.icons.icons.insert("cobol".to_owned(), icon);
+        normalize_config(&mut config).unwrap();
+        assert_eq!(config.language.enabled_languages, ["cobol"]);
+        assert!(config.language.icons.icons.contains_key("cobol"));
     }
 
     #[test]

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `git rebase --rebase-merges` stopped on a conflicting merge step shows `REBASING N/M`, not `MERGING N/M`; the rebase directories now take precedence over the `MERGE_HEAD` the step leaves behind, as in `git status`.
 - The rebase step counter's total no longer undercounts interactive rebases whose `git-rebase-todo` exceeds 64 KiB; the plan is counted line by line and the counter is omitted (not wrong) past 1 MiB.
 - `gpy config set language.confidence_threshold 0.3` writes `0.3`, not `0.30000001192092896`, and `gpy config show language` prints the same.
+- `[language.icons]` keys and `language.enabled_languages` entries written as aliases (`rs`, `js`, `ts`, `golang`, …) now apply; they are read as their canonical language, as `gpy config set` already wrote them. Theme `enabled_languages` lists accept aliases too.
 
 ## [0.10.1] - 2026-11-01
 
