@@ -49,7 +49,9 @@ __gpy_supervisor_start() {
     return 1
 }
 
-# Per-prompt restart of a dead agent, rate limited and attempt-capped.
+# Per-prompt restart of a dead agent, rate limited and attempt-capped. The
+# startup start (`__gpy_init`) counts as the first check, so the first probe
+# runs one interval later.
 __gpy_supervisor_last_check_time=0
 __gpy_supervisor_check_attempts=0
 

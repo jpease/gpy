@@ -16,7 +16,8 @@ function __gpy_start_agent() {
 }
 
 # Mid-session health check from precmd, rate limited by check interval and
-# capped at max restart attempts.
+# capped at max restart attempts. The startup start counts as the first check
+# (zsh/gpy.zsh stamps the time), so the first probe is one interval later.
 __gpy_supervisor_last_check_time=0
 __gpy_supervisor_check_attempts=0
 function __gpy_supervisor_check() {

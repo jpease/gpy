@@ -574,6 +574,8 @@ __gpy_init() {
     # Agent-free mode still installs the prompt hook; every render uses oneshot.
     if __gpy_agent_enabled; then
         __gpy_supervisor_start &>/dev/null
+        # The start just made is the first check: the next probe waits one interval.
+        __gpy_now_seconds __gpy_supervisor_last_check_time
         __gpy_register_with_agent &>/dev/null
     fi
 
