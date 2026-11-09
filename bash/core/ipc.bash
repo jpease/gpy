@@ -464,17 +464,21 @@ __gpy_instant_cache_key_path() {
 }
 
 # Any variant or prev_bg token counts: the agent writes `.none` only when some
-# request had no prev_bg.
+# request had no prev_bg. The `git_bg` colour file is not an entry, and a tail
+# with three dots (`git.<variant>.<token>.bash`) belongs to a sibling key
+# `<key>.git`: the key does not escape `.`.
 __gpy_instant_cache_present() {
-    local base="$1" cwd="${2:-$PWD}" key_path cache_dir cache_key hit found=1 had_failglob=0
+    local base="$1" cwd="${2:-$PWD}" key_path cache_dir cache_key prefix hit found=1 had_failglob=0
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     __gpy_instant_cache_dir cache_dir || return 1
     __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
+    prefix="$cache_dir/$cache_key."
     # An unmatched glob stays literal and fails -e; failglob would abort, so lift it.
     shopt -q failglob && had_failglob=1 && shopt -u failglob
-    for hit in "$cache_dir/$cache_key.$base."*.bash "$cache_dir/$cache_key.${base}_"*.bash; do
+    for hit in "$prefix$base."*.bash "$prefix${base}_first."*.bash "$prefix${base}_last."*.bash "$prefix${base}_first_last."*.bash; do
         if [[ -e "$hit" ]]; then
+            case "${hit#"$prefix"}" in *.*.*.*) continue ;; esac
             found=0
             break
         fi

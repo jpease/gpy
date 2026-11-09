@@ -47,6 +47,22 @@ if not test -r "$fixture"
     exit 1
 end
 
+# present rows: files in a scratch cache dir, key lookup stubbed to the row's path.
+set -g present_tmp (mktemp -d)
+set -g present_key_path
+function __gpy_instant_cache_key_path
+    printf '%s' $present_key_path
+end
+function present_row --argument-names key_path files
+    set -g present_key_path $key_path
+    rm -rf $present_tmp/gpy
+    mkdir -p $present_tmp/gpy/instant-prompts
+    for f in (string split ' ' -- $files)
+        touch $present_tmp/gpy/instant-prompts/(string replace EXT ansi -- $f)
+    end
+    XDG_CACHE_HOME=$present_tmp yes_no __gpy_instant_cache_present git $key_path
+end
+
 set -l vector_count 0
 while read -d \t -la cols
     test -z "$cols[1]"; and continue
@@ -67,6 +83,8 @@ while read -d \t -la cols
         case status
             check "$label stale" "$cols[3]" (yes_no __gpy_cache_status_stale $cols[2])
             check "$label variant" "$cols[4]" (yes_no __gpy_cache_status_variant $cols[2])
+        case present
+            check "$label" "$cols[4]" (present_row "$cols[2]" "$cols[3]")
         case '*'
             fail "$label: unknown row kind [$cols[1]]"
     end
@@ -77,4 +95,5 @@ if test $vector_count -eq 0
     exit 1
 end
 
+rm -rf $present_tmp
 test_finish "instant-cache naming vector tests"
