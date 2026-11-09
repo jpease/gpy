@@ -7,7 +7,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Synthetic example/fixture users, matched as a WHOLE path component ("u"
-# allows /home/u, not /home/ursula).
+# allows /home/u, not /home/ursula). A component runs to the next `/`,
+# whitespace, quote, bracket or `,;:`, so a dotted user such as `me.smith` is
+# not `me`; sentence punctuation after the name (`/home/user.`) is dropped
+# before the comparison. It must start like a user name, which also keeps
+# dotfile directories (`/home/.config`) and placeholders (`/home/$USER`) out.
 ALLOWLIST_USERS=(alice foo me u user user_name)
 
 # Private codenames are never stored in the repo (listing them would publish
@@ -38,8 +42,9 @@ scan_user_paths() {
     local allow hits
     allow="$(IFS='|'; echo "${ALLOWLIST_USERS[*]}")"
 
-    hits="$(git grep -n -I -oE '/(Users|home)/[A-Za-z0-9_][A-Za-z0-9_-]*' -- . 2>/dev/null |
+    hits="$(git grep -n -I -oE '/(Users|home)/[A-Za-z0-9_][^/[:space:]"'"'"'`()<>,;:]*' -- . 2>/dev/null |
         grep -Ev "^($SELF_PATHS):" |
+        sed -E 's/[].!?}*]+$//' |
         grep -Ev ":/(Users|home)/($allow)\$" || true)"
 
     [[ -n "$hits" ]] && report "Absolute home-directory path (allowlist: ${ALLOWLIST_USERS[*]}):" "$hits"
