@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy setup` recognises its block in an rc file with CRLF line endings: an up-to-date block is left alone instead of being reported as edited, and an older block is upgraded in place keeping CRLF.
 - The `Next: ... source <rc>` hint after `gpy setup` quotes the rc path.
 - `gpy uninstall` no longer removes the binaries, shell files and runtime directory while the agent is still running. When `gpy-agent stop` fails it now removes nothing, prints the `kill <pid>` hint and exits 1; re-run after stopping the agent.
-- An IPC request of exactly 64 KiB is answered instead of silently dropped, and a larger one gets the `Message too large` reply instead of a closed connection.
+- Turning `agent.live_updates` on in a running agent now starts the clock repaint and reconcile scans at once instead of after the next 60-second maintenance tick.
+- `gpy-agent start` no longer unlinks a socket it could not connect to (permission errors, a full backlog) and forks a duplicate; it reports the socket as unverifiable. `gpy-agent stop` removes a stale socket only under the start lock and only while the path still holds the socket it probed.
+- An IPC request line of exactly 64 KiB is answered instead of silently dropped: the connection guard no longer counts the terminating newline, and closes a connection only for more than 64 KiB sent without a newline.
 - A `git rebase --rebase-merges` stopped on a conflicting merge step shows `REBASING N/M`, not `MERGING N/M`; the rebase directories now take precedence over the `MERGE_HEAD` the step leaves behind, as in `git status`.
 - The rebase step counter's total no longer undercounts interactive rebases whose `git-rebase-todo` exceeds 64 KiB; the plan is counted line by line and the counter is omitted (not wrong) past 1 MiB.
 - `gpy config set language.confidence_threshold 0.3` writes `0.3`, not `0.30000001192092896`, and `gpy config show language` prints the same.
@@ -20,28 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy config set` rejects `language.filter = 0` (which showed no language) and `git.max_ahead_behind` above `4294967295` (which acted as that cap) instead of accepting them; hand-edited files keep loading as before and the reference now documents both. Configuration reference: `[git.icons]` accept an empty string (bare count); `ui.directory.max_length` counts characters rather than columns and drops the ellipsis only at `1`.
 - The directory segment contracts the home directory to `~` when `HOME` ends in a slash (`/home/u/`).
 - `gpy theme import --stdout` no longer writes `enabled_segments` to `config.toml` when `--apply-layout` is also given; the two flags are now rejected together as a usage error (exit 2).
-- Two plugins providing the same segment name no longer disagree about which one renders: a user plugin owns the name over a bundled one, and within one source the plugin with the lexically smaller id owns it; the other plugin is dropped with a diagnostic shown by `gpy doctor` and `gpy plugin list`.
+- Two plugins providing the same segment name no longer disagree about which one renders: a user plugin owns the name over a bundled one, and within one source the plugin with the lexically smaller id owns it; the other plugin is dropped with a diagnostic shown by `gpy doctor` and `gpy plugin list`, and `gpy plugin install` refuses a plugin that would be dropped.
 - `gpy config wizard` no longer asks `Discard changes and quit?` when every theme option was toggled back to its starting value.
 - In `gpy config wizard`, selecting a theme that fails to load no longer discards the unsaved edits of the theme you stay on.
 - `gpy theme diff` no longer reports a copy as identical when it differs only in line endings or a missing final newline; the diff shows those lines and prints `\ No newline at end of file` like `diff -u`.
-- An IPC request line of exactly 64 KiB is answered instead of silently dropped: the connection guard no longer counts the terminating newline, and closes a connection only for more than 64 KiB sent without a newline.
 
 ### Changed
 - A `__gpy_agent_supervisor_loop` process left by GPY 0.8 or older is no longer stopped at the first Fish prompt (that cleanup was removed in 0.10.0); `gpy uninstall` still stops it.
-- Turning `agent.live_updates` on in a running agent now starts the clock repaint and reconcile scans at once instead of after the next 60-second maintenance tick.
-- `gpy-agent start` no longer unlinks a socket it could not connect to (permission errors, a full backlog) and forks a duplicate; it reports the socket as unverifiable. `gpy-agent stop` removes a stale socket only under the start lock and only while the path still holds the socket it probed.
-- A `git rebase --rebase-merges` stopped on a conflicting merge step shows `REBASING N/M`, not `MERGING N/M`; the rebase directories now take precedence over the `MERGE_HEAD` the step leaves behind, as in `git status`.
-- The rebase step counter's total no longer undercounts interactive rebases whose `git-rebase-todo` exceeds 64 KiB; the plan is counted line by line and the counter is omitted (not wrong) past 1 MiB.
-- `gpy config set language.confidence_threshold 0.3` writes `0.3`, not `0.30000001192092896`, and `gpy config show language` prints the same.
-- `[language.icons]` keys and `language.enabled_languages` entries written as aliases (`rs`, `js`, `ts`, `golang`, …) now apply; they are read as their canonical language, as `gpy config set` already wrote them. Theme `enabled_languages` lists accept aliases too.
-- `gpy config set` rejects `language.filter = 0` (which showed no language) and `git.max_ahead_behind` above `4294967295` (which acted as that cap) instead of accepting them; hand-edited files keep loading as before and the reference now documents both. Configuration reference: `[git.icons]` accept an empty string (bare count); `ui.directory.max_length` counts characters rather than columns and drops the ellipsis only at `1`.
-- The directory segment contracts the home directory to `~` when `HOME` ends in a slash (`/home/u/`).
-- `gpy theme diff` no longer reports a copy as identical when it differs only in line endings or a missing final newline; the diff shows those lines and prints `\ No newline at end of file` like `diff -u`.
-- `gpy config wizard` no longer asks `Discard changes and quit?` when every theme option was toggled back to its starting value.
-- In `gpy config wizard`, selecting a theme that fails to load no longer discards the unsaved edits of the theme you stay on.
-- Two plugins providing the same segment name no longer disagree about which one renders: a user plugin owns the name over a bundled one, and within one source the plugin with the lexically smaller id owns it; the other plugin is dropped with a diagnostic shown by `gpy doctor` and `gpy plugin list`.
-- Two plugins providing the same segment name no longer disagree about which one renders: a user plugin owns the name over a bundled one, and within one source the plugin with the lexically smaller id owns it; the other plugin is dropped with a diagnostic shown by `gpy doctor` and `gpy plugin list`, and `gpy plugin install` refuses a plugin that would be dropped.
-- `gpy theme import --stdout` no longer writes `enabled_segments` to `config.toml` when `--apply-layout` is also given; the two flags are now rejected together as a usage error (exit 2).
 
 ## [0.10.1] - 2026-11-01
 
