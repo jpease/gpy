@@ -18,19 +18,52 @@ enum Kind {
     Insert,
 }
 
+/// One input line: its text without the `\n`, and whether a `\n` followed it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Line<'a> {
+    text: &'a str,
+    newline: bool,
+}
+
+/// `text` split on `\n` only, so a `\r` stays part of its line; the last line
+/// records whether the text ended in `\n`.
+fn split_lines(text: &str) -> Vec<Line<'_>> {
+    let mut segments: Vec<&str> = text.split('\n').collect();
+    if text.is_empty() || text.ends_with('\n') {
+        segments.pop();
+        return segments
+            .into_iter()
+            .map(|segment| Line {
+                text: segment,
+                newline: true,
+            })
+            .collect();
+    }
+    let last = segments.len().saturating_sub(1);
+    segments
+        .into_iter()
+        .enumerate()
+        .map(|(index, segment)| Line {
+            text: segment,
+            newline: index != last,
+        })
+        .collect()
+}
+
 /// One diff line with the counts of old and new lines that precede it.
 struct Op<'a> {
     kind: Kind,
-    text: &'a str,
+    line: Line<'a>,
     old_before: usize,
     new_before: usize,
 }
 
-/// A unified diff turning `old` into `new`, or `None` when their lines are equal.
+/// A unified diff turning `old` into `new`, or `None` when their bytes are
+/// equal. Line endings and a missing final newline count as differences.
 #[must_use]
 pub fn unified(old_label: &str, new_label: &str, old: &str, new: &str) -> Option<String> {
-    let old_lines: Vec<&str> = old.lines().collect();
-    let new_lines: Vec<&str> = new.lines().collect();
+    let old_lines = split_lines(old);
+    let new_lines = split_lines(new);
     let ops = number_ops(diff_lines(&old_lines, &new_lines));
     if ops.iter().all(|op| op.kind == Kind::Keep) {
         return None;
@@ -47,7 +80,7 @@ pub fn unified(old_label: &str, new_label: &str, old: &str, new: &str) -> Option
 }
 
 /// Edit script from `old` to `new`, deletions before insertions within a change.
-fn diff_lines<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(Kind, &'a str)> {
+fn diff_lines<'a>(old: &[Line<'a>], new: &[Line<'a>]) -> Vec<(Kind, Line<'a>)> {
     let prefix = old
         .iter()
         .zip(new)
@@ -73,7 +106,7 @@ fn diff_lines<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(Kind, &'a str)> {
         .copied()
         .collect::<Vec<_>>();
 
-    let keep = |lines: &[&'a str], count: usize, skip: usize| {
+    let keep = |lines: &[Line<'a>], count: usize, skip: usize| {
         lines
             .iter()
             .skip(skip)
@@ -93,7 +126,7 @@ fn diff_lines<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(Kind, &'a str)> {
     clippy::arithmetic_side_effects,
     reason = "every index is bounded by the table dimensions (rows * width cells) and the two line counts the loops run over"
 )]
-fn diff_middle<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(Kind, &'a str)> {
+fn diff_middle<'a>(old: &[Line<'a>], new: &[Line<'a>]) -> Vec<(Kind, Line<'a>)> {
     let (rows, cols) = (old.len(), new.len());
     let width = cols + 1;
     if rows == 0 || cols == 0 || (rows + 1).saturating_mul(width) > MAX_TABLE_CELLS {
@@ -135,14 +168,14 @@ fn diff_middle<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(Kind, &'a str)> {
 }
 
 /// Attach the running old/new line counts to each op.
-fn number_ops(script: Vec<(Kind, &str)>) -> Vec<Op<'_>> {
+fn number_ops(script: Vec<(Kind, Line<'_>)>) -> Vec<Op<'_>> {
     let (mut old_before, mut new_before) = (0_usize, 0_usize);
     script
         .into_iter()
-        .map(|(kind, text)| {
+        .map(|(kind, line)| {
             let op = Op {
                 kind,
-                text,
+                line,
                 old_before,
                 new_before,
             };
@@ -208,8 +241,11 @@ fn write_hunk<'a>(out: &mut String, ops: impl Iterator<Item = &'a Op<'a>> + Clon
             Kind::Insert => '+',
         };
         out.push(marker);
-        out.push_str(op.text);
+        out.push_str(op.line.text);
         out.push('\n');
+        if !op.line.newline {
+            out.push_str("\\ No newline at end of file\n");
+        }
     }
 }
 
@@ -220,6 +256,27 @@ mod tests {
     #[test]
     fn identical_text_has_no_diff() {
         assert_eq!(unified("a", "b", "x\ny\n", "x\ny\n"), None);
+    }
+
+    #[test]
+    fn crlf_lines_differ_from_lf_lines() {
+        assert_eq!(
+            unified("a", "b", "x\ny\n", "x\r\ny\r\n").as_deref(),
+            Some("--- a\n+++ b\n@@ -1,2 +1,2 @@\n-x\n-y\n+x\r\n+y\r\n")
+        );
+    }
+
+    #[test]
+    fn missing_final_newline_is_marked() {
+        assert_eq!(
+            unified("a", "b", "x\ny\n", "x\ny").as_deref(),
+            Some("--- a\n+++ b\n@@ -1,2 +1,2 @@\n x\n-y\n+y\n\\ No newline at end of file\n")
+        );
+    }
+
+    #[test]
+    fn identical_bytes_without_final_newline_have_no_diff() {
+        assert_eq!(unified("a", "b", "x\ny", "x\ny"), None);
     }
 
     #[test]

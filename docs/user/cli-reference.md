@@ -579,7 +579,7 @@ gpy theme validate ~/.config/gpy/themes/mytheme.toml
 
 Show how your copy of a builtin theme differs from the builtin that ships with this version of GPY.
 
-A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. For a full copy the output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. For an overlay (a user theme with `extends`) it lists the keys whose effective value the overlay changes. The command exits 0 when `<name>` is a builtin or an overlay; it says so when there is no copy to compare or the copy is identical.
+A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. For a full copy the output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. For an overlay (a user theme with `extends`) it lists the keys whose effective value the overlay changes. The command exits 0 when `<name>` is a builtin or an overlay; it says so when there is no copy to compare or the copy is identical. Line endings and a missing final newline count as differences, as in `diff -u`.
 
 **Arguments:**
 - `<name>` - Theme with a user file: your copy of a builtin, or one of your overlay themes (see `gpy theme list`)
