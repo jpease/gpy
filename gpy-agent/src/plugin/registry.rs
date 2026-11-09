@@ -304,12 +304,84 @@ fn discover_plugins_in_roots(roots: &[(PluginSource, PathBuf)]) -> PluginDiscove
 
     let mut sorted: Vec<DiscoveredPlugin> = winners.into_values().collect();
     sorted.sort_by(|a, b| a.manifest.id.as_str().cmp(b.manifest.id.as_str()));
-    let plugins = reject_token_collisions(sorted, &mut diagnostics);
+    let plugins = reject_token_collisions(
+        reject_duplicate_segment_names(sorted, &mut diagnostics),
+        &mut diagnostics,
+    );
 
     PluginDiscovery {
         plugins,
         diagnostics,
     }
+}
+
+/// Drop each non-first-party plugin that provides a segment name another
+/// plugin owns: a user plugin owns it over a bundled one; within one source
+/// the lexically smaller id owns it. Each drop is a diagnostic.
+///
+/// Every consumer (`gpy segments`, `doctor`, the theme export) then sees one
+/// provider per name instead of each picking its own.
+fn reject_duplicate_segment_names(
+    plugins: Vec<DiscoveredPlugin>,
+    diagnostics: &mut Vec<PluginDiagnostic>,
+) -> Vec<DiscoveredPlugin> {
+    let mut visit: Vec<&DiscoveredPlugin> = plugins
+        .iter()
+        .filter(|plugin| plugin.source != PluginSource::FirstParty)
+        .collect();
+    visit.sort_by(|a, b| {
+        b.source
+            .precedence()
+            .cmp(&a.source.precedence())
+            .then_with(|| a.manifest.id.as_str().cmp(b.manifest.id.as_str()))
+    });
+
+    let mut claimed: HashMap<&SegmentName, (&PluginId, PluginSource)> = HashMap::new();
+    let mut dropped: Vec<(String, String)> = Vec::new();
+    for plugin in visit {
+        let taken = plugin
+            .manifest
+            .provided_segments
+            .iter()
+            .find_map(|segment| claimed.get(segment).map(|owner| (segment, *owner)));
+        let Some((segment, (owner, owner_source))) = taken else {
+            for segment in &plugin.manifest.provided_segments {
+                claimed.insert(segment, (&plugin.manifest.id, plugin.source));
+            }
+            continue;
+        };
+        let message = if owner_source == plugin.source {
+            format!(
+                "Plugin '{}' ignored: segment '{}' is also provided by plugin '{owner}'",
+                plugin.manifest.id,
+                segment.as_str()
+            )
+        } else {
+            format!(
+                "Plugin '{}' ignored: segment '{}' is provided by {owner_source} plugin '{owner}'",
+                plugin.manifest.id,
+                segment.as_str()
+            )
+        };
+        dropped.push((plugin.manifest.id.as_str().to_owned(), message));
+    }
+
+    let mut accepted = Vec::with_capacity(plugins.len());
+    for plugin in plugins {
+        let drop_message = dropped
+            .iter()
+            .find(|(id, _)| id == plugin.manifest.id.as_str())
+            .map(|(_, message)| message);
+        match drop_message {
+            Some(message) => diagnostics.push(PluginDiagnostic {
+                plugin_dir: plugin.root.unwrap_or_default(),
+                source: plugin.source,
+                message: message.clone(),
+            }),
+            None => accepted.push(plugin),
+        }
+    }
+    accepted
 }
 
 /// Drop each plugin (visited in id order) that provides a segment whose shell
@@ -355,8 +427,10 @@ fn reject_token_collisions(
 /// Discover plugins from bundled and user plugin roots.
 ///
 /// Deterministic: precedence user > bundled > first-party, same-source
-/// duplicates resolve lexically, output is sorted by id, and a plugin whose
-/// segment token collides with an earlier plugin's is dropped with a diagnostic.
+/// duplicates resolve lexically, output is sorted by id, a plugin providing a
+/// segment name another plugin owns (user over bundled, else smaller id) is
+/// dropped with a diagnostic, and so is one whose segment token collides with
+/// an earlier plugin's.
 #[must_use]
 pub fn discover_plugins() -> PluginDiscovery {
     discover_plugins_in_roots(&plugin_roots())
@@ -566,6 +640,69 @@ entry_type = "command"
                     && diagnostic.message.contains("k8s_ctx")
             }),
             "expected a collision diagnostic naming both segments: {:?}",
+            discovery.diagnostics
+        );
+    }
+
+    fn provides(id: &str, segment: &str) -> String {
+        valid_manifest(id).replace(
+            &format!("provided_segments = [\"{id}\"]"),
+            &format!("provided_segments = [\"{segment}\"]"),
+        )
+    }
+
+    #[test]
+    fn discover_plugins_user_plugin_owns_a_segment_name_over_bundled() {
+        let temp = TempDir::new().expect("tempdir");
+        let bundled = temp.path().join("bundled");
+        let user = temp.path().join("user");
+        write_plugin(&bundled, "zzz", &provides("zzz", "demo"));
+        write_plugin(&user, "zzz2", &provides("zzz2", "demo"));
+
+        let discovery = discover_plugins_in_roots(&[
+            (PluginSource::Bundled, bundled),
+            (PluginSource::User, user),
+        ]);
+
+        let ids: Vec<&str> = discovery
+            .plugins
+            .iter()
+            .map(|plugin| plugin.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, [FIRST_PARTY_ID, "zzz2"]);
+        assert!(
+            discovery.diagnostics.iter().any(|diagnostic| {
+                diagnostic.source == PluginSource::Bundled
+                    && diagnostic.message.contains("demo")
+                    && diagnostic.message.contains("zzz2")
+            }),
+            "{:?}",
+            discovery.diagnostics
+        );
+    }
+
+    #[test]
+    fn discover_plugins_drops_a_same_source_plugin_providing_a_taken_segment_name() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("user");
+        write_plugin(&root, "aaa", &provides("aaa", "demo"));
+        write_plugin(&root, "zzz", &provides("zzz", "demo"));
+
+        let discovery = discover_plugins_in_roots(&[(PluginSource::User, root)]);
+
+        let ids: Vec<&str> = discovery
+            .plugins
+            .iter()
+            .map(|plugin| plugin.manifest.id.as_str())
+            .collect();
+        assert!(ids.contains(&"aaa") && !ids.contains(&"zzz"), "{ids:?}");
+        assert!(
+            discovery.diagnostics.iter().any(|diagnostic| {
+                diagnostic.plugin_dir.ends_with("zzz")
+                    && diagnostic.message.contains("demo")
+                    && diagnostic.message.contains("aaa")
+            }),
+            "{:?}",
             discovery.diagnostics
         );
     }

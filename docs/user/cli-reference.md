@@ -174,6 +174,9 @@ in `config.toml` are invalid: `start` prints `Agent disabled in config
 before binding its socket, the line carries the daemon's own error, such as a
 cache directory it could not create and why. When `start` cannot tell whether
 an agent already owns the socket, it leaves the socket alone and exits `1`.
+A socket `start` cannot connect to for a reason other than refusal (for example a
+permission error) is left alone and `start` fails with `could not verify whether
+the GPY agent … is running`.
 The daemon runs in `/`, so it never keeps the
 directory you started it from (or its volume) busy; a relative `--socket`,
 [`GPY_AGENT_SOCKET_PATH`](environment-variables.md#gpy_agent_socket_path), `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
@@ -217,7 +220,9 @@ and still exits `0`.
 
 A socket file with nothing listening is a leftover, not a running agent: `stop`
 removes it, prints `Agent not running; removed stale socket <path>.` and exits
-`0`. If an agent is there but cannot be stopped (it does not answer the
+`0`. If the socket's directory is being started into at the same moment
+(`<socket>.lock` held), `stop` waits for it and leaves a socket that was rebound
+meanwhile. If an agent is there but cannot be stopped (it does not answer the
 shutdown request, or still answers after the shutdown wait), `stop` prints one
 `Error:` line on stderr naming the socket (and `kill <pid>` when the agent
 reported its PID) and exits `1`.
@@ -397,7 +402,8 @@ The migration guide is in [Migrating from Starship](migrating-from-starship.md).
   the file stem)
 - `--force` - Overwrite existing artifacts of the same name, or shadow a
   builtin/plugin theme or palette of that name (without it, both are refused)
-- `--stdout` - Print both artifacts instead of writing files
+- `--stdout` - Print both artifacts instead of writing files; cannot be combined
+  with `--apply-layout`
 - `--apply-layout` - Also write the derived `enabled_segments` into the
   active config
 
@@ -573,7 +579,7 @@ gpy theme validate ~/.config/gpy/themes/mytheme.toml
 
 Show how your copy of a builtin theme differs from the builtin that ships with this version of GPY.
 
-A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. For a full copy the output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. For an overlay (a user theme with `extends`) it lists the keys whose effective value the overlay changes. The command exits 0 when `<name>` is a builtin or an overlay; it says so when there is no copy to compare or the copy is identical.
+A file at `~/.config/gpy/themes/<name>.toml` completely replaces the builtin theme of the same name, so it stops receiving upstream changes and can break after an upgrade. For a full copy the output is a unified diff: `-` lines exist only in the builtin, `+` lines only in your copy. For an overlay (a user theme with `extends`) it lists the keys whose effective value the overlay changes. The command exits 0 when `<name>` is a builtin or an overlay; it says so when there is no copy to compare or the copy is identical. Line endings and a missing final newline count as differences, as in `diff -u`.
 
 **Arguments:**
 - `<name>` - Theme with a user file: your copy of a builtin, or one of your overlay themes (see `gpy theme list`)
@@ -1296,7 +1302,8 @@ symlink, device, FIFO or socket is refused, and the files its manifests name
 must exist. The copy gets modes the script trust check accepts (directories
 0755, files 0644, or 0755 when the source file is owner-executable; never
 group or other writable), then is loaded to confirm it works; a copy that does
-not load is removed. Plugin code never runs.
+not load is removed. That includes a plugin dropped because another user
+plugin with a smaller id already provides one of its segment names. Plugin code never runs.
 
 `--force` replaces an installed user plugin with the same id (the old
 directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
@@ -1428,7 +1435,7 @@ In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the d
 | `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | as `start` |
 | `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – |
 | `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – |
-| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), or a path or rc file could not be handled | usage error | – | – | – |
+| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), the agent could not be stopped (nothing is removed), or a path or rc file could not be handled | usage error | – | – | – |
 | `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – |
 
 `stop` never exits `6`: a disabled agent that is not running is already in the

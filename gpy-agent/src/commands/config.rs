@@ -284,7 +284,7 @@ fn launch_editor(config_path: &std::path::Path) -> Result<Option<String>> {
 
 /// Launch an editor command through the system shell.
 fn launch_shell_editor(editor: &str, config_path: &std::path::Path) -> Result<()> {
-    let quoted_path = shell_quote(config_path);
+    let quoted_path = super::utils::shell_quote(config_path);
 
     #[cfg(windows)]
     let status = Command::new("cmd")
@@ -367,9 +367,4 @@ fn launch_default_editor(config_path: &std::path::Path) -> Result<String> {
             format!("exited with status {status}"),
         ))
     }
-}
-
-fn shell_quote(path: &std::path::Path) -> String {
-    let path_str = path.to_string_lossy();
-    format!("'{}'", path_str.replace('\'', "'\"'\"'"))
 }

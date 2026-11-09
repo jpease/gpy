@@ -54,6 +54,10 @@ impl ConnectionHandler {
 
     /// Handle a single client connection (NDJSON).
     ///
+    /// Complete lines are size-checked by `protocol::validate_message_size` and
+    /// answered; only an unterminated line over `max_message_size` closes the
+    /// connection.
+    ///
     /// # Errors
     /// Fails on non-recoverable read/write or serialization errors.
     #[cfg(unix)]
@@ -80,21 +84,23 @@ impl ConnectionHandler {
                         break;
                     }
 
-                    if accumulated.len() > self.security_config.max_message_size {
-                        warn_log!(
-                            "connection",
-                            "Client exceeded max message size ({} > {} bytes)",
-                            accumulated.len(),
-                            self.security_config.max_message_size
-                        );
-                        break;
-                    }
-
                     if self
                         .process_complete_lines(&mut accumulated, &mut writer, &client_registry)
                         .await?
                     {
                         return Ok(());
+                    }
+
+                    // Only an unterminated line remains; a complete one was
+                    // size-checked by the parser.
+                    if accumulated.len() > self.security_config.max_message_size {
+                        warn_log!(
+                            "connection",
+                            "Client exceeded max message size ({} > {} bytes without a newline)",
+                            accumulated.len(),
+                            self.security_config.max_message_size
+                        );
+                        break;
                     }
                 }
                 Ok(Err(e)) => {

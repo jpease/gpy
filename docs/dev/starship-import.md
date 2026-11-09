@@ -14,7 +14,7 @@ gpy theme import <path/to/starship.toml> [--name <name>] [--force] [--stdout] [-
 | `<path>` | Required. Path to the source `starship.toml`. |
 | `--name <name>` | Base name for the emitted artifacts. Defaults to the file stem (e.g. `starship` from `starship.toml`), then `starship-import` if the stem is empty. |
 | `--force` | Overwrite existing files of the same name, or intentionally shadow a builtin/plugin theme or palette of that name. |
-| `--stdout` | Print both artifacts to stdout (with `# ---- palette ----` / `# ---- theme ----` headers) instead of writing files. Useful for inspection. |
+| `--stdout` | Print both artifacts to stdout (with `# ---- palette ----` / `# ---- theme ----` headers) instead of writing files. Useful for inspection. Cannot be combined with `--apply-layout`. |
 | `--apply-layout` | Also write the derived `enabled_segments` order into the active `config.toml`. Default: print the suggested order only. |
 
 ### Output (normal mode)

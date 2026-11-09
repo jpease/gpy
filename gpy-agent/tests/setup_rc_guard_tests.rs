@@ -247,3 +247,57 @@ fn setup_exits_zero_and_warns_when_a_legacy_block_cannot_be_upgraded() {
     );
     assert_eq!(after, legacy);
 }
+
+fn block_count_bytes(rc: &Path) -> usize {
+    String::from_utf8_lossy(&fs::read(rc).unwrap())
+        .matches("# >>> gpy-init >>>")
+        .count()
+}
+
+#[test]
+fn setup_appends_to_a_non_utf8_bashrc_and_profile() {
+    let home = TempDir::new().unwrap();
+    let bashrc = home.path().join(".bashrc");
+    let profile = home.path().join(".profile");
+    let original = b"export A=1 # caf\xe9\n";
+    fs::write(&bashrc, original).unwrap();
+    fs::write(&profile, b"# caf\xe9\n[ -f ~/.bashrc ] && . ~/.bashrc\n").unwrap();
+
+    assert_ok(&setup(home.path(), &["--shell", "bash"]));
+
+    assert_eq!(block_count_bytes(&bashrc), 1);
+    assert!(fs::read(&bashrc).unwrap().starts_with(original));
+    assert_eq!(block_count_bytes(&profile), 0);
+}
+
+#[test]
+fn setup_leaves_a_crlf_current_block_alone() {
+    let home = TempDir::new().unwrap();
+    let rc = home.path().join(".bashrc");
+    let text = block("GPY shell integration", &guarded_rc_body(home.path())).replace('\n', "\r\n");
+    fs::write(&rc, &text).unwrap();
+
+    let output = setup(home.path(), &["--shell", "bash"]);
+
+    assert_ok(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("differs from the current text"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read(&rc).unwrap(), text.as_bytes());
+}
+
+#[test]
+fn setup_next_steps_quotes_the_rc_path() {
+    let parent = TempDir::new().unwrap();
+    let home = parent.path().join("my home");
+    fs::create_dir_all(&home).unwrap();
+
+    let output = setup(&home, &["--shell", "bash"]);
+
+    assert_ok(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = format!("source '{}'", home.join(".bashrc").display());
+    assert!(stdout.contains(&expected), "{stdout}");
+}

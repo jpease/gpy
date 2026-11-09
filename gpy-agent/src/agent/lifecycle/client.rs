@@ -23,15 +23,59 @@ const PING_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 /// config reload): the agent answers in microseconds unless wedged.
 const REQUEST_BUDGET: Duration = Duration::from_secs(2);
 
-/// Connect within the ping's connect budget; `None` when nothing accepted.
-async fn ping_connect(socket_path: &Path) -> Option<tokio::net::UnixStream> {
-    tokio::time::timeout(
+/// How a failed connect to the socket reads as evidence about the agent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ConnectErrorClass {
+    /// Refused or the path is gone: nothing is listening.
+    NotListening,
+    /// The kernel had no room to queue the connect (a full backlog): something
+    /// holds the socket.
+    Queued,
+    /// A local failure (`EACCES`, `EPERM`, ...) that says nothing about the agent.
+    Local,
+}
+
+/// Classify a failed connect. The one place the ping and status paths agree
+/// on which connect errors prove the socket stale.
+pub(super) fn connect_error_class(error: &std::io::Error) -> ConnectErrorClass {
+    match error.kind() {
+        ErrorKind::ConnectionRefused | ErrorKind::NotFound => ConnectErrorClass::NotListening,
+        ErrorKind::WouldBlock => ConnectErrorClass::Queued,
+        // macOS answers a regular file at the socket path with ENOTSOCK (Linux
+        // says "refused"): nothing can be listening on a path that is no socket.
+        _ if error.raw_os_error() == Some(libc::ENOTSOCK) => ConnectErrorClass::NotListening,
+        _ => ConnectErrorClass::Local,
+    }
+}
+
+/// What a ping's connect step produced.
+enum PingConnect {
+    /// The connection was accepted.
+    Stream(tokio::net::UnixStream),
+    /// The connect already settled the attempt.
+    Outcome(PingOutcome),
+}
+
+/// Connect within the ping's connect budget.
+///
+/// # Errors
+/// A connect failure that is not evidence about the agent (`EACCES`, `EPERM`, ...).
+async fn ping_connect(socket_path: &Path) -> Result<PingConnect> {
+    match tokio::time::timeout(
         PING_CONNECT_TIMEOUT,
         tokio::net::UnixStream::connect(socket_path),
     )
     .await
-    .ok()?
-    .ok()
+    {
+        Ok(Ok(stream)) => Ok(PingConnect::Stream(stream)),
+        Ok(Err(e)) => match connect_error_class(&e) {
+            ConnectErrorClass::NotListening => Ok(PingConnect::Outcome(PingOutcome::NotListening)),
+            ConnectErrorClass::Queued => Ok(PingConnect::Outcome(PingOutcome::AcceptedNoReply)),
+            ConnectErrorClass::Local => Err(Error::ipc(format!("Failed to connect to agent: {e}"))),
+        },
+        // The kernel queued the connect and nobody accepted it.
+        Err(_elapsed) => Ok(PingConnect::Outcome(PingOutcome::AcceptedNoReply)),
+    }
 }
 
 /// Outcome of one ping attempt. `NotListening` is weak evidence (a busy
@@ -40,10 +84,11 @@ async fn ping_connect(socket_path: &Path) -> Option<tokio::net::UnixStream> {
 pub(crate) enum PingOutcome {
     /// The agent answered with a well-formed [`Response::Ack`].
     Answered,
-    /// Nothing accepted the connection.
+    /// Connect was refused or the path is gone.
     NotListening,
     /// The connection was accepted but never produced a recognized reply
-    /// (read timeout, other read error, or an undecodable reply).
+    /// (read timeout, other read error, or an undecodable reply), or the
+    /// connect itself queued and timed out.
     AcceptedNoReply,
     /// The agent closed or reset the connection within the reply window
     /// without answering: its accept loop is running but it is shedding load.
@@ -53,12 +98,14 @@ pub(crate) enum PingOutcome {
 /// Ping the agent once and classify the attempt.
 ///
 /// # Errors
-/// Returns an error if the write to an accepted connection fails for a reason
-/// other than the agent closing it (a local failure, not evidence about the
+/// Returns an error if the connect fails for a reason other than refusal or a
+/// missing path, or the write to an accepted connection fails for a reason
+/// other than the agent closing it (local failures, not evidence about the
 /// agent).
 async fn ping_once(socket_path: &Path) -> Result<PingOutcome> {
-    let Some(stream) = ping_connect(socket_path).await else {
-        return Ok(PingOutcome::NotListening);
+    let stream = match ping_connect(socket_path).await? {
+        PingConnect::Stream(stream) => stream,
+        PingConnect::Outcome(outcome) => return Ok(outcome),
     };
     // The reply is a `Response` decoded as such: a substring check would
     // match any error message containing "ok". The daemon renders `Ack`
@@ -219,10 +266,11 @@ enum ProbeClass {
 /// Classify one failed status request.
 fn probe_class(failure: &RequestFailure) -> ProbeClass {
     match failure {
-        RequestFailure::Connect(e)
-            if matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound) =>
-        {
+        RequestFailure::Connect(e) if connect_error_class(e) == ConnectErrorClass::NotListening => {
             ProbeClass::NotListening
+        }
+        RequestFailure::Connect(e) if connect_error_class(e) == ConnectErrorClass::Queued => {
+            ProbeClass::NoReply
         }
         RequestFailure::Exchange(x) if closed_unanswered(x) => ProbeClass::Busy,
         RequestFailure::Connect(_) | RequestFailure::Exchange(ExchangeError::Send(_)) => {
@@ -310,8 +358,9 @@ impl AgentClient {
     /// Ping the agent once and classify the attempt.
     ///
     /// # Errors
-    /// Returns an error if the write to an accepted connection fails for a
-    /// reason other than the agent closing it (a local failure, not evidence
+    /// Returns an error if the connect fails for a reason other than refusal
+    /// or a missing path, or the write to an accepted connection fails for a
+    /// reason other than the agent closing it (local failures, not evidence
     /// about the agent).
     pub(crate) fn ping(&self) -> Result<PingOutcome> {
         self.runtime.block_on(ping_once(&self.socket))
@@ -394,7 +443,7 @@ impl AgentClient {
     pub fn socket_is_stale(&self) -> bool {
         match std::os::unix::net::UnixStream::connect(&self.socket) {
             Ok(_) => false,
-            Err(e) => matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound),
+            Err(e) => connect_error_class(&e) == ConnectErrorClass::NotListening,
         }
     }
 
@@ -422,6 +471,10 @@ fn agent_status_from(response: Response) -> Result<AgentStatus> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "client_connect_class_tests.rs"]
+mod connect_class_tests;
 
 #[cfg(test)]
 mod tests {
@@ -518,6 +571,12 @@ mod tests {
     fn status_probe_maps_silence_and_shedding() {
         assert!(matches!(
             status_probe_from(Err(RequestFailure::Timeout)),
+            StatusProbe::NoReply(_)
+        ));
+        assert!(matches!(
+            status_probe_from(Err(RequestFailure::Connect(IoError::from(
+                ErrorKind::WouldBlock
+            )))),
             StatusProbe::NoReply(_)
         ));
         assert!(matches!(

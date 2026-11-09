@@ -270,3 +270,39 @@ enabled_segments = ["duration", "language", "directory", "git"]
         "Clock should be removed from enabled segments"
     );
 }
+
+#[test]
+fn segments_names_the_plugin_that_owns_a_duplicated_segment() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    for id in ["aaa", "zzz"] {
+        let plugin_dir = env.plugins_dir().join(id);
+        fs::create_dir_all(&plugin_dir).expect("Failed to create plugin dir");
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            format!(
+                "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi_version = \"v1\"\nentry_type = \"file\"\nprovided_segments = [\"demo\"]\n"
+            ),
+        )
+        .expect("Failed to write plugin manifest");
+    }
+
+    let segments = env
+        .run_gpy(&["segments"])
+        .expect("Failed to run gpy segments");
+    segments.assert_success("gpy segments");
+    let demo = segments
+        .stdout
+        .lines()
+        .find(|line| line.split_whitespace().any(|word| word == "demo"))
+        .unwrap_or_else(|| panic!("no demo row in:\n{}", segments.stdout));
+    assert!(demo.contains("aaa (user)"), "{demo}");
+    assert!(!demo.contains("zzz"), "{demo}");
+
+    let doctor = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    assert!(
+        doctor.stdout.contains("Plugin 'zzz' ignored"),
+        "stdout:\n{}\nstderr:\n{}",
+        doctor.stdout,
+        doctor.stderr
+    );
+}

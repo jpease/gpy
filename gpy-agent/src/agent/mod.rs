@@ -533,6 +533,9 @@ impl Agent {
         let mut last_notified_minute = 0_u64;
 
         loop {
+            // No `if` preconditions on timer arms: `select!` evaluates them once per
+            // entry, so a flag flipped at runtime would not take effect until another
+            // arm fires.
             tokio::select! {
                 joined = &mut server_task => {
                     let result = joined.unwrap_or_else(|join_error| {
@@ -579,9 +582,11 @@ impl Agent {
 
                     return Ok(());
                 }
-                _ = clock_timer.tick(), if ctx.config_manager.get().agent.live_updates => {
-                    last_notified_minute =
-                        handle_clock_tick(&ctx, &registry_for_clock, last_notified_minute);
+                _ = clock_timer.tick() => {
+                    if ctx.config_manager.get().agent.live_updates {
+                        last_notified_minute =
+                            handle_clock_tick(&ctx, &registry_for_clock, last_notified_minute);
+                    }
                 }
                 _ = pruning_timer.tick() => {
                     let _pruned_pids =
@@ -592,15 +597,17 @@ impl Agent {
                     #[cfg(unix)]
                     renudge_unregistered_shells(&mut shell_renudger, &registry_for_pruning);
                 }
-                _ = reconcile_timer.tick(), if ctx.config_manager.get().agent.live_updates => {
+                _ = reconcile_timer.tick() => {
                     let reconcile_config = ctx.config_manager.get();
-                    spawn_reconcile_scan(
-                        &ctx,
-                        &watcher,
-                        reconcile_config,
-                        &reconcile_in_flight,
-                        &reconcile_pending,
-                    );
+                    if reconcile_config.agent.live_updates {
+                        spawn_reconcile_scan(
+                            &ctx,
+                            &watcher,
+                            reconcile_config,
+                            &reconcile_in_flight,
+                            &reconcile_pending,
+                        );
+                    }
                 }
             }
         }

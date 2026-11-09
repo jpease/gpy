@@ -205,7 +205,7 @@ pub(crate) fn wait_for_socket_release(
 
 /// Remove the socket only while the path still holds the captured socket (the
 /// check-then-unlink window is inherent).
-fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
+pub(crate) fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
     if socket_released(socket_path, identity) {
         return;
     }

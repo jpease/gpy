@@ -81,8 +81,8 @@ impl Tally {
 
 /// Run `gpy uninstall`.
 ///
-/// Exit code 0 when everything was removed; 1 when the user declined or some
-/// rc file or path could not be handled.
+/// Exit code 0 when everything was removed; 1 when the user declined, the agent
+/// could not be stopped, or some rc file or path could not be handled.
 ///
 /// # Errors
 /// Fails without a home directory, when stdin is not a terminal and `--yes`
@@ -108,11 +108,21 @@ pub fn run(options: &UninstallOptions) -> Result<ExitCode> {
     output::blank();
     #[cfg(unix)]
     stop_supervisor(&plan.runtime);
-    if let Err(err) = lifecycle::stop() {
-        output::warn(format_args!(
-            "could not stop the agent ({}); continuing",
-            crate::error::user_message(&err)
-        ));
+    match lifecycle::stop_agent_for_removal() {
+        Ok(true) => {}
+        Ok(false) => {
+            output::plain(
+                "Nothing was removed: the agent is still running. Stop it (see the line above), then re-run gpy uninstall.",
+            );
+            return Ok(ExitCode::FAILURE);
+        }
+        Err(err) => {
+            output::plain(format_args!(
+                "Nothing was removed: could not run gpy-agent stop ({}). Stop the agent with gpy stop or kill, then re-run gpy uninstall.",
+                crate::error::user_message(&err)
+            ));
+            return Ok(ExitCode::FAILURE);
+        }
     }
 
     clean_rc_files(&plan.rc_files, &mut tally)?;
@@ -294,7 +304,7 @@ fn print_plan(plan: &Plan, purge_config: bool) {
         "  - runtime files: {}",
         plan.runtime.display()
     ));
-    output::plain("  - the running agent and supervisor");
+    output::plain("  - the running agent");
 }
 
 /// Ask for consent. EOF or a non-terminal stdin is not consent.

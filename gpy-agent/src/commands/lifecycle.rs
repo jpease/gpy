@@ -18,16 +18,22 @@ fn agent_error(subcommand: &str, failure: impl std::fmt::Display) -> Error {
 ///
 /// # Errors
 /// Returns an error if `gpy-agent` cannot run or was killed by a signal.
-fn run_agent(subcommand: &str) -> Result<ExitCode> {
+fn run_agent_code(subcommand: &str) -> Result<u8> {
     let raw_code = Command::new(agent_binary())
         .arg(subcommand)
         .status()
         .map_err(|e| agent_error(subcommand, format_args!("could not run: {e}")))?
         .code()
         .ok_or_else(|| agent_error(subcommand, "was terminated by a signal"))?;
-    Ok(ExitCode::from(
-        u8::try_from(raw_code).unwrap_or(CLI_FAILURE_EXIT_CODE),
-    ))
+    Ok(u8::try_from(raw_code).unwrap_or(CLI_FAILURE_EXIT_CODE))
+}
+
+/// [`run_agent_code`] as a process exit code.
+///
+/// # Errors
+/// Returns an error if `gpy-agent` cannot run or was killed by a signal.
+fn run_agent(subcommand: &str) -> Result<ExitCode> {
+    run_agent_code(subcommand).map(ExitCode::from)
 }
 
 /// Start the GPY agent daemon.
@@ -44,6 +50,15 @@ pub fn start() -> Result<ExitCode> {
 /// Returns an error if `gpy-agent stop` cannot run.
 pub fn stop() -> Result<ExitCode> {
     run_agent("stop")
+}
+
+/// Run `gpy-agent stop`; `Ok(true)` when the agent is stopped afterwards.
+/// `gpy-agent stop` has already printed why not on `Ok(false)`.
+///
+/// # Errors
+/// Returns an error if `gpy-agent stop` cannot run.
+pub fn stop_agent_for_removal() -> Result<bool> {
+    Ok(run_agent_code("stop")? == 0)
 }
 
 /// Restart the GPY agent daemon.

@@ -367,6 +367,31 @@ fn write_supervisor_pid(env: &CliTestEnv, pid: u32) -> PathBuf {
 }
 
 #[test]
+fn uninstall_removes_nothing_and_exits_1_when_the_agent_does_not_stop() {
+    let env = CliTestEnv::new().unwrap();
+    setup_shell(&env, "bash");
+    let socket_dir = env.xdg_runtime_dir().join("gpy");
+    fs::create_dir_all(&socket_dir).unwrap();
+    let _agent = common::fake_agent::FakeAgent::spawn_with(
+        &socket_dir.join("gpy.sock"),
+        common::fake_agent::Behaviour::Wedged,
+        std::time::Duration::ZERO,
+    );
+
+    let result = uninstall(&env, &["--yes"]);
+
+    assert_eq!(result.exit_code, 1_i32, "{}", result.stdout);
+    assert!(
+        result.stdout.contains("Nothing was removed"),
+        "{}",
+        result.stdout
+    );
+    assert!(result.stderr.contains("did not stop"), "{}", result.stderr);
+    assert!(bash_dir(&env).exists());
+    assert_eq!(setup_harness::block_count(&env.root().join(".bashrc")), 1);
+}
+
+#[test]
 fn uninstall_does_not_signal_a_foreign_pid_in_the_supervisor_pidfile() {
     let env = CliTestEnv::new().unwrap();
     let mut child = KillOnDrop::new(Command::new("sleep").arg("30").spawn().unwrap());

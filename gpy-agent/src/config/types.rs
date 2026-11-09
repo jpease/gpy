@@ -43,12 +43,43 @@ impl From<ParseEnumError> for crate::Error {
     }
 }
 
+/// How a bounded number is written to TOML: integers as themselves, `f32` as the
+/// shortest decimal that reads back to the same value, so `0.3` stays `0.3`.
+trait TomlNumber: Copy {
+    fn serialize_toml<S: serde::Serializer>(self, serializer: S) -> Result<S::Ok, S::Error>;
+}
+
+macro_rules! integer_toml_number {
+    ($($int:ty),+) => {
+        $(impl TomlNumber for $int {
+            fn serialize_toml<S: serde::Serializer>(self, serializer: S) -> Result<S::Ok, S::Error> {
+                Serialize::serialize(&self, serializer)
+            }
+        })+
+    };
+}
+
+integer_toml_number!(u32, u64, usize);
+
+impl TomlNumber for f32 {
+    fn serialize_toml<S: serde::Serializer>(self, serializer: S) -> Result<S::Ok, S::Error> {
+        // `f32` Display is the shortest round-trip form; widening the binary value
+        // directly would print `0.30000001192092896`.
+        serializer.serialize_f64(
+            self.to_string()
+                .parse::<f64>()
+                .unwrap_or_else(|_| f64::from(self)),
+        )
+    }
+}
+
 /// Declare a range-checked numeric newtype.
 ///
 /// Generates `MIN`/`MAX`/`DEFAULT`, a const `new` returning `None` outside
 /// `MIN..=MAX`, `get`, `Default`, `Display`, `TryFrom` (with the message built
-/// by `error(min, max)`), and a `Deserialize` that rejects out-of-range values
-/// with that message.
+/// by `error(min, max)`), a `Deserialize` that rejects out-of-range values
+/// with that message, and a `Serialize` that writes the number through
+/// [`TomlNumber`].
 macro_rules! bounded_int {
     (
         $(#[$meta:meta])*
@@ -60,7 +91,7 @@ macro_rules! bounded_int {
         }
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+        #[derive(Debug, Clone, Copy, PartialEq)]
         pub struct $name($int);
 
         impl $name {
@@ -116,6 +147,12 @@ macro_rules! bounded_int {
             {
                 let value = <$int>::deserialize(deserializer)?;
                 Self::try_from(value).map_err(serde::de::Error::custom)
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                TomlNumber::serialize_toml(self.0, serializer)
             }
         }
     };
@@ -368,8 +405,8 @@ bounded_int! {
 bounded_int! {
     /// Maximum path length (1..=1000).
     ///
-    /// Hard cap in `char`s; at or below the ellipsis width (3) the ellipsis is
-    /// dropped and the raw trailing characters are shown.
+    /// Hard cap in `char`s; at `max_length = 1` the ellipsis is dropped and the
+    /// last character is shown.
     #[derive(Eq)]
     MaxPathLength(usize) {
         min: 1,
@@ -736,6 +773,28 @@ impl<'de> Deserialize<'de> for LanguageFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct ThresholdDoc {
+        t: ConfidenceThreshold,
+    }
+
+    #[test]
+    fn confidence_threshold_serializes_as_shortest_decimal() {
+        for (value, expected) in [
+            (0.3_f32, "t = 0.3\n"),
+            (0.1, "t = 0.1\n"),
+            (1.0, "t = 1.0\n"),
+            (0.0, "t = 0.0\n"),
+        ] {
+            let doc = ThresholdDoc {
+                t: ConfidenceThreshold::new(value).unwrap(),
+            };
+            let text = toml::to_string(&doc).unwrap();
+            assert_eq!(text, expected);
+            assert_eq!(toml::from_str::<ThresholdDoc>(&text).unwrap(), doc);
+        }
+    }
 
     #[test]
     fn is_safe_config_name_guards() {

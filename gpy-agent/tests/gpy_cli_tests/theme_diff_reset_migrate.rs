@@ -86,6 +86,23 @@ fn test_theme_diff_reports_an_identical_copy() {
 }
 
 #[test]
+fn test_theme_diff_reports_a_crlf_copy_as_different() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_theme_file(&env, "starship", &BUILTIN_STARSHIP.replace('\n', "\r\n"));
+
+    let output = env
+        .run_gpy(&["theme", "diff", "starship"])
+        .expect("Failed to run gpy theme diff");
+
+    output.assert_success("gpy theme diff starship");
+    assert!(output.stdout.contains("@@"), "{output:?}");
+    assert!(
+        !output.stdout.contains("identical to the builtin"),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn test_theme_diff_without_a_copy_says_so() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
 

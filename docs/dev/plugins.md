@@ -82,6 +82,7 @@ Target the documented contract, not GPY internals.
 Discovery is deterministic and isolated:
 - First-party metadata entries are always included (`gpy-core`)
 - User plugins override bundled plugins by plugin id
+- A segment name is provided by one plugin: a user plugin wins over a bundled one; within a source the lexically smaller plugin id wins and the other plugin is dropped with a diagnostic (`gpy doctor`, `gpy plugin list`); `gpy plugin install` rejects a plugin that would be dropped this way
 - Invalid plugins become diagnostics and do not block healthy plugins
 - Output ordering is stable (sorted by plugin id)
 

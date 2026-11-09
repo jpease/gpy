@@ -31,8 +31,11 @@ pub fn select_display_languages<'a>(
     let effective_enabled: Option<&[String]> = theme_languages.or_else(|| {
         (!cfg.enabled_languages.is_empty()).then_some(cfg.enabled_languages.as_slice())
     });
-    let allowed_languages: Option<HashSet<String>> =
-        effective_enabled.map(|list| list.iter().map(|name| name.to_lowercase()).collect());
+    let allowed_languages: Option<HashSet<String>> = effective_enabled.map(|list| {
+        list.iter()
+            .map(|name| crate::language::detector::normalize_language_name(name).to_lowercase())
+            .collect()
+    });
 
     let threshold = cfg.confidence_threshold.get();
     let mut candidates: Vec<_> = detected

@@ -38,7 +38,7 @@ The server listens on the Unix socket using `UnixListener::accept()`. This is a 
 *   **Idle**: When no requests are pending, the listener task is suspended by the runtime, consuming zero CPU.
 
 ### 2. Clock Timer (Idle Behavior)
-A 1-second `tokio::time::interval` ticks while `agent.live_updates` is on; the agent rings every tick when the clock shows seconds, otherwise once per minute.
+A 1-second `tokio::time::interval` always ticks, so enabling `agent.live_updates` at runtime takes effect at once; while the flag is off a tick returns immediately. With it on, the agent rings every tick when the clock shows seconds, otherwise once per minute.
 *   **Behavior**: On each tick, the agent checks the `ClientDirectory` to see if any clients are registered.
 *   **Optimization**: If **no clients are registered** (e.g., no active terminal windows), the timer tick performs a quick check and returns immediately, sending no signals. This minimizes wakeups when the agent is unused.
 
@@ -48,7 +48,7 @@ A separate 60-second timer triggers the client pruning process.
 *   **Cleanup**: Dead clients are removed from the registry and unregistered from the file watcher to free up resources.
 
 ### 4. Reconcile Timer (Idle Behavior)
-A 45-second timer (`GPY_RECONCILE_INTERVAL_SECS` overrides it) ticks while `agent.live_updates` is on.
+A 45-second timer (`GPY_RECONCILE_INTERVAL_SECS` overrides it) always ticks; a tick scans only while `agent.live_updates` is on and returns immediately otherwise.
 *   **Behavior**: Rescans watched repos to catch changes the OS watcher dropped, and signals shells only on a real diff.
 
 ### File Watcher (Idle Behavior)

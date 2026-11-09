@@ -356,3 +356,33 @@ fn watched_theme_edit_renders_promptly_and_rings_once() {
         "reload doorbells for one theme edit"
     );
 }
+
+/// Flipping `agent.live_updates` on while the daemon runs starts the clock
+/// timer's doorbells at once, not at the next unrelated timer tick.
+#[test]
+fn enabling_live_updates_at_runtime_starts_the_clock_doorbell_promptly() {
+    const CONFIG_OFF: &str = "[ui]\ntheme = \"audit\"\nenabled_segments = [\"directory\", \"clock\"]\n[agent]\nlive_updates = false\n";
+    let env = CliTestEnv::with_config(CONFIG_OFF).expect("create env");
+    // Seconds on the clock make every tick ring.
+    fs::write(
+        env.themes_dir().join("audit.toml"),
+        "[ui]\n[segments.clock]\nshow_seconds = true\n",
+    )
+    .expect("write theme");
+    let daemon = Daemon::start(env);
+    let shell = register_shell(&daemon);
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(shell.count(), 0, "doorbell while live_updates is off");
+
+    daemon.write("config.toml", &CONFIG_OFF.replace("= false", "= true"));
+    assert!(daemon.reload(), "config_reload was not acknowledged");
+    // The reload itself rings once; two more are the 1 s clock.
+    let after_reload = shell.count();
+    let ticking = wait_until(Duration::from_secs(5), Duration::from_millis(50), || {
+        shell.count() >= after_reload + 2
+    });
+    assert!(
+        ticking,
+        "no clock doorbell within 5 s of enabling live_updates"
+    );
+}

@@ -166,6 +166,7 @@ fn each_theme_edit_flips_only_its_own_option() {
             theme_options(&base),
             "{edit:?} twice"
         );
+        assert!(!state.dirty(), "{edit:?} toggled back must not be dirty");
     }
 }
 
@@ -243,6 +244,51 @@ fn patch_active_theme_consults_base_only_for_the_first_edit() {
         Some(true),
         "second call's base must not overwrite the accumulated copy"
     );
+}
+
+#[test]
+fn dirty_false_after_theme_edit_toggled_back() {
+    let mut state = clean_state();
+    let base = ThemeConfig::default();
+
+    state.apply_edit(SegmentEdit::ToggleClockShowSeconds, &base);
+    assert!(state.dirty());
+    state.apply_edit(SegmentEdit::ToggleClockShowSeconds, &base);
+
+    assert!(!state.dirty());
+}
+
+#[test]
+fn reselecting_the_edited_theme_restores_its_pending_edits() {
+    let mut state = clean_state();
+    let base = ThemeConfig::default();
+    state.patch_active_theme(&base, |theme| {
+        theme.segments.clock.time_format = Some("24".to_owned());
+    });
+
+    state.select_theme("text");
+    assert!(state.pending_theme().is_none());
+
+    state.select_theme("default");
+    let restored = state.pending_theme().expect("edits come back");
+    assert_eq!(restored.segments.clock.time_format.as_deref(), Some("24"));
+    assert!(state.dirty());
+}
+
+#[test]
+fn editing_a_different_theme_replaces_the_previous_edits() {
+    let mut state = clean_state();
+    let base = ThemeConfig::default();
+    state.patch_active_theme(&base, |theme| {
+        theme.segments.clock.time_format = Some("24".to_owned());
+    });
+
+    state.select_theme("text");
+    let text_base = ThemeConfig::default();
+    state.apply_edit(SegmentEdit::ToggleGitShowStash, &text_base);
+    state.select_theme("default");
+
+    assert!(state.pending_theme().is_none());
 }
 
 #[test]

@@ -614,6 +614,41 @@ fn gpy_stop_on_stale_socket_reports_not_running() {
     assert!(!sandbox.socket_path.exists(), "{stopped:?}");
 }
 
+/// `stop` takes the start lock before unlinking: a `start` holding it may be
+/// binding the very socket `stop` just found stale.
+#[test]
+fn gpy_stop_waits_for_the_start_lock_before_unlinking() {
+    let sandbox = AgentSandbox::new();
+    drop(bind_silent_socket(&sandbox.socket_path));
+    let mut lock_path = sandbox.socket_path.clone().into_os_string();
+    lock_path.push(".lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .expect("open start lock");
+    lock.try_lock().expect("take start lock");
+
+    let stopper = std::thread::scope(|scope| {
+        let stop = scope.spawn(|| sandbox.gpy(&["stop"]));
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(
+            sandbox.socket_path.exists(),
+            "stop unlinked the socket while the start lock was held"
+        );
+        lock.unlock().expect("release start lock");
+        stop.join().expect("join stop thread")
+    });
+
+    stopper.assert_success("gpy stop after the lock was released");
+    assert!(
+        stopper.stdout.contains("removed stale socket"),
+        "{stopper:?}"
+    );
+    assert!(!sandbox.socket_path.exists(), "{stopper:?}");
+}
+
 #[test]
 fn gpy_lifecycle_fails_clearly_when_gpy_agent_missing() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");

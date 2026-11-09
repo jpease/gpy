@@ -273,8 +273,8 @@ enum ThemeAction {
         /// Overwrite existing artifacts of the same name, or shadow a builtin or plugin theme or palette
         #[arg(long)]
         force: bool,
-        /// Print both artifacts instead of writing files
-        #[arg(long)]
+        /// Print both artifacts instead of writing files (not with --apply-layout)
+        #[arg(long, conflicts_with = "apply_layout")]
         stdout: bool,
         /// Also write the derived `enabled_segments` into the active config
         #[arg(long)]

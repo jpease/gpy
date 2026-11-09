@@ -21,7 +21,7 @@ const READ_ONLY_ICON_PLAIN: &str = "ro";
 /// so [`DirectoryResolver`] does no I/O.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryEnv {
-    /// `$HOME`, contracted to `~` in the displayed path.
+    /// `$HOME`, lexically normalized like `cwd`, contracted to `~` in the displayed path.
     home: Option<String>,
     /// The repository the path anchors at under `truncate_to_repo`.
     repo: Option<RepoAnchor>,
@@ -69,7 +69,8 @@ impl DirectoryEnv {
     }
 
     /// [`Self::probe`] with `home` in place of the ambient home.
-    fn probe_with_home(cwd: &str, settings: &DirectorySettings, home: Option<String>) -> Self {
+    fn probe_with_home(cwd: &str, settings: &DirectorySettings, raw_home: Option<String>) -> Self {
+        let home = raw_home.map(|path| normalize_cwd(&path));
         let anchors = settings.truncate_to_repo && anchors_to_repo(settings.display);
         let repo = anchors
             .then(|| enclosing_anchor_root(cwd, home.as_deref()))
@@ -435,5 +436,7 @@ impl VariableResolver for DirectoryResolver<'_> {
     }
 }
 
+#[cfg(test)]
+mod home_tests;
 #[cfg(test)]
 mod tests;

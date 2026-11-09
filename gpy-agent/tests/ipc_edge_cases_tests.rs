@@ -1,5 +1,10 @@
 //! IPC protocol edge cases.
 
+#![allow(clippy::expect_used, reason = "test code may panic on failure")]
+#![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
+
+mod common;
+
 use gpy_agent::ipc::Message;
 use gpy_agent::ipc::protocol::deserialize_message;
 use gpy_agent::security::SafePath;
@@ -114,4 +119,104 @@ fn test_all_message_types_parse_in_op_form() {
         parse(r#"{"op":"status"}"#.to_owned()),
         Message::Status
     ));
+}
+
+/// A `{"op":"ping","pad":"xxx"}` request body of exactly `len` bytes.
+#[cfg(unix)]
+fn padded_ping(len: usize) -> Vec<u8> {
+    let prefix = br#"{"op":"ping","pad":""#;
+    let suffix = br#""}"#;
+    let mut body = prefix.to_vec();
+    body.resize(len.saturating_sub(suffix.len()), b'x');
+    body.extend_from_slice(suffix);
+    assert_eq!(body.len(), len);
+    body
+}
+
+/// Start a server, connect, send `request` plus a newline, and return the
+/// buffered stream positioned before the first reply line.
+#[cfg(unix)]
+async fn send_line(
+    socket_path: &std::path::Path,
+    request: &[u8],
+) -> tokio::io::BufReader<tokio::net::UnixStream> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut stream = tokio::net::UnixStream::connect(socket_path)
+        .await
+        .expect("connect to test server");
+    // One buffer, so the newline is never sent after a gap in which the server
+    // could read an unterminated line over the limit and drop the connection.
+    stream
+        .write_all(&[request, b"\n"].concat())
+        .await
+        .expect("send request");
+    tokio::io::BufReader::new(stream)
+}
+
+#[cfg(unix)]
+async fn read_reply(stream: &mut tokio::io::BufReader<tokio::net::UnixStream>) -> String {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_line(&mut line),
+    )
+    .await
+    .expect("reply within 5s")
+    .expect("read reply");
+    line
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_request_line_of_exactly_the_size_limit_is_answered() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket_path = dir.path().join("limit.sock");
+    let mut server = common::endpoint::endpoint(socket_path.clone());
+    let handle = tokio::spawn(async move {
+        let _ = server.start().await;
+    });
+    common::endpoint::wait_for_socket(&socket_path, std::time::Duration::from_secs(5)).await;
+
+    let mut stream = send_line(&socket_path, &padded_ping(65_536)).await;
+
+    assert_eq!(
+        read_reply(&mut stream).await.trim_end(),
+        r#"{"status":"ok"}"#
+    );
+    handle.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_request_line_one_byte_over_the_limit_gets_the_too_large_reply() {
+    use tokio::io::AsyncWriteExt;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket_path = dir.path().join("over.sock");
+    let mut server = common::endpoint::endpoint(socket_path.clone());
+    let handle = tokio::spawn(async move {
+        let _ = server.start().await;
+    });
+    common::endpoint::wait_for_socket(&socket_path, std::time::Duration::from_secs(5)).await;
+
+    let mut stream = send_line(&socket_path, &padded_ping(65_537)).await;
+
+    let reply = read_reply(&mut stream).await;
+    assert!(
+        reply.contains("Message too large: 65537 bytes (max 65536)"),
+        "{reply}"
+    );
+    stream
+        .get_mut()
+        .write_all(b"{\"op\":\"ping\"}\n")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_reply(&mut stream).await.trim_end(),
+        r#"{"status":"ok"}"#
+    );
+    handle.abort();
 }

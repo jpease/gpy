@@ -147,8 +147,8 @@ pub fn list() -> Result<()> {
     Ok(())
 }
 
-/// Plugin-provided segment name → `<plugin id> (<source>)`; a later source
-/// (user over bundled) wins.
+/// Plugin-provided segment name → `<plugin id> (<source>)`. Discovery
+/// guarantees one provider per name.
 fn plugin_segment_owners() -> BTreeMap<String, String> {
     let mut owners = BTreeMap::new();
     for plugin in discover_plugins().plugins {

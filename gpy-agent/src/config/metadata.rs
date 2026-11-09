@@ -185,10 +185,11 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "git.max_ahead_behind",
         get: |c| c.git.max_ahead_behind.to_string(),
         set: Some(|c, v| {
-            c.git.max_ahead_behind = parse_field(v, "git.max_ahead_behind")?;
+            let parsed: u32 = parse_field(v, "git.max_ahead_behind")?;
+            c.git.max_ahead_behind = usize::try_from(parsed).unwrap_or(usize::MAX);
             Ok(())
         }),
-        description: "Largest ahead/behind count displayed; larger counts show as N+ (display only: git still counts them all; 0 = no cap)",
+        description: "Largest ahead/behind count displayed; larger counts show as N+ (display only: git still counts them all; 0 = no cap, at most 4294967295)",
     },
     ConfigKeyMeta {
         key: "git.stash_enabled",
@@ -265,7 +266,15 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.filter",
         get: |c| c.language.filter.to_string(),
         set: Some(|c, v| {
-            c.language.filter = v.parse()?;
+            let filter: types::LanguageFilter = v.parse()?;
+            if filter == types::LanguageFilter::Top(0) {
+                return Err(invalid_value(
+                    "language.filter",
+                    "language filter ('all', 'primary', or a number of at least 1, e.g. '3')",
+                    v,
+                ));
+            }
+            c.language.filter = filter;
             Ok(())
         }),
         description: "Language filter: 'all', 'primary', or top N (e.g. '3')",
@@ -542,6 +551,16 @@ mod tests {
                 "Invalid whole number: -1",
             ),
             ("git.max_branch_length", "abc", "Invalid whole number: abc"),
+            (
+                "git.max_ahead_behind",
+                "4294967296",
+                "Invalid whole number: 4294967296",
+            ),
+            (
+                "language.filter",
+                "0",
+                "Invalid language filter ('all', 'primary', or a number of at least 1, e.g. '3'): 0",
+            ),
             ("ui.theme", "", "Invalid theme name: "),
             (
                 "ui.directory.display",
@@ -790,6 +809,7 @@ mod tests {
         for (key, value) in [
             ("ui.palette", "nord"),
             ("git.max_ahead_behind", "5"),
+            ("git.max_ahead_behind", "4294967295"),
             ("git.stash_enabled", "false"),
             ("git.icon_set", "nerd_font"),
             ("language.detection_mode", "hybrid"),

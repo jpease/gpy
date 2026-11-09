@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 /// A theme key the wizard edits: its path and how the theme reads it.
-struct WizardKey {
+pub(super) struct WizardKey {
     /// `[section, segment, field]`.
     path: [&'static str; 3],
     /// The value the theme uses, through the accessor when there is one.
@@ -159,7 +159,7 @@ pub fn save_theme(name: &str, edits: &ThemeEdits) -> Result<Option<ThemeWrite>> 
 }
 
 /// The keys whose effective value differs between the seed and the edits.
-fn changed_keys(edits: &ThemeEdits) -> Vec<&'static WizardKey> {
+pub(super) fn changed_keys(edits: &ThemeEdits) -> Vec<&'static WizardKey> {
     WIZARD_KEYS
         .iter()
         .filter(|key| (key.read)(&edits.seed) != (key.read)(&edits.edited))
@@ -433,6 +433,7 @@ mod tests {
             "the unset key falls back to its default"
         );
         let mut edits = ThemeEdits {
+            theme: "starship".to_owned(),
             edited: seed.clone(),
             seed,
         };
@@ -462,6 +463,7 @@ mod tests {
             .expect("overlay loads")
             .theme;
         let mut edits = ThemeEdits {
+            theme: "starship".to_owned(),
             edited: seed.clone(),
             seed,
         };

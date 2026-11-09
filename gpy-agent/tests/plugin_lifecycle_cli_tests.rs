@@ -427,6 +427,37 @@ fn install_ignores_unrelated_broken_plugins() {
     assert!(broken.join("plugin.toml").is_file());
 }
 
+/// A plugin whose only segment name is `demo`, as a source directory.
+fn demo_segment_plugin(source_env: &CliTestEnv, id: &str) -> PathBuf {
+    let dir = source_env.root().join(format!("src-{id}"));
+    std::fs::create_dir_all(dir.join("segments")).expect("create segments");
+    std::fs::write(
+        dir.join("plugin.toml"),
+        format!(
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi_version = \"v1\"\n\
+             entry_type = \"file\"\nprovided_segments = [\"demo\"]\n"
+        ),
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("segments/demo.fish"), "echo hi\n").expect("write fish");
+    dir
+}
+
+#[test]
+fn install_refuses_a_plugin_whose_segment_name_another_plugin_owns() {
+    let source_env = CliTestEnv::new().expect("create source env");
+    let owner = demo_segment_plugin(&source_env, "aaa");
+    let loser = demo_segment_plugin(&source_env, "zzz");
+    let env = CliTestEnv::new().expect("create env");
+    install(&env, &owner, &[]).assert_success("install owner");
+
+    let result = install(&env, &loser, &[]);
+
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(result.stderr.contains("segment 'demo'"), "{result:?}");
+    assert!(!env.plugins_dir().join("zzz").exists());
+}
+
 #[test]
 fn install_leaves_nothing_behind_when_validation_fails() {
     let (_source_env, dir) = scaffold("foo");

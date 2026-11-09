@@ -107,7 +107,7 @@ fn test_git_status_error_handling() {
     );
 }
 
-/// A request line longer than the 64 `KiB` limit makes the server drop the
+/// Unterminated input longer than the 64 `KiB` limit makes the server drop the
 /// connection without replying.
 #[cfg(unix)] // The agent's IPC is Unix-socket only; native Windows is CLI-only.
 #[tokio::test]
