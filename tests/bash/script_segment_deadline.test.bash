@@ -54,19 +54,21 @@ if [[ -n "${CI:-}" ]]; then
 else
     STRICT="${GPY_STRICT_DEADLINE:-1}"
 fi
-# The scripts must start and finish inside T for the fast segment to show. Where
-# strict timing is off (shared CI runners) a 100 ms T is below what a stalled
-# macOS runner can start a process in, so T is wider there; every bound below is
-# relative to T.
+# The scripts must start and finish inside T for the fast segment to show, and
+# a prompt must come back within T + HANG_MS. Where strict timing is off (shared
+# CI runners, macOS above all: load 10 and prompts 400 ms late were seen) T is
+# wider and the hang slack looser. A missed deadline still stands out: the hung
+# scripts sleep 9 s, so the prompt would take far longer than any slack here.
 if [[ "$STRICT" == 1 ]]; then
     T_MS=100
+    HANG_MS=500
 else
     T_MS=300
+    HANG_MS=2000
 fi
 GRACE_MS=50
 MARGIN_MS=30
 BOUND_US=$(((T_MS + GRACE_MS + MARGIN_MS) * 1000))
-HANG_MS=500
 HANG_US=$(((T_MS + HANG_MS) * 1000))
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-g-deadline.XXXXXX")"
