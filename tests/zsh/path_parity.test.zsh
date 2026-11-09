@@ -83,6 +83,10 @@ compare xdg_unset HOME="$tmp/home"
 compare xdg_windows_shaped HOME="$tmp/home" XDG_CONFIG_HOME='\\srv\cfg' XDG_CACHE_HOME='C:/x' XDG_RUNTIME_DIR='C:\x'
 # GPY_AGENT_SOCKET_PATH overrides only the socket, never the runtime root.
 compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SOCKET_PATH="$tmp/custom.sock"
+# A relative override is absolutized once against the load directory, as the
+# agent does against its launch directory; -P so the shell's $PWD and the
+# agent's current_dir() agree under a symlinked temp dir.
+(cd -P "$tmp" && compare socket_override_relative HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SOCKET_PATH=rel/custom.sock)
 # An empty HOME is "unset" -- the agent, Fish and Bash take the passwd
 # home, and Zsh must not build a filesystem-root `/.cache/gpy` path instead.
 PARITY_SRC=zsh/core/ipc.zsh

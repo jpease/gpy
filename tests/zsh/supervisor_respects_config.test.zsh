@@ -79,7 +79,8 @@ fi
 # Case 2: check_interval_seconds rate-limits the health probe. The second
 # check is made to look 15 s after the first: past a 10 s interval,
 # inside the configured 60 s.
-run_case 1 '__gpy_supervisor_check
+run_case 1 '__gpy_supervisor_last_check_time=0  # the startup start now counts as the first check
+    __gpy_supervisor_check
     (( __gpy_supervisor_last_check_time -= 15 ))
     __gpy_supervisor_check' \
     GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60

@@ -109,8 +109,16 @@ __gpy_home() {
     printf -v "$out_var" '%s' "$__gpy_home_value"
 }
 
+# A relative override resolves once against the directory the integration loads
+# in, like the agent's `paths::absolutize` against its launch directory; the
+# export keeps every child the shell spawns on the same socket file.
+if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" && "$GPY_AGENT_SOCKET_PATH" != /* ]]; then
+    export GPY_AGENT_SOCKET_PATH="$PWD/$GPY_AGENT_SOCKET_PATH"
+fi
+
 # An $XDG_* variable counts only when non-empty and absolute (XDG spec).
-# Rust counterpart: `SocketPath::resolve`.
+# Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
+# once at load, like `paths::absolutize`.
 __gpy_ipc_endpoint_into() {
     local __gpy_ie_home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
@@ -211,12 +219,29 @@ __gpy_theme_export_cache_path() {
     return 1
 }
 
-# Milliseconds to seconds for `timeout` (150 -> "0.150"), fork-free.
+# Escape PATH for socat's address parser into OUT_VAR: `\ , : ! ' "` are special
+# there, and a runtime root can contain any of them. Backslash goes first so the
+# escapes added after it are not doubled.
+__gpy_socat_escape_into() {
+    local __gpy_se_p="$1" __gpy_se_bs=$'\\' __gpy_se_sq="'" __gpy_se_dq='"'
+    __gpy_se_p=${__gpy_se_p//"$__gpy_se_bs"/"$__gpy_se_bs$__gpy_se_bs"}
+    __gpy_se_p=${__gpy_se_p//,/"$__gpy_se_bs,"}
+    __gpy_se_p=${__gpy_se_p//:/"$__gpy_se_bs:"}
+    __gpy_se_p=${__gpy_se_p//!/"$__gpy_se_bs!"}
+    __gpy_se_p=${__gpy_se_p//"$__gpy_se_sq"/"$__gpy_se_bs$__gpy_se_sq"}
+    __gpy_se_p=${__gpy_se_p//"$__gpy_se_dq"/"$__gpy_se_bs$__gpy_se_dq"}
+    printf -v "$2" '%s' "$__gpy_se_p"
+}
+
+# Milliseconds to seconds for `timeout` (150 -> "0.150", never below 0.001),
+# fork-free.
 __gpy_ms_to_secs() {
     local ms="$1" out_var="$2"
     # A non-numeric override must not break `$(( ))`; `10#` stops octal.
     [[ "$ms" =~ ^[0-9]+$ ]] || ms=150
     ms=$((10#$ms))
+    # timeout(1) treats 0 as "no limit"; 1 ms is the smallest honoured budget.
+    ((ms > 0)) || ms=1
     printf -v "$out_var" '%d.%03d' "$(( ms / 1000 ))" "$(( ms % 1000 ))"
 }
 
@@ -293,7 +318,9 @@ __gpy_send_json() {
     [[ -S "$__gpy_sj_socket_path" ]] || return 1
 
     if command -v socat &>/dev/null; then
-        IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; socat -t "$__gpy_sj_timeout_secs" - "UNIX-CONNECT:$__gpy_sj_socket_path" 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
+        local __gpy_sj_socat_addr
+        __gpy_socat_escape_into "$__gpy_sj_socket_path" __gpy_sj_socat_addr
+        IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; socat -t "$__gpy_sj_timeout_secs" - "UNIX-CONNECT:$__gpy_sj_socat_addr" 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
         __gpy_sj_read_status=$?
     # nc -w takes whole seconds only; `timeout` tightens the bound when present.
     elif __gpy_ipc_client_available; then
@@ -359,24 +386,35 @@ __gpy_check_protocol_version() {
     return 0
 }
 
-# $PWD resolved once per directory change (`__gpy_pwd_memo`, "" when realpath
-# fails), so a cache-hit render forks no realpath.
+# Canonical path of directory $2 into variable $1 (symlinks resolved, like the
+# agent's `canonicalize`): builtins in one subshell, so no `realpath(1)`,
+# which macOS before 13 does not ship. `builtin` keeps a user's `cd`/`pwd`
+# wrapper (zoxide, nvm, ...) out of it; CDPATH is cleared so a relative $2 is
+# not looked up through it. Status 1 when $2 is not a directory.
+__gpy_realpath_into() {
+    local __gpy_rp
+    __gpy_rp=$(CDPATH='' builtin cd -P -- "$2" >/dev/null 2>&1 && builtin pwd -P) || return 1
+    printf -v "$1" '%s' "$__gpy_rp"
+}
+
+# $PWD resolved once per directory change (`__gpy_pwd_memo`, "" when
+# `__gpy_realpath_into` fails), so a cache-hit render forks nothing.
 __gpy_resolve_pwd() {
     [[ "$PWD" == "${__gpy_pwd_memo_key-}" ]] && return 0
     __gpy_pwd_memo_key="$PWD"
-    __gpy_pwd_memo="$(realpath "$PWD" 2>/dev/null)" || __gpy_pwd_memo=""
+    __gpy_realpath_into __gpy_pwd_memo "$PWD" || __gpy_pwd_memo=""
 }
 
 # Git root above $1 into variable $2; status 1 when there is none.
 __gpy_find_git_root() {
     # The cache key must match the Rust writer's `path_to_cache_key` byte for byte,
-    # including symlink resolution, and only `realpath` resolves a path without
-    # changing directory. $PWD uses the per-`cd` memo; any other path still forks.
+    # including symlink resolution. The helper's `cd` runs in a subshell, so this
+    # shell's $PWD is untouched. $PWD uses the per-`cd` memo; any other path forks.
     local __gpy_fgr_dir __gpy_fgr_start="${1:-$PWD}"
     if [[ -n "${__gpy_pwd_memo_key-}" && "$__gpy_fgr_start" == "$__gpy_pwd_memo_key" ]]; then
         __gpy_fgr_dir="${__gpy_pwd_memo-}"
     else
-        __gpy_fgr_dir=$(realpath "$__gpy_fgr_start" 2>/dev/null)
+        __gpy_realpath_into __gpy_fgr_dir "$__gpy_fgr_start" || __gpy_fgr_dir=""
     fi
     [[ -z "$__gpy_fgr_dir" ]] && return 1
 
@@ -445,7 +483,7 @@ __gpy_instant_cache_key_path() {
         if [[ -n "${__gpy_pwd_memo_key-}" && "$cwd" == "$__gpy_pwd_memo_key" ]]; then
             __gpy_kp="${__gpy_pwd_memo-}"
         else
-            __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
+            __gpy_realpath_into __gpy_kp "$cwd" || __gpy_kp=""
         fi
     fi
     printf -v "$3" '%s' "$__gpy_kp"
@@ -453,17 +491,21 @@ __gpy_instant_cache_key_path() {
 }
 
 # Any variant or prev_bg token counts: the agent writes `.none` only when some
-# request had no prev_bg.
+# request had no prev_bg. The `git_bg` colour file is not an entry, and a tail
+# with three dots (`git.<variant>.<token>.bash`) belongs to a sibling key
+# `<key>.git`: the key does not escape `.`.
 __gpy_instant_cache_present() {
-    local base="$1" cwd="${2:-$PWD}" key_path cache_dir cache_key hit found=1 had_failglob=0
+    local base="$1" cwd="${2:-$PWD}" key_path cache_dir cache_key prefix hit found=1 had_failglob=0
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     __gpy_instant_cache_dir cache_dir || return 1
     __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
+    prefix="$cache_dir/$cache_key."
     # An unmatched glob stays literal and fails -e; failglob would abort, so lift it.
     shopt -q failglob && had_failglob=1 && shopt -u failglob
-    for hit in "$cache_dir/$cache_key.$base."*.bash "$cache_dir/$cache_key.${base}_"*.bash; do
+    for hit in "$prefix$base."*.bash "$prefix${base}_first."*.bash "$prefix${base}_last."*.bash "$prefix${base}_first_last."*.bash; do
         if [[ -e "$hit" ]]; then
+            case "${hit#"$prefix"}" in *.*.*.*) continue ;; esac
             found=0
             break
         fi
@@ -513,6 +555,8 @@ __gpy_read_instant_cache() {
             __gpy_ric_ttl="${GPY_LANGUAGE_CACHE_TTL_SECONDS:-30}"
         fi
         [[ "$__gpy_ric_ttl" =~ ^[0-9]+$ ]] || __gpy_ric_ttl="$__gpy_ric_default_ttl"
+        # `10#`: a zero-padded value (08) is decimal, not an octal error.
+        __gpy_ric_ttl=$((10#$__gpy_ric_ttl))
         (( __gpy_ric_now - __gpy_ric_mtime >= __gpy_ric_ttl )) && __gpy_ric_status=$((__gpy_ric_status + 2))
     fi
 

@@ -45,9 +45,10 @@ fn instant_cache_naming_shared_vectors() {
                 assert_eq!(actual, cell(expected), "suffix row {row:?}");
                 checked = checked.saturating_add(1);
             }
-            // Shell cache-read status codes and the git background file tail
-            // (`git_bg_names_match_the_shared_vectors`) are not checked here.
-            ["status" | "bgfile", ..] => {}
+            // Shell cache-read status codes, the shells' presence probe and the
+            // git background file tail (`git_bg_names_match_the_shared_vectors`)
+            // are not checked here.
+            ["status" | "bgfile" | "present", ..] => {}
             _ => panic!("unknown or short row {row:?}"),
         }
     }

@@ -33,7 +33,8 @@ __gpy_warn_flag_values
 
 # Start only after the theme export set the flags; [agent.supervisor]
 # enabled = false disables restarts, not this start.
-__gpy_agent_enabled && __gpy_start_agent
+# The start just made is the first check: the next probe waits one interval.
+__gpy_agent_enabled && { __gpy_start_agent; __gpy_supervisor_last_check_time=$EPOCHSECONDS; }
 
 for __gpy_seg_file in "$__gpy_zsh_root"/segments/*.zsh; do
     source "$__gpy_seg_file"

@@ -152,11 +152,13 @@ __gpy_keep_arm_hook_last() {
     done
     [[ "$pc" == "$hook" || "$pc" == *[\;[:space:]]"$hook" ]] && return 0
     pc="${pc//; $hook/}"
+    pc="${pc//$'\n'$hook/}"
     while [[ "$pc" == *[\;[:space:]] ]]; do
         pc="${pc%?}"
     done
     # shellcheck disable=SC2178
-    PROMPT_COMMAND="${pc:+$pc; }$hook"
+    # Newline, not ';': the user's string may end in '&'.
+    PROMPT_COMMAND="${pc:+$pc$'\n'}$hook"
 }
 
 # Millisecond delta between EPOCHREALTIME strings into OUT_VAR. The decimal
@@ -264,7 +266,9 @@ __gpy_segment_would_render() {
 }
 
 # The memo lives here, not in __gpy_segment_directory: that runs inside `$()`,
-# where a cache write would be lost with the subshell.
+# where a cache write would be lost with the subshell. The key holds the git
+# root as well as $PWD: with `truncate_to_repo` the agent's render depends on
+# it, and `git init` or removing `.git` must not wait for the next `cd`.
 __gpy_directory_segment_output() {
     local is_last="$1"
     local prev_bg="$2"
@@ -273,7 +277,9 @@ __gpy_directory_segment_output() {
 
     local is_last_bool="${is_last:-false}"
     local is_first_bool="${is_first:-false}"
-    local dir_key="${__gpy_theme_name:-}:${PWD}:${is_last_bool}:${is_first_bool}:${prev_bg}"
+    local dir_root=""
+    __gpy_find_git_root "$PWD" dir_root
+    local dir_key="${__gpy_theme_name:-}:${PWD}:${dir_root}:${is_last_bool}:${is_first_bool}:${prev_bg}"
 
     if [[ -n "$__gpy_dir_cache_key" && "$dir_key" == "$__gpy_dir_cache_key" ]]; then
         printf -v "$out_var" '%s' "$__gpy_dir_cache_val"
@@ -532,7 +538,10 @@ __gpy_debug_trap() {
         # The first DEBUG after arming is the user's command or, on an empty
         # Enter or Ctrl-C, the first PROMPT_COMMAND command.
         local pc="${PROMPT_COMMAND-}"
-        [[ "$BASH_COMMAND" == "${pc%%;*}" ]] || __gpy_g_ran=1
+        # The first command ends at `;` or, since the arm hook joins with a
+        # newline, at the first newline.
+        pc="${pc%%;*}"
+        [[ "$BASH_COMMAND" == "${pc%%$'\n'*}" ]] || __gpy_g_ran=1
         __gpy_preexec
     fi
 
@@ -574,6 +583,8 @@ __gpy_init() {
     # Agent-free mode still installs the prompt hook; every render uses oneshot.
     if __gpy_agent_enabled; then
         __gpy_supervisor_start &>/dev/null
+        # The start just made is the first check: the next probe waits one interval.
+        __gpy_now_seconds __gpy_supervisor_last_check_time
         __gpy_register_with_agent &>/dev/null
     fi
 

@@ -12,7 +12,8 @@
 #   - Zsh:   __gpy_ms_to_secs VALUE -> `secs`
 #            (tests/zsh/uint_timeout_vectors.test.zsh)
 # `secs` is `validated` read as a DECIMAL millisecond count (a leading zero is
-# not octal), printed as whole.milliseconds. Fish converts with an inline
+# not octal), printed as whole.milliseconds, and never below 0.001: timeout(1)
+# reads 0 as "disabled". Fish converts with an inline
 # `math` at its use sites, so it has no `secs` helper to test.
 #
 # Format: one vector per line, tab-separated: value<TAB>validated<TAB>secs.
@@ -24,7 +25,7 @@
 # differently in every shell and are not a meaningful timeout.
 
 150	150	0.150
-0	0	0.000
+0	0	0.001
 1	1	0.001
 999	999	0.999
 1000	1000	1.000

@@ -14,7 +14,8 @@
 # Rows with a `renders<N>` flag render N prompts in one shell process (state
 # that spans prompts, such as the script segment breaker); only the last is compared.
 # Flag `check_now` runs the supervisor check on every prompt; `kill_after_first`
-# stops the agent (its proxy) between the first and second prompt.
+# stops the agent (its proxy) between the first and second prompt; flag
+# `git_init_between` runs `git init` in the cwd between them.
 # SCN_FILTER=<regex> selects scenarios; SCN_VERBOSE=1 prints effects and prompts.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -148,6 +149,7 @@ run_driver() {
     case "$row_cwd" in
         -) cwd="$ROOT" ;;
         repo) cwd="$sandbox/repo" ;;
+        plain) cwd="$sandbox/plain" ;;
         *) cwd="$row_cwd" ;;
     esac
     local -a scn_env=(
@@ -199,6 +201,7 @@ run_shell() {
         fi
     fi
     [[ "$row_cwd" == repo ]] && make_repo "$sandbox"
+    [[ "$row_cwd" == plain ]] && mkdir -p "$sandbox/plain"
     make_wrapper "$sandbox"
     : >"$sandbox/calls.log"
     : >"$sandbox/ipc.log"
@@ -238,6 +241,18 @@ run_shell() {
 : >"$sandbox/between.done"
 kill $proxy_pid 2>/dev/null
 rm -f "$sandbox/p.sock"
+BETWEEN
+        chmod +x "$sandbox/between.sh"
+    fi
+
+    if [[ ",$row_flags," == *,git_init_between,* ]]; then
+        # One `git init` in the cwd after the first prompt, so the second
+        # prompt's git root differs while $PWD does not.
+        cat >"$sandbox/between.sh" <<BETWEEN
+#!/bin/sh
+[ -e "$sandbox/between.done" ] && exit 0
+: >"$sandbox/between.done"
+git -C "\$SCN_CWD" init -q
 BETWEEN
         chmod +x "$sandbox/between.sh"
     fi

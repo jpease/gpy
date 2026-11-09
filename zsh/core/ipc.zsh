@@ -113,8 +113,16 @@ function __gpy_home() {
     printf -v "$out_var" '%s' "$__gpy_home_value"
 }
 
+# A relative override resolves once against the directory the integration loads
+# in, like the agent's `paths::absolutize` against its launch directory; the
+# export keeps every child the shell spawns on the same socket file.
+if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" && "$GPY_AGENT_SOCKET_PATH" != /* ]]; then
+    export GPY_AGENT_SOCKET_PATH="$PWD/$GPY_AGENT_SOCKET_PATH"
+fi
+
 # XDG vars count only when non-empty and absolute, matching the agent.
-# Rust counterpart: `SocketPath::resolve`.
+# Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
+# once at load, like `paths::absolutize`.
 function __gpy_ipc_endpoint() {
     local home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
@@ -218,10 +226,26 @@ function __gpy_theme_export_cache_path() {
     return 1
 }
 
-# 150 -> "0.150" without an awk fork.
+# Escape PATH for socat's address parser into OUT_VAR: `\ , : ! ' "` are special
+# there, and a runtime root can contain any of them. Backslash goes first so the
+# escapes added after it are not doubled.
+function __gpy_socat_escape_into() {
+    local p=$1 bs=$'\\' sq="'" dq='"'
+    p=${p//"$bs"/"$bs$bs"}
+    p=${p//,/"$bs,"}
+    p=${p//:/"$bs:"}
+    p=${p//!/"$bs!"}
+    p=${p//"$sq"/"$bs$sq"}
+    p=${p//"$dq"/"$bs$dq"}
+    printf -v "$2" '%s' "$p"
+}
+
+# 150 -> "0.150" without an awk fork; never below 0.001, as timeout(1) reads 0
+# as "no limit".
 function __gpy_ms_to_secs() {
     local ms=$1 out_var=$2
     [[ "$ms" =~ ^[0-9]+$ ]] || ms=150
+    (( ms > 0 )) || ms=1
     printf -v "$out_var" '%d.%03d' "$(( ms / 1000 ))" "$(( ms % 1000 ))"
 }
 
@@ -318,7 +342,9 @@ function __gpy_send_json() {
 
     read_status=1
     if (( $+commands[socat] )); then
-        IFS= read -r response < <(exec 2>/dev/null; print -r -- "$json" | socat -t $timeout_secs - UNIX-CONNECT:"$socket_path" 2>/dev/null; printf '\037%s\n' "$?")
+        local socat_addr
+        __gpy_socat_escape_into "$socket_path" socat_addr
+        IFS= read -r response < <(exec 2>/dev/null; print -r -- "$json" | socat -t $timeout_secs - UNIX-CONNECT:"$socat_addr" 2>/dev/null; printf '\037%s\n' "$?")
         read_status=$?
 
     # nc -w only takes whole seconds; `timeout` gives a tighter bound.
@@ -456,16 +482,21 @@ function __gpy_instant_cache_key_path() {
 }
 
 # Any variant or prev_bg token counts: `.none` exists only if some request
-# carried no prev_bg.
+# carried no prev_bg. The `git_bg` colour file is not an entry, and a file of a
+# sibling key `<key>.git` also matches the glob (the key does not escape `.`):
+# only `<variant>.<token>.zsh` tails, with no further dot, count.
 function __gpy_instant_cache_present() {
     # `(N)`: an unmatched pattern is an empty list, not a NOMATCH error.
     emulate -L zsh
+    setopt local_options extended_glob
     local base=$1 cwd=${2:-$PWD} key_path cache_dir cache_key
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     __gpy_instant_cache_dir cache_dir || return 1
     __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
-    local -a hits=("$cache_dir/$cache_key.$base."*.zsh(N) "$cache_dir/$cache_key.${base}_"*.zsh(N))
+    local prefix="$cache_dir/$cache_key."
+    local -a hits=("$prefix$base."*.zsh(N) "$prefix${base}_first."*.zsh(N) "$prefix${base}_last."*.zsh(N) "$prefix${base}_first_last."*.zsh(N))
+    hits=(${(M)hits:#${prefix}${base}(|_first|_last|_first_last).[^.]##.zsh})
     (( ${#hits} > 0 ))
 }
 

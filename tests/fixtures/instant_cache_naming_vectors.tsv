@@ -17,9 +17,17 @@
 #   bgfile<TAB>ext<TAB>expected               __gpy_git_bg_file_tail OUT_VAR
 #                                              (the git pill's background file
 #                                              tail: `git_bg.none.{ext}`)
+#   present<TAB>key_path<TAB>files<TAB>expected
+#                                              __gpy_instant_cache_present git
+#                                              (yes|no): `files` is a space-separated
+#                                              list of cache file names with `EXT`
+#                                              for the shell's extension
 #   status<TAB>code<TAB>stale<TAB>variant      __gpy_cache_status_stale /
 #                                              __gpy_cache_status_variant
 #                                              (yes|no each)
+# Only a renderable entry (`<key>.git[_first|_last|_first_last].<token>.EXT`)
+# counts as present: the `git_bg` colour file and the files of a sibling key
+# `<key>.git` (the key does not escape `.`) do not.
 # Blank lines and lines starting with # are ignored; extra columns MUST be
 # ignored. The whole-column token \e means the EMPTY string, and an input
 # column uses the mini escape scheme of json_escape_vectors.tsv (backslash
@@ -42,8 +50,8 @@
 # value fails there too. Rust checks every `token` row, and a `suffix` row
 # whose two flag cells are `true`, `false` or `\e` (`\e` is false). It skips
 # `suffix` rows with other spellings (`TRUE`, `1`), which test the shells'
-# "anything but `true` is false" rule, and the shell-only `status` kind (the
-# cache-read codes). `bgfile` rows are checked by
+# "anything but `true` is false" rule, and the shell-only `status` and
+# `present` kinds (the cache-read codes and the presence probe). `bgfile` rows are checked by
 # `git_bg_names_match_the_shared_vectors`.
 
 token	\e	none
@@ -73,3 +81,12 @@ status	1	no	no
 status	2	yes	no
 status	4	no	yes
 status	6	yes	yes
+
+present	/x/foo	_sx_sfoo.git_bg.none.EXT	no
+present	/x/foo	_sx_sfoo.git.git.none.EXT _sx_sfoo.git.git_bg.none.EXT	no
+present	/x/foo.git	_sx_sfoo.git.git.none.EXT	yes
+present	/x/foo	_sx_sfoo.git.none.EXT	yes
+present	/x/foo	_sx_sfoo.git_first.blue.EXT	yes
+present	/x/foo	_sx_sfoo.git_last.none.EXT	yes
+present	/x/foo	_sx_sfoo.git_first_last.__ff8800.EXT	yes
+present	/x/foo	_sx_sfoo.git_bg.none.EXT _sx_sfoo.git_last.none.EXT	yes

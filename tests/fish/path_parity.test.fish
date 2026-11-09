@@ -142,6 +142,7 @@ mkdir -p \
 # variable with an empty value is set-but-empty, a distinct state every
 # implementation must handle identically.
 set -g GPY_PP_CASES \
+    "socket_override_relative;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;HOME=%T%/home;GPY_AGENT_SOCKET_PATH=rel/custom.sock" \
     "xdg_all_set;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
     "runtime_unset;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
     "runtime_empty;XDG_RUNTIME_DIR=;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
@@ -318,7 +319,7 @@ end
 # that escapes the scratch tree is `/tmp/gpy` in the `all_unset` case, which is
 # the agent's own last-resort runtime root -- exactly what `gpy status` would
 # create there.
-cd $GPY_PP_TMP/cwd
+cd (realpath $GPY_PP_TMP/cwd)
 
 for spec in $GPY_PP_CASES
     set -l fields (string split ';' -- $spec)

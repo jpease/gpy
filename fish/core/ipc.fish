@@ -53,7 +53,16 @@ function __gpy_shell_registry_file --description 'Fish shell PID file for agent 
     echo (__gpy_shell_registry_dir)/$fish_pid
 end
 
-# Rust counterpart: `SocketPath::resolve`.
+# A relative override resolves once against the directory the integration loads
+# in, like the agent's `paths::absolutize` against its launch directory; the
+# export keeps every child the shell spawns on the same socket file.
+if set -q GPY_AGENT_SOCKET_PATH; and test -n "$GPY_AGENT_SOCKET_PATH"
+    and not string match -q '/*' -- "$GPY_AGENT_SOCKET_PATH"
+    set -gx GPY_AGENT_SOCKET_PATH "$PWD/$GPY_AGENT_SOCKET_PATH"
+end
+
+# Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
+# once at load, like `paths::absolutize`.
 function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
     # Empty counts as unset, matching Bash and Zsh.
     if set -q GPY_AGENT_SOCKET_PATH; and test -n "$GPY_AGENT_SOCKET_PATH"
@@ -106,6 +115,12 @@ function __gpy_ipc_cold_timeout_ms --description 'Reply budget (ms) when a segme
     math --scale=0 "max($cold, $warm)"
 end
 
+# Escape a socket path for socat's address parser: `\ , : ! ' "` are special
+# there. Backslash goes first so the escapes added after it are not doubled.
+function __gpy_socat_escape --argument-names path
+    string replace -a -- '\\' '\\\\' $path | string replace -a -- ',' '\\,' | string replace -a -- ':' '\\:' | string replace -a -- '!' '\\!' | string replace -a -- "'" "\\'" | string replace -a -- '"' '\\"'
+end
+
 # Returns 0 on a complete reply, 1 if unreachable, 2 if the request was sent
 # but no complete reply arrived in time; on 2 callers must not resend or fork
 # oneshot for the same segment.
@@ -126,7 +141,7 @@ function __gpy_ipc_send --argument-names payload timeout_ms sock
     if command -q socat
         # -t bounds the post-EOF reply wait (-T does not; default 0.5s).
         set -l secs (math "$timeout_ms / 1000")
-        set reply (echo $payload | socat -t $secs - UNIX-CONNECT:$sock 2>/dev/null | __gpy_ipc_read_complete_line)
+        set reply (echo $payload | socat -t $secs - UNIX-CONNECT:(__gpy_socat_escape $sock) 2>/dev/null | __gpy_ipc_read_complete_line)
         set ps $pipestatus
     else if __gpy_ipc_client_available
         if command -q timeout
@@ -169,7 +184,7 @@ function __gpy_ipc_send_detached --argument-names payload timeout_ms --descripti
 
     if command -q socat
         set -l secs (math "$timeout_ms / 1000")
-        printf '%s\n' $payload | command socat -t $secs - UNIX-CONNECT:$sock >/dev/null 2>&1 &
+        printf '%s\n' $payload | command socat -t $secs - UNIX-CONNECT:(__gpy_socat_escape $sock) >/dev/null 2>&1 &
     else if command -q nc
         __gpy_nc_probe_capabilities
         test "$__gpy_nc_supports_unix" -eq 1; or return 1
@@ -501,14 +516,20 @@ function __gpy_instant_cache_key_path --argument-names suffix cwd --description 
 end
 
 # Whether any variant/prev_bg entry exists; the agent writes `.none` only for
-# context-free requests, so probing `.none` alone would miss.
+# context-free requests, so probing `.none` alone would miss. The `git_bg` colour
+# file is not an entry, and a sibling key `<key>.git` (the key does not escape
+# `.`) also matches the glob, so only `<variant>.<token>.ansi` tails count.
 function __gpy_instant_cache_present --argument-names base cwd --description 'Whether any instant-cache entry exists for git|lang under cwd'
     set -l key_path (__gpy_instant_cache_key_path $base $cwd); or return 1
     set -l cache_dir (__gpy_instant_cache_dir)
     test -n "$cache_dir"; or return 1
     set -l cache_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key $key_path))
-    set -l hits $cache_dir/$cache_key.$base.*.ansi $cache_dir/$cache_key.$base"_"*.ansi
-    set -q hits[1]
+    set -l prefix $cache_dir/$cache_key.
+    for hit in $prefix$base.*.ansi $prefix$base"_first".*.ansi $prefix$base"_last".*.ansi $prefix$base"_first_last".*.ansi
+        set -l tail (string replace -- $prefix '' $hit)
+        string match -rq '^'$base'(_first|_last|_first_last)?\.[^.]+\.ansi$' -- $tail; and return 0
+    end
+    return 1
 end
 
 # Exit status: 1 = miss; else bit 2 = stale, bit 4 = served via `.none` fallback.

@@ -48,6 +48,38 @@ else
     check "__gpy_load_theme re-sources updated cache content" pass fail
 end
 
+# --- No cache file: the agent is run, and its failure is reported ---
+rm -f "$cache_file"
+set -l stub_dir "$tmp_dir/bin"
+mkdir -p "$stub_dir"
+set -gx PATH $stub_dir $PATH
+set -l stub "$stub_dir/gpy-agent"
+
+function write_stub --argument-names stub body
+    printf '#!/bin/sh\n%s\n' "$body" >$stub
+    chmod +x $stub
+end
+
+write_stub $stub 'exit 1'
+check "stub gpy-agent shadows any real binary" "$stub" (command -s gpy-agent)
+
+__gpy_load_theme >/dev/null 2>&1
+check "__gpy_load_theme returns 1 when theme export exits 1 without output" 1 $status
+
+write_stub $stub 'echo "error: bad config" >&2; exit 1'
+set -l err (GPY_DEBUG=1 __gpy_load_theme 2>&1 >/dev/null | string collect)
+check "__gpy_load_theme logs the agent's first stderr line under GPY_DEBUG" 1 (string match -q '*gpy[init]: theme export failed: error: bad config*' -- "$err"; and echo 1; or echo 0)
+
+write_stub $stub 'exit 0'
+__gpy_load_theme >/dev/null 2>&1
+check "__gpy_load_theme returns 1 when theme export exits 0 with no output" 1 $status
+
+write_stub $stub 'echo "set -g __gpy_export_version \"1\""; echo "set -g GPY_TEST_THEME_FROM_AGENT yes"'
+set -e GPY_TEST_THEME_FROM_AGENT
+__gpy_load_theme >/dev/null 2>&1
+check "__gpy_load_theme returns 0 for a successful export without a cache file" 0 $status
+check "__gpy_load_theme sources a successful export without a cache file" yes "$GPY_TEST_THEME_FROM_AGENT"
+
 # Cleanup
 rm -rf "$tmp_dir"
 

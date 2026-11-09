@@ -30,6 +30,8 @@
 #                                 to 0, so every prompt runs the check
 #             kill_after_first    the agent dies after the first prompt (the
 #                                 harness kills its proxy and removes p.sock)
+#             git_init_between    run `git init` in the cwd between the first and
+#                                 second prompt (with `renders<N>`)
 #             renders<N>          render N prompts in one shell process and
 #                                 compare the last (state that spans prompts,
 #                                 such as the script segment breaker); between
@@ -40,7 +42,8 @@
 #           down  no agent and no socket
 #           slow  up, but a data request (git, directory, ...) is held 1.8 s
 #                 before the agent sees it; register/ping/status are not
-# cwd       `repo` (a scratch git repo with one commit), or an absolute path;
+# cwd       `repo` (a scratch git repo with one commit), `plain` (a scratch
+#           directory outside any repo), or an absolute path;
 #           `-` is the checkout (default)
 # config    extra config.toml text appended after [ui] ("\n" is a newline), or -.
 #           The supervisor is off unless the text has an [agent.supervisor] table
@@ -92,6 +95,10 @@ template-username-first	golden-template	username,status	0	-	root	up	-	-	-	prompt
 disabled	default	directory	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory
 # `[agent.supervisor] enabled=false` only gates restarts: the agent is still started
 supervisor-off-down	default	directory,git	0	-	-	down	repo	[agent.supervisor]\nenabled = false	-	starts=1 registers=0 oneshots=directory prompt!~=main
+# two prompts with a 30 s interval and no agent: the startup start is the only one
+supervisor-on-down	default	directory	0	-	renders2	down	repo	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 30	-	starts=1
+# `git init` in the cwd between two prompts: the second prompt asks the agent again
+dir-memo-tracks-git-root	default	directory	0	-	renders2,git_init_between	up	plain	[ui.directory]\ndisplay = "full"\ntruncate_to_repo = true	-	ipc.directory=2
 # the agent dies between two prompts: the next checked prompt runs `start` once
 restart-after-crash	golden-ascii	directory	0	-	renders2,check_now,kill_after_first	up	-	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 5	-	starts=1
 # every start fails: the initial start plus max_restart_attempts retries

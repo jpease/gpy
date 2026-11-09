@@ -82,4 +82,29 @@ check "a non-numeric TTL still reads a fresh entry as fresh" "0" "$(read_status 
 age_entries 60
 check "a non-numeric TTL falls back to the default and ages an old entry to stale" "2" "$(read_status git)"
 
+# Zero-padded TTLs are decimal like in Zsh and Fish, never octal, and silent.
+export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=08
+age_entries 60
+check "a zero-padded git TTL is decimal (08 = 8 s)" "2" "$(read_status git)"
+age_entries 1
+check "a zero-padded git TTL keeps a 1 s entry fresh" "0" "$(read_status git)"
+export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=010
+# A 9 s entry against a 10 s TTL has one second of slack: age whole seconds from the
+# start of a second so a slow runner cannot tip it to 10 s before the read.
+python3 -c 'import os, sys, time
+frac = time.time() % 1
+if frac > 0.3:
+    time.sleep(1.0 - frac)
+t = int(time.time()) - 9
+for p in sys.argv[1:]:
+    os.utime(p, (t, t))' "$entry_git" "$entry_lang"
+check "a zero-padded git TTL is not octal (010 = 10 s)" "0" "$(read_status git)"
+export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=08
+age_entries 60
+stderr_out="$(__gpy_read_instant_cache git "$tmp/repo" "" ignored 2>&1 >/dev/null)"
+check "a zero-padded TTL prints nothing on stderr" "" "$stderr_out"
+export GPY_LANGUAGE_CACHE_TTL_SECONDS=08
+age_entries 9
+check "a zero-padded language TTL is decimal" "2" "$(read_status lang)"
+
 test_finish "bash env knobs"

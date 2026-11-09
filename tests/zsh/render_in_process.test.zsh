@@ -69,6 +69,16 @@ cd "$SANDBOX" || exit 1
 __gpy_update_prompts 0
 check "another directory asks again" 2 "$(shell_e2e_count_lines "$DIR_LOG")"
 cd "$SANDBOX/w" || exit 1
+__gpy_update_prompts 0
+check "returning to the directory asks again" 3 "$(shell_e2e_count_lines "$DIR_LOG")"
+# A new git root changes what the agent renders (truncate_to_repo): ask again
+# without a cd.
+git init -q "$SANDBOX/w"
+__gpy_update_prompts 0
+check "git init in the directory asks again without a cd" 4 "$(shell_e2e_count_lines "$DIR_LOG")"
+rm -rf "$SANDBOX/w/.git"
+__gpy_update_prompts 0
+check "removing .git asks again without a cd" 5 "$(shell_e2e_count_lines "$DIR_LOG")"
 
 # --- nothing under TMPDIR ----------------------------------------------------------
 local_entries=("$TMPDIR"/*(N) "$TMPDIR"/.*(N))

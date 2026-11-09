@@ -7,7 +7,7 @@
 # inherited via functrace logs every command run with BASH_SUBSHELL > 0 while
 # __gpy_read_instant_cache and the git and language segments serve hits. Only
 # `stat` (the entry's age) and `date` (the clock on bash without a builtin
-# epoch) may run there; `realpath` is memoized per directory by __gpy_resolve_pwd.
+# epoch) may run there; the canonical $PWD is memoized per directory by __gpy_resolve_pwd.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

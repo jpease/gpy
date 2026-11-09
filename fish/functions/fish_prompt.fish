@@ -139,15 +139,29 @@ function __gpy_resolve_prompt_character --argument-names last_status
     end
 end
 
+# set_color spelling of a theme foreground: `transparent`, `match_bg`,
+# `match_text` and empty are the terminal default (set_color rejects the
+# keywords; the agent emits no SGR for them in a foreground-only render).
+# Lives here, not in core/renderer.fish, because fish_prompt also runs when
+# GPY is disabled or failed to load and the core files are not sourced.
+function __gpy_set_fg_color --argument-names color
+    switch "$color"
+        case transparent match_bg match_text ''
+            set_color normal
+        case '*'
+            set_color $color
+    end
+end
+
 # Needs __gpy_resolve_prompt_character first.
 function __gpy_print_prompt_symbol
     if test "$__gpy_is_root" -eq 1
-        set_color "$__root_prompt_color"
+        __gpy_set_fg_color "$__root_prompt_color"
         printf "%s " "$__icon_root_prompt"
     else if test "$__gpy_char_agent_rendered" -eq 1
         printf '%s' "$__gpy_char_output"
     else
-        set_color "$__prompt_color"
+        __gpy_set_fg_color "$__prompt_color"
         printf "%s " "$__icon_prompt"
     end
     set_color normal
@@ -162,9 +176,7 @@ function __gpy_transient_prompt --argument-names last_status
     if contains clock $__enabled_segments; and functions -q __gpy_clock_date_format
         set -l now (string trim -- (date "+"(__gpy_clock_date_format) 2>/dev/null))
         set -q __prompt_time_pad; or set -g __prompt_time_pad " "
-        if test -n "$__color_clock_fg"
-            set_color $__color_clock_fg
-        end
+        __gpy_set_fg_color "$__color_clock_fg"
         printf '%s%s' "$__prompt_time_pad" "$now"
         set_color normal
         # Add a separator unless the character already opens with a space.

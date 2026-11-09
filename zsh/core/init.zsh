@@ -260,7 +260,11 @@ function __gpy_render_prompt() {
                 # Memoized in the shell; a miss fills the memo.
                 local is_last_bool="${is_last:-false}"
                 local is_first_bool="${is_first:-false}"
-                local dir_key="${__gpy_theme_name:-}:${PWD}:${is_last_bool}:${is_first_bool}:${prev_bg}"
+                # The git root is part of the key: `truncate_to_repo` makes the
+                # render depend on it, and `git init` must not wait for a `cd`.
+                local dir_root=""
+                __gpy_find_git_root "$PWD" dir_root
+                local dir_key="${__gpy_theme_name:-}:${PWD}:${dir_root}:${is_last_bool}:${is_first_bool}:${prev_bg}"
                 if [[ -n "$__gpy_dir_cache_key" && "$dir_key" == "$__gpy_dir_cache_key" ]]; then
                     seg_out="$__gpy_dir_cache_val"
                 else

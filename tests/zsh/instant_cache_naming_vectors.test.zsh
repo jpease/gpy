@@ -36,6 +36,20 @@ yes_no() {
     if "$@"; then print yes; else print no; fi
 }
 
+# present rows: files in a scratch cache dir, key lookup stubbed to the row's path.
+PRESENT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/gpy-present.XXXXXX") || exit 1
+trap 'rm -rf "$PRESENT_TMP"' EXIT
+present_key_path=""
+function __gpy_instant_cache_key_path() { printf -v "$3" '%s' "$present_key_path"; }
+present_row() {
+    local f
+    present_key_path=$1
+    rm -rf "${PRESENT_TMP:?}/gpy"
+    mkdir -p "$PRESENT_TMP/gpy/instant-prompts"
+    for f in ${=2}; do : >"$PRESENT_TMP/gpy/instant-prompts/${f//EXT/zsh}"; done
+    XDG_CACHE_HOME=$PRESENT_TMP yes_no __gpy_instant_cache_present git "$1"
+}
+
 vector_count=0
 while IFS=$'\t' read -r kind c2 c3 c4 c5 _rest; do
     [[ -z "$kind" || "$kind" == \#* ]] && continue
@@ -59,6 +73,7 @@ while IFS=$'\t' read -r kind c2 c3 c4 c5 _rest; do
             check "$label stale" "$c3" "$(yes_no __gpy_cache_status_stale "$c2")"
             check "$label variant" "$c4" "$(yes_no __gpy_cache_status_variant "$c2")"
             ;;
+        present) check "$label" "$c4" "$(present_row "$c2" "$c3")" ;;
         *) fail "$label: unknown row kind [$kind]" ;;
     esac
 done < "$FIXTURE"
