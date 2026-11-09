@@ -235,6 +235,38 @@ fn config_set_language_icon_writes_map_entry() {
 }
 
 #[test]
+fn confidence_threshold_is_written_as_typed() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "language.confidence_threshold", "0.3"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let written = fs::read_to_string(&custom).unwrap();
+    assert!(
+        written.lines().any(|l| l == "confidence_threshold = 0.3"),
+        "{written}"
+    );
+
+    let shown = run_gpy(
+        &["config", "show", "language"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(shown.status.success(), "{}", stderr_of(&shown));
+    let stdout = String::from_utf8_lossy(&shown.stdout);
+    assert!(stdout.contains("confidence_threshold = 0.3"), "{stdout}");
+    assert!(!stdout.contains("0.30000001"), "{stdout}");
+}
+
+#[test]
 fn config_set_unknown_palette_is_rejected_without_writing() {
     let (temp, home, xdg) = isolated_dirs();
     let custom = temp.path().join("custom.toml");
