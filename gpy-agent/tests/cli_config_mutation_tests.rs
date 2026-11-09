@@ -235,6 +235,23 @@ fn config_set_language_icon_writes_map_entry() {
 }
 
 #[test]
+fn empty_git_icon_is_accepted() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "git.icons.ahead", ""],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let written = fs::read_to_string(&custom).unwrap();
+    assert!(written.lines().any(|l| l == "ahead = \"\""), "{written}");
+}
+
+#[test]
 fn confidence_threshold_is_written_as_typed() {
     let (temp, home, xdg) = isolated_dirs();
     let custom = temp.path().join("custom.toml");

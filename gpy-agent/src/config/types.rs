@@ -405,8 +405,8 @@ bounded_int! {
 bounded_int! {
     /// Maximum path length (1..=1000).
     ///
-    /// Hard cap in `char`s; at or below the ellipsis width (3) the ellipsis is
-    /// dropped and the raw trailing characters are shown.
+    /// Hard cap in `char`s; at `max_length = 1` the ellipsis is dropped and the
+    /// last character is shown.
     #[derive(Eq)]
     MaxPathLength(usize) {
         min: 1,
