@@ -73,6 +73,8 @@ impl SegmentEdit {
 /// keys whose effective value differs between the two.
 #[derive(Debug, Clone)]
 pub(crate) struct ThemeEdits {
+    /// The theme the edits belong to.
+    pub(crate) theme: String,
     /// The selected theme's merged result the edits started from.
     pub(crate) seed: ThemeConfig,
     /// `seed` with every edit applied.
@@ -247,8 +249,7 @@ impl WizardState {
 
     /// The active theme for reads: pending edits, else `base`.
     pub(crate) fn active_theme<'a>(&'a self, base: &'a ThemeConfig) -> &'a ThemeConfig {
-        self.pending_theme
-            .as_ref()
+        self.current_theme_edits()
             .map_or(base, |edits| &edits.edited)
     }
 
@@ -288,10 +289,6 @@ impl WizardState {
 
     pub(crate) fn select_theme(&mut self, name: &str) {
         if self.available_themes.iter().any(|t| t == name) {
-            if name != self.selected_theme {
-                // Pending edits belong to the old theme's file.
-                self.pending_theme = None;
-            }
             name.clone_into(&mut self.selected_theme);
         }
     }
@@ -303,21 +300,35 @@ impl WizardState {
         base: &ThemeConfig,
         patch: impl FnOnce(&mut ThemeConfig),
     ) {
-        let edits = self.pending_theme.get_or_insert_with(|| ThemeEdits {
-            seed: base.clone(),
-            edited: base.clone(),
-        });
+        let edits = match self.pending_theme.as_mut() {
+            Some(edits) if edits.theme == self.selected_theme => edits,
+            // Edits left over from another theme are replaced by a fresh seed.
+            _ => self.pending_theme.insert(ThemeEdits {
+                theme: self.selected_theme.clone(),
+                seed: base.clone(),
+                edited: base.clone(),
+            }),
+        };
         patch(&mut edits.edited);
     }
 
     /// Active theme with pending edits, or `None` if unedited.
     pub(crate) fn pending_theme(&self) -> Option<&ThemeConfig> {
-        self.pending_theme.as_ref().map(|edits| &edits.edited)
+        self.current_theme_edits().map(|edits| &edits.edited)
     }
 
     /// The pending edits with the theme they started from, or `None` if unedited.
-    pub(crate) const fn theme_edits(&self) -> Option<&ThemeEdits> {
-        self.pending_theme.as_ref()
+    pub(crate) fn theme_edits(&self) -> Option<&ThemeEdits> {
+        self.current_theme_edits()
+    }
+
+    /// The pending edits while they belong to the selected theme: they stay
+    /// stored across a theme switch, so a switch that is reverted (the new
+    /// theme failed to load) shows them again.
+    fn current_theme_edits(&self) -> Option<&ThemeEdits> {
+        self.pending_theme
+            .as_ref()
+            .filter(|edits| edits.theme == self.selected_theme)
     }
 
     pub(crate) fn select_palette(&mut self, name: &str) {
@@ -505,7 +516,9 @@ impl WizardState {
             || self.selected_directory_display != self.initial_config.ui.directory.display
             || self.selected_language_display != self.initial_config.language.display
             || self.selected_language_show_versions != self.initial_config.language.show_versions
-            || self.pending_theme.is_some()
+            || self
+                .current_theme_edits()
+                .is_some_and(|edits| !super::theme_file::changed_keys(edits).is_empty())
     }
 
     /// [`apply_to`](Self::apply_to) onto a config it was applied to before:
