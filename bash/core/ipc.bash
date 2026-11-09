@@ -359,24 +359,35 @@ __gpy_check_protocol_version() {
     return 0
 }
 
-# $PWD resolved once per directory change (`__gpy_pwd_memo`, "" when realpath
-# fails), so a cache-hit render forks no realpath.
+# Canonical path of directory $2 into variable $1 (symlinks resolved, like the
+# agent's `canonicalize`): builtins in one subshell, so no `realpath(1)`,
+# which macOS before 13 does not ship. `builtin` keeps a user's `cd`/`pwd`
+# wrapper (zoxide, nvm, ...) out of it; CDPATH is cleared so a relative $2 is
+# not looked up through it. Status 1 when $2 is not a directory.
+__gpy_realpath_into() {
+    local __gpy_rp
+    __gpy_rp=$(CDPATH='' builtin cd -P -- "$2" >/dev/null 2>&1 && builtin pwd -P) || return 1
+    printf -v "$1" '%s' "$__gpy_rp"
+}
+
+# $PWD resolved once per directory change (`__gpy_pwd_memo`, "" when
+# `__gpy_realpath_into` fails), so a cache-hit render forks nothing.
 __gpy_resolve_pwd() {
     [[ "$PWD" == "${__gpy_pwd_memo_key-}" ]] && return 0
     __gpy_pwd_memo_key="$PWD"
-    __gpy_pwd_memo="$(realpath "$PWD" 2>/dev/null)" || __gpy_pwd_memo=""
+    __gpy_realpath_into __gpy_pwd_memo "$PWD" || __gpy_pwd_memo=""
 }
 
 # Git root above $1 into variable $2; status 1 when there is none.
 __gpy_find_git_root() {
     # The cache key must match the Rust writer's `path_to_cache_key` byte for byte,
-    # including symlink resolution, and only `realpath` resolves a path without
-    # changing directory. $PWD uses the per-`cd` memo; any other path still forks.
+    # including symlink resolution. The helper's `cd` runs in a subshell, so this
+    # shell's $PWD is untouched. $PWD uses the per-`cd` memo; any other path forks.
     local __gpy_fgr_dir __gpy_fgr_start="${1:-$PWD}"
     if [[ -n "${__gpy_pwd_memo_key-}" && "$__gpy_fgr_start" == "$__gpy_pwd_memo_key" ]]; then
         __gpy_fgr_dir="${__gpy_pwd_memo-}"
     else
-        __gpy_fgr_dir=$(realpath "$__gpy_fgr_start" 2>/dev/null)
+        __gpy_realpath_into __gpy_fgr_dir "$__gpy_fgr_start" || __gpy_fgr_dir=""
     fi
     [[ -z "$__gpy_fgr_dir" ]] && return 1
 
@@ -445,7 +456,7 @@ __gpy_instant_cache_key_path() {
         if [[ -n "${__gpy_pwd_memo_key-}" && "$cwd" == "$__gpy_pwd_memo_key" ]]; then
             __gpy_kp="${__gpy_pwd_memo-}"
         else
-            __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
+            __gpy_realpath_into __gpy_kp "$cwd" || __gpy_kp=""
         fi
     fi
     printf -v "$3" '%s' "$__gpy_kp"

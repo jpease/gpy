@@ -662,6 +662,7 @@ exec fish  # or zsh, bash
 - Both Intel (x86_64) and Apple Silicon (arm64) are supported
 - Gatekeeper may require manual approval on first run
 - Bash 5.0+ recommended (via Homebrew), default 3.2 has limitations
+- No `realpath` is required; the Bash integration uses shell builtins (macOS 11 and 12 do not ship `realpath`)
 
 ### Windows (WSL)
 
