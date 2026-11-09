@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-09
+
 ### Fixed
 - Fish no longer prints `set_color: Unknown color 'transparent'` on every prompt when the character, root prompt or clock text colour is `default`/`transparent` (or `match_bg`/`match_text`); these now render in the terminal default colour, as in Bash and Zsh.
 - Fish: when `gpy-agent theme export` fails at shell start and no theme cache exists, the theme loader now reports the failure (exit status, and the agent's first error line with `GPY_DEBUG=1`) instead of returning success.
@@ -1102,7 +1104,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/jpease/gpy/releases/tag/v0.10.2
 [0.10.1]: https://github.com/jpease/gpy/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jpease/gpy/releases/tag/v0.10.0
 [0.9.0]: https://github.com/jpease/gpy/releases/tag/v0.9.0
