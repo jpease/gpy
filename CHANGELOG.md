@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fish no longer prints `set_color: Unknown color 'transparent'` on every prompt when the character, root prompt or clock text colour is `default`/`transparent` (or `match_bg`/`match_text`); these now render in the terminal default colour, as in Bash and Zsh.
+- Fish: when `gpy-agent theme export` fails at shell start and no theme cache exists, the theme loader now reports the failure (exit status, and the agent's first error line with `GPY_DEBUG=1`) instead of returning success.
+- The Bash integration no longer needs `realpath(1)`; on macOS 11 and 12, which do not ship it, the git segment was silently omitted and language instant-cache keys were empty. (#1224)
+- Bash reads zero-padded `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS`, `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS`, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` and `GPY_LANGUAGE_CACHE_TTL_SECONDS` values (`08`, `010`) as decimal, like Zsh and Fish, instead of printing `value too great for base` on every prompt and skipping the rate limit or TTL. (#1225)
+- Bash and Zsh no longer run `gpy-agent start` a second time on the first prompt after the shell started it, and no longer count that start against `max_restart_attempts`; the first health check now runs one `check_interval_seconds` after startup, as in Fish. (#1226)
+- The shells no longer treat the git background-colour cache file, or the cache of a neighbouring `<dir>.git` repository, as a cached git entry; with the agent down the git segment is omitted cleanly instead of leaving a gap with wrong separators. (#1227)
+- The shell integrations now agree with the agent on a relative `GPY_AGENT_SOCKET_PATH` (it is resolved once, against the directory the integration loaded in), honour `GPY_IPC_TIMEOUT_MS=0` on the `nc` transport instead of waiting one second, keep working when a Bash `PROMPT_COMMAND` string ends in `&`, and reach an agent whose socket path contains `,`, `:`, `!`, `\`, `'` or `"` through socat. (#1228)
+- With `ui.directory.truncate_to_repo = true`, the directory segment now re-renders on the next prompt after `git init` or removing `.git` in the current directory tree instead of waiting for the next `cd` (Bash, Zsh, Fish). (#1229)
 - `gpy setup` no longer fails with `stream did not contain valid UTF-8` on an rc file (or `.profile`) that is not UTF-8 and has no GPY block yet; it appends the block as it does for any other file.
 - `gpy setup` recognises its block in an rc file with CRLF line endings: an up-to-date block is left alone instead of being reported as edited, and an older block is upgraded in place keeping CRLF.
 - The `Next: ... source <rc>` hint after `gpy setup` quotes the rc path.
