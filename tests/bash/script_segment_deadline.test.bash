@@ -49,17 +49,25 @@ cd "$ROOT" || exit 1
 [[ -n "${EPOCHREALTIME:-}" ]] || test_skip "needs Bash 5 (EPOCHREALTIME) to time the prompts"
 
 RUNS="${GPY_TEST_G_LATENCY_RUNS:-20}"
-T_MS=100
-GRACE_MS=50
-MARGIN_MS=30
-BOUND_US=$(((T_MS + GRACE_MS + MARGIN_MS) * 1000))
-HANG_MS=500
-HANG_US=$(((T_MS + HANG_MS) * 1000))
 if [[ -n "${CI:-}" ]]; then
     STRICT="${GPY_STRICT_DEADLINE:-0}"
 else
     STRICT="${GPY_STRICT_DEADLINE:-1}"
 fi
+# The scripts must start and finish inside T for the fast segment to show. Where
+# strict timing is off (shared CI runners) a 100 ms T is below what a stalled
+# macOS runner can start a process in, so T is wider there; every bound below is
+# relative to T.
+if [[ "$STRICT" == 1 ]]; then
+    T_MS=100
+else
+    T_MS=300
+fi
+GRACE_MS=50
+MARGIN_MS=30
+BOUND_US=$(((T_MS + GRACE_MS + MARGIN_MS) * 1000))
+HANG_MS=500
+HANG_US=$(((T_MS + HANG_MS) * 1000))
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-g-deadline.XXXXXX")"
 T="$(cd "$T" && pwd -P)"
