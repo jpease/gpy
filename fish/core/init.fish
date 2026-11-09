@@ -144,7 +144,19 @@ function __gpy_source_theme_export --argument-names mode
         return $status
     end
 
-    "$agent_binary" theme export --shell fish 2>/dev/null | source
+    set -l err_file (mktemp)
+    set -l export_text ("$agent_binary" theme export --shell fish 2>$err_file)
+    set -l export_status $status
+    set -l first_err (head -n 1 -- $err_file 2>/dev/null)
+    rm -f -- $err_file
+    if test $export_status -ne 0; or not set -q export_text[1]
+        test -n "$first_err"; and __gpy_log_error init "theme export failed: $first_err"
+        test $export_status -ne 0; and return $export_status
+        return 1
+    end
+    # `source` from a pipe leaves $status as it found it (see the fresh branch).
+    true
+    string join \n -- $export_text | source
     return $status
 end
 
