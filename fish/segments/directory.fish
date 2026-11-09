@@ -9,8 +9,10 @@ function segment_directory_render --argument-names is_last is_first --descriptio
     set -q is_last[1]; or set is_last ""
     set -q is_first[1]; or set is_first ""
 
-    # Memoized on (theme, PWD, position, prev_bg) to skip the IPC round-trip.
-    set -l dir_key "$__gpy_theme_name:$PWD:$is_last:$is_first:$__gpy_last_segment_bg"
+    # Memoized on (theme, PWD, git root, position, prev_bg) to skip the IPC
+    # round-trip; `truncate_to_repo` makes the render depend on the root.
+    set -l dir_root (__gpy_memoized_git_root $PWD)
+    set -l dir_key "$__gpy_theme_name:$PWD:$dir_root:$is_last:$is_first:$__gpy_last_segment_bg"
     set -l dir_output
     if test -n "$__gpy_dir_cache_key"; and test "$dir_key" = "$__gpy_dir_cache_key"
         set dir_output $__gpy_dir_cache_val

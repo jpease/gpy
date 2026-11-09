@@ -159,6 +159,26 @@ true
 fish_prompt >/dev/null 2>&1
 check "empty directory render is never cached" 2 $__gpy_dir_call_count
 
+# --- 7. git init in the cwd re-renders the directory (truncate_to_repo anchors
+#        the path at the repo root); removing .git re-renders it again ---
+function __gpy_request
+    set -g __gpy_dir_call_count (math $__gpy_dir_call_count + 1)
+    printf DIR
+end
+reset_caches
+set -g __gpy_dir_call_count 0
+cd $tmp_a
+true
+fish_prompt >/dev/null 2>&1 # baseline
+git init -q $tmp_a
+true
+fish_prompt >/dev/null 2>&1 # a root appeared
+check "git init in the cwd re-renders the directory" 2 $__gpy_dir_call_count
+rm -rf $tmp_a/.git
+true
+fish_prompt >/dev/null 2>&1 # the root is gone
+check "removing .git re-renders the directory" 3 $__gpy_dir_call_count
+
 cd -
 rm -rf $tmp_a $tmp_b
 

@@ -266,7 +266,9 @@ __gpy_segment_would_render() {
 }
 
 # The memo lives here, not in __gpy_segment_directory: that runs inside `$()`,
-# where a cache write would be lost with the subshell.
+# where a cache write would be lost with the subshell. The key holds the git
+# root as well as $PWD: with `truncate_to_repo` the agent's render depends on
+# it, and `git init` or removing `.git` must not wait for the next `cd`.
 __gpy_directory_segment_output() {
     local is_last="$1"
     local prev_bg="$2"
@@ -275,7 +277,9 @@ __gpy_directory_segment_output() {
 
     local is_last_bool="${is_last:-false}"
     local is_first_bool="${is_first:-false}"
-    local dir_key="${__gpy_theme_name:-}:${PWD}:${is_last_bool}:${is_first_bool}:${prev_bg}"
+    local dir_root=""
+    __gpy_find_git_root "$PWD" dir_root
+    local dir_key="${__gpy_theme_name:-}:${PWD}:${dir_root}:${is_last_bool}:${is_first_bool}:${prev_bg}"
 
     if [[ -n "$__gpy_dir_cache_key" && "$dir_key" == "$__gpy_dir_cache_key" ]]; then
         printf -v "$out_var" '%s' "$__gpy_dir_cache_val"

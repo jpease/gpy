@@ -726,6 +726,22 @@ else
     exit 1
 fi
 
+# 3b. `git init` / removing `.git` re-renders the directory without a `cd`:
+# truncate_to_repo makes the agent's render depend on the repo root.
+__gpy_memo_reset
+cd "$memo_dir_b" || exit 1
+__gpy_render_prompt 0 # baseline (miss)
+git init -q "$memo_dir_b"
+__gpy_render_prompt 0 # root appeared
+rm -rf "$memo_dir_b/.git"
+__gpy_render_prompt 0 # root gone
+if [[ "$(__gpy_memo_call_count "$memo_dir_calls_file")" == "3" ]]; then
+    echo "PASS: git init and removing .git re-render the directory without a cd"
+else
+    echo "FAIL: git root change counts wrong (dir=$(__gpy_memo_call_count "$memo_dir_calls_file"))"
+    exit 1
+fi
+
 # 4. Theme change re-renders both segments (the handler renders immediately;
 # the trailing render is a hit).
 __gpy_memo_reset
