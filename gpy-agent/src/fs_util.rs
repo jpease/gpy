@@ -14,15 +14,15 @@ pub fn read_small_file(path: &Path, cap: usize) -> std::io::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Read at most `cap` bytes of `path`, refusing anything but a regular file.
+/// Open `path` read-only, refusing anything but a regular file.
 ///
 /// The open is non-blocking, so a FIFO without a writer cannot stall it, and
 /// the type check runs on the opened descriptor, so swapping a special file in
 /// after any earlier check still fails here.
 ///
 /// # Errors
-/// Returns an error if `path` is not a regular file or cannot be opened or read.
-pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
+/// Returns an error if `path` is not a regular file or cannot be opened.
+pub fn open_regular_file(path: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -38,6 +38,17 @@ pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<
             format!("not a regular file: {}", path.display()),
         ));
     }
+    Ok(file)
+}
+
+/// Read at most `cap` bytes of `path`, refusing anything but a regular file.
+///
+/// A file longer than `cap` is returned truncated, with `Ok`.
+///
+/// # Errors
+/// Returns an error if `path` is not a regular file or cannot be opened or read.
+pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
+    let file = open_regular_file(path)?;
     let limit = u64::try_from(cap).unwrap_or(u64::MAX);
     let mut buf = Vec::new();
     file.take(limit).read_to_end(&mut buf)?;

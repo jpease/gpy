@@ -56,8 +56,9 @@ static IGNORE_CASE: TtlMap<PathBuf, bool> =
 
 const MSGNUM_READ_CAP: usize = 4_096;
 
-/// Cap on `rebase-merge/git-rebase-todo` reads; long interactive rebases exceed a few KB.
-const REBASE_TODO_READ_CAP: usize = 65_536;
+/// Bytes of `rebase-merge/git-rebase-todo` read before the count is given up as
+/// unknown; a 1 `MiB` plan is not a rebase.
+const REBASE_TODO_READ_CAP: usize = 1 << 20;
 
 /// Parse a `msgnum` file (current step of an interactive rebase).
 #[must_use]
@@ -65,16 +66,35 @@ fn parse_msgnum(contents: &str) -> Option<u32> {
     contents.trim().parse().ok()
 }
 
-/// Count non-blank, non-comment lines (remaining steps) in `git-rebase-todo`.
+/// Count non-blank, non-comment lines (remaining steps) in `git-rebase-todo`,
+/// reading at most `REBASE_TODO_READ_CAP` bytes; `None` past the cap or on I/O error.
+///
+/// Lines are counted as bytes so a non-UTF-8 commit subject still counts, and the
+/// reader is bounded so one newline-free line cannot grow the buffer past the cap.
 #[must_use]
-fn count_todo_lines(contents: &str) -> Option<u32> {
-    let count = contents
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
-        })
-        .count();
+fn count_todo_steps<R: std::io::BufRead>(source: R) -> Option<u32> {
+    use std::io::BufRead as _;
+
+    let limit = u64::try_from(REBASE_TODO_READ_CAP).ok()?.saturating_add(1);
+    let mut reader = source.take(limit);
+    let mut line = Vec::new();
+    let mut consumed = 0_usize;
+    let mut count = 0_usize;
+    loop {
+        line.clear();
+        let read = reader.read_until(b'\n', &mut line).ok()?;
+        if read == 0 {
+            break;
+        }
+        consumed = consumed.saturating_add(read);
+        if consumed > REBASE_TODO_READ_CAP {
+            return None;
+        }
+        let trimmed = line.trim_ascii();
+        if !trimmed.is_empty() && !trimmed.starts_with(b"#") {
+            count = count.saturating_add(1);
+        }
+    }
     u32::try_from(count).ok()
 }
 
@@ -382,12 +402,8 @@ impl NativeGitBackend {
     /// Count remaining steps in `rebase-merge/git-rebase-todo`; each instruction
     /// advances `msgnum` by exactly 1.
     fn count_remaining_todo_steps(rebase_merge: &Path) -> Option<u32> {
-        let todo = crate::fs_util::read_small_file(
-            &rebase_merge.join("git-rebase-todo"),
-            REBASE_TODO_READ_CAP,
-        )
-        .ok()?;
-        count_todo_lines(&todo)
+        let file = crate::fs_util::open_regular_file(&rebase_merge.join("git-rebase-todo")).ok()?;
+        count_todo_steps(std::io::BufReader::new(file))
     }
 
     /// Run status-v2, repo-state, and stash-count captures in parallel.

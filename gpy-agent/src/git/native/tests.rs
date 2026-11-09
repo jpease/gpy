@@ -27,7 +27,11 @@ fn count_todo_lines_table() {
         ("", Some(0)),
     ];
     for (input, expected) in cases {
-        assert_eq!(count_todo_lines(input), *expected, "input: {input:?}");
+        assert_eq!(
+            count_todo_steps(input.as_bytes()),
+            *expected,
+            "input: {input:?}"
+        );
     }
 }
 
