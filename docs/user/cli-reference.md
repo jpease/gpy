@@ -402,7 +402,8 @@ The migration guide is in [Migrating from Starship](migrating-from-starship.md).
   the file stem)
 - `--force` - Overwrite existing artifacts of the same name, or shadow a
   builtin/plugin theme or palette of that name (without it, both are refused)
-- `--stdout` - Print both artifacts instead of writing files
+- `--stdout` - Print both artifacts instead of writing files; cannot be combined
+  with `--apply-layout`
 - `--apply-layout` - Also write the derived `enabled_segments` into the
   active config
 

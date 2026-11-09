@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[language.icons]` keys and `language.enabled_languages` entries written as aliases (`rs`, `js`, `ts`, `golang`, …) now apply; they are read as their canonical language, as `gpy config set` already wrote them. Theme `enabled_languages` lists accept aliases too.
 - `gpy config set` rejects `language.filter = 0` (which showed no language) and `git.max_ahead_behind` above `4294967295` (which acted as that cap) instead of accepting them; hand-edited files keep loading as before and the reference now documents both. Configuration reference: `[git.icons]` accept an empty string (bare count); `ui.directory.max_length` counts characters rather than columns and drops the ellipsis only at `1`.
 - The directory segment contracts the home directory to `~` when `HOME` ends in a slash (`/home/u/`).
+- `gpy theme import --stdout` no longer writes `enabled_segments` to `config.toml` when `--apply-layout` is also given; the two flags are now rejected together as a usage error (exit 2).
 
 ## [0.10.1] - 2026-11-01
 

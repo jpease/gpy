@@ -132,6 +132,35 @@ fn import_stdout_prints_both_artifacts_without_writing() {
 }
 
 #[test]
+fn import_stdout_with_apply_layout_is_a_usage_error() {
+    let env = CliTestEnv::new().unwrap();
+    let source = write_sample(&env);
+    let config_path = env.config_path();
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let body = "[ui]\nenabled_segments = [\"directory\"]\n";
+    fs::write(&config_path, body).unwrap();
+    let result = env
+        .run_gpy(&[
+            "theme",
+            "import",
+            source.to_str().unwrap(),
+            "--name",
+            "demo",
+            "--stdout",
+            "--apply-layout",
+        ])
+        .unwrap();
+    assert_eq!(result.exit_code, 2_i32, "stderr: {}", result.stderr);
+    assert!(
+        result.stderr.contains("cannot be used with"),
+        "{}",
+        result.stderr
+    );
+    assert_eq!(fs::read(&config_path).unwrap(), body.as_bytes());
+    assert!(!env.themes_dir().join("demo.toml").exists());
+}
+
+#[test]
 fn import_refuses_overwrite_without_force() {
     let env = CliTestEnv::new().unwrap();
     let source = write_sample(&env);
