@@ -15,7 +15,7 @@
 #
 # Rows = installer x shell x hostile HOME layout:
 #
-#   row INSTALLER SHELL LAYOUT EXPECT
+#   row INSTALLER SHELL LAYOUT EXPECT [GPY_SHELL]  (GPY_SHELL defaults to the SHELL column)
 #     INSTALLER  oneline (install-oneline.sh, fake curl) | install.sh (staged
 #                release payload, fish only)
 #     SHELL      fish | zsh | bash | nushell (unsupported: binaries only)
@@ -241,8 +241,9 @@ check_start() {
 }
 
 row() {
-    installer="$1" shell="$2" layout="$3" expect="$4"
+    installer="$1" shell="$2" layout="$3" expect="$4" gpy_shell="${5-$2}"
     name="$installer/$shell/$layout/$expect"
+    [ $# -lt 5 ] || name="$name/GPY_SHELL='$gpy_shell'"
     echo "=== $name ==="
     shell_e2e_init "$ROOT"
     SB="$SHELL_E2E_ROOT"
@@ -256,6 +257,9 @@ row() {
     export XDG_CACHE_HOME="$SB/cache"
     mkdir -p "$HOME"
     export PATH="$HOME/.local/bin:$SB/fakebin:$PATH"
+    # Rows with a blank GPY_SHELL fall back to $SHELL.
+    SHELL="$(command -v "$shell" || true)"
+    export SHELL
     mkdir -p "$SB/fakebin"
     SHELL_ARCHIVE="$SB/gpy-shell-files.tar.gz"
     shell_e2e_build_shell_archive "$ROOT" "$SHELL_ARCHIVE" || { fail "$name: could not build the shell archive"; return; }
@@ -265,7 +269,7 @@ row() {
 
     case "$installer" in
         oneline)
-            (cd "$SB" && GPY_SHELL="$shell" GPY_VERSION=v9.9.9-test sh "$ROOT/install-oneline.sh" </dev/null) >"$SB/install.log" 2>&1
+            (cd "$SB" && GPY_SHELL="$gpy_shell" GPY_VERSION=v9.9.9-test sh "$ROOT/install-oneline.sh" </dev/null) >"$SB/install.log" 2>&1
             ;;
         install.sh)
             PKG="$SB/pkg"
@@ -277,7 +281,7 @@ row() {
             for asset in "$AGENT_ASSET" "$CLI_ASSET"; do
                 printf '%s  %s\n' "$(sha256_of "$PKG/bin/$asset")" "$asset" >"$PKG/bin/$asset.sha256"
             done
-            (cd "$PKG" && GPY_SHELL="$shell" bash ./install.sh </dev/null) >"$SB/install.log" 2>&1
+            (cd "$PKG" && GPY_SHELL="$gpy_shell" bash ./install.sh </dev/null) >"$SB/install.log" 2>&1
             ;;
     esac
     rc=$?
@@ -299,6 +303,7 @@ row() {
         if [ -z "$leftovers" ]; then pass "$name: nothing installed"; else fail "$name: refused install left files: $leftovers"; fi
     else
         if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi
+        if grep -q 'Unsupported shell' "$SB/install.log"; then fail "$name: warned about an unsupported shell"; fi
         for mode in nonlogin login; do
             check_start "$name [$mode]" "$shell" "$mode"
         done
@@ -329,6 +334,12 @@ row() {
 row oneline fish plain ok
 row oneline zsh plain ok
 row oneline bash plain ok
+
+# GPY_SHELL is case-insensitive and blank means unset, as in `gpy setup`
+row oneline zsh plain ok Zsh
+row install.sh bash plain ok BASH
+row oneline fish plain ok ' '
+row install.sh zsh plain ok ' '
 
 # A space in HOME / XDG_CONFIG_HOME
 row oneline fish space ok

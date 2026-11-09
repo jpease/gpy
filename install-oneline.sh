@@ -157,6 +157,7 @@ Usage: sh install-oneline.sh [-h|--help]
 
 Takes no other options. Configure with environment variables:
   GPY_SHELL=fish|zsh|bash  Shell to wire up (default: basename of $SHELL).
+                           Case-insensitive; a blank value means unset.
                            Any other shell installs the binaries only.
   GPY_VERSION=v1.2.3       Release to install (default: latest).
   GPY_NERD_FONT=1|0|unknown  Set the icon style without asking.
@@ -221,9 +222,12 @@ main() {
 
     ok "Platform: $PLATFORM ($ARCH)"
 
-    CURRENT_SHELL="${GPY_SHELL:-${SHELL##*/}}"
+    # GPY_SHELL is case-insensitive and blank counts as unset, as in `gpy setup`.
+    GPY_SHELL_RAW="${GPY_SHELL:-}"
+    GPY_SHELL_NORM="$(printf '%s' "$GPY_SHELL_RAW" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    CURRENT_SHELL="${GPY_SHELL_NORM:-${SHELL##*/}}"
 
-    if [ -n "$GPY_SHELL" ]; then
+    if [ -n "$GPY_SHELL_NORM" ]; then
         info "Using shell from GPY_SHELL environment variable: $CURRENT_SHELL"
     fi
 
@@ -232,7 +236,9 @@ main() {
             ok "Detected shell: $CURRENT_SHELL"
             ;;
         *)
-            warn "Unsupported shell '$CURRENT_SHELL'${GPY_SHELL:+ (from GPY_SHELL)}: installing the binaries only. For shell integration re-run with GPY_SHELL=fish, zsh or bash"
+            # Quote what the user typed when it came from GPY_SHELL.
+            SHELL_SHOWN="${GPY_SHELL_NORM:+$GPY_SHELL_RAW}"
+            warn "Unsupported shell '${SHELL_SHOWN:-$CURRENT_SHELL}'${GPY_SHELL_NORM:+ (from GPY_SHELL)}: installing the binaries only. For shell integration re-run with GPY_SHELL=fish, zsh or bash"
             CURRENT_SHELL=""
             ;;
     esac

@@ -185,7 +185,7 @@ one-line installer to `sh`; run `install.sh` from an extracted archive with
 fish, zsh or bash, or no `$SHELL`) they install the binaries only, edit no shell
 files, and ask you to re-run with `GPY_SHELL=fish`, `zsh` or `bash`.
 
-- **`GPY_SHELL`**: Override shell detection
+- **`GPY_SHELL`**: Override shell detection. It is case-insensitive; a blank value is treated as unset.
   ```bash
   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | GPY_SHELL=fish sh
   ```

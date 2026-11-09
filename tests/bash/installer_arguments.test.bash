@@ -52,6 +52,10 @@ for var in GPY_SHELL GPY_VERSION GPY_NERD_FONT; do
         *) fail "install-oneline.sh --help does not list $var" ;;
     esac
 done
+case "${result#*|}" in
+    *"Case-insensitive"*) pass "install-oneline.sh --help states GPY_SHELL is case-insensitive" ;;
+    *) fail "install-oneline.sh --help does not state case-insensitivity" ;;
+esac
 
 result="$(run bash "$ROOT/install.sh" --help)"
 [[ "${result%%|*}" -eq 0 ]] || fail "install.sh --help exited ${result%%|*}"
@@ -61,6 +65,10 @@ for var in GPY_SHELL GPY_NERD_FONT; do
         *) fail "install.sh --help does not list $var" ;;
     esac
 done
+case "${result#*|}" in
+    *"Case-insensitive"*) pass "install.sh --help states GPY_SHELL is case-insensitive" ;;
+    *) fail "install.sh --help does not state case-insensitivity" ;;
+esac
 case "${result#*|}" in
     *GPY_VERSION*) fail "install.sh --help lists GPY_VERSION, which it never reads" ;;
     *) pass "install.sh --help omits GPY_VERSION" ;;
