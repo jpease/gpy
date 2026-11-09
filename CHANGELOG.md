@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy setup` no longer fails with `stream did not contain valid UTF-8` on an rc file (or `.profile`) that is not UTF-8 and has no GPY block yet; it appends the block as it does for any other file.
 - `gpy setup` recognises its block in an rc file with CRLF line endings: an up-to-date block is left alone instead of being reported as edited, and an older block is upgraded in place keeping CRLF.
 - The `Next: ... source <rc>` hint after `gpy setup` quotes the rc path.
+- `gpy uninstall` no longer removes the binaries, shell files and runtime directory while the agent is still running. When `gpy-agent stop` fails it now removes nothing, prints the `kill <pid>` hint and exits 1; re-run after stopping the agent.
+
+### Changed
+- A `__gpy_agent_supervisor_loop` process left by GPY 0.8 or older is no longer stopped at the first Fish prompt (that cleanup was removed in 0.10.0); `gpy uninstall` still stops it.
 
 ## [0.10.1] - 2026-11-01
 

@@ -1428,7 +1428,7 @@ In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the d
 | `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | as `start` |
 | `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – |
 | `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – |
-| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), or a path or rc file could not be handled | usage error | – | – | – |
+| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), the agent could not be stopped (nothing is removed), or a path or rc file could not be handled | usage error | – | – | – |
 | `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – |
 
 `stop` never exits `6`: a disabled agent that is not running is already in the

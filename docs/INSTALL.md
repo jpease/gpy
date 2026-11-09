@@ -582,7 +582,8 @@ removes the cache and runtime directories. Startup files are restored
 byte-for-byte (a startup file `gpy setup` created is removed once it is empty).
 Your configuration directory (`~/.config/gpy`: `config.toml`, themes, palettes,
 plugins) is kept unless you pass `--purge-config`; without it, the directory is removed
-only when nothing is left in it.
+only when nothing is left in it. `gpy uninstall` stops the agent first; if it does not
+stop, nothing is removed and the command exits 1 with the `kill` hint from `gpy stop`.
 
 It asks for confirmation first and removes nothing unless it gets it: with no
 terminal to answer (stdin closed or at end of input) it exits 1, so pass `--yes`
