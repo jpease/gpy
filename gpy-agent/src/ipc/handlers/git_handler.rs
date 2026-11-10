@@ -254,7 +254,15 @@ impl GitHandler {
                     }
                 }
                 Ok(None) => Ok(None),
-                Err(e) => Err(e.to_string()),
+                Err(e) => match job_spec.cache.mark_stale_error(&job_spec.git_root, None) {
+                    // Serve and publish the last good status with unknown
+                    // upstream counts (`↑?`); no last good status keeps the error.
+                    Some(stale) => {
+                        publish_and_repaint(&job_spec.render, &job_spec.git_root, &stale, None);
+                        Ok(Some(stale))
+                    }
+                    None => Err(e.to_string()),
+                },
             };
 
             job_spec.guard.finish(shared_result);
@@ -374,6 +382,7 @@ mod tests {
             },
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         }
     }
@@ -705,5 +714,66 @@ mod tests {
 
         // Drain the job so it doesn't outlive the temp dir.
         let _ = job.wait_timeout(Duration::from_secs(5));
+    }
+
+    /// A bare repository makes `git status` fail, standing in for any failing query.
+    fn init_failing_repo(temp_dir: &tempfile::TempDir) -> PathBuf {
+        let bare_path = temp_dir.path().join("bare.git");
+        std::fs::create_dir_all(&bare_path).expect("bare dir");
+        let output = std::process::Command::new("git")
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(&bare_path)
+            .output()
+            .expect("run git init --bare");
+        assert!(output.status.success(), "git init --bare failed");
+        std::fs::canonicalize(&bare_path).expect("canonicalize bare root")
+    }
+
+    /// A failed query serves and caches the last good status with unknown
+    /// upstream counts instead of the failure.
+    #[test]
+    fn failed_query_serves_last_good_status_marked_stale() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = init_failing_repo(&temp_dir);
+        let cache = Arc::new(GitStatusCache::new());
+        let (handler, _registry) = make_handler_with_cache(Arc::clone(&cache));
+        let last_good = RepositoryStatus {
+            ahead: 2,
+            ..status(0)
+        };
+        cache.set_canonical(&root, last_good.clone(), HashMap::new());
+
+        let job = handler.git_status_job(&root, root.clone(), 0);
+        let served = job
+            .wait_timeout(Duration::from_secs(10))
+            .expect("the job finishes")
+            .expect("a last good status turns the failure into a served status")
+            .expect("repository found");
+
+        assert_eq!(
+            served,
+            RepositoryStatus {
+                stale_error: true,
+                ..last_good
+            }
+        );
+        assert_eq!(cache.get_any_canonical(&root), Some(served));
+    }
+
+    /// With no last good status the failure is reported as before.
+    #[test]
+    fn failed_query_without_last_good_status_still_errors() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = init_failing_repo(&temp_dir);
+        let cache = Arc::new(GitStatusCache::new());
+        let (handler, _registry) = make_handler_with_cache(Arc::clone(&cache));
+
+        let job = handler.git_status_job(&root, root.clone(), 0);
+        let result = job
+            .wait_timeout(Duration::from_secs(10))
+            .expect("the job finishes");
+
+        assert!(result.is_err(), "got {result:?}");
+        assert_eq!(cache.get_any_canonical(&root), None);
     }
 }

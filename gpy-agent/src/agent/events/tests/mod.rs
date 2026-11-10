@@ -208,6 +208,7 @@ fn status(untracked: u32, state: crate::git::RepositoryState) -> RepositoryStatu
         state,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }

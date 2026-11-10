@@ -482,6 +482,7 @@ mod schema_files {
             stash_count: 1,
             detached: false,
             rebase_progress,
+            stale_error: false,
         };
         let rebase = Some(gpy_agent::git::RebaseProgress { step: 1, total: 3 });
         let replies = vec![

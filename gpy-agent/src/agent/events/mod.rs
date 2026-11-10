@@ -261,7 +261,7 @@ fn detect_languages(ctx: &AgentContext, root: &Path) -> Vec<crate::language::Det
 /// last-written memo untouched, so a later identical write reports `Written`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CacheWriteOutcome {
-    /// No write attempted (repo unavailable or scan failed).
+    /// No write attempted (repo unavailable, or the scan failed with no last good status).
     NotAttempted,
     /// `write_git` returned `Err`; on-disk file unchanged.
     Failed,
@@ -463,7 +463,9 @@ fn refresh_repo_status_with<B: GitBackend>(
         }
     }
 
-    // Invalidate first so the scan reflects the triggering mutation.
+    // Invalidate first so the scan reflects the triggering mutation; keep the
+    // last good status so a failed scan can still publish it as stale.
+    let last_good = ctx.cache.get_any_canonical(git_root);
     ctx.cache.invalidate_canonical(git_root);
     match backend.complete_status(
         git_root,
@@ -502,11 +504,30 @@ fn refresh_repo_status_with<B: GitBackend>(
                 git_root.display(),
                 error
             );
-            RepoRefresh {
-                status: None,
-                cache_write: CacheWriteOutcome::NotAttempted,
-            }
+            publish_stale_status(ctx, git_root, config, last_good)
         }
+    }
+}
+
+/// After a failed full scan, serve and publish the last good status with its
+/// upstream counts marked unknown (`↑?`) instead of leaving a stale segment
+/// that looks current. Without a last good status nothing is invented.
+fn publish_stale_status(
+    ctx: &AgentContext,
+    git_root: &Path,
+    config: &Config,
+    last_good: Option<RepositoryStatus>,
+) -> RepoRefresh {
+    let Some(stale) = ctx.cache.mark_stale_error(git_root, last_good) else {
+        return RepoRefresh {
+            status: None,
+            cache_write: CacheWriteOutcome::NotAttempted,
+        };
+    };
+    let cache_write = write_status_caches(ctx, git_root, config, &stale);
+    RepoRefresh {
+        status: Some(stale),
+        cache_write,
     }
 }
 

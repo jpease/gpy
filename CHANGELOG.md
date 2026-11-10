@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- When the agent cannot read a repository's git status, the prompt now shows `↑?` where the ahead/behind count was (branch and other fields come from the last good status) instead of silently keeping the old count; the next successful query restores it. (#1238)
+- The agent log, `~/.cache/gpy/agent.log` (or `GPY_DEBUG_LOG`), now receives warnings by default; it stayed empty before. Failed git commands are logged once per repository and error per minute, with a count of suppressed repeats. Git error messages now include the exit status. (#1238)
+- `gpy doctor` warns when the running agent's version differs from the installed binary and when the agent answers a git query with an error, each with a `gpy restart` remediation. (#1238)
+
+### Changed
+- The shells no longer compare the agent's protocol or version themselves: each shell runs `gpy-agent start` once at its first prompt and `start` keeps or replaces the agent, so an agent left running across an upgrade is replaced on either difference. The protocol-mismatch warning the shells printed is gone. (#1238)
+- The release workflow skips the full Rust and shell gate when the tagged commit's tree equals that of a merged pull request whose `gate-result` passed; any doubt runs the full gate. See `docs/dev/releasing.md`. (#1238)
+
 ## [0.10.4] - 2026-11-10
 
 ### Fixed

@@ -70,6 +70,14 @@ impl AgentClient {
     pub fn probe_status(&self) -> StatusProbe {
         StatusProbe::NotListening(native_windows_unsupported())
     }
+
+    /// Ask the agent for the git status segment of `cwd`.
+    ///
+    /// # Errors
+    /// Always returns an error on this platform.
+    pub fn git_reply(&self, _cwd: &std::path::Path) -> Result<String> {
+        Err(native_windows_unsupported())
+    }
 }
 
 /// Start the agent in background (native Windows: not supported).

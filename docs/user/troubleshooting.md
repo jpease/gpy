@@ -26,6 +26,18 @@ GPY_DEBUG_LOG=/tmp/gpy-debug.log gpy restart   # Restart with debug logging, the
 
 `gpy doctor` and `gpy status` syntax/output are fully documented in the [CLI Reference](cli-reference.md#gpy-doctor). Debug logging, the `gpy status` / `gpy debug paths` connection check, and config reset are covered in [Advanced Configuration → Troubleshooting](advanced-configuration.md#troubleshooting).
 
+### The agent log
+
+The agent writes warnings to `~/.cache/gpy/agent.log` (`$XDG_CACHE_HOME/gpy/agent.log`) with no setup; `GPY_DEBUG_LOG`, when set, redirects them to that file and adds the full trace. A daemon's stderr is discarded, so this file is where a running agent reports problems.
+
+A repository whose git commands fail (for example `fatal: Unable to read current working directory: Operation not permitted` after an upgrade left an old agent without directory access) logs one line per repo and error:
+
+```text
+[1731200000000] [git] git status failed in /path/to/repo: Git command failed (exit status: 128): fatal: Unable to read current working directory: Operation not permitted
+```
+
+The same failure is logged at most once every 60 seconds; the next line says how many identical failures were suppressed. `gpy restart` replaces a stale agent. The file is append-only and never rotated.
+
 ---
 
 ## Shell Comparison

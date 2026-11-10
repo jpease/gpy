@@ -65,7 +65,7 @@ Read by the agent. Each is off, or at the default shown, unless set.
 | Variable | Default | Effect |
 |---|---|---|
 | `GPY_PROFILE` | off | A true value logs `[PROFILE] <operation>: <ms>` lines for timed operations to stderr and the debug log. |
-| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. |
+| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. Warnings go to it too; without it they go to `~/.cache/gpy/agent.log`. |
 | `GPY_DISABLE_WATCHER` | off | A true value skips the git/language file watcher at agent startup. See [below](#gpy_disable_watcher). |
 | `GPY_THEME_WATCH_POLL_MS` | off | Positive integer: also poll the active theme's files on this interval. `0` or unset: notifications only. |
 | `GPY_CONFIG_WATCH_POLL_MS` | off | The same for `config.toml`, floored at the 1-second config debounce. The fix when editing the file never applies until `gpy restart`. |

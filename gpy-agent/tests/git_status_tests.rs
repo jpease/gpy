@@ -172,6 +172,7 @@ fn test_git_status_struct_default_values() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 

@@ -30,6 +30,7 @@ fn sample_status() -> RepositoryStatus {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }
@@ -50,6 +51,7 @@ fn bench_cache_write(c: &mut Criterion) {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -80,6 +82,7 @@ fn bench_cache_read(c: &mut Criterion) {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -117,6 +120,7 @@ fn bench_cache_invalidate(c: &mut Criterion) {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 

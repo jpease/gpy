@@ -312,7 +312,8 @@ impl GitStatusCache {
         let mut guard = self.entries.lock_or_recover();
         let entry = guard.get_mut(key)?;
 
-        if !entry.files_complete {
+        // A stale entry's head fields are unknown; only a full scan clears it.
+        if !entry.files_complete || entry.data.aggregates.stale_error {
             return None;
         }
 
@@ -355,6 +356,35 @@ impl GitStatusCache {
 
         drop(guard);
         Some(aggregates)
+    }
+
+    /// Record that the latest status query for `key` failed, so the status
+    /// the cache serves and publishes renders its upstream counts as unknown.
+    ///
+    /// An existing entry keeps its data and timestamps, only gaining the
+    /// `stale_error` flag; the next full scan replaces it. With no entry,
+    /// `last_good` (the status read before the failed query invalidated it)
+    /// is reinstated without file details, so the next incremental update
+    /// falls back to a full scan. Returns the stale status, or `None` when
+    /// there is neither an entry nor a `last_good`.
+    #[must_use]
+    pub fn mark_stale_error(
+        &self,
+        key: &Path,
+        last_good: Option<RepositoryStatus>,
+    ) -> Option<RepositoryStatus> {
+        let mut entries = self.entries.lock_or_recover();
+        if let Some(entry) = entries.get_mut(key) {
+            entry.data.aggregates.stale_error = true;
+            return Some(entry.data.aggregates.clone());
+        }
+        let mut status = last_good?;
+        status.stale_error = true;
+        let stale = Self::insert_entry(&mut entries, key, status, HashMap::new());
+        if let Some(entry) = entries.get_mut(key) {
+            entry.files_complete = false;
+        }
+        Some(stale)
     }
 
     /// Whether the entry was updated within the policy's cooldown window.
@@ -456,6 +486,7 @@ mod tests {
             state: RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         }
     }
@@ -1125,6 +1156,73 @@ mod tests {
                 .is_none(),
             "a details-dropped entry must force a full scan"
         );
+    }
+
+    #[test]
+    fn mark_stale_error_flags_the_live_entry_and_keeps_its_files() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/stale-live");
+        let files = HashMap::from([(PathBuf::from("a.rs"), unstaged())]);
+        cache.set_canonical(&key, dummy_status(), files.clone());
+
+        let stale = cache.mark_stale_error(&key, None).expect("live entry");
+
+        assert!(stale.stale_error);
+        assert_eq!(cache.get_canonical(&key), Some(stale));
+        assert_eq!(cache.files_for_test(&key), Some(files));
+    }
+
+    #[test]
+    fn mark_stale_error_reinstates_last_good_after_invalidation() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/stale-restored");
+        let last_good = RepositoryStatus {
+            ahead: 2,
+            ..dummy_status()
+        };
+        cache.set_canonical(&key, last_good.clone(), HashMap::new());
+        cache.invalidate_canonical(&key);
+
+        let stale = cache
+            .mark_stale_error(&key, Some(last_good.clone()))
+            .expect("reinstated");
+
+        assert_eq!(
+            stale,
+            RepositoryStatus {
+                stale_error: true,
+                ..last_good
+            }
+        );
+        assert_eq!(cache.get_any_canonical(&key), Some(stale));
+    }
+
+    #[test]
+    fn mark_stale_error_without_any_status_invents_nothing() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/stale-none");
+
+        assert_eq!(cache.mark_stale_error(&key, None), None);
+        assert_eq!(cache.get_any_canonical(&key), None);
+    }
+
+    #[test]
+    fn stale_entry_refuses_incremental_updates_and_a_full_scan_clears_it() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/stale-incremental");
+        cache.set_canonical(&key, dummy_status(), HashMap::new());
+        assert!(cache.mark_stale_error(&key, None).is_some());
+
+        let results = HashMap::from([(PathBuf::from("a.rs"), unstaged())]);
+        assert!(
+            cache
+                .update_paths_canonical(&key, &[PathBuf::from("a.rs")], &results, false)
+                .is_none(),
+            "a stale entry must force a full scan"
+        );
+
+        cache.set_canonical(&key, dummy_status(), HashMap::new());
+        assert_eq!(cache.get_canonical(&key), Some(dummy_status()));
     }
 
     fn unstaged() -> FileStatus {

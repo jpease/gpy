@@ -64,6 +64,7 @@ fn notify_clients_respects_agent_live_updates_flag() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     });
 

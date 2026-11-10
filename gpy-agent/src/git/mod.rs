@@ -215,6 +215,10 @@ impl RepositoryState {
 
 /// Git repository status information
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent status facts (detached, stale_error, ...) reported one by one"
+)]
 pub struct RepositoryStatus {
     /// Current branch name
     pub branch: String,
@@ -247,6 +251,20 @@ pub struct RepositoryStatus {
     /// Step/total progress for an interactive rebase, when one is in progress
     #[serde(default)]
     pub rebase_progress: Option<RebaseProgress>,
+    /// The last status query for this repository failed, so the upstream
+    /// counts are unknown and render as `↑?`. Omitted from the wire when
+    /// false; an absent field reads as false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stale_error: bool,
+}
+
+/// `skip_serializing_if` predicate that keeps a false flag off the wire.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Step/total progress for an interactive rebase (`git rebase -i`).
@@ -316,6 +334,7 @@ impl RepositoryStatus {
         self.behind = 0;
         self.ahead_capped = false;
         self.behind_capped = false;
+        self.stale_error = false;
         self
     }
 }

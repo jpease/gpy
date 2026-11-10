@@ -33,6 +33,7 @@ fn git_without_format_emits_empty() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let response = Response::RepositoryStatus(status);
@@ -59,6 +60,7 @@ fn git_malformed_format_emits_empty() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let response = Response::RepositoryStatus(status);
@@ -85,6 +87,7 @@ fn format_some_renders_via_engine() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let response = Response::RepositoryStatus(status);
@@ -112,6 +115,7 @@ fn style_indirection_renders_via_engine() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let response = Response::RepositoryStatus(status);
@@ -509,6 +513,7 @@ fn git_format_resolves_through_attached_palette() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let response = Response::RepositoryStatus(status);
@@ -619,6 +624,7 @@ fn separator_bearing_responses() -> Vec<Response> {
             state: crate::git::RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         }),
         rust_response(),

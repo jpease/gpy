@@ -26,6 +26,106 @@ impl GitBackend for FixedScanBackend {
     }
 }
 
+/// Backend whose full scans fail on demand, as `git` does when its working
+/// directory is unreadable; otherwise delegates to the native backend.
+struct FlakyBackend {
+    failing: std::sync::atomic::AtomicBool,
+}
+
+impl FlakyBackend {
+    fn new(failing: bool) -> Self {
+        Self {
+            failing: std::sync::atomic::AtomicBool::new(failing),
+        }
+    }
+
+    fn set_failing(&self, failing: bool) {
+        self.failing
+            .store(failing, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl GitBackend for FlakyBackend {
+    fn complete_status(
+        &self,
+        path: &Path,
+        max_ahead_behind: usize,
+        stash_enabled: bool,
+        timeout: Duration,
+    ) -> Result<Option<CompleteStatus>> {
+        if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::Error::git(
+                "Unable to read current working directory: Operation not permitted".to_owned(),
+            ));
+        }
+        NativeGitBackend.complete_status(path, max_ahead_behind, stash_enabled, timeout)
+    }
+
+    fn pathspec_status(
+        &self,
+        repo_root: &Path,
+        paths: &[PathBuf],
+        timeout: Duration,
+    ) -> Result<crate::git::PathspecScan> {
+        NativeGitBackend.pathspec_status(repo_root, paths, timeout)
+    }
+}
+
+#[test]
+fn failed_refresh_publishes_the_last_good_status_as_stale_and_success_restores_it() {
+    let (_tmp, repo) = create_temp_repo();
+    fs::write(repo.join("a.txt"), "one\n").expect("write a.txt");
+    commit_all(&repo);
+    let ctx = make_agent_context();
+    let config = Config::default();
+    let backend = FlakyBackend::new(false);
+
+    let good = refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+    let good_status = good.status.expect("first scan succeeds");
+    assert!(!good_status.stale_error);
+
+    backend.set_failing(true);
+    let failed = refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+    let stale = failed.status.expect("last good status is kept");
+    assert!(
+        stale.stale_error,
+        "a failed scan must mark the status stale"
+    );
+    assert_eq!(
+        crate::git::RepositoryStatus {
+            stale_error: false,
+            ..stale.clone()
+        },
+        good_status,
+        "everything but the upstream slot comes from the last good status"
+    );
+    assert_eq!(
+        failed.cache_write,
+        CacheWriteOutcome::Written,
+        "the stale rendering must reach the instant-prompt cache"
+    );
+    assert_eq!(ctx.cache.get_any_canonical(&repo), Some(stale));
+
+    backend.set_failing(false);
+    let recovered = refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+    assert_eq!(recovered.status, Some(good_status.clone()));
+    assert_eq!(ctx.cache.get_any_canonical(&repo), Some(good_status));
+}
+
+#[test]
+fn failed_refresh_without_a_last_good_status_invents_none() {
+    let (_tmp, repo) = create_temp_repo();
+    let ctx = make_agent_context();
+    let config = Config::default();
+    let backend = FlakyBackend::new(true);
+
+    let failed = refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+
+    assert_eq!(failed.status, None);
+    assert_eq!(failed.cache_write, CacheWriteOutcome::NotAttempted);
+    assert_eq!(ctx.cache.get_any_canonical(&repo), None);
+}
+
 #[test]
 /// A `.git/index` write costs one full scan, not a failed incremental round first.
 fn git_index_write_triggers_exactly_one_capture_round() {
@@ -134,6 +234,7 @@ fn incremental_refresh_reuses_the_ignore_case_of_its_scan() {
         state: RepositoryState::Dirty,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     ctx.cache.set_canonical(

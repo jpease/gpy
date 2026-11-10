@@ -22,6 +22,7 @@ fn git_clean() -> RepositoryStatus {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }

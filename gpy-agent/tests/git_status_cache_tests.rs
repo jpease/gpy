@@ -41,6 +41,7 @@ fn test_cache_set_and_get() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -77,6 +78,7 @@ fn test_cache_invalidate() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -154,6 +156,7 @@ fn test_cache_clear() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -188,6 +191,7 @@ fn test_cache_update_existing() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -204,6 +208,7 @@ fn test_cache_update_existing() {
         state: RepositoryState::Dirty,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -245,6 +250,7 @@ fn test_cache_thread_safety() {
                 state: RepositoryState::Clean,
                 stash_count: 0,
                 detached: false,
+                stale_error: false,
                 rebase_progress: None,
             };
 
@@ -295,6 +301,7 @@ fn test_cache_symlink_keys_share_entry() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
 
@@ -317,6 +324,7 @@ fn dummy_status() -> RepositoryStatus {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }
