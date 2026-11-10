@@ -402,6 +402,24 @@ function __gpy_check_protocol_version() {
     return 0
 }
 
+typeset -gi __gpy_agent_version_checked=0
+
+# 1 only when the running agent reports a different version than the installed
+# binary (an agent left running across an upgrade), and only the first time:
+# `start` decides whether to replace it. An unreadable version passes.
+function __gpy_check_agent_version() {
+    (( __gpy_agent_version_checked )) && return 0
+    __gpy_agent_version_checked=1
+
+    local response out agent_version binary_version
+    response=$(__gpy_send_json '{"op":"status"}' 2>/dev/null)
+    [[ $response =~ '"version":"([^"]+)"' ]] && agent_version="${match[1]}"
+    out=$(gpy-agent --version 2>/dev/null)
+    binary_version="${out##* }"
+    [[ -n "$agent_version" && -n "$binary_version" ]] || return 0
+    [[ "$agent_version" == "$binary_version" ]]
+}
+
 # Git root above $1 into variable $2; status 1 when there is none.
 function __gpy_find_git_root() {
     local __gpy_fgr_dir

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A shell's first prompt now runs `gpy-agent start` when the running agent's version differs from the installed binary, so an agent left running across an upgrade (same protocol, e.g. after `brew upgrade`) is replaced instead of serving stale or failed git status indefinitely. An unreadable version is left alone. (#1237)
+
 ## [0.10.3] - 2026-11-09
 
 ### Fixed

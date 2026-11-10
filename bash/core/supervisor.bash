@@ -20,7 +20,7 @@ __gpy_supervisor_is_running() {
         return 0
     fi
 
-    if __gpy_check_protocol_version; then
+    if __gpy_check_protocol_version && __gpy_check_agent_version; then
         __gpy_protocol_version_checked=1
         return 0
     fi

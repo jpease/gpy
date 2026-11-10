@@ -3,9 +3,9 @@
 # they are read at call time, never at source time.
 
 function __gpy_start_agent() {
-    # `status` succeeds for an agent on a mismatched protocol too (e.g. left
-    # running across an upgrade); treat that as not running.
-    if gpy-agent status &>/dev/null && __gpy_check_protocol_version; then
+    # `status` succeeds for an agent on a mismatched protocol or version too
+    # (e.g. left running across an upgrade); treat that as not running.
+    if gpy-agent status &>/dev/null && __gpy_check_protocol_version && __gpy_check_agent_version; then
         return 0
     fi
 
