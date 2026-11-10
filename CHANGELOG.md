@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `gpy setup --shell fish` now repoints a `config.fish` block that still sources the pre-0.9 tree in `~/.config/fish/gpy`. It used to report "GPY already configured" and leave it, so after the old tree went away `fish_prompt` ran without GPY's core files and failed with `Unknown command: __gpy_flag_value` on every prompt.
+
 ### Changed
 - `gpy doctor` and the other commands print `Remediation:` lines in bold cyan on an interactive terminal, so the action to take stands out; piped output, `NO_COLOR`, `TERM=dumb` and `ui.show_icons = false` stay plain.
 

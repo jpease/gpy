@@ -301,3 +301,34 @@ fn setup_next_steps_quotes_the_rc_path() {
     let expected = format!("source '{}'", home.join(".bashrc").display());
     assert!(stdout.contains(&expected), "{stdout}");
 }
+
+#[test]
+fn fish_setup_repoints_a_block_that_sources_the_pre_0_9_tree() {
+    let home = TempDir::new().unwrap();
+    let fish = |tree: &str| {
+        format!(
+            "if status is-interactive\n    source \"{}/{tree}/conf.d/gpy_init.fish\"\nend",
+            home.path().display()
+        )
+    };
+    let legacy = block("GPY Prompt Enhancement", &fish(".config/fish/gpy"));
+    let config = home.path().join(".config/fish/config.fish");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, format!("set -x A 1\n{legacy}")).unwrap();
+
+    let output = setup(home.path(), &["--shell", "fish"]);
+    assert_ok(&output);
+
+    let text = fs::read_to_string(&config).unwrap();
+    assert!(
+        text.contains(&fish(".local/share/gpy/fish")) && !text.contains(".config/fish/gpy/"),
+        "{text}"
+    );
+    assert!(text.starts_with("set -x A 1\n"), "{text}");
+    assert_eq!(block_count(&config), 1);
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Updated the GPY block in"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
