@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `gpy doctor` and the other commands print `Remediation:` lines in bold cyan on an interactive terminal, so the action to take stands out; piped output, `NO_COLOR`, `TERM=dumb` and `ui.show_icons = false` stay plain.
+
 ## [0.10.2] - 2026-11-09
 
 ### Fixed

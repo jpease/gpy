@@ -3,7 +3,8 @@
 //! Status markers are ANSI-colored `✓`/`✗`/`!` on an interactive terminal and
 //! ASCII (`ok:`, `FAIL:`, `warn:`) when the stream is not a TTY, `NO_COLOR` is
 //! set, `TERM=dumb`, or `ui.show_icons = false`. Single-action confirmations
-//! print plain text and do not use markers.
+//! print plain text and do not use markers. Under the same conditions a
+//! `Remediation:` detail line is bold cyan, so the action stands out.
 //!
 //! Every report shares one layout: a [`heading`] (or [`section`]) at column 0,
 //! then [`detail`] lines indented one [`INDENT`] per nesting depth.
@@ -149,7 +150,32 @@ pub fn detail(message: impl Display) {
 
 /// Print `message` indented `depth` levels.
 pub fn detail_at(depth: usize, message: impl Display) {
-    println!("{}{message}", indent(depth));
+    let styled = std::io::stdout().is_terminal() && *GLYPHS_ALLOWED;
+    println!("{}", render_detail(depth, &message.to_string(), styled));
+}
+
+/// Bold cyan, so the action to take stands out from the diagnosis around it.
+const REMEDIATION_STYLE: &str = "\x1b[1;36m";
+const STYLE_RESET: &str = "\x1b[0m";
+
+/// `message` indented `depth` levels. When `styled`, every line that starts
+/// with `Remediation:` (after its own leading whitespace) is wrapped in
+/// [`REMEDIATION_STYLE`], reset before the newline.
+fn render_detail(depth: usize, message: &str, styled: bool) -> String {
+    let body = message
+        .split('\n')
+        .map(|line| {
+            let text = line.trim_start();
+            if styled && text.starts_with("Remediation:") {
+                let lead = line.strip_suffix(text).unwrap_or_default();
+                format!("{lead}{REMEDIATION_STYLE}{text}{STYLE_RESET}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{}{body}", indent(depth))
 }
 
 /// Print `message` behind the marker for `status`, indented `depth` levels.
@@ -159,7 +185,7 @@ pub fn detail_status(depth: usize, status: Status, message: impl Display) {
 
 #[cfg(test)]
 mod tests {
-    use super::{INDENT, indent, underline};
+    use super::{INDENT, indent, render_detail, underline};
 
     #[test]
     fn underline_matches_title_width_in_characters() {
@@ -173,5 +199,26 @@ mod tests {
         assert_eq!(indent(0), "");
         assert_eq!(indent(1), INDENT);
         assert_eq!(indent(3), INDENT.repeat(3));
+    }
+
+    #[test]
+    fn remediation_is_bold_cyan_on_a_terminal_and_plain_otherwise() {
+        assert_eq!(
+            render_detail(1, "Remediation: run `gpy setup`.", true),
+            "   \x1b[1;36mRemediation: run `gpy setup`.\x1b[0m"
+        );
+        assert_eq!(
+            render_detail(1, "Remediation: run `gpy setup`.", false),
+            "   Remediation: run `gpy setup`."
+        );
+    }
+
+    #[test]
+    fn only_remediation_lines_are_styled_wherever_they_sit_in_the_message() {
+        assert_eq!(render_detail(1, "Diagnostic: x", true), "   Diagnostic: x");
+        assert_eq!(
+            render_detail(0, "Error: e\n  Remediation: do it\n  tail", true),
+            "Error: e\n  \x1b[1;36mRemediation: do it\x1b[0m\n  tail"
+        );
     }
 }
