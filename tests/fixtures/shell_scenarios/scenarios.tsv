@@ -99,40 +99,40 @@ supervisor-off-down	default	directory,git	0	-	-	down	repo	[agent.supervisor]\nen
 supervisor-on-down	default	directory	0	-	renders2	down	repo	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 30	-	starts=1
 # `git init` in the cwd between two prompts: the second prompt asks the agent again
 dir-memo-tracks-git-root	default	directory	0	-	renders2,git_init_between	up	plain	[ui.directory]\ndisplay = "full"\ntruncate_to_repo = true	-	ipc.directory=2
-# the agent dies between two prompts: the next checked prompt runs `start` once
-restart-after-crash	golden-ascii	directory	0	-	renders2,check_now,kill_after_first	up	-	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 5	-	starts=1
+# the agent dies between two prompts: the shell's startup start plus the next checked prompt's `start`
+restart-after-crash	golden-ascii	directory	0	-	renders2,check_now,kill_after_first	up	-	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 5	-	starts=2
 # every start fails: the initial start plus max_restart_attempts retries
 restart-cap	golden-ascii	directory	0	-	renders4,check_now	down	-	[agent.supervisor]\nenabled = true\ncheck_interval_seconds = 5\nmax_restart_attempts = 2	-	starts=3
 # cold git miss, agent down: the segment is omitted, no foreground `oneshot git`
 cold-miss-down	default	directory,git	0	-	-	down	repo	-	-	starts=1 registers=0 oneshots=directory prompt!~=main
-# cold git miss, agent up: one bounded synchronous query
-cold-miss-up	default	directory,git	0	-	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
+# cold git miss, agent up: the one startup start, then one bounded synchronous query
+cold-miss-up	default	directory,git	0	-	-	up	repo	-	-	starts=1 registers=1 oneshots=- ipc.git=1 prompt~=main
 # variant fallback: a git entry for the wrong previous colour is corrected by one bounded sync query...
-variant-up	variant-git	status,git	0	-	drop_variants	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
+variant-up	variant-git	status,git	0	-	drop_variants	up	repo	-	git	starts=1 oneshots=- ipc.git=1 prompt~=main
 # ...or, with the agent gone, the context-free entry is served as is
 variant-down	variant-git	status,git	0	-	drop_variants,down_after_prime	up	repo	-	git	starts=1 oneshots=character ipc_total=0 prompt~=main
 # slow reply (connected, late): omitted, no oneshot fork, no resend. Two git requests
 # are the sync query plus the one throttled background refresh a miss queues; a resend
 # of the sync query would make it three.
-slow-reply	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150	-	slow	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=2 prompt!~=main
+slow-reply	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150	-	slow	repo	-	-	starts=1 registers=1 oneshots=- ipc.git=2 prompt!~=main
 # GPY_IPC_TIMEOUT_MS is honoured: a budget longer than the delay uses the late reply
-ipc-timeout-long	default	directory,git	0	GPY_IPC_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=0 oneshots=- ipc.git=1 prompt~=main
+ipc-timeout-long	default	directory,git	0	GPY_IPC_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=1 oneshots=- ipc.git=1 prompt~=main
 # GPY_IPC_COLD_TIMEOUT_MS: with nothing to show (cold git cache, no directory memo) the
 # prompt waits the cold budget, so a reply too late for GPY_IPC_TIMEOUT_MS still draws
-cold-budget	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150 GPY_IPC_COLD_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=0 oneshots=- ipc.git=1 prompt~=main prompt~=repo
+cold-budget	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150 GPY_IPC_COLD_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=1 oneshots=- ipc.git=1 prompt~=main prompt~=repo
 # GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured: a fresh entry is served with no git request...
-ttl-fresh	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	starts=0 oneshots=- ipc.git=0 prompt~=main
+ttl-fresh	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	starts=1 oneshots=- ipc.git=0 prompt~=main
 # ...and an expired one is still drawn (stale) and the agent is asked to refresh it
-ttl-expired	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=1	aged_cache	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
+ttl-expired	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=1	aged_cache	up	repo	-	git	starts=1 oneshots=- ipc.git=1 prompt~=main
 # empty HOME: the same prompt and requests with HOME= as with a home
-empty-home	default	directory,git	0	HOME=	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
+empty-home	default	directory,git	0	HOME=	-	up	repo	-	-	starts=1 registers=1 oneshots=- ipc.git=1 prompt~=main
 # agent disabled, two data segments: git is not omitted in any shell (it renders through oneshot, or
 # draws nothing once the directory has spent the one-fork budget), so the directory is never the last segment
 disabled-two-segments	default	directory,git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory prompt!~=main
 # agent disabled, git alone: the segment renders through oneshot
 disabled-git-only	default	git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=git prompt~=main
 # a theme without two_line (built-in `text`) draws the character on the segments' line in every shell
-text-theme	text	directory,status	0	-	-	up	repo	-	-	starts=0 registers=1 ipc.character=1
+text-theme	text	directory,status	0	-	-	up	repo	-	-	starts=1 registers=1 ipc.character=1
 # a newline in a segment format is a line break in every shell, rendered by oneshot, read from the instant cache, or answered live over IPC
 multiline-oneshot	golden-multiline	directory	0	-	-	down	repo	[agent]\nenabled = false	-	oneshots=directory prompt~=dir\n
 multiline-git-cached	golden-multiline	git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	ipc.git=0 prompt~=git\nmain
