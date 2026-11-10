@@ -32,10 +32,12 @@ set -gx GPY_AGENT_ENABLED 1
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 1
 set -gx PATH $tmp $PATH
 set -g calls $tmp/agent.calls
-printf '%s\n' '#!/bin/sh' "echo \"\$*\" >>'$calls'" 'exit 0' >$tmp/gpy-agent
+printf '%s\n' '#!/bin/sh' "[ \"\$1\" = --version ] && { echo 'gpy-agent 1.2.3'; exit 0; }" "echo \"\$*\" >>'$calls'" 'exit 0' >$tmp/gpy-agent
 chmod +x $tmp/gpy-agent
 
-function __gpy_register_with_agent; return 0; end
+function __gpy_register_with_agent
+    return 0
+end
 
 function __starts
     test -f $calls; or begin
@@ -45,12 +47,13 @@ function __starts
     count (string match -r '^start$' <$calls)
 end
 
-function __first_prompt_with_protocol --argument-names protocol
+function __first_prompt_with --argument-names protocol agent_version
     rm -f $tmp/agent.sock $calls
     set -e __gpy_supervisor_initialized
     set -e __gpy_register_retry_pending
+    set -e __gpy_agent_version_checked
     test_stub_listener $tmp/agent.sock reply --lifetime 30 \
-        --reply '{"status":"ok","version":"0.0.0","protocol_version":'$protocol'}'
+        --reply '{"status":"ok","version":"'$agent_version'","protocol_version":'$protocol'}'
     __gpy_supervisor_on_prompt 2>/dev/null
 end
 
@@ -58,15 +61,20 @@ function __start_recorded
     test (__starts) -ge 1
 end
 
-__first_prompt_with_protocol 1
+__first_prompt_with 1 1.2.3
 poll_until 5 __start_recorded; or fail "a protocol 1 agent did not make the first prompt run start"
 check "a mismatched agent is started over exactly once" 1 (__starts)
 test_stop_pids $test_stub_pid
 
-__first_prompt_with_protocol 2
+__first_prompt_with 2 1.2.3
 # Absence cannot be polled for: give a wrongly started process a fixed window.
 sleep 0.5
 check "a matching agent is left alone" 0 (__starts)
+test_stop_pids $test_stub_pid
+
+__first_prompt_with 2 1.0.0
+poll_until 5 __start_recorded; or fail "an older agent on the same protocol did not make the first prompt run start"
+check "an older same-protocol agent is started over exactly once" 1 (__starts)
 test_stop_pids $test_stub_pid
 
 test_finish "Protocol mismatch starts the agent on the first prompt"

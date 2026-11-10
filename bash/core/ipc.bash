@@ -386,6 +386,24 @@ __gpy_check_protocol_version() {
     return 0
 }
 
+__gpy_agent_version_checked=0
+
+# 1 only when the running agent reports a different version than the installed
+# binary (an agent left running across an upgrade), and only the first time:
+# `start` decides whether to replace it. An unreadable version passes.
+__gpy_check_agent_version() {
+    [[ "$__gpy_agent_version_checked" == "1" ]] && return 0
+    __gpy_agent_version_checked=1
+
+    local response out agent_version="" binary_version
+    __gpy_send_json '{"op":"status"}' "" response 2>/dev/null
+    [[ $response =~ \"version\":\"([^\"]+)\" ]] && agent_version="${BASH_REMATCH[1]}"
+    out=$(gpy-agent --version 2>/dev/null)
+    binary_version="${out##* }"
+    [[ -n "$agent_version" && -n "$binary_version" ]] || return 0
+    [[ "$agent_version" == "$binary_version" ]]
+}
+
 # Canonical path of directory $2 into variable $1 (symlinks resolved, like the
 # agent's `canonicalize`): builtins in one subshell, so no `realpath(1)`,
 # which macOS before 13 does not ship. `builtin` keeps a user's `cd`/`pwd`
