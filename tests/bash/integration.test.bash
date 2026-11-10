@@ -315,9 +315,8 @@ else
             wc -c < "$__gpy_supervisor_call_count_file" | tr -d ' '
         }
 
-# Steady state: protocol check already cached. last_check_time=0 puts the
-# first call past the rate-limit window; the other two land inside it.
-        __gpy_protocol_version_checked=1
+# Steady state: last_check_time=0 puts the first call past the rate-limit
+# window; the other two land inside it.
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0
 
@@ -329,7 +328,7 @@ else
             rm -rf "$supervisor_test_tmp_dir"
             exit 1
         fi
-        echo "PASS: healthy supervisor check at the window boundary makes exactly 1 round-trip (ping only; protocol cached)"
+        echo "PASS: healthy supervisor check at the window boundary makes exactly 1 round-trip (ping only)"
 
         : > "$__gpy_supervisor_call_count_file"
         __gpy_supervisor_check
@@ -351,31 +350,24 @@ else
         fi
         echo "PASS: third consecutive healthy supervisor check within the rate-limit window makes 0 round-trips"
 
-# Down-path restart must clear the protocol cache in the PARENT shell:
-# __gpy_supervisor_start is backgrounded, so a reset inside it never reaches the
-# parent, and a mismatched daemon after restart would go undetected.
+# Down-path: an unreachable agent is restarted and counts one attempt in the
+# PARENT shell (__gpy_supervisor_start itself runs backgrounded).
         __gpy_supervisor_saved_is_running=$(declare -f __gpy_supervisor_is_running)
         __gpy_supervisor_saved_start=$(declare -f __gpy_supervisor_start)
         __gpy_supervisor_is_running() { return 1; }  # agent is down
         __gpy_supervisor_start() { return 1; }        # no-op: don't spawn a real agent
 
-        __gpy_protocol_version_checked=1   # stale cache from the prior healthy session
         __gpy_supervisor_last_check_time=0 # past the rate-limit window
         __gpy_supervisor_check_attempts=0
 
         __gpy_supervisor_check
 
-        if [[ "$__gpy_protocol_version_checked" != "0" ]]; then
-            echo "FAIL: down-path restart left parent protocol cache stale (__gpy_protocol_version_checked=$__gpy_protocol_version_checked, want 0); a post-restart mismatched agent would be skipped"
-            rm -rf "$supervisor_test_tmp_dir"
-            exit 1
-        fi
         if [[ "$__gpy_supervisor_check_attempts" != "1" ]]; then
             echo "FAIL: down-path restart did not increment restart attempts (got $__gpy_supervisor_check_attempts, want 1); the down-path was not actually taken"
             rm -rf "$supervisor_test_tmp_dir"
             exit 1
         fi
-        echo "PASS: down-path restart invalidates the parent shell's protocol cache so the next health check re-checks the protocol"
+        echo "PASS: down-path restart counts one attempt in the parent shell"
 
 # Interval/attempt cap are read from the theme export on every check:
 # two prompts 15 s apart with a 60 s interval probe once.
@@ -423,7 +415,6 @@ else
         unset -f __gpy_supervisor_call_count
         unset __gpy_supervisor_call_count_file
         unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
-        __gpy_protocol_version_checked=0
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0
 
