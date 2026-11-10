@@ -498,6 +498,18 @@ pub(super) fn fish_rc_body(shell_dir: &Path) -> String {
     )
 }
 
+/// `config.fish` block bodies releases before 0.9 wrote, which source the tree
+/// in `~/.config/fish/gpy` that `gpy setup` no longer keeps. Some carried a
+/// `# GPY Prompt Enhancement` comment as their first body line.
+pub(super) fn legacy_fish_rc_bodies(config_home: &Path) -> Vec<String> {
+    let old_init = config_home.join("fish/gpy/conf.d/gpy_init.fish");
+    let body = format!(
+        "if status is-interactive\n    source \"{}\"\nend",
+        old_init.display()
+    );
+    vec![format!("# GPY Prompt Enhancement\n{body}"), body]
+}
+
 /// The Zsh rc block body sourcing the tree at `shell_dir`.
 pub(super) fn zsh_rc_body(shell_dir: &Path) -> String {
     format!("source \"{}\"", shell_dir.join("gpy.zsh").display())
@@ -510,7 +522,7 @@ fn wire_fish(env: &Environment, config_home: &Path, shell_dir: &Path) -> Result<
         &config,
         RC_BLOCK_HEADER,
         &fish_rc_body(shell_dir),
-        &[],
+        &legacy_fish_rc_bodies(config_home),
         "so it loads the files in the data directory",
     )?;
     let fish_dir = config_home.join("fish");
