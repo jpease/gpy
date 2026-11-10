@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-11-09
+
 ### Fixed
 - `gpy setup --shell fish` now repoints a `config.fish` block that still sources the pre-0.9 tree in `~/.config/fish/gpy`. It used to report "GPY already configured" and leave it, so after the old tree went away `fish_prompt` ran without GPY's core files and failed with `Unknown command: __gpy_flag_value` on every prompt.
 
@@ -1110,7 +1112,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.3...HEAD
+[0.10.3]: https://github.com/jpease/gpy/releases/tag/v0.10.3
 [0.10.2]: https://github.com/jpease/gpy/releases/tag/v0.10.2
 [0.10.1]: https://github.com/jpease/gpy/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jpease/gpy/releases/tag/v0.10.0
