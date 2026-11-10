@@ -679,66 +679,6 @@ function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_
     __gpy_ipc_send_detached $payload (__gpy_ipc_timeout_ms)
 end
 
-# Prints the agent version; sets __gpy_agent_version/_protocol_version.
-function __gpy_get_agent_version --description 'Get the version and protocol version from the agent'
-    if not __gpy_agent_enabled
-        return 1
-    end
-
-    set -l payload '{"op":"status"}'
-    set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
-
-    if test -z "$result"
-        return 1
-    end
-
-    # Not `version`: that is fish's read-only special variable.
-    set -l agent_version_str (__gpy_json_extract_string version $result)
-    if test $status -ne 0
-        return 1
-    end
-    set -g __gpy_agent_version $agent_version_str
-
-    set -l protocol_version (__gpy_json_extract_int protocol_version $result)
-    if test $status -eq 0
-        set -g __gpy_agent_protocol_version $protocol_version
-    else
-        set -g __gpy_agent_protocol_version 0
-    end
-
-    echo $__gpy_agent_version
-    return 0
-end
-
-function __gpy_check_protocol_version --description 'Check and warn on protocol version mismatch'
-    # MUST match PROTOCOL_VERSION in gpy-agent/src/ipc/protocol/mod.rs.
-    set -l __gpy_protocol_version 2
-
-    if not __gpy_get_agent_version >/dev/null
-        return 0
-    end
-
-    if test "$__gpy_agent_protocol_version" -ne "$__gpy_protocol_version"
-        echo "" >&2
-        echo "warning: protocol version mismatch" >&2
-        echo "================================================" >&2
-        echo "Running agent protocol version: $__gpy_agent_protocol_version" >&2
-        echo "Expected protocol version: $__gpy_protocol_version" >&2
-        echo "" >&2
-        echo "This may cause compatibility issues. Recommended actions:" >&2
-        echo "  1. Restart the agent: gpy-agent restart" >&2
-        echo "  2. If issues persist, update gpy and re-run: gpy setup" >&2
-        echo "" >&2
-        echo "Fallback: Use oneshot mode if IPC fails:" >&2
-        echo "  gpy-agent oneshot git --cwd . --format ansi" >&2
-        echo "================================================" >&2
-        echo "" >&2
-        return 1
-    end
-
-    return 0
-end
-
 function __gpy_track_shell_for_agent_recovery --description 'Track this Fish PID so agent restarts can wake existing shells'
     set -l registry_dir (__gpy_shell_registry_dir)
     mkdir -p "$registry_dir" 2>/dev/null

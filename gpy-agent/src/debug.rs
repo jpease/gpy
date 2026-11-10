@@ -1,12 +1,26 @@
-//! Logging controlled by `GPY_DEBUG_LOG`.
+//! Logging: `GPY_DEBUG_LOG` for traces, `agent.log` for warnings.
 //!
 //! `debug_log!` writes only to the `GPY_DEBUG_LOG` file. `warn_log!` always
-//! writes stderr and mirrors to that file, since a daemon's stderr is `/dev/null`.
+//! writes stderr and appends to the warning log, since a daemon's stderr is
+//! `/dev/null`. The warning log is the `GPY_DEBUG_LOG` file when set, else
+//! `agent.log` in the cache root (`~/.cache/gpy/agent.log`), so warnings
+//! survive without any opt-in. Nothing else writes `agent.log`.
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, OnceLock};
+
+/// File name of the default warning log inside the cache root.
+const AGENT_LOG_NAME: &str = "agent.log";
+
+/// Where `warn_log!` appends: `GPY_DEBUG_LOG`, else the cache root's `agent.log`;
+/// `None` without a cache root.
+static WARN_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+    debug_log_path()
+        .map(PathBuf::from)
+        .or_else(|| crate::paths::cache_root().map(|root| root.join(AGENT_LOG_NAME)))
+});
 
 /// `GPY_DEBUG_LOG`, made absolute against the launch directory.
 static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
@@ -77,7 +91,8 @@ pub fn is_debug_enabled() -> bool {
     debug_log_path().is_some()
 }
 
-/// Log a warning to stderr, and to `GPY_DEBUG_LOG` if set.
+/// Log a warning to stderr and the warning log (`GPY_DEBUG_LOG`, else
+/// `agent.log` in the cache root), whether or not debug logging is on.
 #[macro_export]
 macro_rules! warn_log {
     ($category:expr, $($arg:tt)*) => {
@@ -85,12 +100,43 @@ macro_rules! warn_log {
     };
 }
 
-/// Write a warning to stderr and mirror it to `GPY_DEBUG_LOG` when set.
+#[cfg(test)]
+thread_local! {
+    /// Warnings captured instead of written while [`capture_warnings`] runs.
+    static CAPTURED: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f`, collecting the `[category] message` of every [`warn`] it makes on
+/// this thread instead of writing stderr or the log file.
+#[cfg(test)]
+pub(crate) fn capture_warnings<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    CAPTURED.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+    let result = f();
+    let captured = CAPTURED.with(|slot| slot.borrow_mut().take().unwrap_or_default());
+    (result, captured)
+}
+
+/// Write a warning to stderr and append it to the warning log.
 pub fn warn(category: &str, message: &str) {
+    #[cfg(test)]
+    {
+        let captured = CAPTURED.with(|slot| {
+            slot.borrow_mut().as_mut().is_some_and(|lines| {
+                lines.push(format!("[{category}] {message}"));
+                true
+            })
+        });
+        if captured {
+            return;
+        }
+    }
     // Not `eprintln!`: `clippy::print_stderr` is denied.
     let _ = writeln!(std::io::stderr(), "Warning: [{category}] {message}");
 
-    write_debug_log(category, message);
+    if let Some(path) = WARN_PATH.as_deref() {
+        append_to(path, &format_line(now_millis(), category, message));
+    }
 }
 
 /// Warn that `component` failed with `error` and is doing `fallback_action`.

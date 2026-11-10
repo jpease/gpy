@@ -103,6 +103,10 @@
               }
             }
           ]
+        },
+        "stale_error": {
+          "type": "boolean",
+          "description": "The last git status query failed; ahead/behind counts are unknown and render as an ahead glyph followed by ?. Omitted when false."
         }
       },
       "title": "RepositoryStatus (git)",

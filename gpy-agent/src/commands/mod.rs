@@ -18,6 +18,7 @@ pub mod debug;
 pub mod debug_paths;
 /// System health checks.
 pub mod doctor;
+mod doctor_agent;
 mod doctor_bundled;
 mod doctor_ipc;
 mod doctor_themes;

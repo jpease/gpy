@@ -36,6 +36,7 @@ fn bench_git_status_rendering(c: &mut Criterion) {
             state: gpy_agent::git::RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         });
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -62,6 +63,7 @@ fn bench_git_status_rendering(c: &mut Criterion) {
             state: gpy_agent::git::RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         });
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -92,6 +94,7 @@ fn bench_git_status_rendering(c: &mut Criterion) {
             state: gpy_agent::git::RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         });
         let ctx = RenderContext::new(&config_truncated, &theme, SegmentPosition::MIDDLE);

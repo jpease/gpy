@@ -1295,6 +1295,7 @@ fn test_write_git_creates_both_is_last_variants() {
         state: crate::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let config = Config::default();
@@ -1731,6 +1732,7 @@ fn git_cache_reflects_active_palette() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let config = Config::default();
@@ -1787,6 +1789,7 @@ fn write_git_writes_each_dialect_escaped_for_its_shell() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let config = Config::default();
@@ -1836,6 +1839,7 @@ fn write_git_with_none_prev_bg_produces_valid_output() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let config = Config::default();
@@ -1894,6 +1898,7 @@ fn git_cache_changes_when_palette_redefines_used_color() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     let config = Config::default();
@@ -2045,6 +2050,7 @@ fn clean_status(branch: &str) -> RepositoryStatus {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }

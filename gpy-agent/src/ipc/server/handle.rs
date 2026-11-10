@@ -628,6 +628,7 @@ mod content_token_tests {
             state: RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         })
     }

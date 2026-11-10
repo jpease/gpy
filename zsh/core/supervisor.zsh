@@ -2,13 +2,11 @@
 # Enable flags come from the theme export, which loads after this file, so
 # they are read at call time, never at source time.
 
+# `start` is idempotent and itself keeps a healthy agent or replaces one on
+# another protocol or version (e.g. left running across an upgrade), so it runs
+# whether or not the agent answers. Called once at shell startup, and by the
+# supervisor check when the agent is unreachable.
 function __gpy_start_agent() {
-    # `status` succeeds for an agent on a mismatched protocol or version too
-    # (e.g. left running across an upgrade); treat that as not running.
-    if gpy-agent status &>/dev/null && __gpy_check_protocol_version && __gpy_check_agent_version; then
-        return 0
-    fi
-
     # &! disowns immediately. Never waits: the first prompt renders from the
     # cache or oneshot, and the post-render retry registers once the agent is up.
     gpy-agent start &>/dev/null &!

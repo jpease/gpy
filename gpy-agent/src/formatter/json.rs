@@ -54,6 +54,7 @@ mod tests {
             state: crate::git::RepositoryState::Rebasing,
             stash_count: 6_u32,
             detached: true,
+            stale_error: false,
             rebase_progress: Some(crate::git::RebaseProgress {
                 step: 2_u32,
                 total: 5_u32,

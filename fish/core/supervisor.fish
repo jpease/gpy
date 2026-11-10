@@ -23,39 +23,21 @@ function __gpy_start_agent_detached --description 'Run gpy-agent start in the ba
     return 0
 end
 
-# The installed binary's version, empty when it cannot be read.
-function __gpy_agent_binary_version --description 'Print the installed gpy-agent version'
-    set -l agent_binary (__gpy_resolve_agent_binary); or return 1
-    set -l version_line ("$agent_binary" --version 2>/dev/null)
-    string match -rg '^\S+ (\S+)$' -- "$version_line"
-end
-
-# 1 only when the running agent reports a different version than the installed
-# binary (an agent left running across an upgrade), and only the first time:
-# `start` decides whether to replace it, and an unreadable version passes.
-# Needs __gpy_agent_version from a preceding __gpy_check_protocol_version.
-function __gpy_agent_version_is_current --description 'Check the running agent matches the installed binary, once per shell'
-    set -q __gpy_agent_version_checked; and return 0
-    set -g __gpy_agent_version_checked 1
-
-    set -l binary_version (__gpy_agent_binary_version)
-    test -n "$binary_version"; and test -n "$__gpy_agent_version"; or return 0
-    test "$binary_version" = "$__gpy_agent_version"
-end
-
-# Returns 0 when the agent is reachable, speaks this protocol and matches the
-# installed version; otherwise it starts the agent in the background and
-# returns 1.
-function __gpy_ensure_agent_started --description 'Start the agent in the background unless it is reachable'
+# Starts the agent in the background on every call: `start` is idempotent and
+# itself keeps a healthy agent or replaces one on another protocol or version
+# (left running across an upgrade). Returns 0 when the agent was already
+# answering, so the caller registers now; 1 when it was not, so registration
+# waits for the next prompt (__gpy_register_retry_pending).
+function __gpy_ensure_agent_started --description 'Run gpy-agent start in the background; 0 when the agent already answers'
     __gpy_agent_enabled; or return 1
     __gpy_resolve_agent_binary >/dev/null; or return 1
 
-    # A reachable agent on another protocol or version counts as not reachable.
-    if __gpy_agent_is_healthy; and __gpy_check_protocol_version; and __gpy_agent_version_is_current
-        return 0
-    end
+    set -l healthy 1
+    __gpy_agent_is_healthy; and set healthy 0
 
     __gpy_start_agent_detached
+    test $healthy -eq 0; and return 0
+
     set -g __gpy_register_retry_pending 1
     return 1
 end

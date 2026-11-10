@@ -148,8 +148,12 @@ impl<'a> GitResolver<'a> {
         (!text.is_empty()).then_some(text)
     }
 
-    /// Ahead/behind indicator (e.g. `↑2↓1`), or `None`.
+    /// Ahead/behind indicator (e.g. `↑2↓1`), or `None`. A failed last query
+    /// replaces the counts with `↑?` (the configured ahead glyph, a literal `?`).
     fn ahead_behind(&self) -> Option<String> {
+        if self.status.stale_error {
+            return Some([self.glyph(GitIconKind::Ahead), "?"].concat());
+        }
         let mut text = String::new();
         for (count, capped, icon) in [
             (
@@ -231,6 +235,7 @@ mod tests {
             state: RepositoryState::Clean,
             stash_count: 0,
             detached: false,
+            stale_error: false,
             rebase_progress: None,
         }
     }
@@ -609,6 +614,65 @@ mod tests {
         );
         assert_eq!(resolver.resolve("ahead_behind"), None);
         assert_eq!(resolver.resolve("branch"), Some("main".to_owned()));
+    }
+
+    #[test]
+    fn stale_error_replaces_counts_with_ahead_glyph_and_question_mark() {
+        let (config, theme) = (Config::default(), ThemeConfig::default());
+        let mut st = status();
+        st.behind = 3;
+        st.behind_capped = true;
+        st.stale_error = true;
+        let resolver = GitResolver::new(
+            &st,
+            GitState::AheadBehind,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        let ahead = config
+            .git
+            .icons
+            .glyph(crate::config::GitIconKind::Ahead, config.git.icon_set);
+        assert_eq!(resolver.resolve("ahead_behind"), Some(format!("{ahead}?")));
+        assert_eq!(resolver.resolve("branch"), Some("main".to_owned()));
+    }
+
+    #[test]
+    fn stale_error_marks_a_repo_with_no_upstream_counts() {
+        let (config, theme) = (Config::default(), ThemeConfig::default());
+        let mut st = status();
+        st.ahead = 0;
+        st.stale_error = true;
+        let resolver = GitResolver::new(
+            &st,
+            GitState::Clean,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        assert!(
+            resolver
+                .resolve("ahead_behind")
+                .is_some_and(|text| text.ends_with('?'))
+        );
+    }
+
+    #[test]
+    fn stale_error_stays_hidden_when_ahead_behind_is_hidden() {
+        let config = Config::default();
+        let mut theme = ThemeConfig::default();
+        theme.segments.git.show_ahead_behind = Some(false);
+        let mut st = status();
+        st.stale_error = true;
+        let resolver = GitResolver::new(
+            &st,
+            GitState::AheadBehind,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        assert_eq!(resolver.resolve("ahead_behind"), None);
     }
 
     #[test]

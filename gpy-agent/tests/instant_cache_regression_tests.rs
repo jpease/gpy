@@ -165,6 +165,7 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     };
     git_cache.set(repo.path(), stale_status, HashMap::new());

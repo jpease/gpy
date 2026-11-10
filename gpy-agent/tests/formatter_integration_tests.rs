@@ -28,6 +28,7 @@ fn sample_repo_status() -> RepositoryStatus {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }
@@ -62,6 +63,7 @@ fn git_json_matches_legacy() {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     });
 

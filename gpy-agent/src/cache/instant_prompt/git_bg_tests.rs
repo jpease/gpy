@@ -29,6 +29,7 @@ pub(super) fn clean_status() -> RepositoryStatus {
         state: RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     }
 }
@@ -225,4 +226,60 @@ fn git_bg_names_match_the_shared_vectors() {
         rows = rows.saturating_add(1);
     }
     assert_eq!(rows, 3, "one bgfile row per dialect");
+}
+
+/// A stale status shows `↑?` where `↑2` was; the next good status restores `↑2`.
+#[test]
+fn write_git_renders_stale_error_as_unknown_ahead_and_recovers() {
+    let (_dir, cache, repo_root) = cache_with_repo();
+    let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canonicalize"));
+
+    let config = Config::default();
+    let theme = ThemeManager::builtin("default")
+        .expect("builtin default theme")
+        .get();
+    let ahead = config
+        .git
+        .icons
+        .glyph(crate::config::GitIconKind::Ahead, config.git.icon_set)
+        .to_owned();
+    let good = RepositoryStatus {
+        ahead: 2,
+        ..clean_status()
+    };
+    let stale = RepositoryStatus {
+        stale_error: true,
+        ..good.clone()
+    };
+    let read = || {
+        let (dir, file_name) = cache_file_parts(&cache.cache_dir, &key, "git.none.ansi");
+        std::fs::read_to_string(dir.join(file_name)).expect("read git.none")
+    };
+    let write = |status: &RepositoryStatus| {
+        cache
+            .write_git(
+                &repo_root,
+                status,
+                &config,
+                &theme,
+                None,
+                &crate::palette::active_palette(&config),
+            )
+            .expect("write git")
+    };
+
+    write(&good);
+    assert!(read().contains(&format!("{ahead}2")), "{:?}", read());
+
+    assert!(
+        write(&stale),
+        "the stale rendering differs from the good one"
+    );
+    let shown = read();
+    assert!(shown.contains(&format!("{ahead}?")), "{shown:?}");
+    assert!(!shown.contains(&format!("{ahead}2")), "{shown:?}");
+    assert!(shown.contains("main"), "branch survives: {shown:?}");
+
+    write(&good);
+    assert!(read().contains(&format!("{ahead}2")), "{:?}", read());
 }

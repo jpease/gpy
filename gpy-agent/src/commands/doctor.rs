@@ -1,5 +1,6 @@
 //! `gpy doctor`: agent, config, theme, segment, plugin and binary checks.
 
+use super::doctor_agent::check_answering_agent;
 use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
 use super::doctor_ipc::check_ipc_client;
 use super::doctor_themes::check_theme_overrides;
@@ -78,11 +79,19 @@ fn check_agent_status(cfg: Option<&config::Config>) -> bool {
         return true;
     }
     match crate::paths::SocketPath::resolve(None) {
-        Ok(socket) => {
-            let probe = AgentClient::new(&socket)
-                .map_or_else(StatusProbe::Failed, |client| client.probe_status());
-            report_agent_probe(probe, socket.path())
-        }
+        Ok(socket) => match AgentClient::new(&socket) {
+            Ok(client) => {
+                let probe = client.probe_status();
+                let healthy = report_agent_probe(&probe, socket.path());
+                match &probe {
+                    StatusProbe::Answered(status) => {
+                        check_answering_agent(&client, status) && healthy
+                    }
+                    _ => healthy,
+                }
+            }
+            Err(err) => report_agent_probe(&StatusProbe::Failed(err), socket.path()),
+        },
         Err(err) => {
             output::fail(format_args!("Cannot resolve the agent socket: {err}"));
             false
@@ -654,7 +663,7 @@ fn check_binaries() -> bool {
 /// The agent check's verdict from a probe of its socket. A refused or absent
 /// socket and a load-shedding agent only warn; an agent that holds its socket
 /// without answering is wedged, and every shell prompt would time out on it.
-fn report_agent_probe(probe: StatusProbe, socket_path: &std::path::Path) -> bool {
+fn report_agent_probe(probe: &StatusProbe, socket_path: &std::path::Path) -> bool {
     match probe {
         StatusProbe::Answered(_) => {
             output::ok("Running");

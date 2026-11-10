@@ -24,6 +24,7 @@ fn sample_git_status() -> Response {
         state: gpy_agent::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     })
 }
@@ -43,6 +44,7 @@ fn sample_git_with_conflicts() -> Response {
         state: gpy_agent::git::RepositoryState::Merging,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     })
 }
@@ -62,6 +64,7 @@ fn sample_git_rebase() -> Response {
         state: gpy_agent::git::RepositoryState::Rebasing,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     })
 }
@@ -216,6 +219,7 @@ fn snapshot_git_long_branch_name() {
         state: gpy_agent::git::RepositoryState::Clean,
         stash_count: 0,
         detached: false,
+        stale_error: false,
         rebase_progress: None,
     });
 

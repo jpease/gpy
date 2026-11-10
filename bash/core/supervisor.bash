@@ -1,7 +1,3 @@
-# Caches only a confirmed protocol match, so health checks after the first pay
-# for the ping alone; reset on every (re)start.
-__gpy_protocol_version_checked=0
-
 __gpy_supervisor_is_running() {
     local socket_path
     __gpy_ipc_endpoint_into socket_path
@@ -12,31 +8,16 @@ __gpy_supervisor_is_running() {
     local response
     __gpy_send_json "$ping_json" "" response 2>/dev/null
 
-    [[ -n "$response" && "$response" == *'"status":"ok"'* ]] || return 1
-
-    # A responsive agent on the wrong protocol (left running across an
-    # upgrade) counts as not running, so the caller restarts it.
-    if [[ "$__gpy_protocol_version_checked" == "1" ]]; then
-        return 0
-    fi
-
-    if __gpy_check_protocol_version && __gpy_check_agent_version; then
-        __gpy_protocol_version_checked=1
-        return 0
-    fi
-
-    return 1
+    [[ -n "$response" && "$response" == *'"status":"ok"'* ]]
 }
 
+# Runs `gpy-agent start` unconditionally: it is idempotent and itself keeps a
+# healthy agent or replaces one on another protocol or version (left running
+# across an upgrade). Called once at shell init, and by the supervisor check
+# when the agent is unreachable.
 __gpy_supervisor_start() {
-    __gpy_protocol_version_checked=0
-
     # Not gated on GPY_AGENT_SUPERVISOR_ENABLED, which only controls restarts.
     __gpy_agent_enabled || return 0
-
-    if __gpy_supervisor_is_running; then
-        return 0
-    fi
 
     # Never waits: the first prompt renders from the cache or oneshot, and a
     # later prompt registers once the agent is up.
@@ -93,9 +74,6 @@ __gpy_supervisor_check() {
     fi
 
     __gpy_supervisor_check_attempts=$((__gpy_supervisor_check_attempts + 1))
-    # Reset here too: the backgrounded start runs in a subshell, so its own
-    # reset never reaches this shell.
-    __gpy_protocol_version_checked=0
     __gpy_supervisor_start &>/dev/null &
     disown
 }

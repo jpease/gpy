@@ -128,7 +128,7 @@ impl NativeGitBackend {
 
     /// Execute a git command that may fail (for optional operations).
     fn run_git_optional(repo_path: &Path, args: &[&str], deadline: Instant) -> Option<String> {
-        run_git_until(repo_path, args, deadline).ok()
+        run_git_quiet_env_until(repo_path, args, &[], deadline).ok()
     }
 
     /// Deadline for a standalone git query outside a status operation.
@@ -263,9 +263,12 @@ impl NativeGitBackend {
         match branch_head {
             BranchHead::Named(name) => Ok((name, false)),
             BranchHead::Detached => {
-                if let Ok(hash) =
-                    run_git_until(repo_path, &["rev-parse", "--short", "HEAD"], deadline)
-                {
+                if let Ok(hash) = run_git_quiet_env_until(
+                    repo_path,
+                    &["rev-parse", "--short", "HEAD"],
+                    &[],
+                    deadline,
+                ) {
                     return Ok((hash, true));
                 }
                 oid.and_then(|full| full.get(..7))
@@ -501,6 +504,7 @@ impl NativeGitBackend {
             stash_count,
             detached,
             rebase_progress,
+            stale_error: false,
         };
 
         Ok(Some(CompleteStatus {
@@ -614,6 +618,26 @@ fn run_git_env_until<S: AsRef<OsStr>>(
     envs: &[(&str, &str)],
     deadline: Instant,
 ) -> Result<String> {
+    let result = run_git_quiet_env_until(repo_path, args, envs, deadline);
+    if let Err(error) = &result {
+        failure_log::log_failure(repo_path, args, error);
+    }
+    result
+}
+
+/// [`run_git_env_until`] without the failure warning, for commands whose
+/// non-zero exit is an expected answer (`config --get` on an unset key,
+/// `rev-parse --verify --quiet`).
+///
+/// # Errors
+///
+/// Same as [`run_git_until`].
+fn run_git_quiet_env_until<S: AsRef<OsStr>>(
+    repo_path: &Path,
+    args: &[S],
+    envs: &[(&str, &str)],
+    deadline: Instant,
+) -> Result<String> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
         return Err(Error::git(
@@ -682,7 +706,11 @@ const REPO_LOCAL_GIT_ENV: &[&str] = &[
 fn git_output_to_string(output: &std::process::Output) -> Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::git(format!("Git command failed: {}", stderr.trim())));
+        return Err(Error::git(format!(
+            "Git command failed ({}): {}",
+            output.status,
+            stderr.trim()
+        )));
     }
     // Don't trim leading whitespace — git status porcelain uses it.
     Ok(String::from_utf8_lossy(&output.stdout)
@@ -692,6 +720,9 @@ fn git_output_to_string(output: &std::process::Output) -> Result<String> {
 
 /// Guard against git's stale untracked cache (#1204).
 mod untracked_guard;
+
+/// Rate-limited warning log for failed git commands.
+mod failure_log;
 
 #[cfg(test)]
 mod tests;

@@ -175,14 +175,14 @@ impl From<ExchangeError> for Error {
     }
 }
 
-/// Send `message` (JSON op, no trailing newline) over `stream` and decode the
-/// one-line reply. Message and newline go in one write to avoid EPIPE from a
-/// server that answers and closes. Unbounded in time: callers wrap it in a
-/// timeout.
-async fn exchange(
+/// Send `message` (JSON op, no trailing newline) over `stream` and read the
+/// one-line reply undecoded. Message and newline go in one write to avoid
+/// EPIPE from a server that answers and closes. Unbounded in time: callers
+/// wrap it in a timeout.
+async fn exchange_line(
     mut stream: tokio::net::UnixStream,
     message: &str,
-) -> std::result::Result<Response, ExchangeError> {
+) -> std::result::Result<String, ExchangeError> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
     let mut payload = Vec::with_capacity(message.len().saturating_add(1));
@@ -203,7 +203,16 @@ async fn exchange(
     if reply.is_empty() {
         return Err(ExchangeError::Closed);
     }
-    decode_control_reply(&String::from_utf8_lossy(&reply)).map_err(ExchangeError::Reply)
+    Ok(String::from_utf8_lossy(&reply).into_owned())
+}
+
+/// [`exchange_line`], with the reply decoded as a control reply.
+async fn exchange(
+    stream: tokio::net::UnixStream,
+    message: &str,
+) -> std::result::Result<Response, ExchangeError> {
+    let line = exchange_line(stream, message).await?;
+    decode_control_reply(&line).map_err(ExchangeError::Reply)
 }
 
 /// Why [`request`] failed, keeping the stage so callers can tell a refused
@@ -228,8 +237,30 @@ impl From<RequestFailure> for Error {
     }
 }
 
-/// Connect to the agent, send `message` and decode its one-line reply, all
-/// within `budget`.
+/// Connect to the agent, send `message` and read its one-line reply
+/// undecoded, all within `budget`.
+///
+/// # Errors
+/// Returns the stage that failed: connect, the budget elapsing, or the
+/// exchange (closed without a reply, I/O error).
+async fn request_line(
+    socket_path: &Path,
+    message: &str,
+    budget: Duration,
+) -> std::result::Result<String, RequestFailure> {
+    tokio::time::timeout(budget, async {
+        let stream = tokio::net::UnixStream::connect(socket_path)
+            .await
+            .map_err(RequestFailure::Connect)?;
+        exchange_line(stream, message)
+            .await
+            .map_err(RequestFailure::Exchange)
+    })
+    .await
+    .unwrap_or_else(|_| Err(RequestFailure::Timeout))
+}
+
+/// [`request_line`], with the reply decoded as a control reply.
 ///
 /// # Errors
 /// Returns the stage that failed: connect, the budget elapsing, or the
@@ -239,16 +270,8 @@ pub(super) async fn request(
     message: &str,
     budget: Duration,
 ) -> std::result::Result<Response, RequestFailure> {
-    tokio::time::timeout(budget, async {
-        let stream = tokio::net::UnixStream::connect(socket_path)
-            .await
-            .map_err(RequestFailure::Connect)?;
-        exchange(stream, message)
-            .await
-            .map_err(RequestFailure::Exchange)
-    })
-    .await
-    .unwrap_or_else(|_| Err(RequestFailure::Timeout))
+    let line = request_line(socket_path, message, budget).await?;
+    decode_control_reply(&line).map_err(|e| RequestFailure::Exchange(ExchangeError::Reply(e)))
 }
 
 /// How a failed status request reads to `probe_status`.
@@ -437,6 +460,24 @@ impl AgentClient {
         status_probe_from(self.send(&Op::Status.bare_request(), REQUEST_BUDGET))
     }
 
+    /// Ask the agent for the JSON git status segment of `cwd` and return the
+    /// reply line as the agent sent it: the segment, or `{"error":…}` when
+    /// the agent could not produce one.
+    ///
+    /// # Errors
+    /// Returns an error if the exchange fails or times out.
+    pub fn git_reply(&self, cwd: &Path) -> Result<String> {
+        let message = serde_json::json!({
+            "op": Op::Git.as_str(),
+            "cwd": cwd.to_string_lossy(),
+            "format": "json",
+        })
+        .to_string();
+        Ok(self
+            .runtime
+            .block_on(request_line(&self.socket, &message, REQUEST_BUDGET))?)
+    }
+
     /// Whether nothing is listening on the socket (connection refused or file
     /// gone); an accepted connection means a live agent.
     #[must_use]
@@ -622,6 +663,41 @@ mod tests {
             matches!(alive, Ok(true)),
             "an agent that replied and closed is alive; got {alive:?}"
         );
+    }
+
+    /// `git_reply` sends a JSON-format git request for the directory and hands
+    /// back the agent's reply line untouched, an `{"error":…}` included.
+    #[test]
+    fn git_reply_sends_a_git_request_and_returns_the_raw_reply() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("git.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0_u8; 1024];
+            let read = stream.read(&mut buf).expect("read request");
+            stream
+                .write_all(b"{\"error\":\"Unable to read current working directory\"}\n")
+                .expect("write reply");
+            String::from_utf8_lossy(buf.get(..read).expect("bytes read")).into_owned()
+        });
+
+        let reply = client_at(&socket_path).git_reply(Path::new("/some/repo"));
+        let request = server.join().expect("join fake server thread");
+
+        assert_eq!(
+            reply.expect("git reply"),
+            "{\"error\":\"Unable to read current working directory\"}\n"
+        );
+        let sent: serde_json::Value = serde_json::from_str(request.trim()).expect("JSON request");
+        for (field, expected) in [("op", "git"), ("cwd", "/some/repo"), ("format", "json")] {
+            assert_eq!(
+                sent.get(field).and_then(serde_json::Value::as_str),
+                Some(expected),
+                "request field {field}"
+            );
+        }
     }
 
     /// Pins the fixtures to the daemon's real JSON-formatted `Ack` reply.

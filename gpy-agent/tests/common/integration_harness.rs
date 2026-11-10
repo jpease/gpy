@@ -222,6 +222,7 @@ impl IntegrationTestServer {
                     state,
                     stash_count: 0,
                     detached: false,
+                    stale_error: false,
                     rebase_progress: None,
                 };
                 return Ok(Response::RepositoryStatus(status));
