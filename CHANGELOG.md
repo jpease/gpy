@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-11-10
+
 ### Fixed
 - When the agent cannot read a repository's git status, the prompt now shows `↑?` where the ahead/behind count was (branch and other fields come from the last good status) instead of silently keeping the old count; the next successful query restores it. (#1238)
 - The agent log, `~/.cache/gpy/agent.log` (or `GPY_DEBUG_LOG`), now receives warnings by default; it stayed empty before. Failed git commands are logged once per repository and error per minute, with a count of suppressed repeats. Git error messages now include the exit status. (#1238)
@@ -1126,7 +1128,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.4...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.5...HEAD
+[0.10.5]: https://github.com/jpease/gpy/releases/tag/v0.10.5
 [0.10.4]: https://github.com/jpease/gpy/releases/tag/v0.10.4
 [0.10.3]: https://github.com/jpease/gpy/releases/tag/v0.10.3
 [0.10.2]: https://github.com/jpease/gpy/releases/tag/v0.10.2
