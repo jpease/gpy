@@ -1,8 +1,9 @@
 name: Release
 
-# Validates the tag against every declared version, runs the full gate and
-# budgets, builds, packages (scripts/package-release.sh, fail-closed),
-# smoke-tests the archive, and publishes.
+# Validates the tag against every declared version, proves or runs the full
+# gate and budgets (see `proven` below), builds, packages
+# (scripts/package-release.sh, fail-closed), smoke-tests the archive, and
+# publishes.
 
 on:
   push:
@@ -36,14 +37,41 @@ jobs:
     name: Validate Release
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Job-level reads for the proof lookup (scripts/release-gate-proven.sh).
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      gate-proven: ${{ steps.proven.outputs.proven }}
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      # Do not re-run what already passed on unchanged code: if the PR that
+      # produced this commit passed gate-result on a head commit with the same
+      # git tree, the gate legs below are skipped. Any doubt (no merged PR,
+      # different tree, missing or failed check, API error) runs the full gate.
+      - name: Check whether the PR gate already proved this tree
+        id: proven
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if ! ./scripts/release-gate-proven.sh --sha "$GITHUB_SHA" --repo "$REPO" >proof.out; then
+            printf 'proven=false\nreason=proof script failed; running the full gate\n' >proof.out
+          fi
+          cat proof.out >>"$GITHUB_OUTPUT"
+          if grep -qx 'proven=true' proof.out; then
+            echo "::notice title=Release gate::SKIPPED, $(sed -n 's/^reason=//p' proof.out)"
+          else
+            echo "::notice title=Release gate::FULL GATE, $(sed -n 's/^reason=//p' proof.out)"
+          fi
+          rm -f proof.out
 
       # A published release must come from main's history.
       - name: Require the release commit to be on main
@@ -88,23 +116,30 @@ jobs:
           echo "Version metadata is consistent across Cargo.toml and CHANGELOG.md"
 
       - name: Set up Rust
+        if: steps.proven.outputs.proven != 'true'
         uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
 
       - name: Install Rust tooling (nextest, audit, deny, machete)
+        if: steps.proven.outputs.proven != 'true'
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just,shellcheck
 
       - name: Install shells and shell-suite prerequisites
+        if: steps.proven.outputs.proven != 'true'
         uses: ./.github/actions/install-shells
 
       # The same gate a PR runs, so a tag cannot ship what would not merge.
+      # Skipped only when the proof step found that gate already green on
+      # this exact tree.
       - name: Rust toolchain gate
+        if: steps.proven.outputs.proven != 'true'
         run: just check-rust
 
       - name: Shell integration gate
+        if: steps.proven.outputs.proven != 'true'
         run: just check-shell
 
       # The PR gate enforces the micro-benchmark budgets; release adds the
@@ -112,6 +147,7 @@ jobs:
       # the loose `max` ceilings: they catch order-of-magnitude regressions,
       # not a few percent.
       - name: Performance budgets
+        if: steps.proven.outputs.proven != 'true'
         run: just bench-ci
 
   build:

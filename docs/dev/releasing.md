@@ -89,8 +89,17 @@ Everything below runs on `main`, with a clean tree.
    version=vX.Y.Z`). A tag push always publishes.
 
 9. **Watch the run.** `validate` → `build` (five targets) → `package` →
-   `release`. The gate that runs on a pull request runs here too, so a tag
-   cannot ship something that would not have merged.
+   `release`. `validate` first runs `scripts/release-gate-proven.sh`. When the
+   PR that produced the tagged commit (found through the squash merge's
+   `merge_commit_sha`) passed `gate-result` on its head commit, and that head
+   commit has the same git tree as the tagged commit, the full Rust and shell
+   gate and the performance budgets are skipped as already proven. The log
+   says which path ran (`Release gate: SKIPPED` or `FULL GATE`) and why. Any
+   doubt (no merged PR, a different tree, a missing or failed `gate-result`, an
+   API error) runs the full gate exactly as a PR would, so a tag cannot ship
+   something that would not have merged. Tag format, version consistency, the
+   on-main check, build, packaging and smoke runs never skip. A dry run
+   (`workflow_dispatch`) uses the same proof.
 
 10. **Verify the published release.** The assets are asserted by
     `scripts/package-release.sh` after the fact, but check by hand once:
@@ -141,13 +150,14 @@ Everything below runs on `main`, with a clean tree.
 | Tag format is `vMAJOR.MINOR.PATCH` | `release.yml`, `validate` |
 | Tag matches both version-bearing files | `release.yml`, `validate` |
 | The released commit is on `main` (tag push or `publish: true`; skipped on a dry run) | `release.yml`, `validate` |
-| Full Rust + shell gate, `just lint`, and the performance budgets (`just bench-ci`) pass at the tagged commit | `release.yml`, `validate` |
+| Full Rust + shell gate, `just lint`, and the performance budgets (`just bench-ci`) pass at the tagged commit, unless proven: the merged PR's head commit has the same tree as the tagged commit and a green `gate-result` (any doubt runs the full gate) | `release.yml`, `validate` → `scripts/release-gate-proven.sh` |
 | The packaged binaries actually run: the archive's `install.sh`, both `--version`s, a oneshot render, a responding agent, one prompt each from fish, zsh and bash (Linux); both `.exe` `--version`s and `gpy --help` (Windows). A failure here blocks `create-release` | `release.yml`, `smoke` → `scripts/smoke-release.sh` |
 | No Linux binary (either arch) references a glibc newer than `GPY_GLIBC_FLOOR` (2.31); the Linux legs link against that floor with `cargo zigbuild --target <triple>.2.31`, and the packaged x86_64 binaries run their `--version` in `ubuntu:20.04` | `release.yml`, `build` → `scripts/check-glibc-floor.sh`; `smoke` |
 | Release notes are non-empty and CHANGELOG-derived | `scripts/release-notes.sh` |
 | Archives contain the files the installers reach for | `scripts/package-release.sh` |
 | Build matrix agrees with both installers' asset names | `tests/repo/release_asset_contract.test.bash` |
 | Packaging and note generation still work | `tests/repo/release_packaging.test.bash` |
+| The gate-skip proof fails closed (different tree, no PR, missing or failed `gate-result`, API error) and gates exactly the expensive `validate` steps | `tests/repo/release_gate_proven.test.bash` |
 | The Linux legs stay pinned to the glibc floor, the gate checks it, and `docs/INSTALL.md` states the same floor | `tests/repo/release_glibc_floor.test.bash` |
 | Cargo.toml and the newest CHANGELOG heading declare the same version | `tests/repo/release_version_consistency.test.bash` |
 | The smoke run passes on the real debug binaries and fails on an agent that answers `--version` but nothing else | `tests/repo/release_smoke.test.bash` |
