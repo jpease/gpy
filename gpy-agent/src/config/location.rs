@@ -17,7 +17,7 @@ pub fn config_candidates_for(
 ) -> Vec<PathBuf> {
     [
         custom_path
-            .filter(|path| !path.as_os_str().is_empty())
+            .filter(|path| !path.is_empty())
             .map(Path::to_path_buf),
         crate::paths::xdg_path(xdg_config, os).map(|xdg| xdg.join("gpy").join("config.toml")),
         crate::paths::xdg_path(home, os)

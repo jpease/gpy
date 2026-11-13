@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// Max age at which a stale entry is still served immediately after the fast
 /// window misses. Must exceed the 30s git-status TTL.
-const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_secs(60);
+const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_mins(1);
 
 /// Handler for Git repository status queries.
 pub struct GitHandler {
@@ -292,6 +292,7 @@ mod tests {
     use crate::git::{RepositoryState, RepositoryStatus};
     use crate::ipc::ClientDirectory;
     use crate::ipc::fixtures::render_deps;
+    use std::assert_matches;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -492,11 +493,9 @@ mod tests {
             make_handler_with_config(Arc::new(GitStatusCache::new()), config_manager);
 
         let skipped = crate::security::SafePath::new(repo.to_str().expect("utf8")).expect("safe");
-        assert!(
-            matches!(
-                handler.status(&skipped, None),
-                Err(HandlerError::FeatureDisabled("Git"))
-            ),
+        assert_matches!(
+            handler.status(&skipped, None),
+            Err(HandlerError::FeatureDisabled("Git")),
             "repo under a symlinked skip_paths entry must be disabled"
         );
 
@@ -522,10 +521,10 @@ mod tests {
             make_handler_with_config(Arc::new(GitStatusCache::new()), config_manager);
 
         let path = crate::security::SafePath::new(git_root.to_str().expect("utf8")).expect("safe");
-        assert!(matches!(
+        assert_matches!(
             handler.status(&path, None),
             Err(HandlerError::FeatureDisabled("Git"))
-        ));
+        );
     }
 
     /// A within-TTL hit past its cooldown serves the cached value and revalidates in the background.

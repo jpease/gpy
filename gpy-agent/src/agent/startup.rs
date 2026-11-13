@@ -48,7 +48,7 @@ pub(super) fn create_clock_timer() -> tokio::time::Interval {
 /// Creates the 60 s pruning and shell re-nudge timer.
 /// First tick is at +60 s: the restart-nudge task already covers t=0.
 pub(super) fn create_pruning_timer() -> tokio::time::Interval {
-    let mut pruning_timer = tokio::time::interval(Duration::from_secs(60));
+    let mut pruning_timer = tokio::time::interval(Duration::from_mins(1));
     pruning_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pruning_timer.reset();
     pruning_timer

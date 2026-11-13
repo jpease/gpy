@@ -6,6 +6,7 @@ use crate::config::manager::ConfigManager;
 use crate::ipc::ClientDirectory;
 use crate::ipc::fixtures::{endpoint_deps, render_deps};
 use crate::ipc::{Message, Response, Segment};
+use std::assert_matches;
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -121,10 +122,10 @@ fn hot_reload_git_segment_blocks_requests() {
         "[ui]\nenabled_segments = [\"directory\"]\n",
     );
 
-    assert!(matches!(
+    assert_matches!(
         handle.handler_registry.route(&git_status_message(path)),
         Err(ref err) if err.to_string().contains("Git segment disabled")
-    ));
+    );
 }
 
 /// A minimal mid-chain `RepositoryStatus` request.
@@ -167,10 +168,10 @@ fn hot_reload_language_segment_updates_responses() {
         segment: Segment::default(),
         virtual_env: None,
     };
-    assert!(matches!(
+    assert_matches!(
         handle.handler_registry.route(&lang_msg),
         Ok(Response::Language { languages }) if !languages.is_empty()
-    ));
+    );
 
     reload_config(
         &config_manager,
@@ -183,8 +184,8 @@ fn hot_reload_language_segment_updates_responses() {
         segment: Segment::default(),
         virtual_env: None,
     };
-    assert!(matches!(
+    assert_matches!(
         handle.handler_registry.route(&message),
         Ok(Response::Language { languages }) if languages.is_empty()
-    ));
+    );
 }

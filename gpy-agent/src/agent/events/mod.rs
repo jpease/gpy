@@ -143,7 +143,7 @@ fn git_paths_hint(paths: &GitPaths, git_root: &Path) -> Option<Vec<PathBuf>> {
 /// for the root itself (git rejects an empty pathspec).
 fn incremental_relative_path<'a>(changed: &'a Path, git_root: &Path) -> Option<&'a Path> {
     let relative_path = changed.strip_prefix(git_root).ok()?;
-    if relative_path.as_os_str().is_empty() {
+    if relative_path.is_empty() {
         return None;
     }
     Some(relative_path)
@@ -359,7 +359,7 @@ fn nested_worktree_root(relative: &Path, git_root: &Path) -> PathBuf {
     relative
         .ancestors()
         .skip(1)
-        .take_while(|dir| !dir.as_os_str().is_empty())
+        .take_while(|dir| !dir.is_empty())
         .filter(|dir| git_root.join(dir).join(".git").symlink_metadata().is_ok())
         .last()
         .unwrap_or(relative)

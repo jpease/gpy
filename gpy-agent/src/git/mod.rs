@@ -139,7 +139,7 @@ pub(crate) fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
 #[must_use]
 pub(crate) fn parse_commondir_pointer(git_dir: &Path, contents: &str) -> Option<PathBuf> {
     let target = Path::new(contents.trim());
-    if target.as_os_str().is_empty() {
+    if target.is_empty() {
         return None;
     }
     Some(resolve_relative_to(git_dir, target))

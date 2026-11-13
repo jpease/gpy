@@ -215,28 +215,28 @@ mod tests {
     fn fresh_entry_within_ttl_is_fresh() {
         let inserted = SystemTime::UNIX_EPOCH;
         let now = inserted + Duration::from_secs(30);
-        assert!(is_fresh(inserted, now, Duration::from_secs(60)));
+        assert!(is_fresh(inserted, now, Duration::from_mins(1)));
     }
 
     #[test]
     fn entry_past_ttl_is_not_fresh() {
         let inserted = SystemTime::UNIX_EPOCH;
         let now = inserted + Duration::from_secs(90);
-        assert!(!is_fresh(inserted, now, Duration::from_secs(60)));
+        assert!(!is_fresh(inserted, now, Duration::from_mins(1)));
     }
 
     #[test]
     fn entry_exactly_at_ttl_boundary_is_not_fresh() {
         let inserted = SystemTime::UNIX_EPOCH;
-        let now = inserted + Duration::from_secs(60);
-        assert!(!is_fresh(inserted, now, Duration::from_secs(60)));
+        let now = inserted + Duration::from_mins(1);
+        assert!(!is_fresh(inserted, now, Duration::from_mins(1)));
     }
 
     #[test]
     fn clock_going_backwards_is_treated_as_stale_not_fresh() {
         let inserted = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
         let now = SystemTime::UNIX_EPOCH;
-        assert!(!is_fresh(inserted, now, Duration::from_secs(60)));
+        assert!(!is_fresh(inserted, now, Duration::from_mins(1)));
     }
 
     #[test]
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn fixed_ttl_expires_independently_of_the_shared_knob() {
-        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_mins(1));
         let now = SystemTime::now();
 
         map.insert_at("young", 1, now - Duration::from_secs(30));
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn insert_if_absent_inserts_once_while_fresh() {
-        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_mins(1));
 
         assert!(map.insert_if_absent("k", 1));
         assert!(!map.insert_if_absent("k", 2));
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn insert_if_absent_replaces_a_stale_entry() {
-        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_mins(1));
         map.insert_at("k", 1, SystemTime::now() - Duration::from_secs(61));
 
         assert!(map.insert_if_absent("k", 2));
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn insert_if_absent_has_exactly_one_winner_across_threads() {
-        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_mins(1));
         let winners: usize = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..16_u8)
                 .map(|_| scope.spawn(|| map.insert_if_absent("k", 0)))
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn insert_if_absent_evicts_down_to_capacity() {
-        let map: TtlMap<u32, u32> = TtlMap::with_ttl(4, Duration::from_secs(60));
+        let map: TtlMap<u32, u32> = TtlMap::with_ttl(4, Duration::from_mins(1));
         for key in 0..10_u32 {
             assert!(map.insert_if_absent(key, key));
         }

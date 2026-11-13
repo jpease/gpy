@@ -72,12 +72,11 @@ pub(super) fn remove_path(table: &mut toml::Table, path: &[String]) {
 /// anywhere else the overlay's value replaces the base's.
 pub(super) fn deep_merge(base: &mut toml::Table, overlay: toml::Table) {
     for (key, value) in overlay {
-        let meets_table = matches!(base.get(&key), Some(toml::Value::Table(_)));
         match value {
-            toml::Value::Table(inner) if meets_table => {
-                if let Some(toml::Value::Table(existing)) = base.get_mut(&key) {
-                    deep_merge(existing, inner);
-                }
+            toml::Value::Table(inner)
+                if let Some(toml::Value::Table(existing)) = base.get_mut(&key) =>
+            {
+                deep_merge(existing, inner);
             }
             other => {
                 base.insert(key, other);

@@ -1,6 +1,7 @@
 //! Tests for `gpy_agent::Error` conversions, source chaining, and message composition.
 
 use gpy_agent::{Error, Result};
+use std::assert_matches;
 use std::error::Error as StdError;
 use std::io;
 
@@ -96,14 +97,14 @@ fn test_toml_error_conversion() {
 #[test]
 fn test_git_helper() {
     let err = Error::git("test message");
-    assert!(matches!(err, Error::Git { .. }));
+    assert_matches!(err, Error::Git { .. });
     assert_eq!(err.to_string(), "Git operation failed: test message");
 }
 
 #[test]
 fn test_process_helper() {
     let err = Error::process("npm", "not found");
-    assert!(matches!(err, Error::Process { .. }));
+    assert_matches!(err, Error::Process { .. });
     assert!(err.to_string().contains("npm"));
     assert!(err.to_string().contains("not found"));
 }
@@ -128,21 +129,21 @@ fn test_result_question_mark_propagation() {
 fn test_from_io_error() {
     let io_err = io::Error::new(io::ErrorKind::NotFound, "test");
     let err: Error = io_err.into();
-    assert!(matches!(err, Error::Io(_)));
+    assert_matches!(err, Error::Io(_));
 }
 
 #[test]
 fn test_from_serde_json_error() {
     let json_err = serde_json::from_str::<i32>("not a number").expect_err("Should fail");
     let err: Error = json_err.into();
-    assert!(matches!(err, Error::Json(_)));
+    assert_matches!(err, Error::Json(_));
 }
 
 #[test]
 fn test_from_toml_error() {
     let toml_err = toml::from_str::<toml::Value>("bad { toml").expect_err("Should fail");
     let err: Error = toml_err.into();
-    assert!(matches!(err, Error::Config { .. }));
+    assert_matches!(err, Error::Config { .. });
 }
 
 #[test]
@@ -238,7 +239,7 @@ fn test_all_variants_have_proper_display() {
 fn test_io_context_keeps_kind_and_names_action() {
     let source = io::Error::new(io::ErrorKind::NotFound, "no such file");
     let err = Error::io_context("failed to read x", &source);
-    assert!(matches!(&err, Error::Io(e) if e.kind() == io::ErrorKind::NotFound));
+    assert_matches!(&err, Error::Io(e) if e.kind() == io::ErrorKind::NotFound);
     assert_eq!(
         gpy_agent::error::user_message(&err),
         "I/O operation failed: failed to read x: no such file"
@@ -248,10 +249,10 @@ fn test_io_context_keeps_kind_and_names_action() {
 #[test]
 fn test_import_errors_keep_their_type() {
     let base16: Error = gpy_agent::import::base16::ImportError::BadHex("zz".to_owned()).into();
-    assert!(matches!(base16, Error::Base16Import(_)));
+    assert_matches!(base16, Error::Base16Import(_));
     let starship: Error = gpy_agent::import::starship::ImportError::Parse {
         message: "bad".to_owned(),
     }
     .into();
-    assert!(matches!(starship, Error::StarshipImport(_)));
+    assert_matches!(starship, Error::StarshipImport(_));
 }

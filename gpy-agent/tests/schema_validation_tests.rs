@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used)]
 
+use std::assert_matches;
+
 #[test]
 fn test_msg_deserialize_repository_status_fish() {
     use gpy_agent::ipc::protocol::deserialize_message;
@@ -16,10 +18,7 @@ fn test_msg_deserialize_repository_status_fish() {
     for (input, label) in cases {
         let msg = format!("Failed to deserialize {label}");
         let message = deserialize_message(input).expect(&msg);
-        assert!(matches!(
-            message,
-            gpy_agent::ipc::Message::RepositoryStatus { .. }
-        ));
+        assert_matches!(message, gpy_agent::ipc::Message::RepositoryStatus { .. });
     }
 }
 
@@ -37,10 +36,7 @@ fn test_msg_deserialize_language_detect_fish() {
     for (input, label) in cases {
         let msg = format!("Failed to deserialize {label}");
         let message = deserialize_message(input).expect(&msg);
-        assert!(matches!(
-            message,
-            gpy_agent::ipc::Message::LanguageDetect { .. }
-        ));
+        assert_matches!(message, gpy_agent::ipc::Message::LanguageDetect { .. });
     }
 }
 
@@ -54,37 +50,25 @@ fn test_msg_deserialize_client_registration_fish() {
         let json = format!(r#"{{"op":"register","pid":{pid},"cwd":"/home/user/project"}}"#);
         let message = deserialize_message(json.as_bytes())
             .expect("Failed to deserialize RegisterClient (with cwd)");
-        assert!(matches!(
-            message,
-            gpy_agent::ipc::Message::RegisterClient { .. }
-        ));
+        assert_matches!(message, gpy_agent::ipc::Message::RegisterClient { .. });
     }
     {
         let json = format!(r#"{{"op":"register","pid":{pid}}}"#);
         let message = deserialize_message(json.as_bytes())
             .expect("Failed to deserialize RegisterClient (without cwd)");
-        assert!(matches!(
-            message,
-            gpy_agent::ipc::Message::RegisterClient { .. }
-        ));
+        assert_matches!(message, gpy_agent::ipc::Message::RegisterClient { .. });
     }
     {
         let json = format!(r#"{{"op":"unregister","pid":{pid}}}"#);
         let message =
             deserialize_message(json.as_bytes()).expect("Failed to deserialize UnregisterClient");
-        assert!(matches!(
-            message,
-            gpy_agent::ipc::Message::UnregisterClient { .. }
-        ));
+        assert_matches!(message, gpy_agent::ipc::Message::UnregisterClient { .. });
     }
     {
         let json = format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/home/user/new-project"}}"#);
         let message =
             deserialize_message(json.as_bytes()).expect("Failed to deserialize WorkspaceUpdate");
-        assert!(matches!(
-            message,
-            gpy_agent::ipc::Message::WorkspaceUpdate { .. }
-        ));
+        assert_matches!(message, gpy_agent::ipc::Message::WorkspaceUpdate { .. });
     }
 }
 
@@ -101,13 +85,13 @@ fn test_msg_deserialize_simple_ops_fish() {
     for (input, label) in cases {
         let msg = format!("Failed to deserialize {label}");
         let message = deserialize_message(input).expect(&msg);
-        assert!(matches!(
+        assert_matches!(
             message,
             gpy_agent::ipc::Message::Ping
                 | gpy_agent::ipc::Message::Status
                 | gpy_agent::ipc::Message::Shutdown
                 | gpy_agent::ipc::Message::ConfigReload
-        ));
+        );
     }
 }
 

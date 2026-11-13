@@ -253,14 +253,13 @@ fn poll_targets_of(watcher: &FileSystemWatcher, root: &Path) -> BTreeSet<PathBuf
     guard
         .registrations
         .get(&(root.to_path_buf(), WatchMode::Recursive))
-        .map(|registration| {
+        .map_or_default(|registration| {
             registration
                 .targets
                 .iter()
                 .map(|(target, _)| target.clone())
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// The union of every registration's targets: what must be armed.

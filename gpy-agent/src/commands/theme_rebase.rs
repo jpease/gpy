@@ -357,7 +357,7 @@ fn default_base(link: &ChainLink, copy: &toml::Table) -> Result<String> {
     match overlay::resolve_extends(&link.name, link) {
         Ok(_) => Ok(link.name.clone()),
         Err(reason) => {
-            let suggestion = closest_builtin(copy).map_or_else(String::new, |(builtin, count)| {
+            let suggestion = closest_builtin(copy).map_or_default(|(builtin, count)| {
                 format!(
                     " The closest builtin is '{builtin}' ({} differ): \
                      `gpy theme rebase {} --onto {builtin}`.",

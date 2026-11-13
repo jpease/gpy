@@ -27,10 +27,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const STATE_TTL: Duration = Duration::from_hours(24);
 
 /// After a failed or timed-out check, how long before trying again.
-const BACKOFF_TTL: Duration = Duration::from_secs(60);
+const BACKOFF_TTL: Duration = Duration::from_mins(1);
 
 /// Longest a check claims a repository; a crashed check frees it after this.
-const FLIGHT_TTL: Duration = Duration::from_secs(60);
+const FLIGHT_TTL: Duration = Duration::from_mins(1);
 
 /// Mismatches on one index state that trigger a repair without the
 /// stale-directory signature.
@@ -230,7 +230,7 @@ fn reconcile(probe: &Probe, parsed: &mut V2ParseState, bypass: Result<String>, d
         .key
         .modified
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+        .map_or_default(|d| d.as_secs());
     if mismatches >= REPAIR_AFTER_MISMATCHES
         || shows_stale_signature(&probe.repo, &differing, index_secs)
     {

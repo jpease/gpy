@@ -22,8 +22,7 @@ fn palette_section(env: &CliTestEnv) -> String {
     config
         .lines()
         .find(|line| line.trim_start().starts_with("palette"))
-        .map(str::to_owned)
-        .unwrap_or_default()
+        .map_or_default(str::to_owned)
 }
 
 fn assert_error_names(result: &CliCommandResult, needle: &str, context: &str) {

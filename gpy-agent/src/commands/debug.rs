@@ -150,7 +150,7 @@ pub fn prompt() -> Result<()> {
         output::plain(format_args!("{lang_duration:.2?}"));
 
         output::plain("--------------------------");
-        let total = git_duration.checked_add(lang_duration).unwrap_or_default();
+        let total = git_duration.saturating_add(lang_duration);
         output::plain(format_args!("Git + Language Total: {total:.2?}"));
         output::plain("\n(Note: Timings are roundtrip latencies including serialization, transport, and agent processing.)");
 

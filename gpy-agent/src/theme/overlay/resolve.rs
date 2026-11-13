@@ -93,7 +93,7 @@ fn plugin_of(path: &Path) -> Option<String> {
     Some(listed.map_or_else(
         || {
             root.file_name()
-                .map_or_else(String::new, |dir| dir.to_string_lossy().into_owned())
+                .map_or_default(|dir| dir.to_string_lossy().into_owned())
         },
         |plugin| plugin.manifest.id.as_str().to_owned(),
     ))
@@ -123,8 +123,7 @@ pub(super) fn own_link(mut top: ChainLink, own: OwnName) -> Result<ChainLink> {
     let entries: Vec<(String, PathBuf)> = top
         .path
         .parent()
-        .map(|dir| toml_stems(dir).collect())
-        .unwrap_or_default();
+        .map_or_default(|dir| toml_stems(dir).collect());
     let Some((stem, path)) = own_entry(entries, &top.name) else {
         return Err(super::overlay_error(
             &top.path.display().to_string(),

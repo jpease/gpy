@@ -14,7 +14,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// Minimum gap between log lines for the same `(repo, message)`.
-const REPEAT_WINDOW: Duration = Duration::from_secs(60);
+const REPEAT_WINDOW: Duration = Duration::from_mins(1);
 
 /// Distinct failures tracked before the table is pruned.
 const MAX_TRACKED: usize = 256;

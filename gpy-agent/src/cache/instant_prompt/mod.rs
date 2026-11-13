@@ -322,11 +322,11 @@ impl InstantPromptCache {
     ) -> bool {
         let tail = name.tail();
         let (dir, file_name) = cache_file_parts(&self.cache_dir, name.key, &tail);
-        let touched = std::fs::File::options()
-            .write(true)
-            .open(dir.join(file_name))
-            .and_then(|file| file.set_modified(now))
-            .is_ok();
+        let touched = std::fs::set_times(
+            dir.join(file_name),
+            std::fs::FileTimes::new().set_modified(now),
+        )
+        .is_ok();
         if touched {
             let tick = cache.next_tick();
             if let Some(written) = cache.entries.get_mut(&format!("{}.{tail}", name.key)) {
@@ -516,11 +516,10 @@ impl InstantPromptCache {
             .is_some_and(|written| written.content == content)
         {
             // Unchanged: bump mtime for the shells' TTL; a vanished file is rewritten.
-            match std::fs::File::options()
-                .write(true)
-                .open(&cache_file)
-                .and_then(|f| f.set_modified(SystemTime::now()))
-            {
+            match std::fs::set_times(
+                &cache_file,
+                std::fs::FileTimes::new().set_modified(SystemTime::now()),
+            ) {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Ok(()) | Err(_) => {
                     let tick = cache.next_tick();

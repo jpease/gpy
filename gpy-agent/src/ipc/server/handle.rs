@@ -762,6 +762,8 @@ mod socket_ownership_tests {
         reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
     )]
 
+    use std::assert_matches;
+
     use super::EndpointHandle;
     use crate::ipc::fixtures::{default_render_deps, endpoint_deps};
     use std::os::unix::fs::MetadataExt;
@@ -854,7 +856,7 @@ mod socket_ownership_tests {
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
             .await
             .expect("the accept loop must exit once its socket is lost");
-        assert!(matches!(outcome, Ok(Ok(()))), "{outcome:?}");
+        assert_matches!(outcome, Ok(Ok(())), "{outcome:?}");
         assert_eq!(inode_of(&socket_path), foreign_inode);
         drop(foreign);
     }
@@ -876,7 +878,7 @@ mod socket_ownership_tests {
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
             .await
             .expect("shutdown must end the loop");
-        assert!(matches!(outcome, Ok(Ok(()))), "{outcome:?}");
+        assert_matches!(outcome, Ok(Ok(())), "{outcome:?}");
     }
 
     // A never-bound handle must never unlink a file at its socket path.

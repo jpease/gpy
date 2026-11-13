@@ -70,12 +70,11 @@ impl Provenance {
     ) {
         for (key, value) in overlay {
             prefix.push(key.clone());
-            let meets_table = matches!(base.get(&key), Some(toml::Value::Table(_)));
             match value {
-                toml::Value::Table(inner) if meets_table => {
-                    if let Some(toml::Value::Table(existing)) = base.get_mut(&key) {
-                        self.write(existing, inner, prefix, file);
-                    }
+                toml::Value::Table(inner)
+                    if let Some(toml::Value::Table(existing)) = base.get_mut(&key) =>
+                {
+                    self.write(existing, inner, prefix, file);
                 }
                 other => {
                     self.replace(prefix, &other, file);

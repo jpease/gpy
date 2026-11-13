@@ -335,7 +335,7 @@ pub(super) fn is_git_significant_relative(relative: &Path) -> bool {
         return true;
     }
     // Remaining significant files sit directly under the git dir.
-    let is_top_level = relative.parent().is_none_or(|p| p.as_os_str().is_empty());
+    let is_top_level = relative.parent().is_none_or(std::path::Path::is_empty);
     if !is_top_level {
         return false;
     }
@@ -370,7 +370,7 @@ pub(super) fn is_common_gitdir_significant_relative(relative: &Path) -> bool {
     if relative.starts_with("refs/heads") || relative.starts_with("refs/remotes") {
         return true;
     }
-    let is_top_level = relative.parent().is_none_or(|p| p.as_os_str().is_empty());
+    let is_top_level = relative.parent().is_none_or(std::path::Path::is_empty);
     is_top_level
         && matches!(
             relative.file_name().and_then(std::ffi::OsStr::to_str),

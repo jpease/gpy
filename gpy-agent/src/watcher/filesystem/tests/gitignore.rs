@@ -1,4 +1,5 @@
 use super::*;
+use std::assert_matches;
 
 /// A gitignored language manifest still emits Language but no Git refresh.
 #[test]
@@ -24,10 +25,10 @@ fn gitignored_language_manifest_does_not_emit_git_refresh() {
         "a gitignored manifest should still emit the specialized event \
          but no Git refresh, got: {events:?}"
     );
-    assert!(matches!(
+    assert_matches!(
         events.first().map(|e| &e.event),
         Some(FileEvent::Language { .. })
-    ));
+    );
 }
 
 /// A canonicalized repo with `.git`, `gitignore` and the marker at `marker`
@@ -370,11 +371,9 @@ fn tracked_file_under_high_churn_token_dir_triggers_git_refresh() {
         let events = events_for_edit(&repo, &repo.join(rel));
         assert_eq!(events.len(), 1, "tracked `{rel}` edit must emit one event");
         assert_eq!(events.first().map(|e| &e.repo), Some(&repo), "`{rel}`");
-        assert!(
-            matches!(
-                events.first().map(|e| &e.event),
-                Some(FileEvent::Git { .. })
-            ),
+        assert_matches!(
+            events.first().map(|e| &e.event),
+            Some(FileEvent::Git { .. }),
             "`{rel}` edit must be a Git event"
         );
     }

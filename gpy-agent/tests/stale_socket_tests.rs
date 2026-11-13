@@ -16,6 +16,7 @@ use gpy_agent::agent::lifecycle::{
 };
 use gpy_agent::ipc::protocol::PROTOCOL_VERSION;
 use gpy_agent::paths::SocketPath;
+use std::assert_matches;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -185,7 +186,7 @@ fn status_probe_reports_a_dropping_agent_as_busy() {
 
     let probe = probe_at(&socket_path);
 
-    assert!(matches!(probe, StatusProbe::Busy), "got {probe:?}");
+    assert_matches!(probe, StatusProbe::Busy, "got {probe:?}");
 }
 
 #[test]
@@ -200,10 +201,7 @@ fn status_probe_reports_a_refused_socket_as_not_listening() {
 
     let probe = probe_at(&socket_path);
 
-    assert!(
-        matches!(probe, StatusProbe::NotListening(_)),
-        "got {probe:?}"
-    );
+    assert_matches!(probe, StatusProbe::NotListening(_), "got {probe:?}");
 }
 
 // A leftover socket file with nothing listening must be removed.

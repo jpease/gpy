@@ -382,9 +382,7 @@ fn load_full(file: ChainFile) -> Result<LoadedTheme> {
 /// # Errors
 /// Returns the attributed error if the merged table fails `from_table`.
 fn merge_chain(files: Vec<ChainFile>) -> Result<LoadedTheme> {
-    let top_label = files
-        .first()
-        .map_or_else(String::new, |file| file.label.clone());
+    let top_label = files.first().map_or_default(|file| file.label.clone());
     let mut links = Vec::with_capacity(files.len());
     let mut texts = Vec::with_capacity(files.len());
     let mut merged = toml::Table::new();

@@ -152,7 +152,7 @@ fn run_with_bundled(env: &CliTestEnv, args: &[&str]) -> common::cli_harness::Cli
 }
 
 fn count_entries(dir: &std::path::Path) -> usize {
-    std::fs::read_dir(dir).map_or(0_usize, Iterator::count)
+    std::fs::read_dir(dir).map_or_default(Iterator::count)
 }
 
 #[cfg(unix)]

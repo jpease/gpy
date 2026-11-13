@@ -8,18 +8,10 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 /// Age (by mtime) after which the startup sweep removes an unused entry.
-#[expect(
-    clippy::duration_suboptimal_units,
-    reason = "from_days/from_hours are unstable (duration_constructors)"
-)]
-pub(super) const CACHE_ENTRY_MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+pub(super) const CACHE_ENTRY_MAX_AGE: Duration = Duration::from_hours(14 * 24);
 
 /// Age after which a `.tmp-*` file is an orphan from a killed writer.
-#[expect(
-    clippy::duration_suboptimal_units,
-    reason = "from_days/from_hours are unstable (duration_constructors)"
-)]
-pub(super) const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+pub(super) const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_hours(1);
 
 /// Entries of `dir`; `None`, logged unless `dir` is missing, if it cannot be read.
 fn read_entries(dir: &Path) -> Option<std::fs::ReadDir> {

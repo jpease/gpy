@@ -252,6 +252,7 @@ fn parse_variable(chars: &[char], pos: &mut usize) -> Result<Node> {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
 
     use super::parse;
     use crate::template::TemplateError;
@@ -395,7 +396,7 @@ mod tests {
     fn deeply_nested_input_errors_without_panic() {
         // Without the depth cap this would overflow the stack.
         let deep = "[".repeat(100_000_usize);
-        assert!(matches!(parse(&deep), Err(TemplateError::TooDeep { .. })));
+        assert_matches!(parse(&deep), Err(TemplateError::TooDeep { .. }));
     }
 
     #[test]

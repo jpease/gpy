@@ -343,6 +343,7 @@ fn any_var_nonempty(nodes: &[Node], ctx: &EvalContext<'_>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
 
     use super::{
         EvalContext, MapResolver, Span, VariableResolver, check_template_controls, render,
@@ -579,10 +580,7 @@ mod tests {
         let resolver = MapResolver::from_pairs([("x", "hi")]);
         let ctx = EvalContext::new(&resolver);
         let err = render("[$x](fg:nonsuch)", &ctx).unwrap_err();
-        assert!(matches!(
-            err,
-            crate::template::TemplateError::UnknownColor { .. }
-        ));
+        assert_matches!(err, crate::template::TemplateError::UnknownColor { .. });
     }
 
     #[test]
@@ -647,10 +645,7 @@ mod tests {
         let resolver = MapResolver::from_pairs([("x", "hi")]);
         let ctx = EvalContext::new(&resolver);
         let err = render("[$x](fg:nonsuch)", &ctx).unwrap_err();
-        assert!(matches!(
-            err,
-            crate::template::TemplateError::UnknownColor { .. }
-        ));
+        assert_matches!(err, crate::template::TemplateError::UnknownColor { .. });
     }
 
     #[test]

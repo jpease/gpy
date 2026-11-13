@@ -212,6 +212,7 @@ impl DebounceEngine {
 mod tests {
     use super::*;
     use crate::watcher::{FileEvent, GitPaths, PendingEvent};
+    use std::assert_matches;
     use std::path::{Path, PathBuf};
     fn make_pending(repo: &str, file: &str) -> PendingEvent {
         PendingEvent {
@@ -412,10 +413,10 @@ mod tests {
 
         assert_eq!(flushed.len(), 1);
         let first = flushed.first().expect("one flushed event");
-        assert!(matches!(
+        assert_matches!(
             &first.event,
             FileEvent::Language { path } if path == Path::new("/repo/package.json")
-        ));
+        );
     }
 
     #[test]
@@ -561,7 +562,7 @@ mod tests {
     fn next_deadline_is_capped_by_max_delay() {
         let t0 = Instant::now();
         let mut engine =
-            DebounceEngine::new(Duration::from_secs(60)).with_max_delay(Duration::from_millis(20));
+            DebounceEngine::new(Duration::from_mins(1)).with_max_delay(Duration::from_millis(20));
         engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
         assert_eq!(engine.next_deadline(), Some(t0 + Duration::from_millis(20)));

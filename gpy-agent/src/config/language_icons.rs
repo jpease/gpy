@@ -124,13 +124,12 @@ pub(crate) fn nest_language_table(table: &mut toml::Table) {
     }
     for (key, value) in std::mem::take(table) {
         if LANGUAGE_FIELDS.contains(&key.as_str()) {
-            let meets_table = matches!(table.get(&key), Some(toml::Value::Table(_)));
             match value {
                 // A nested map after flat keys of the same map: its entries win.
-                toml::Value::Table(nested) if meets_table => {
-                    if let Some(toml::Value::Table(existing)) = table.get_mut(&key) {
-                        existing.extend(nested);
-                    }
+                toml::Value::Table(nested)
+                    if let Some(toml::Value::Table(existing)) = table.get_mut(&key) =>
+                {
+                    existing.extend(nested);
                 }
                 other => {
                     table.insert(key, other);

@@ -1,11 +1,12 @@
 use super::*;
 use crate::shell::Shell;
+use std::assert_matches;
 
 #[test]
 fn test_config_reload_json_deserializes_to_config_reload() {
     let msg = deserialize_message(Op::ConfigReload.bare_request().as_bytes())
         .expect("deserialize failed");
-    assert!(matches!(msg, Message::ConfigReload));
+    assert_matches!(msg, Message::ConfigReload);
 }
 
 #[test]
@@ -85,7 +86,7 @@ fn test_exit_status_validation_rejects_long_prev_bg() {
 #[test]
 fn test_status_op_is_still_the_agent_health_check() {
     let msg = deserialize_message(br#"{"op":"status"}"#).expect("deserialize failed");
-    assert!(matches!(msg, Message::Status));
+    assert_matches!(msg, Message::Status);
 }
 
 #[test]
@@ -224,10 +225,10 @@ fn test_encode_reply_newlines_keeps_reply_on_one_line() {
     let encoded = encode_reply_newlines("a\x1eb\nc\n\nd");
     assert_eq!(encoded, "ab\x1ec\x1e\x1ed");
     assert!(!encoded.contains('\n'));
-    assert!(matches!(
+    assert_matches!(
         encode_reply_newlines("\x1b[31mplain\x1b[0m"),
         std::borrow::Cow::Borrowed(_)
-    ));
+    );
 }
 
 #[test]
@@ -254,14 +255,14 @@ fn test_duration_is_a_plain_field_copy() {
 
 #[test]
 fn test_unit_ops() {
-    assert!(matches!(
+    assert_matches!(
         deserialize_message(br#"{"op":"ping"}"#).expect("deserialize failed"),
         Message::Ping
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         deserialize_message(br#"{"op":"shutdown"}"#).expect("deserialize failed"),
         Message::Shutdown
-    ));
+    );
 }
 
 /// A missing required field is reported before the denylisted `cwd` is ever canonicalized.
@@ -375,8 +376,8 @@ fn test_virtual_env_rejects_parent_dir() {
 fn test_virtual_env_accepts_plain_path() {
     let json = language_json_with_venv("/tmp/some-venv");
     let msg = deserialize_message(json.as_bytes()).expect("valid virtual_env");
-    assert!(matches!(
+    assert_matches!(
         msg,
         Message::LanguageDetect { virtual_env: Some(ref v), .. } if v == "/tmp/some-venv"
-    ));
+    );
 }

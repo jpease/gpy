@@ -74,7 +74,7 @@ pub(super) fn line_column(contents: &str, offset: usize) -> (usize, usize) {
     let column = before
         .rsplit('\n')
         .next()
-        .map_or(0, |tail| tail.chars().count())
+        .map_or_default(|tail| tail.chars().count())
         .saturating_add(1);
     (line, column)
 }

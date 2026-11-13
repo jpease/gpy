@@ -149,6 +149,7 @@ fn escape_controls(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
 
     use super::{ValidationErrorKind, segment_template_errors, validate_segment_templates};
     use crate::template::Palette;
@@ -216,13 +217,13 @@ mod tests {
         theme.segments.directory.format = Some("\u{1b}]0;title\u{7}$path".to_owned());
         let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
         assert_eq!(err.field_path, "segments.directory.format");
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             ValidationErrorKind::TemplateRenderFailed {
                 source: crate::template::TemplateError::ControlCharacter { code: 0x1b, .. },
                 ..
             }
-        ));
+        );
         let message = err.to_string();
         assert!(
             !message.chars().any(char::is_control),

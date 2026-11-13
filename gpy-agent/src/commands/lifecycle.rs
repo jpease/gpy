@@ -72,7 +72,6 @@ pub fn restart() -> Result<ExitCode> {
 /// Run `gpy-agent status`. A `gpy-agent` that cannot be run leaves the status
 /// unknown: print the error and return [`STATUS_UNKNOWN`], so `status` never
 /// reports a failure as 1.
-#[must_use]
 pub fn status() -> ExitCode {
     run_agent("status").unwrap_or_else(|err| {
         eprintln!("Error: {}", crate::error::user_message(&err));
