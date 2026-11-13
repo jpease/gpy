@@ -127,7 +127,7 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     };
     let parent = target
         .parent()
-        .filter(|p| !p.as_os_str().is_empty())
+        .filter(|p| !p.is_empty())
         .unwrap_or_else(|| Path::new("."));
     let file_name = target
         .file_name()

@@ -873,7 +873,7 @@ mod tests {
     /// Lines appended to `path` so far (0 when it does not exist).
     #[cfg(unix)]
     fn spawn_count(path: &Path) -> usize {
-        std::fs::read_to_string(path).map_or(0, |contents| contents.lines().count())
+        std::fs::read_to_string(path).map_or_default(|contents| contents.lines().count())
     }
 
     #[test]

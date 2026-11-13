@@ -318,7 +318,7 @@ const SAVE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Returns an error if the directory or lock file cannot be created, or the
 /// lock stays held past [`SAVE_LOCK_WAIT`].
 fn lock_for_save(target: &Path) -> Result<crate::fs_util::PathLock> {
-    if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+    if let Some(parent) = target.parent().filter(|p| !p.is_empty()) {
         std::fs::create_dir_all(parent)
             .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;
     }
@@ -337,7 +337,7 @@ fn lock_for_save(target: &Path) -> Result<crate::fs_util::PathLock> {
 fn write_atomically(target: &Path, contents: &str) -> Result<()> {
     let parent = target
         .parent()
-        .filter(|p| !p.as_os_str().is_empty())
+        .filter(|p| !p.is_empty())
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)
         .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;

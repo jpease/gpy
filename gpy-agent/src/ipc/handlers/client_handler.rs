@@ -135,7 +135,7 @@ impl ClientHandler {
             .watcher
             .lock_or_recover()
             .as_ref()
-            .map_or(0, |w| w.watched_repo_count());
+            .map_or_default(|w| w.watched_repo_count());
         let registered_clients = self.render.client_registry.len();
         let cache_entries = self.git_cache.len();
 

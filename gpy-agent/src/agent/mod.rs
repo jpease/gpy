@@ -213,7 +213,7 @@ fn spawn_reconcile_scan(
     let repos = watcher_slot
         .lock_or_recover()
         .as_ref()
-        .map_or_else(Vec::new, |w| w.watched_roots());
+        .map_or_default(|w| w.watched_roots());
     if repos.is_empty() {
         in_flight.store(false, Ordering::Release);
         return;
@@ -235,7 +235,7 @@ fn spawn_reconcile_scan(
         watcher_for_reconcile
             .lock_or_recover()
             .as_ref()
-            .map_or_else(Vec::new, |w| w.watched_roots())
+            .map_or_default(|w| w.watched_roots())
     };
     tokio::spawn(run_reconcile_scan(
         repos,

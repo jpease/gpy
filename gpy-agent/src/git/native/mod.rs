@@ -377,7 +377,7 @@ impl NativeGitBackend {
 
         run_git_until(repo_path, &["stash", "list", "-z"], deadline)
             .ok()
-            .map_or(0, |output| {
+            .map_or_default(|output| {
                 u32::try_from(output.split('\0').filter(|entry| !entry.is_empty()).count())
                     .unwrap_or(u32::MAX)
             })

@@ -20,7 +20,7 @@ pub(crate) static LAUNCH_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// `path` made absolute against [`LAUNCH_DIR`], else the current directory.
 #[must_use]
 pub fn absolutize(path: &Path) -> PathBuf {
-    if path.is_absolute() || path.as_os_str().is_empty() {
+    if path.is_absolute() || path.is_empty() {
         return path.to_path_buf();
     }
     LAUNCH_DIR

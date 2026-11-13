@@ -93,7 +93,7 @@ fn plugin_of(path: &Path) -> Option<String> {
     Some(listed.map_or_else(
         || {
             root.file_name()
-                .map_or_else(String::new, |dir| dir.to_string_lossy().into_owned())
+                .map_or_default(|dir| dir.to_string_lossy().into_owned())
         },
         |plugin| plugin.manifest.id.as_str().to_owned(),
     ))

@@ -176,7 +176,7 @@ pub fn translate_git(
         )
     };
 
-    let branch_part = branch_table.map_or_else(String::new, |table| {
+    let branch_part = branch_table.map_or_default(|table| {
         let filled = with_default_style(table, "style", "bold purple");
         let raw = table
             .get("format")
@@ -193,7 +193,7 @@ pub fn translate_git(
         remove_literal(&retained, "(:)")
     });
 
-    let status_part = status_table.map_or_else(String::new, |table| {
+    let status_part = status_table.map_or_default(|table| {
         let filled = with_default_style(table, "style", "bold red");
         let raw = table
             .get("format")

@@ -147,7 +147,7 @@ fn u32_field(value: &serde_json::Value, key: &str) -> u32 {
     value
         .get(key)
         .and_then(serde_json::Value::as_u64)
-        .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
+        .map_or_default(|n| u32::try_from(n).unwrap_or(u32::MAX))
 }
 
 impl IntegrationTestServer {

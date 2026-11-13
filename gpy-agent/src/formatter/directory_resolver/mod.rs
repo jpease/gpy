@@ -377,14 +377,14 @@ fn cluster_end(text: &str, start: usize) -> usize {
     };
     let mut len = first.len_utf8();
     if is_regional_indicator(first) && chars.peek().copied().is_some_and(is_regional_indicator) {
-        len = len.saturating_add(chars.next().map_or(0, char::len_utf8));
+        len = len.saturating_add(chars.next().map_or_default(char::len_utf8));
     }
     while let Some(next) = chars.peek().copied() {
         if next == '\u{200D}' {
             // Zero-width joiner glues the following character on.
             chars.next();
             len = len.saturating_add(next.len_utf8());
-            len = len.saturating_add(chars.next().map_or(0, char::len_utf8));
+            len = len.saturating_add(chars.next().map_or_default(char::len_utf8));
         } else if is_cluster_extender(next) {
             chars.next();
             len = len.saturating_add(next.len_utf8());

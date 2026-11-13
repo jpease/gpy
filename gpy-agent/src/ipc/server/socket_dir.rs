@@ -27,7 +27,7 @@ pub enum DirRepair {
 pub(crate) fn secure_socket_dir(socket_path: &Path, repair: DirRepair) -> Result<()> {
     let dir = socket_path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."));
     secure_dir_for_uid(dir, nix::unistd::getuid().as_raw(), repair)
 }

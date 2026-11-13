@@ -80,9 +80,7 @@ pub(crate) fn parse_u64(raw: Option<&str>) -> Reading<u64> {
 #[must_use]
 pub(crate) fn parse_positive(raw: Option<&str>) -> Reading<u64> {
     match parse_u64(raw) {
-        Reading::Value(0) => {
-            Reading::Invalid(raw.map_or_else(String::new, |r| r.trim().to_owned()))
-        }
+        Reading::Value(0) => Reading::Invalid(raw.map_or_default(|r| r.trim().to_owned())),
         other => other,
     }
 }

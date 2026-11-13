@@ -104,7 +104,7 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
             .parent()
             .ok_or_else(|| Error::invalid("path has no parent directory"))?;
         // A bare filename like `plugin.toml` has an empty parent; it means the cwd.
-        if parent.as_os_str().is_empty() {
+        if parent.is_empty() {
             PathBuf::from(".")
         } else {
             parent.to_path_buf()

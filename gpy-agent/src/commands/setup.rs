@@ -549,7 +549,7 @@ pub(super) fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
         } else {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_secs());
+                .map_or_default(|elapsed| elapsed.as_secs());
             let mut backup = target.as_os_str().to_owned();
             backup.push(format!(
                 ".backup.{}",

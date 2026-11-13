@@ -329,10 +329,7 @@ impl GitStatusCache {
             })
         });
         let nested_untracked = results.iter().any(|(path, status)| {
-            status.untracked
-                && path
-                    .parent()
-                    .is_some_and(|parent| !parent.as_os_str().is_empty())
+            status.untracked && path.parent().is_some_and(|parent| !parent.is_empty())
         });
         if collapsed_ancestor || nested_untracked {
             return None;

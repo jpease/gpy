@@ -154,7 +154,7 @@ impl Detector {
             return Ok(None);
         };
 
-        let file_size = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
+        let file_size = std::fs::metadata(path).map_or_default(|metadata| metadata.len());
         Ok(Some(DetectedLanguage {
             name: normalize_language_name(language.name()).to_owned(),
             confidence: 1.0, // Single-file detection has no prevalence to weigh.
@@ -313,7 +313,7 @@ fn path_candidates(path: &Path) -> Vec<Language> {
     let by_filename = path
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
-        .map_or_else(Vec::new, Language::from_filename);
+        .map_or_default(Language::from_filename);
     if !by_filename.is_empty() {
         return by_filename;
     }
@@ -325,7 +325,7 @@ fn path_candidates(path: &Path) -> Vec<Language> {
 
     path.extension()
         .and_then(std::ffi::OsStr::to_str)
-        .map_or_else(Vec::new, Language::from_extension)
+        .map_or_default(Language::from_extension)
 }
 
 /// Strips trailing [`STRIPPED_SUFFIX_EXTENSIONS`]; `None` if none present.

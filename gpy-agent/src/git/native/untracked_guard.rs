@@ -230,7 +230,7 @@ fn reconcile(probe: &Probe, parsed: &mut V2ParseState, bypass: Result<String>, d
         .key
         .modified
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+        .map_or_default(|d| d.as_secs());
     if mismatches >= REPAIR_AFTER_MISMATCHES
         || shows_stale_signature(&probe.repo, &differing, index_secs)
     {

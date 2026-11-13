@@ -364,7 +364,7 @@ mod tests {
 
     #[cfg(unix)]
     fn spawn_count(counter: &Path) -> usize {
-        std::fs::read_to_string(counter).map_or(0, |text| text.lines().count())
+        std::fs::read_to_string(counter).map_or_default(|text| text.lines().count())
     }
 
     #[cfg(unix)]

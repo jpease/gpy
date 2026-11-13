@@ -359,7 +359,7 @@ fn plan_install(id: &PluginId, force: bool) -> Result<Plan> {
 fn backup_targets(id: &PluginId, to_move: &[PathBuf]) -> Result<Vec<(PathBuf, PathBuf)>> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+        .map_or_default(|elapsed| elapsed.as_secs());
     let stamp = backup_stamp(now);
     let backup_dir = config_root().join("plugins.bak");
 
@@ -448,7 +448,7 @@ fn copy_tree(source: &Path, entries: &[TreeEntry], stage: &Path) -> Result<()> {
 fn ensure_dir_chain(path: &Path) -> Result<()> {
     let missing: Vec<&Path> = path
         .ancestors()
-        .take_while(|dir| !dir.as_os_str().is_empty() && !dir.exists())
+        .take_while(|dir| !dir.is_empty() && !dir.exists())
         .collect();
     for dir in missing.into_iter().rev() {
         match crate::fs_util::create_dir_unshared(dir) {
