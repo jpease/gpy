@@ -8,6 +8,7 @@ mod common;
 use gpy_agent::ipc::Message;
 use gpy_agent::ipc::protocol::deserialize_message;
 use gpy_agent::security::SafePath;
+use std::assert_matches;
 
 #[test]
 fn test_path_with_null_bytes() {
@@ -88,37 +89,34 @@ fn test_json_with_unexpected_fields() {
 
     let message = deserialize_message(json_with_extra.as_bytes())
         .expect("Should handle extra fields gracefully (forward compatibility)");
-    assert!(matches!(message, Message::RepositoryStatus { .. }));
+    assert_matches!(message, Message::RepositoryStatus { .. });
 }
 
 #[test]
 fn test_all_message_types_parse_in_op_form() {
     let pid = std::process::id();
     let parse = |line: String| deserialize_message(line.as_bytes()).expect("Should deserialize");
-    assert!(matches!(
+    assert_matches!(
         parse(format!(r#"{{"op":"register","pid":{pid},"cwd":"/tmp"}}"#)),
         Message::RegisterClient { .. }
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         parse(format!(r#"{{"op":"unregister","pid":{pid}}}"#)),
         Message::UnregisterClient { .. }
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         parse(format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/tmp"}}"#)),
         Message::WorkspaceUpdate { .. }
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         parse(r#"{"op":"git","cwd":"/tmp"}"#.to_owned()),
         Message::RepositoryStatus { .. }
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         parse(r#"{"op":"lang","cwd":"/tmp"}"#.to_owned()),
         Message::LanguageDetect { .. }
-    ));
-    assert!(matches!(
-        parse(r#"{"op":"status"}"#.to_owned()),
-        Message::Status
-    ));
+    );
+    assert_matches!(parse(r#"{"op":"status"}"#.to_owned()), Message::Status);
 }
 
 /// A `{"op":"ping","pad":"xxx"}` request body of exactly `len` bytes.

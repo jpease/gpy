@@ -1,4 +1,5 @@
 use super::*;
+use std::assert_matches;
 
 /// A no-paths overflow (e.g. inotify `IN_Q_OVERFLOW`, surfaced as `Ok` with
 /// `need_rescan()`) rescans every watched root.
@@ -34,8 +35,9 @@ fn rescan_overflow_with_no_paths_triggers_all_watched_roots() {
     expected_repos.sort();
     assert_eq!(rescanned_repos, expected_repos);
     for pending in recorded.iter() {
-        assert!(
-            matches!(pending.event, FileEvent::Git { .. }),
+        assert_matches!(
+            pending.event,
+            FileEvent::Git { .. },
             "a rescan should be delivered as a synthetic git event"
         );
     }
@@ -100,10 +102,10 @@ fn non_rescan_event_is_unaffected_by_overflow_handling() {
         1,
         "a normal gitdir event should still trigger exactly one git event, unchanged"
     );
-    assert!(matches!(
+    assert_matches!(
         events.first().map(|e| &e.event),
         Some(FileEvent::Git { .. })
-    ));
+    );
 }
 
 /// Several overflow paths under one root collapse to one rescan.
@@ -162,13 +164,11 @@ fn rescan_emits_whole_repo_for_each_affected_root() {
     let recorded = events.lock().unwrap();
     assert_eq!(recorded.len(), 2, "one rescan event per affected root");
     for pending in recorded.iter() {
-        assert!(
-            matches!(
-                &pending.event,
-                FileEvent::Git {
-                    paths: GitPaths::WholeRepo
-                }
-            ),
+        assert_matches!(
+            &pending.event,
+            FileEvent::Git {
+                paths: GitPaths::WholeRepo
+            },
             "a rescan must carry GitPaths::WholeRepo, got: {:?}",
             pending.event
         );

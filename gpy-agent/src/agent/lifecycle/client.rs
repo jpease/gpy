@@ -527,6 +527,7 @@ mod tests {
     use crate::ipc::wire::Op;
     use crate::ipc::{AgentStatus, Response};
     use crate::paths::SocketPath;
+    use std::assert_matches;
     use std::io::{Error as IoError, ErrorKind, Read, Write};
     use std::path::Path;
     use std::time::Duration;
@@ -546,24 +547,25 @@ mod tests {
         let outcome = classify_exchange(Err(ExchangeError::Read(IoError::from(
             ErrorKind::ConnectionReset,
         ))));
-        assert!(
-            matches!(outcome, Ok(PingOutcome::ClosedUnanswered)),
+        assert_matches!(
+            outcome,
+            Ok(PingOutcome::ClosedUnanswered),
             "got {outcome:?}"
         );
     }
 
     #[test]
     fn a_clean_close_and_a_broken_pipe_write_are_closed_unanswered() {
-        assert!(matches!(
+        assert_matches!(
             classify_exchange(Err(ExchangeError::Closed)),
             Ok(PingOutcome::ClosedUnanswered)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             classify_exchange(Err(ExchangeError::Send(IoError::from(
                 ErrorKind::BrokenPipe
             )))),
             Ok(PingOutcome::ClosedUnanswered)
-        ));
+        );
     }
 
     #[test]
@@ -571,26 +573,26 @@ mod tests {
         assert!(!closed_unanswered(&ExchangeError::Read(IoError::from(
             ErrorKind::TimedOut
         ))));
-        assert!(matches!(
+        assert_matches!(
             classify_exchange(Err(ExchangeError::Read(IoError::from(ErrorKind::TimedOut)))),
             Ok(PingOutcome::AcceptedNoReply)
-        ));
+        );
         assert!(
             classify_exchange(Err(ExchangeError::Send(IoError::from(
                 ErrorKind::PermissionDenied
             ))))
             .is_err()
         );
-        assert!(matches!(
+        assert_matches!(
             classify_exchange(Ok(crate::ipc::Response::Error {
                 message: "no".to_owned()
             })),
             Ok(PingOutcome::AcceptedNoReply)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             classify_exchange(Ok(crate::ipc::Response::Ack)),
             Ok(PingOutcome::Answered)
-        ));
+        );
     }
 
     #[test]
@@ -598,44 +600,41 @@ mod tests {
         let refused = status_probe_from(Err(RequestFailure::Connect(IoError::from(
             ErrorKind::ConnectionRefused,
         ))));
-        assert!(
-            matches!(refused, StatusProbe::NotListening(_)),
-            "got {refused:?}"
-        );
+        assert_matches!(refused, StatusProbe::NotListening(_), "got {refused:?}");
         let denied = status_probe_from(Err(RequestFailure::Connect(IoError::from(
             ErrorKind::PermissionDenied,
         ))));
-        assert!(matches!(denied, StatusProbe::Failed(_)), "got {denied:?}");
+        assert_matches!(denied, StatusProbe::Failed(_), "got {denied:?}");
     }
 
     #[test]
     fn status_probe_maps_silence_and_shedding() {
-        assert!(matches!(
+        assert_matches!(
             status_probe_from(Err(RequestFailure::Timeout)),
             StatusProbe::NoReply(_)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             status_probe_from(Err(RequestFailure::Connect(IoError::from(
                 ErrorKind::WouldBlock
             )))),
             StatusProbe::NoReply(_)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             status_probe_from(Err(RequestFailure::Exchange(ExchangeError::Closed))),
             StatusProbe::Busy
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             status_probe_from(Err(RequestFailure::Exchange(ExchangeError::Send(
                 IoError::from(ErrorKind::PermissionDenied)
             )))),
             StatusProbe::Failed(_)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             status_probe_from(Err(RequestFailure::Exchange(ExchangeError::Read(
                 IoError::from(ErrorKind::UnexpectedEof)
             )))),
             StatusProbe::NoReply(_)
-        ));
+        );
     }
 
     /// An agent that answers and immediately closes is alive.
@@ -659,8 +658,9 @@ mod tests {
         let alive = client_at(&socket_path).is_answering();
         server.join().expect("join fake server thread");
 
-        assert!(
-            matches!(alive, Ok(true)),
+        assert_matches!(
+            alive,
+            Ok(true),
             "an agent that replied and closed is alive; got {alive:?}"
         );
     }
@@ -725,10 +725,7 @@ mod tests {
     fn a_formatter_error_reply_over_the_wire_is_not_an_acknowledgement() {
         let response = request_against(b"{\"error\":\"config not ok: parse failed\"}\n")
             .expect("a formatter Error reply decodes as a Response");
-        assert!(
-            matches!(&response, Response::Error { message } if message == "config not ok: parse failed"),
-            "got {response:?}"
-        );
+        assert_matches!(&response, Response::Error { message } if message == "config not ok: parse failed", "got {response:?}");
         assert!(!is_ack(&response));
     }
 

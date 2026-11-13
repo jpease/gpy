@@ -307,6 +307,7 @@ pub(crate) fn run_trial(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn classify_applies_the_output_protocol() {
@@ -329,15 +330,12 @@ mod tests {
             (b"x", false),
             ("a\u{9b}b".as_bytes(), true),
         ] {
-            assert!(
-                matches!(classify(bytes, ok), Outcome::Hidden(_)),
-                "{bytes:?}"
-            );
+            assert_matches!(classify(bytes, ok), Outcome::Hidden(_), "{bytes:?}");
         }
-        assert!(matches!(
+        assert_matches!(
             classify(&vec![b'a'; OUTPUT_CAP + 1], true),
             Outcome::Hidden(_)
-        ));
+        );
         assert_eq!(
             classify(b"a\0junk", true),
             Outcome::Shown {

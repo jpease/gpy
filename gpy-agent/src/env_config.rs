@@ -497,6 +497,7 @@ mod tests {
         parse_u64, warn_once,
     };
     use crate::sync_ext::MutexExt as _;
+    use std::assert_matches;
     use std::ffi::OsStr;
 
     #[test]
@@ -543,8 +544,8 @@ mod tests {
         assert_eq!(parse_u64(Some("0")), Reading::Value(0));
         assert_eq!(parse_u64(Some(" 500 ")), Reading::Value(500));
         assert_eq!(parse_u64(Some("abc")), Reading::Invalid("abc".into()));
-        assert!(matches!(parse_positive(Some("0")), Reading::Invalid(_)));
-        assert!(matches!(parse_positive(Some("abc")), Reading::Invalid(_)));
+        assert_matches!(parse_positive(Some("0")), Reading::Invalid(_));
+        assert_matches!(parse_positive(Some("abc")), Reading::Invalid(_));
     }
 
     #[test]
@@ -618,8 +619,9 @@ mod tests {
             match state {
                 "on" => assert_eq!(reading, Reading::Value(true), "{raw:?} must be on"),
                 "off" => assert_eq!(reading, Reading::Value(false), "{raw:?} must be off"),
-                "unset" => assert!(
-                    matches!(reading, Reading::Unset | Reading::Invalid(_)),
+                "unset" => assert_matches!(
+                    reading,
+                    Reading::Unset | Reading::Invalid(_),
                     "{raw:?} must be unset"
                 ),
                 other => panic!("unknown state {other:?}"),

@@ -286,9 +286,10 @@ fn describe(written: &LoadedTheme, copied_from: Option<&str>) {
 /// would resolve it to the new file once it exists.
 fn cycle_once_written(chain: &ThemeChain, name: &str) -> Option<String> {
     let links: Vec<&ChainLink> = chain.iter().collect();
-    let at = links.windows(2).skip(1).position(
-        |pair| matches!(pair, [from, to] if from.source == Source::User && to.name == name),
-    )?;
+    let at = links
+        .array_windows::<2>()
+        .skip(1)
+        .position(|[from, to]| from.source == Source::User && to.name == name)?;
     let path: Vec<String> = links
         .iter()
         .take(at.saturating_add(2))

@@ -5,6 +5,7 @@ mod git;
 
 use git::{TestRepo, git_stdout};
 use gpy_agent::git::status::load_repository_state;
+use std::assert_matches;
 
 #[test]
 fn test_repo_fixture_is_an_initialized_repository() {
@@ -136,7 +137,7 @@ fn test_load_repository_state_invalid_path() {
     let result = load_repository_state(std::path::Path::new("/nonexistent/path"), 0, true);
 
     // Discovery may yield Ok(None) or an error for a nonexistent path.
-    assert!(matches!(result, Ok(None) | Err(_)));
+    assert_matches!(result, Ok(None) | Err(_));
 }
 
 #[test]
@@ -144,7 +145,7 @@ fn test_load_repository_state_not_a_repo() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
     let result = load_repository_state(temp_dir.path(), 0, true);
 
-    assert!(matches!(result, Ok(None)));
+    assert_matches!(result, Ok(None));
 }
 
 #[test]

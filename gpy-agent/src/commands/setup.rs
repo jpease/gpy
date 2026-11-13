@@ -712,24 +712,24 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
 fn sources_bashrc(text: &str) -> bool {
     text.lines().any(|line| {
         let words = shell_words(line);
-        words.windows(2).enumerate().any(|(index, pair)| {
-            let in_command_position = index
-                .checked_sub(1)
-                .and_then(|previous| words.get(previous))
-                .is_none_or(|word| {
-                    matches!(
-                        *word,
-                        ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
-                    )
-                });
-            let &[command, argument] = pair else {
-                return false;
-            };
-            let path = argument.trim_matches(['"', '\'']);
-            in_command_position
-                && matches!(command, "." | "source")
-                && (path == ".bashrc" || path.ends_with("/.bashrc"))
-        })
+        words
+            .array_windows::<2>()
+            .enumerate()
+            .any(|(index, &[command, argument])| {
+                let in_command_position = index
+                    .checked_sub(1)
+                    .and_then(|previous| words.get(previous))
+                    .is_none_or(|word| {
+                        matches!(
+                            *word,
+                            ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
+                        )
+                    });
+                let path = argument.trim_matches(['"', '\'']);
+                in_command_position
+                    && matches!(command, "." | "source")
+                    && (path == ".bashrc" || path.ends_with("/.bashrc"))
+            })
     })
 }
 

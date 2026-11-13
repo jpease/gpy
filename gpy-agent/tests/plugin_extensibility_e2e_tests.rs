@@ -22,6 +22,7 @@ mod env_guard;
 mod skip;
 
 use env_guard::EnvGuard;
+use std::assert_matches;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -245,7 +246,7 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
         .iter()
         .find(|theme| theme.name == "community")
         .expect("plugin theme should be discovered");
-    assert!(matches!(community.source, Source::Plugin { .. }));
+    assert_matches!(community.source, Source::Plugin { .. });
     let manager = ThemeManager::new("community").expect("load plugin theme");
     let mut config = Config::default();
     config.ui.enabled_segments = vec!["clock".to_owned(), "k8s_tools".to_owned()];

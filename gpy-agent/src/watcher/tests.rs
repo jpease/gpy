@@ -2,6 +2,7 @@ use super::registry::{
     is_common_gitdir_significant_relative, is_git_significant_relative, split_at_git_dir_modules,
 };
 use super::{FileEvent, PendingEvent, WatchRegistry, filter_ignored};
+use std::assert_matches;
 use std::path::{Path, PathBuf};
 
 /// Classify against a fresh, empty registry.
@@ -17,20 +18,21 @@ fn should_trigger_update(path: &Path) -> Option<PendingEvent> {
 #[test]
 fn python_version_file_is_language_event() {
     let event = classify_event(Path::new("/tmp/project/.python-version"));
-    assert!(matches!(event, Some(FileEvent::Language { .. })));
+    assert_matches!(event, Some(FileEvent::Language { .. }));
 }
 
 #[test]
 fn tool_versions_file_is_language_event() {
     let event = classify_event(Path::new("/tmp/project/.tool-versions"));
-    assert!(matches!(event, Some(FileEvent::Language { .. })));
+    assert_matches!(event, Some(FileEvent::Language { .. }));
 }
 
 #[test]
 fn git_info_exclude_is_git_event() {
     let event = classify_event(Path::new("/tmp/project/.git/info/exclude"));
-    assert!(
-        matches!(event, Some(FileEvent::Git { .. })),
+    assert_matches!(
+        event,
+        Some(FileEvent::Git { .. }),
         "expected a Git event, got {event:?}"
     );
 }
@@ -38,8 +40,9 @@ fn git_info_exclude_is_git_event() {
 #[test]
 fn git_info_exclude_triggers_update() {
     let pending = should_trigger_update(Path::new("/tmp/project/.git/info/exclude"));
-    assert!(
-        matches!(pending.map(|p| p.event), Some(FileEvent::Git { .. })),
+    assert_matches!(
+        pending.map(|p| p.event),
+        Some(FileEvent::Git { .. }),
         "should_trigger_update must classify .git/info/exclude as a Git event"
     );
 }
@@ -48,8 +51,9 @@ fn git_info_exclude_triggers_update() {
 #[test]
 fn packed_refs_is_git_event() {
     let event = classify_event(Path::new("/tmp/project/.git/packed-refs"));
-    assert!(
-        matches!(event, Some(FileEvent::Git { .. })),
+    assert_matches!(
+        event,
+        Some(FileEvent::Git { .. }),
         "expected a Git event, got {event:?}"
     );
 }
@@ -57,8 +61,9 @@ fn packed_refs_is_git_event() {
 #[test]
 fn refs_stash_is_git_event() {
     let event = classify_event(Path::new("/tmp/project/.git/refs/stash"));
-    assert!(
-        matches!(event, Some(FileEvent::Git { .. })),
+    assert_matches!(
+        event,
+        Some(FileEvent::Git { .. }),
         "expected a Git event, got {event:?}"
     );
 }
@@ -67,8 +72,9 @@ fn refs_stash_is_git_event() {
 #[test]
 fn orig_head_is_git_event() {
     let event = classify_event(Path::new("/tmp/project/.git/ORIG_HEAD"));
-    assert!(
-        matches!(event, Some(FileEvent::Git { .. })),
+    assert_matches!(
+        event,
+        Some(FileEvent::Git { .. }),
         "expected a Git event, got {event:?}"
     );
 }
@@ -207,8 +213,9 @@ fn rebase_progress_files_trigger_update() {
         "/tmp/project/.git/rebase-apply/applying",
     ] {
         let pending = should_trigger_update(Path::new(path));
-        assert!(
-            matches!(pending.map(|p| p.event), Some(FileEvent::Git { .. })),
+        assert_matches!(
+            pending.map(|p| p.event),
+            Some(FileEvent::Git { .. }),
             "should_trigger_update must classify {path} as a Git event"
         );
     }
@@ -222,8 +229,9 @@ fn rebase_operation_directory_entry_is_git_event() {
         "/tmp/project/.git/rebase-apply",
     ] {
         let event = classify_event(Path::new(path));
-        assert!(
-            matches!(event, Some(FileEvent::Git { .. })),
+        assert_matches!(
+            event,
+            Some(FileEvent::Git { .. }),
             "expected a Git event for the {path} directory entry, got {event:?}"
         );
     }
@@ -588,8 +596,9 @@ fn classify_event_recognizes_platform_separated_paths() {
     );
 
     let git_head = PathBuf::from_iter(["C:", "Users", "dev", "project", ".git", "HEAD"]);
-    assert!(
-        matches!(classify_event(&git_head), Some(FileEvent::Git { .. })),
+    assert_matches!(
+        classify_event(&git_head),
+        Some(FileEvent::Git { .. }),
         "a .git/HEAD path must still classify as a Git event regardless of platform separator"
     );
 
@@ -602,8 +611,9 @@ fn classify_event_recognizes_platform_separated_paths() {
         "themes",
         "default.toml",
     ]);
-    assert!(
-        matches!(classify_event(&themes_dir), Some(FileEvent::Theme { .. })),
+    assert_matches!(
+        classify_event(&themes_dir),
+        Some(FileEvent::Theme { .. }),
         "a gpy/themes path must still classify as a Theme event regardless of platform separator"
     );
 }
@@ -612,17 +622,16 @@ fn classify_event_recognizes_platform_separated_paths() {
 fn git_metadata_under_gpy_themes_classifies_as_git() {
     for leaf in ["HEAD", "index", "packed-refs", "refs/heads/main"] {
         let path = Path::new("/x/gpy/themes/.git").join(leaf);
-        assert!(
-            matches!(classify_event(&path), Some(FileEvent::Git { .. })),
+        assert_matches!(
+            classify_event(&path),
+            Some(FileEvent::Git { .. }),
             "{} must classify as Git",
             path.display()
         );
     }
-    assert!(
-        matches!(
-            classify_event(Path::new("/x/gpy/themes/mine.toml")),
-            Some(FileEvent::Theme { .. })
-        ),
+    assert_matches!(
+        classify_event(Path::new("/x/gpy/themes/mine.toml")),
+        Some(FileEvent::Theme { .. }),
         "a plain theme file must still classify as Theme"
     );
 }
@@ -631,8 +640,9 @@ fn git_metadata_under_gpy_themes_classifies_as_git() {
 fn metadata_marker_files_trigger_language_event() {
     for file_name in ["composer.json", "CMakeLists.txt", "tsconfig.json"] {
         let path = Path::new("/tmp/project").join(file_name);
-        assert!(
-            matches!(classify_event(&path), Some(FileEvent::Language { .. })),
+        assert_matches!(
+            classify_event(&path),
+            Some(FileEvent::Language { .. }),
             "{file_name} should classify as a Language event (metadata.rs marker file)"
         );
     }
@@ -648,8 +658,9 @@ fn residual_lockfiles_still_trigger_language_event() {
         "go.work",
     ] {
         let path = Path::new("/tmp/project").join(file_name);
-        assert!(
-            matches!(classify_event(&path), Some(FileEvent::Language { .. })),
+        assert_matches!(
+            classify_event(&path),
+            Some(FileEvent::Language { .. }),
             "{file_name} must keep triggering a Language event (residual lockfile list)"
         );
     }
@@ -666,8 +677,9 @@ fn version_pin_files_trigger_language_event() {
         ".mise.local.toml",
     ] {
         let path = Path::new("/tmp/project").join(file_name);
-        assert!(
-            matches!(classify_event(&path), Some(FileEvent::Language { .. })),
+        assert_matches!(
+            classify_event(&path),
+            Some(FileEvent::Language { .. }),
             "{file_name} must trigger a Language event (version pin)"
         );
     }

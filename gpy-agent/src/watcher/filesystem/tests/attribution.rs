@@ -1,4 +1,5 @@
 use super::*;
+use std::assert_matches;
 
 /// Reading a watched file must not look like writing it: inotify's `OPEN` mask
 /// would otherwise make every reload retrigger itself.
@@ -44,10 +45,10 @@ fn gitdir_changes_trigger_without_aggressive_mode() {
     );
 
     assert_eq!(events.len(), 1, "Expected gitdir event to trigger");
-    assert!(matches!(
+    assert_matches!(
         events.first().map(|e| &e.event),
         Some(FileEvent::Git { .. })
-    ));
+    );
 }
 
 #[test]
@@ -85,10 +86,10 @@ fn worktree_content_edit_triggers_when_enabled() {
         1,
         "a tracked-file content edit should emit one git event"
     );
-    assert!(matches!(
+    assert_matches!(
         events.first().map(|e| &e.event),
         Some(FileEvent::Git { .. })
-    ));
+    );
 }
 
 /// A file with both language/config and git-status significance emits a Git
@@ -187,10 +188,10 @@ fn nested_event_attributes_to_watched_root_via_prefix_match() {
         Some(&watched_root),
         "event should attribute to the watched root via longest-prefix match"
     );
-    assert!(matches!(
+    assert_matches!(
         events.first().map(|e| &e.event),
         Some(FileEvent::Git { .. })
-    ));
+    );
 }
 
 /// An event outside every watched root falls back to `find_worktree_root`, then the parent.
@@ -260,8 +261,9 @@ fn directory_create_schedules_one_followup_git_event() {
         "directory-create should emit its own git event immediately"
     );
     let immediate = recorded.first().expect("the immediate event");
-    assert!(
-        matches!(immediate.event, FileEvent::Git { .. }),
+    assert_matches!(
+        immediate.event,
+        FileEvent::Git { .. },
         "the immediate event must be a git event"
     );
     assert_eq!(immediate.repo, tmp.path().to_path_buf());

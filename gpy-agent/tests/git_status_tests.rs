@@ -15,6 +15,7 @@ use tempfile::TempDir;
 #[path = "common/git.rs"]
 mod git;
 
+use std::assert_matches;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::os::unix::ffi::OsStrExt;
 
@@ -24,10 +25,7 @@ fn test_git_status_not_a_repo() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let result = load_repository_state(temp_dir.path().to_string_lossy().as_ref(), 0, true);
 
-    assert!(
-        matches!(result, Ok(None)),
-        "non-repo directory must yield Ok(None)"
-    );
+    assert_matches!(result, Ok(None), "non-repo directory must yield Ok(None)");
 }
 
 #[test]
@@ -57,10 +55,7 @@ fn test_git_status_invalid_path() {
 
     // A nonexistent path has no enclosing `.git`, so it resolves to "not a repo".
     let result = load_repository_state(&missing, 0, true);
-    assert!(
-        matches!(result, Ok(None)),
-        "nonexistent path must yield Ok(None)"
-    );
+    assert_matches!(result, Ok(None), "nonexistent path must yield Ok(None)");
 }
 
 #[test]
@@ -153,7 +148,7 @@ fn test_git_status_empty_path() {
     let result = load_repository_state("", 0, true);
 
     // Empty path should be handled gracefully (either Ok(None) or Err)
-    assert!(matches!(result, Ok(Some(_) | None) | Err(_)));
+    assert_matches!(result, Ok(Some(_) | None) | Err(_));
 }
 
 #[test]
