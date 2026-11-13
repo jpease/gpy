@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 
 /// How long a failed probe suppresses re-probing: avoids respawning a broken
 /// tool every render while picking up a fixed one within a minute.
-pub(crate) const FAILURE_TTL: Duration = Duration::from_secs(60);
+pub(crate) const FAILURE_TTL: Duration = Duration::from_mins(1);
 
 /// Successful probe results by `K`, plus a negative cache of recent failures.
 ///

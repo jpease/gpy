@@ -45,7 +45,7 @@ fn poll_fallback_backend_delivers_real_worktree_writes() {
 #[test]
 fn stop_returns_promptly_with_poll_backend() {
     // Moving only the watcher out leaves the directory owned by `poll` until the end of the test.
-    let poll = PollRepo::forced_poll(Duration::from_secs(60));
+    let poll = PollRepo::forced_poll(Duration::from_mins(1));
     let PollRepo {
         mut watcher,
         ref root,

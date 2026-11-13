@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// Max age at which a stale entry is still served immediately after the fast
 /// window misses. Must exceed the 30s git-status TTL.
-const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_secs(60);
+const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_mins(1);
 
 /// Handler for Git repository status queries.
 pub struct GitHandler {

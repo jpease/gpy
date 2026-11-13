@@ -203,7 +203,7 @@ async fn exchange_line(
     if reply.is_empty() {
         return Err(ExchangeError::Closed);
     }
-    Ok(String::from_utf8_lossy(&reply).into_owned())
+    Ok(String::from_utf8_lossy_owned(reply))
 }
 
 /// [`exchange_line`], with the reply decoded as a control reply.

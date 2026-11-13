@@ -561,7 +561,7 @@ mod tests {
     fn next_deadline_is_capped_by_max_delay() {
         let t0 = Instant::now();
         let mut engine =
-            DebounceEngine::new(Duration::from_secs(60)).with_max_delay(Duration::from_millis(20));
+            DebounceEngine::new(Duration::from_mins(1)).with_max_delay(Duration::from_millis(20));
         engine.handle_event_at(make_pending("/repo", "/repo/.git/HEAD"), t0);
 
         assert_eq!(engine.next_deadline(), Some(t0 + Duration::from_millis(20)));

@@ -63,7 +63,7 @@ fn in_context<'a>(files: &'a [PathBuf], context: &str) -> Vec<&'a PathBuf> {
 /// Move every file's mtime back an hour.
 fn backdate<'a>(files: impl IntoIterator<Item = &'a PathBuf>) {
     let long_ago = SystemTime::now()
-        .checked_sub(Duration::from_secs(3600))
+        .checked_sub(Duration::from_hours(1))
         .expect("an hour ago is representable");
     for path in files {
         set_mtime(path, long_ago);
@@ -76,7 +76,7 @@ fn is_fresh(path: &Path) -> bool {
         .and_then(|meta| meta.modified())
         .expect("mtime")
         .elapsed()
-        .is_ok_and(|age| age < Duration::from_secs(600))
+        .is_ok_and(|age| age < Duration::from_mins(10))
 }
 
 #[test]

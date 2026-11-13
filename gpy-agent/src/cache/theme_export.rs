@@ -139,11 +139,11 @@ mod tests {
 
         let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_u64);
         for file_name in ["theme-export.fish", "theme-export.bash", "theme-export.zsh"] {
-            std::fs::File::options()
-                .write(true)
-                .open(cache_dir.join(file_name))
-                .and_then(|file| file.set_modified(old))
-                .expect("backdate export");
+            std::fs::set_times(
+                cache_dir.join(file_name),
+                std::fs::FileTimes::new().set_modified(old),
+            )
+            .expect("backdate export");
         }
 
         assert!(

@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn a_long_budget_is_not_spent() {
-        assert!(!Deadline::after(Duration::from_secs(3600)).expired());
+        assert!(!Deadline::after(Duration::from_hours(1)).expired());
     }
 
     #[test]

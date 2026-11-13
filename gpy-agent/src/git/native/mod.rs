@@ -48,7 +48,7 @@ static UNTRACKED_CACHE_CHECKED: TtlMap<PathBuf, ()> =
 static UNTRACKED_CACHE_SETUP: AtomicBool = AtomicBool::new(true);
 
 /// How long a repository's `core.ignorecase` is trusted before it is re-read.
-const IGNORE_CASE_TTL: Duration = Duration::from_secs(60);
+const IGNORE_CASE_TTL: Duration = Duration::from_mins(1);
 
 /// Per-repository `core.ignorecase`, expiring after [`IGNORE_CASE_TTL`].
 static IGNORE_CASE: TtlMap<PathBuf, bool> =

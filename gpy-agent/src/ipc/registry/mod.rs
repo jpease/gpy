@@ -32,7 +32,7 @@ use shell_tracking::{process_start_time_secs, ring_doorbell, write_shell_flag};
 
 /// How long a throttle entry is kept: entries older than this cannot affect a
 /// throttle decision, and dropping them keeps the map bounded.
-const THROTTLE_ENTRY_TTL: Duration = Duration::from_secs(3600);
+const THROTTLE_ENTRY_TTL: Duration = Duration::from_hours(1);
 
 /// Whether a registered PID still belongs to the process that registered it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

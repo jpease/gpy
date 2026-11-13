@@ -81,22 +81,17 @@ fn aged_file(dir: &Path, name: &str, age: Duration) -> PathBuf {
 }
 
 pub(super) fn set_mtime(path: &Path, when: SystemTime) {
-    std::fs::File::options()
-        .write(true)
-        .open(path)
-        .expect("open for mtime")
-        .set_modified(when)
-        .expect("set mtime");
+    std::fs::set_times(path, std::fs::FileTimes::new().set_modified(when)).expect("set mtime");
 }
 
 #[test]
 fn sweep_keeps_recent_entries_and_removes_ancient_ones() {
     let dir = tempfile::TempDir::new().expect("temp dir");
-    let fresh = aged_file(dir.path(), "repo.git.none.ansi", Duration::from_secs(60));
+    let fresh = aged_file(dir.path(), "repo.git.none.ansi", Duration::from_mins(1));
     let ancient = aged_file(
         dir.path(),
         "old.git.none.ansi",
-        CACHE_ENTRY_MAX_AGE.saturating_add(Duration::from_secs(60)),
+        CACHE_ENTRY_MAX_AGE.saturating_add(Duration::from_mins(1)),
     );
 
     let (entries, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
@@ -117,13 +112,13 @@ fn sweep_removes_orphaned_temp_files_on_a_shorter_clock() {
     let orphan = aged_file(
         dir.path(),
         ".tmp-1234-5",
-        ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_secs(60)),
+        ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_mins(1)),
     );
     // Past the orphan threshold but not the entry threshold.
     let live_entry = aged_file(
         dir.path(),
         "repo.git.none.ansi",
-        ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_secs(60)),
+        ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_mins(1)),
     );
 
     let (entries, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
@@ -529,7 +524,7 @@ impl CacheHarness {
     fn sweep(&mut self) {
         let when = SystemTime::now()
             .checked_sub(CACHE_ENTRY_MAX_AGE)
-            .and_then(|t| t.checked_sub(Duration::from_secs(60)))
+            .and_then(|t| t.checked_sub(Duration::from_mins(1)))
             .expect("backdating within range");
         for name in self.expected.keys() {
             set_mtime(&self.cache.cache_dir.join(name), when);

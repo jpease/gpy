@@ -509,7 +509,7 @@ mod tests {
         let repo = PathBuf::from("/repo");
         let within = GitStatusCache::with_policy(CachePolicy {
             ttl: Duration::from_secs(30),
-            cooldown: Duration::from_secs(3600),
+            cooldown: Duration::from_hours(1),
         });
         within.set(&repo, dummy_status(), HashMap::new());
         assert!(within.is_fresh(&repo));
@@ -727,12 +727,12 @@ mod tests {
     #[test]
     fn cooldown_counts_from_incremental_update() {
         let cache = GitStatusCache::with_policy(CachePolicy {
-            ttl: Duration::from_secs(3600),
-            cooldown: Duration::from_secs(3600),
+            ttl: Duration::from_hours(1),
+            cooldown: Duration::from_hours(1),
         });
         let key = PathBuf::from("/repo/cooldown-incremental");
         cache.set_canonical(&key, dummy_status(), HashMap::new());
-        cache.age_entry_for_test(&key, Duration::from_secs(7200), Duration::from_secs(7200));
+        cache.age_entry_for_test(&key, Duration::from_hours(2), Duration::from_hours(2));
         assert!(!cache.is_fresh_canonical(&key));
 
         incremental_update(&cache, &key, "a.rs");

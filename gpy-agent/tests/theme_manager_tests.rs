@@ -1137,7 +1137,7 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
     /// Generous on purpose: the switch loop takes ~20s alone and ~45s sharing
     /// a machine with the rest of the suite, and overshooting this deadline is
     /// a test failure, so it has to sit well clear of ordinary CI load.
-    const READER_DEADLINE: Duration = Duration::from_secs(300);
+    const READER_DEADLINE: Duration = Duration::from_mins(5);
 
     let temp_dir = TempDir::new().unwrap();
     let config_home = temp_dir.path().join("gpy");

@@ -36,7 +36,7 @@ pub(crate) fn lint_script(script: &Path) -> Lint {
         return match result {
             Ok(output) if output.status.success() => Lint::Clean(tool),
             Ok(output) => {
-                let mut report = String::from_utf8_lossy(&output.stdout).into_owned();
+                let mut report = String::from_utf8_lossy_owned(output.stdout);
                 report.push_str(&String::from_utf8_lossy(&output.stderr));
                 Lint::Failed {
                     tool,
