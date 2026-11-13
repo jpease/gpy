@@ -60,24 +60,22 @@ pub fn style_color<S: BuildHasher>(
 /// Attribute keywords of a style string, in declaration order.
 #[must_use]
 pub fn attr_tokens(style: &str) -> Vec<&'static str> {
-    parse_style(style)
-        .map(|parsed| {
-            parsed
-                .attrs
-                .into_iter()
-                .map(|attr| match attr {
-                    Attr::Bold => "bold",
-                    Attr::Italic => "italic",
-                    Attr::Underline => "underline",
-                    Attr::Dimmed => "dimmed",
-                    Attr::Inverted => "inverted",
-                    Attr::Blink => "blink",
-                    Attr::Hidden => "hidden",
-                    Attr::Strikethrough => "strikethrough",
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    parse_style(style).map_or_default(|parsed| {
+        parsed
+            .attrs
+            .into_iter()
+            .map(|attr| match attr {
+                Attr::Bold => "bold",
+                Attr::Italic => "italic",
+                Attr::Underline => "underline",
+                Attr::Dimmed => "dimmed",
+                Attr::Inverted => "inverted",
+                Attr::Blink => "blink",
+                Attr::Hidden => "hidden",
+                Attr::Strikethrough => "strikethrough",
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]

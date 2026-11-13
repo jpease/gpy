@@ -195,7 +195,6 @@ pub fn is_broken_pipe(err: &Error) -> bool {
 /// Turn a command's result into its process exit code: a broken stdout pipe is
 /// success, any other error prints one `Error: ...` line and exits
 /// [`CLI_FAILURE_EXIT_CODE`].
-#[must_use]
 pub fn report(result: Result<std::process::ExitCode>) -> std::process::ExitCode {
     match result {
         Ok(code) => code,

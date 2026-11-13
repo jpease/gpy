@@ -230,13 +230,12 @@ fn parent_after(link: &ChainLink, base: &str, unset: &[String]) -> Option<ThemeC
 fn unset_entries(doc: &DocumentMut) -> Vec<String> {
     doc.get("unset")
         .and_then(Item::as_array)
-        .map(|entries| {
+        .map_or_default(|entries| {
             entries
                 .iter()
                 .filter_map(|entry| entry.as_str().map(str::to_owned))
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// Remove the `unset` entry for exactly `path`, and `unset` itself when that

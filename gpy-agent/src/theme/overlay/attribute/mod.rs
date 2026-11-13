@@ -67,9 +67,7 @@ pub(super) fn table_error(
         }
         FromTableError::Validation(invalid) => (
             Finding {
-                paths: merged
-                    .map(|table| find::validation_paths(table, &invalid))
-                    .unwrap_or_default(),
+                paths: merged.map_or_default(|table| find::validation_paths(table, &invalid)),
                 reason: invalid.to_string(),
             },
             Some(Box::new(invalid)),
@@ -92,8 +90,7 @@ pub(super) fn template_error(
     let finding = Finding {
         paths: rebuilt
             .as_ref()
-            .map(|(merged, _)| find::validation_paths(merged, &error))
-            .unwrap_or_default(),
+            .map_or_default(|(merged, _)| find::validation_paths(merged, &error)),
         reason: error.to_string(),
     };
     let provenance = rebuilt.as_ref().map(|(_, provenance)| provenance);
@@ -153,11 +150,7 @@ fn report(
     let mapped: Vec<Vec<(Vec<String>, Record)>> = finding
         .paths
         .iter()
-        .map(|path| {
-            provenance
-                .map(|records| records.lookup(path))
-                .unwrap_or_default()
-        })
+        .map(|path| provenance.map_or_default(|records| records.lookup(path)))
         .collect();
     let any_mapped = mapped.iter().any(|records| !records.is_empty());
     let user_mapped = mapped

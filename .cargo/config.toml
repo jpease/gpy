@@ -1,0 +1,8 @@
+# Dependency cooldown (Cargo 1.100, RFC 3923): `cargo update` and fresh
+# resolution skip versions published less than this long ago, unless they are
+# already in Cargo.lock. Malicious releases are usually pulled within days.
+# Needs the registry to record publish times (crates.io does). Bypass for one
+# run with CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow. `cargo install`
+# ignores it; pin an exact version there.
+[registry]
+global-min-publish-age = "3 days"

@@ -150,8 +150,7 @@ impl FakeAgent {
                         let n = stream.read(&mut buf).unwrap_or(0);
                         let request = buf
                             .get(..n)
-                            .map(|body| String::from_utf8_lossy(body).into_owned())
-                            .unwrap_or_default();
+                            .map_or_default(|body| String::from_utf8_lossy(body).into_owned());
                         let is_shutdown = request.contains("shutdown");
                         if is_shutdown {
                             shutdown_requests_clone.fetch_add(1, Ordering::Relaxed);

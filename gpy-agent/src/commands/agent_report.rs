@@ -140,7 +140,6 @@ fn status_report(socket: Option<&Path>) -> Result<StatusReport> {
 /// `gpy-agent status`: print the report and return its exit code. A status
 /// that cannot be determined prints one `Error:` line and returns
 /// [`STATUS_UNKNOWN`].
-#[must_use]
 pub fn status(socket: Option<&Path>) -> ExitCode {
     match status_report(socket) {
         Ok(report) => {

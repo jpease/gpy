@@ -102,8 +102,7 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     let segments_order = model
         .format
         .as_deref()
-        .map(|format| layout::derive_segments(format, &mut warnings))
-        .unwrap_or_default();
+        .map_or_default(|format| layout::derive_segments(format, &mut warnings));
 
     Ok(ImportArtifacts {
         theme,

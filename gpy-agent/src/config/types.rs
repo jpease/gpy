@@ -458,7 +458,7 @@ pub trait NameKind {
 
 /// Marker for [`ThemeName`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ThemeKind {}
+pub struct ThemeKind(std::convert::Infallible);
 
 impl NameKind for ThemeKind {
     const KIND: &'static str = "theme";
@@ -466,7 +466,7 @@ impl NameKind for ThemeKind {
 
 /// Marker for [`PaletteName`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PaletteKind {}
+pub struct PaletteKind(std::convert::Infallible);
 
 impl NameKind for PaletteKind {
     const KIND: &'static str = "palette";
