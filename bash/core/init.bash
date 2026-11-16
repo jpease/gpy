@@ -63,11 +63,11 @@ fi
 # it asks the agent, and only a successful export replaces the running state.
 # Its stderr is kept, so an invalid config.toml shows the agent's warning.
 __gpy_load_theme() {
-    local cache_path rc=1 out first=""
+    local cache_path rc=1 out first="" agent
     if [[ "${1:-}" == fresh ]]; then
         # `eval "$(cmd)"` succeeds even when cmd fails, so fetch first.
-        command -v gpy-agent &>/dev/null || return 1
-        out="$(gpy-agent theme export --shell bash)" || return 1
+        __gpy_agent_binary_into agent || return 1
+        out="$("$agent" theme export --shell bash)" || return 1
         [[ -n "$out" ]] || return 1
         __gpy_g_clear_styles
         unset __gpy_script_segments
@@ -86,8 +86,8 @@ __gpy_load_theme() {
         # shellcheck source=/dev/null
         source "$cache_path"
         rc=$?
-    elif command -v gpy-agent &>/dev/null; then
-        eval "$(gpy-agent theme export --shell bash 2>/dev/null)"
+    elif __gpy_agent_binary_into agent; then
+        eval "$("$agent" theme export --shell bash 2>/dev/null)"
         rc=$?
     fi
     __gpy_g_sync

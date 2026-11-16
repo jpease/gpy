@@ -4,6 +4,7 @@ mod backend;
 mod ignore;
 mod meta_poll;
 mod probe;
+mod queue;
 
 use super::watch_set::WatchMode;
 use super::{
@@ -18,13 +19,13 @@ use backend::{
 pub(crate) use ignore::IgnoreCaches;
 use ignore::{EventPathVerdict, IgnoreTokenHit, path_is_gitignored, path_matches_ignored_patterns};
 use notify::Event;
-use notify::event::{CreateKind, EventKind, MetadataKind, ModifyKind};
+use notify::event::{CreateKind, EventKind, Flag, MetadataKind, ModifyKind};
 use probe::{FallbackPolicy, FilesystemProbes, ProbeContext, ProbeTiming, spawn_health_probe};
+use queue::{EVENT_QUEUE_CAPACITY, EventReceiver, EventSender, event_queue};
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -61,7 +62,7 @@ struct EventThreadState {
 /// File system watcher using notify crate.
 pub struct FileSystemWatcher {
     backend: Arc<Mutex<WatcherBackend>>,
-    event_tx: Option<Sender<Event>>,
+    event_tx: Option<EventSender>,
     handle: Option<thread::JoinHandle<()>>,
     probe_handle: Option<thread::JoinHandle<()>>,
     /// Probes of repositories' own filesystems; `None` unless the policy probes.
@@ -98,7 +99,7 @@ impl FileSystemWatcher {
         policy: FallbackPolicy,
     ) -> Result<Self> {
         let shared_registry = registry.unwrap_or_else(|| Arc::new(WatchRegistry::new()));
-        let (event_tx, event_rx): (Sender<Event>, Receiver<Event>) = mpsc::channel();
+        let (event_tx, event_rx) = event_queue(EVENT_QUEUE_CAPACITY);
 
         let (watcher, kind) = match policy {
             FallbackPolicy::ForcePoll { poll_interval } => (
@@ -162,9 +163,12 @@ impl FileSystemWatcher {
         })
     }
 
-    /// Spawn the thread that drains the event channel into `process_event`.
+    /// Spawn the thread that drains the event queue into `process_event`.
+    ///
+    /// A queue overflow dropped events nobody can name, so it becomes a
+    /// pathless rescan: a whole-repo refresh of every watched root.
     fn spawn_event_thread(
-        event_rx: Receiver<Event>,
+        events: EventReceiver,
         callback: PendingCallback,
         stop_flag: &Arc<AtomicBool>,
         state: EventThreadState,
@@ -173,7 +177,7 @@ impl FileSystemWatcher {
         let callback_arc = Arc::new(callback);
         let stop_flag_thread = Arc::clone(stop_flag);
         thread::spawn(move || {
-            while let Ok(event) = event_rx.recv() {
+            while let Some(event) = events.recv() {
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
                 }
@@ -189,21 +193,33 @@ impl FileSystemWatcher {
                     followup.delay,
                     &followup.schedule,
                 );
+                if events.take_overflow() {
+                    // Debug only: a sustained storm overflows again after every drain.
+                    crate::debug_log!(
+                        "watcher",
+                        "file event queue overflowed; refreshing every watched repository"
+                    );
+                    Self::process_event(
+                        &Event::new(EventKind::Other).set_flag(Flag::Rescan),
+                        &callback_arc,
+                        &state.registry,
+                        followup.delay,
+                        &followup.schedule,
+                    );
+                }
             }
         })
     }
 
-    /// Forward one raw notify result into the shared event channel.
+    /// Forward one raw notify result into the shared event queue.
     ///
     /// `Access` events (inotify arms `OPEN`) are never a change and are dropped
     /// here rather than queued. A watch-limit error means some directories go
     /// unwatched, so it is reported in the warning log, not only the debug log.
-    fn forward_event(event_tx: &Sender<Event>, res: notify::Result<Event>) {
+    fn forward_event(event_tx: &EventSender, res: notify::Result<Event>) {
         match res {
             Ok(event) if matches!(event.kind, EventKind::Access(_)) => {}
-            Ok(event) => {
-                let _ = event_tx.send(event);
-            }
+            Ok(event) => event_tx.send(event),
             Err(error) if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) => {
                 crate::warn_log!(
                     "watcher",
@@ -554,7 +570,7 @@ impl FileSystemWatcher {
         self.backend.lock_or_recover().watcher = None;
 
         if let Some(tx) = self.event_tx.take() {
-            let _ = tx.send(Event::new(EventKind::Other));
+            tx.send(Event::new(EventKind::Other));
         }
 
         // Probes check `stop_flag` each iteration, so these return promptly.

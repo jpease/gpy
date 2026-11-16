@@ -21,8 +21,9 @@ __gpy_supervisor_start() {
 
     # Never waits: the first prompt renders from the cache or oneshot, and a
     # later prompt registers once the agent is up.
-    if command -v gpy-agent &>/dev/null; then
-        nohup gpy-agent start &>/dev/null &
+    local agent
+    if __gpy_agent_binary_into agent; then
+        nohup "$agent" start &>/dev/null &
         disown
         return 0
     fi

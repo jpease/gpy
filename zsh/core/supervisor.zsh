@@ -9,7 +9,9 @@
 function __gpy_start_agent() {
     # &! disowns immediately. Never waits: the first prompt renders from the
     # cache or oneshot, and the post-render retry registers once the agent is up.
-    gpy-agent start &>/dev/null &!
+    local agent
+    __gpy_agent_binary_into agent || return 1
+    $agent start &>/dev/null &!
     return 0
 }
 

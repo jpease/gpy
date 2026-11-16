@@ -837,6 +837,18 @@ function __gpy_oneshot_claim() {
     return 0
 }
 
+# The gpy-agent command into variable $1: PATH first, then ~/.local/bin (the
+# installer's default), as in Fish. Status 1 when neither exists. Fork-free.
+function __gpy_agent_binary_into() {
+    if (( ${+commands[gpy-agent]} )); then
+        typeset -g "$1"=gpy-agent
+    elif [[ -n "${HOME:-}" && -x "$HOME/.local/bin/gpy-agent" ]]; then
+        typeset -g "$1"="$HOME/.local/bin/gpy-agent"
+    else
+        return 1
+    fi
+}
+
 # Returns __gpy_seg_status_oneshot whenever it forked, output or not.
 function __gpy_fallback_oneshot() {
     local op=$1
@@ -846,7 +858,8 @@ function __gpy_fallback_oneshot() {
     local is_last=${4:-false}
     local is_first=${5:-false}
 
-    (( ${+commands[gpy-agent]} )) || return 1
+    local agent
+    __gpy_agent_binary_into agent || return 1
     __gpy_oneshot_claim || return 1
 
     local -a args
@@ -858,7 +871,7 @@ function __gpy_fallback_oneshot() {
         args+=(--first)
     fi
 
-    gpy-agent oneshot $args 2>/dev/null
+    $agent oneshot $args 2>/dev/null
     return "$__gpy_seg_status_oneshot"
 }
 
@@ -898,7 +911,8 @@ function __gpy_request_duration() {
 
     # A late agent never forks oneshot: it is already computing it.
     local used_oneshot=0
-    if [[ "$kind" == none ]] && (( ${+commands[gpy-agent]} )) && __gpy_oneshot_claim; then
+    local agent
+    if [[ "$kind" == none ]] && __gpy_agent_binary_into agent && __gpy_oneshot_claim; then
         used_oneshot=1
         local -a args
         args=(duration --duration-ms "$duration_ms" --format zsh-prompt)
@@ -908,7 +922,7 @@ function __gpy_request_duration() {
         if [[ "$is_first" == "true" ]]; then
             args+=(--first)
         fi
-        result=$(gpy-agent oneshot $args 2>/dev/null)
+        result=$($agent oneshot $args 2>/dev/null)
     fi
 
     [[ -n "$result" ]] && print -r -- "$result"
@@ -993,7 +1007,8 @@ function __gpy_request_character() {
     [[ "$kind" == ok ]] || result=""
 
     # A late agent (connected, reply late) never forks a oneshot.
-    if [[ "$kind" == none ]] && (( ${+commands[gpy-agent]} )) && __gpy_oneshot_claim; then
+    local agent
+    if [[ "$kind" == none ]] && __gpy_agent_binary_into agent && __gpy_oneshot_claim; then
         used_oneshot=1
         local exit_code=1
         [[ "$success" == "1" ]] && exit_code=0
@@ -1002,7 +1017,7 @@ function __gpy_request_character() {
         if [[ "$is_last" != "true" ]]; then
             args+=(--not-last)
         fi
-        result=$(gpy-agent oneshot $args 2>/dev/null)
+        result=$($agent oneshot $args 2>/dev/null)
     fi
 
     [[ -n "$result" ]] && print -r -- "$result"

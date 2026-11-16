@@ -127,6 +127,13 @@ check_shellcheck() {
     return "$failed"
 }
 
+# Workflow syntax, expression and embedded-shell lint. The CI shell leg installs it.
+# shellcheck disable=SC2329
+check_actionlint() {
+    command -v actionlint >/dev/null 2>&1 || { skip_tool actionlint; return; }
+    actionlint
+}
+
 # Stop any gpy-agent still bound under the hermetic XDG root $1 (agent binary
 # in $2) before the root is deleted: politely through its socket, then
 # TERM -> bounded wait -> KILL of whatever holds a socket under $1. Never by
@@ -294,6 +301,7 @@ run_shell_checks() {
     if shell_part checks; then
         run_fish_lint
         run_check "Shellcheck" "check_shellcheck" || true
+        run_check "Actionlint" "check_actionlint" || true
     fi
     run_shell_tests
 }
@@ -426,6 +434,7 @@ case "${1:-}" in
         run_repo_checks
         run_check "Fish syntax" "check_fish_syntax" || true
         run_check "Shellcheck" "check_shellcheck" || true
+        run_check "Actionlint" "check_actionlint" || true
         run_check "Bash parity tests" "$GPY_BASH tests/bash/parity.test.bash" || true
         if command -v zsh &>/dev/null; then
             run_check "Zsh parity tests" "zsh tests/zsh/parity.test.zsh" || true

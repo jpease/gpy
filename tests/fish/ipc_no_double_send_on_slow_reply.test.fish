@@ -58,6 +58,8 @@ function check_transport --argument-names label use_path delay
     set -gx GPY_AGENT_SOCKET_PATH $tmp/slow.sock
     set -g GPY_IPC_TIMEOUT_MS 150
     set -gx PATH $use_path
+    # Each case is a fresh agent: the previous case's late window must not gate it.
+    set -g __gpy_agent_late_until 0
     set -l out (__gpy_ipc_send '{"op":"ping"}')
     set -l rc $status
     set -gx PATH $real_path

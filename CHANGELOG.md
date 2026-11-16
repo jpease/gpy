@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Bash and Zsh find `gpy-agent` in `~/.local/bin` when it is not on `PATH` (as Fish does) for agent start, theme export and oneshot; Fish now skips a connected-but-silent agent for 5 s after one timed-out request, as Bash and Zsh do.
 - A git or language reply no longer rings the shells' doorbell; shells are repainted only when the agent's rendered output changes, and with `agent.live_updates = false` requests never trigger a repaint. A client's process start time is looked up at most once per 2 s instead of a full process refresh per ring.
 - `GPY_CONFIG_PATH` is honoured whenever it is set, even before the file exists; the XDG file no longer shadows it.
 - With no usable `HOME`/`XDG_*` the agent and CLI fail with one clear error and the shells stay off for that session, instead of using the shared `/tmp/gpy` runtime root or a relative `./.config/gpy` config root. The bundled-plugin data root has no relative fallback either.
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugins: `plugin install` needs `--force` to take over another plugin's segment, reloads a running agent, rejects built-in segment names and escape sequences in `version`; script plugin manifests get the same ownership check as scripts; `username` works without `$USER`.
 - Shells: blank Enter no longer re-shows the Fish duration, Fish retries registration every prompt, Zsh and Bash negatively cache a late agent, Zsh repaints a doorbell that arrives during `precmd`, the `nc` fallback half-closes on netcat-openbsd, clock and status renders are memoized, and `bash/gpy.bash` and the runner survive `CDPATH` and `cd` wrappers.
 - Release pipeline: the fallback full gate reuses the PR gate legs (macOS, Windows, fresh install), `just bench-ci` runs on every release, a manual publish tags the built commit, and release runs are serialized per version. `install.sh` handles native Windows (binaries only) and Rosetta; `cleanup-test-agents.sh` only stops this checkout's agents.
+- File watcher: the event queue holds at most 4096 events, so a burst of file changes (a checkout, `npm install`) no longer grows agent memory without limit. When the queue is full, further events are dropped and every watched repository gets a full refresh, so no change is missed.
 
 ### Added
 - `GPY_COLOR_DEPTH` (`truecolor`, `256`, `16`, `none`) and an automatic 256-colour downgrade on `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`.

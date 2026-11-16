@@ -88,11 +88,11 @@ jobs:
           save-if: "false"
 
       # One shellcheck version on every runner; cargo-audit backs the
-      # dependency-advisory claims test.
-      - name: Install just, shellcheck and cargo-audit
+      # dependency-advisory claims test; actionlint (pinned) lints the workflows.
+      - name: Install just, shellcheck, actionlint and cargo-audit
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
-          tool: just,shellcheck,cargo-audit
+          tool: just,shellcheck,actionlint@1.7.12,cargo-audit
 
       - name: Install shells and shell-suite prerequisites
         uses: ./.github/actions/install-shells

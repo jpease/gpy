@@ -99,8 +99,38 @@ function __gpy_socat_escape --argument-names path
     string replace -a -- '\\' '\\\\' $path | string replace -a -- ',' '\\,' | string replace -a -- ':' '\\:' | string replace -a -- '!' '\\!' | string replace -a -- "'" "\\'" | string replace -a -- '"' '\\"'
 end
 
+# Late window for an agent that accepts connections but does not answer in
+# budget (stopped, paused across sleep, wedged): until this epoch second every
+# send to that socket returns 2 at once, so a wedged agent costs one budget
+# per window, not one per request and prompt (as in Bash and Zsh). A
+# path-bearing op (git, lang, directory) can be slow for its path alone, so
+# only the ops the agent answers from memory open it. A doorbell clears it,
+# since the agent that rang is answering.
+set -g __gpy_agent_late_until 0
+set -g __gpy_agent_late_socket ''
+set -g __gpy_agent_late_secs 5
+
+# Status 0 while the late window for socket $sock is open.
+function __gpy_agent_late_active --argument-names sock
+    test "$__gpy_agent_late_until" -gt 0 2>/dev/null; or return 1
+    test "$sock" = "$__gpy_agent_late_socket"; or return 1
+    set -l now (__gpy_now_seconds)
+    string match -qr '\A[0-9]+\z' -- "$now"; or return 1
+    test "$now" -lt "$__gpy_agent_late_until"
+end
+
+# Opens the late window for socket $sock after request $payload went unanswered.
+function __gpy_agent_late_mark --argument-names payload sock
+    string match -qr '\A\{"op":"(git|lang|directory)"' -- "$payload"; and return 0
+    set -l now (__gpy_now_seconds)
+    string match -qr '\A[0-9]+\z' -- "$now"; or return 0
+    set -g __gpy_agent_late_socket "$sock"
+    set -g __gpy_agent_late_until (math "$now + $__gpy_agent_late_secs")
+end
+
 # Returns 0 on a complete reply, 1 if unreachable, 2 if the request was sent
-# but no complete reply arrived in time (an empty reply line included); on 2
+# but no complete reply arrived in time (an empty reply line included), or a
+# late window is open (see __gpy_agent_late_mark); on 2
 # callers must not resend or fork oneshot for the same segment. 3: the agent
 # refused the request for good (a reply starting `{"error"`, e.g. a denied cwd
 # or an unparseable request); nothing is printed, the reply is kept in
@@ -113,6 +143,7 @@ function __gpy_ipc_send --argument-names payload timeout_ms sock
     if not test -S "$sock"
         return 1
     end
+    __gpy_agent_late_active "$sock"; and return 2
 
     set -l reply
     set -l ps
@@ -155,6 +186,9 @@ function __gpy_ipc_send --argument-names payload timeout_ms sock
         return 0
     end
     if contains -- "$client_status" $connected_codes
+        # Only a silent connection opens the window: an empty line is an
+        # agent that answered in time.
+        test "$ps[3]" != 0; and __gpy_agent_late_mark "$payload" "$sock"
         return 2
     end
     return 1
@@ -780,6 +814,8 @@ end
 # Defined unconditionally. SIGURG's default disposition is ignore, so a shell
 # that `exec`s itself survives an early ring; meaning travels in flag files.
 function __gpy_doorbell_handler --on-signal SIGURG
+    # The agent that rang is answering again.
+    set -g __gpy_agent_late_until 0
     set -l registry_file (__gpy_shell_registry_file); or return 0
     # Each flag is removed BEFORE acting so a ring mid-action re-queues.
     if test -e $registry_file.reregister

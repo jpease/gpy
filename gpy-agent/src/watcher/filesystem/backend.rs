@@ -4,6 +4,7 @@ use super::super::watch_set::{OsOp, WatchMode, WatchSet};
 use super::super::{WatchRegistry, is_git_noise_path, is_git_noise_relative};
 use super::ignore::force_added::prime_force_added;
 use super::meta_poll::MetadataPoller;
+use super::queue::EventSender;
 use super::{
     FileSystemWatcher, is_directory_create, is_in_git_dir, is_poll_directory_mtime_noise,
     path_is_gitignored,
@@ -15,7 +16,6 @@ use notify::{Event, PollWatcher, RecommendedWatcher, Watcher};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -343,7 +343,7 @@ impl WatcherBackend {
 ///
 /// # Errors
 /// Returns an error if the platform backend cannot be initialized.
-pub(super) fn build_native_watcher(event_tx: &Sender<Event>) -> Result<Box<dyn Watcher + Send>> {
+pub(super) fn build_native_watcher(event_tx: &EventSender) -> Result<Box<dyn Watcher + Send>> {
     let tx_clone = event_tx.clone();
     let watcher = RecommendedWatcher::new(
         move |res: notify::Result<Event>| FileSystemWatcher::forward_event(&tx_clone, res),
@@ -389,7 +389,7 @@ impl SplitPollWatcher {
     /// # Errors
     /// Returns an error if either poller cannot be initialized.
     pub(super) fn new_split(
-        event_tx: &Sender<Event>,
+        event_tx: &EventSender,
         poll_interval: Duration,
         registry: Arc<WatchRegistry>,
     ) -> Result<Self> {
@@ -403,7 +403,7 @@ impl SplitPollWatcher {
     }
 
     /// The worktree poller; directory-mtime echoes of child changes are dropped.
-    fn worktree_half(event_tx: &Sender<Event>, poll_interval: Duration) -> Result<PollWatcher> {
+    fn worktree_half(event_tx: &EventSender, poll_interval: Duration) -> Result<PollWatcher> {
         let tx_clone = event_tx.clone();
         PollWatcher::new(
             move |res: notify::Result<Event>| match res {
@@ -457,7 +457,7 @@ impl Watcher for SplitPollWatcher {
 /// # Errors
 /// Returns an error if the poll watchers cannot be initialized.
 pub(super) fn build_poll_watcher(
-    event_tx: &Sender<Event>,
+    event_tx: &EventSender,
     poll_interval: Duration,
     registry: Arc<WatchRegistry>,
 ) -> Result<Box<dyn Watcher + Send>> {

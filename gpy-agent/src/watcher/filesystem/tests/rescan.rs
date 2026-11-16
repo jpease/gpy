@@ -174,3 +174,57 @@ fn rescan_emits_whole_repo_for_each_affected_root() {
         );
     }
 }
+
+/// A full event queue drops the event but flags the overflow, which the event
+/// thread turns into a whole-repo rescan of every watched root.
+#[test]
+fn queue_overflow_triggers_whole_repo_rescan() {
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let root = tmp.path().to_path_buf();
+    let registry = test_registry(true, HashSet::from([root.clone()]));
+    let (callback, events) = recording_callback();
+
+    // Two events into a one-slot queue before the thread runs: the second
+    // overflows. Both are `Access`, which emits nothing, so any delivery is
+    // the overflow's rescan.
+    let (event_tx, event_rx) = event_queue(1);
+    event_tx.send(Event::new(EventKind::Access(AccessKind::Any)));
+    event_tx.send(Event::new(EventKind::Access(AccessKind::Any)));
+    drop(event_tx);
+
+    // The backend forwards to its own queue, so the thread ends once drained.
+    let (backend_tx, _backend_rx) = event_queue(1);
+    let backend_state = WatcherBackend::armed(
+        build_native_watcher(&backend_tx).expect("native watcher"),
+        BackendKind::Native,
+    );
+    let poll_active = Arc::clone(&backend_state.poll_active);
+    let handle = FileSystemWatcher::spawn_event_thread(
+        event_rx,
+        callback,
+        &Arc::new(AtomicBool::new(false)),
+        EventThreadState {
+            registry: Arc::clone(&registry),
+            backend: Arc::new(Mutex::new(backend_state)),
+            poll_active,
+        },
+        FollowupHandoff {
+            delay: TEST_FOLLOWUP_DELAY,
+            schedule: no_op_scheduler(),
+        },
+    );
+    handle.join().expect("event thread");
+
+    let recorded = events.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "one rescan for the one watched root");
+    let pending = recorded.first().expect("rescan event");
+    assert_eq!(pending.repo, root);
+    assert_matches!(
+        &pending.event,
+        FileEvent::Git {
+            paths: GitPaths::WholeRepo
+        },
+        "an overflow must rescan the whole repo, got: {:?}",
+        pending.event
+    );
+}

@@ -50,11 +50,11 @@ typeset -g __gpy_repaint_pending=""
 # `__gpy_script_segments` is unset before each export is sourced, as in Bash
 # and Fish: a failed load leaves no script segments rather than the old set.
 function __gpy_load_theme() {
-    local cache_path out first=""
+    local cache_path out first="" agent
     if [[ "${1:-}" == fresh ]]; then
         # `eval "$(cmd)"` succeeds even when cmd fails, so fetch first.
-        command -v gpy-agent &>/dev/null || return 1
-        out="$(gpy-agent theme export --shell zsh)" || return 1
+        __gpy_agent_binary_into agent || return 1
+        out="$($agent theme export --shell zsh)" || return 1
         [[ -n "$out" ]] || return 1
         __gpy_g_clear_styles
         unset __gpy_script_segments
@@ -72,8 +72,8 @@ function __gpy_load_theme() {
         return $?
     fi
 
-    if command -v gpy-agent &>/dev/null; then
-        eval "$(gpy-agent theme export --shell zsh 2>/dev/null)"
+    if __gpy_agent_binary_into agent; then
+        eval "$($agent theme export --shell zsh 2>/dev/null)"
         return $?
     else
         return 1
