@@ -8,14 +8,19 @@ mod fuzzy;
 mod keys;
 mod preview;
 mod save;
+mod signals;
 mod state;
 mod theme_file;
 mod ui;
 
 use crate::Result;
 use crossterm::event::{self, Event, KeyEventKind};
-
 use ratatui::DefaultTerminal;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// How often the event loop checks for a termination signal while idle.
+const SIGNAL_POLL: Duration = Duration::from_millis(100);
 
 /// Restores the terminal on drop, including on early return.
 /// `ratatui::try_init` installs the panic hook that covers panics.
@@ -43,6 +48,8 @@ struct WizardRuntime {
     /// Startup config with the selection applied, kept for the preview.
     preview_config: crate::config::Config,
     facts: facts::PreviewFacts,
+    /// Directory the preview describes.
+    cwd: std::path::PathBuf,
     /// Theme/palette names `cached_theme`/`cached_palette` were loaded for,
     /// so files are re-parsed only when the selection changes.
     cached_selection: (String, String),
@@ -59,7 +66,7 @@ impl WizardRuntime {
         })?;
         let config = crate::commands::utils::read_config()?;
         let cached_theme = crate::theme::ThemeManager::new(config.ui.theme.as_str())?.get();
-        let facts = facts::gather(&cwd, &config, &cached_theme)?;
+        let facts = facts::gather(&cwd, &config, &cached_theme);
         let state = state::WizardState::new(config.clone());
         let cached_palette = crate::palette::resolve::palette_by_name(state.selected_palette());
         let cached_selection = (
@@ -71,6 +78,7 @@ impl WizardRuntime {
             state,
             mode: keys::InputMode::default(),
             preview_config: config,
+            cwd,
             facts,
             cached_selection,
             cached_theme,
@@ -120,6 +128,21 @@ impl WizardRuntime {
 fn draw_frame(terminal: &mut DefaultTerminal, runtime: &mut WizardRuntime) -> Result<()> {
     runtime.refresh_theme_palette_cache();
     runtime.state.reapply_to(&mut runtime.preview_config);
+    runtime.facts.refresh_languages(
+        &runtime.cwd,
+        &runtime.cached_selection.0,
+        &runtime.cached_theme,
+        &runtime.preview_config.language,
+    );
+    if runtime.mode == keys::InputMode::Help
+        && let Ok(size) = terminal.size()
+    {
+        let max = ui::help_max_scroll(
+            ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            runtime.state.focused_builtin(),
+        );
+        runtime.state.clamp_help_scroll(max);
+    }
 
     // Pending theme edits live in `pending_theme()`, not the on-disk theme.
     let preview_theme = runtime
@@ -152,21 +175,40 @@ fn draw_frame(terminal: &mut DefaultTerminal, runtime: &mut WizardRuntime) -> Re
     Ok(())
 }
 
+/// Block until a terminal event arrives, or `shutdown` is set (`None`).
+fn next_event(shutdown: &AtomicBool) -> Result<Option<Event>> {
+    let read_error =
+        |e: std::io::Error| crate::Error::config(format!("Failed to read terminal event: {e}"));
+    while !shutdown.load(Ordering::SeqCst) {
+        if event::poll(SIGNAL_POLL).map_err(read_error)? {
+            return event::read().map(Some).map_err(read_error);
+        }
+    }
+    Ok(None)
+}
+
 /// Run the `gpy config wizard` interactive TUI.
+///
+/// SIGINT, SIGTERM and SIGHUP leave without saving, restoring the terminal.
 ///
 /// # Errors
 ///
 /// Returns an error if terminal setup, drawing, or event reading fails.
 pub fn run() -> Result<()> {
-    let (mut terminal, guard) = init_terminal()?;
+    // Built before the terminal switches, so slow git and version probes
+    // don't leave a blank alternate screen.
     let mut runtime = WizardRuntime::new()?;
+    let shutdown = signals::watch();
+    let (mut terminal, guard) = init_terminal()?;
 
     let should_save = loop {
         draw_frame(&mut terminal, &mut runtime)?;
 
-        let Event::Key(key) = event::read()
-            .map_err(|e| crate::Error::config(format!("Failed to read terminal event: {e}")))?
-        else {
+        let Some(Event::Key(key)) = next_event(&shutdown)? else {
+            // Terminated by signal, or a non-key event: nothing to save.
+            if shutdown.load(Ordering::SeqCst) {
+                break false;
+            }
             continue;
         };
         if key.kind != KeyEventKind::Press {

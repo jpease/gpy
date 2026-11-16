@@ -209,7 +209,7 @@ show_seconds = true
 ```
 
 **Impact:**
-- Prompt repaints every second while idle
+- Fish and Zsh repaint the prompt every second while idle; Bash cannot repaint an idle prompt
 - Uses ~2% CPU per terminal on modern systems
 - Shows exact time in scrollback history
 

@@ -1,18 +1,48 @@
 //! IPC handler for Git status requests: serves from [`crate::git::cache::GitStatusCache`]
-//! when fresh, else computes natively with a progressive timeout.
+//! while change events keep the entry current, else computes natively with a
+//! progressive timeout.
 
 use super::{HandlerError, RenderDeps, notify_if_changed, spawn_detached};
+use crate::cache::bounded::GIT_STATUS_CACHE_CAPACITY;
+use crate::cache::ttl_map::TtlMap;
 use crate::config::Config;
 use crate::git::{self, cache::GitStatusCache};
 use crate::ipc::Response;
 use crate::ipc::single_flight::{JobGuard, SharedJob, SingleFlight};
+use crate::sync_ext::MutexExt;
+use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Max age at which a stale entry is still served immediately after the fast
 /// window misses. Must exceed the 30s git-status TTL.
 const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_mins(1);
+
+/// How long a failed status for a repository with no cached status is
+/// answered from memory before git is run again, so a repository git always
+/// refuses (dubious ownership, corruption) or a hung mount does not cost a
+/// full capture on every prompt.
+const FAILURE_TTL: Duration = Duration::from_secs(5);
+
+/// Recent failures by canonical repository root.
+type FailureCache = TtlMap<PathBuf, String>;
+
+/// The agent's lazily-set repository watcher.
+type WatcherSlot = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
+
+/// What keeps a repository's cached status current.
+#[derive(Clone, Copy)]
+enum Watch {
+    /// No watcher was wired in ([`GitHandler::with_watcher`]): the TTL alone
+    /// decides, as for embedders and handler tests.
+    Untracked,
+    /// Change events have been reported since this instant.
+    Since(Instant),
+    /// Nothing reports changes: the watch was torn down (no client in the
+    /// repository), live updates are off, or the watcher failed to start.
+    Unwatched,
+}
 
 /// Handler for Git repository status queries.
 pub struct GitHandler {
@@ -20,6 +50,10 @@ pub struct GitHandler {
     /// Handles for publishing to the instant-prompt cache; see [`publish_and_repaint`].
     render: RenderDeps,
     in_flight: SingleFlight<PathBuf, SharedGitStatusResult>,
+    /// Failures with no status to fall back on; see [`FAILURE_TTL`].
+    failures: Arc<FailureCache>,
+    /// Tells whether change events keep a repository's cached status current.
+    watcher: Option<WatcherSlot>,
 }
 
 type SharedGitStatusResult = Result<Option<git::RepositoryStatus>, String>;
@@ -29,8 +63,9 @@ struct GitStatusJob {
     max_ahead_behind: usize,
     git_root: PathBuf,
     cache: Arc<GitStatusCache>,
+    failures: Arc<FailureCache>,
     render: RenderDeps,
-    /// Frees the single-flight slot even if `load_repository_state` panics.
+    /// Frees the single-flight slot even if the status capture panics.
     guard: JobGuard<PathBuf, SharedGitStatusResult>,
 }
 
@@ -52,6 +87,34 @@ pub(super) fn publish_and_repaint(
     notify_if_changed(&deps.client_registry, git_root, result, "git");
 }
 
+/// How many times a status job scans again because the repository changed
+/// while it ran, before it settles for its last view.
+const MAX_CHANGE_RESCANS: u8 = 2;
+
+/// Run `scan` again while the repository changed (see
+/// [`GitStatusCache::note_change_canonical`]) after the latest run started,
+/// at most [`MAX_CHANGE_RESCANS`] times. Requests that join a job in flight
+/// across a change (a checkout during the registration scan) thereby get the
+/// view from after it. Returns the last run's start and result.
+fn scan_past_changes<T>(
+    cache: &GitStatusCache,
+    git_root: &Path,
+    mut scan: impl FnMut() -> crate::Result<T>,
+) -> (Instant, crate::Result<T>) {
+    let mut started = Instant::now();
+    let mut result = scan();
+    let mut rescans = 0_u8;
+    while rescans < MAX_CHANGE_RESCANS
+        && result.is_ok()
+        && cache.changed_since_canonical(git_root, started)
+    {
+        rescans = rescans.saturating_add(1);
+        started = Instant::now();
+        result = scan();
+    }
+    (started, result)
+}
+
 impl GitHandler {
     /// Create a new `GitHandler`.
     #[must_use]
@@ -60,7 +123,79 @@ impl GitHandler {
             git_cache,
             render,
             in_flight: SingleFlight::new(),
+            failures: Arc::new(TtlMap::with_ttl(GIT_STATUS_CACHE_CAPACITY, FAILURE_TTL)),
+            watcher: None,
         }
+    }
+
+    /// Trust a cached status only while `watcher` reports changes to its
+    /// repository, and only if it was scanned after that watch went live;
+    /// otherwise a request rescans, keeping the cached status as the
+    /// fallback for a scan that times out.
+    #[must_use]
+    pub fn with_watcher(mut self, watcher: WatcherSlot) -> Self {
+        self.watcher = Some(watcher);
+        self
+    }
+
+    /// What keeps `git_root`'s cached status current; see [`Watch`].
+    fn watch_state(&self, git_root: &Path, config: &Config) -> Watch {
+        let Some(slot) = &self.watcher else {
+            return Watch::Untracked;
+        };
+        if !config.agent.live_updates {
+            return Watch::Unwatched;
+        }
+        // Clone out so the slot lock is not held across the watcher call.
+        let watcher = slot.lock_or_recover().clone();
+        watcher
+            .and_then(|current| current.watched_since(git_root))
+            .map_or(Watch::Unwatched, Watch::Since)
+    }
+
+    /// The cached status a request may answer with without waiting on a
+    /// scan: within its TTL and current per `watch`, or still within the
+    /// cooldown of its last update.
+    fn trusted_cached(&self, git_root: &Path, watch: Watch) -> Option<git::RepositoryStatus> {
+        let current = match watch {
+            Watch::Untracked => self.git_cache.get_canonical(git_root),
+            Watch::Since(since) => self.git_cache.get_canonical_scanned_since(git_root, since),
+            Watch::Unwatched => None,
+        };
+        current.or_else(|| {
+            if self.git_cache.is_fresh_canonical(git_root) {
+                self.git_cache.get_canonical(git_root)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Number of repositories with a cached status.
+    #[must_use]
+    pub(crate) fn cached_repo_count(&self) -> usize {
+        self.git_cache.len()
+    }
+
+    /// Fill the caches for the repository holding `path` ahead of its first
+    /// prompt (client registration), in the background.
+    ///
+    /// Shares the request path's single-flight and `git.timeout_seconds`, so
+    /// shells registering together in one repository start one scan. Does
+    /// nothing outside a repository, when git is off or skipped for the root,
+    /// while the cached status is within its cooldown, or after a recent failure.
+    pub(crate) fn prewarm(&self, path: &Path) {
+        let Some(git_root) = git::find_repo_root(path) else {
+            return;
+        };
+        let config = self.render.config_manager.get();
+        if !config.git_enabled_for(&git_root)
+            || self.git_cache.is_fresh_canonical(&git_root)
+            || self.failures.get(&git_root).is_some()
+        {
+            return;
+        }
+        drop(self.git_status_job(&git_root, git_root.clone(), config.git.max_ahead_behind));
     }
 
     /// Get git status for a path, checking cache first.
@@ -94,7 +229,8 @@ impl GitHandler {
         }
 
         // `git_root` is already canonical.
-        if let Some(cached_status) = self.git_cache.get_canonical(&git_root) {
+        let watch = self.watch_state(&git_root, &config);
+        if let Some(cached_status) = self.trusted_cached(&git_root, watch) {
             // Whatever changed the cached status already published its files, so a hit
             // only refreshes their mtime; a missing file takes the write path.
             if !self.render.instant_cache.touch_git(&git_root, prev_bg) {
@@ -111,13 +247,18 @@ impl GitHandler {
             ));
         }
 
+        // A failure with nothing cached is answered again until it expires.
+        if let Some(error) = self.failures.get(&git_root) {
+            return Err(HandlerError::Git(error));
+        }
+
         let path_owned = path_buf.to_path_buf();
         let max_ahead_behind = config.git.max_ahead_behind;
 
         let job = self.git_status_job(&git_root, path_owned, max_ahead_behind);
 
         job.wait_timeout(Duration::from_millis(100)).map_or_else(
-            || self.handle_git_status_timeout(&job, &git_root, &config, prev_bg),
+            || self.handle_git_status_timeout(&job, &git_root, &config, prev_bg, watch),
             |result| match result {
                 Ok(Some(status)) => {
                     publish_and_repaint(&self.render, &git_root, &status, prev_bg);
@@ -132,8 +273,10 @@ impl GitHandler {
 
     /// Handle a miss of the fast 100ms window.
     ///
-    /// Serves stale data immediately only within [`MAX_IMMEDIATE_STALE_AGE`];
-    /// otherwise waits for the in-flight recompute, falling back to very-stale data.
+    /// While change events report on the repository, serves stale data
+    /// immediately within [`MAX_IMMEDIATE_STALE_AGE`] (the events will correct
+    /// it); otherwise waits for the in-flight recompute, falling back to the
+    /// stale value only if that times out.
     ///
     /// # Errors
     /// Fails if the path is no longer a repo, or the recompute fails or times out
@@ -144,8 +287,10 @@ impl GitHandler {
         git_root: &Path,
         config: &Config,
         prev_bg: Option<&str>,
+        watch: Watch,
     ) -> Result<Response, HandlerError> {
-        if let Some((stale, age)) = self.git_cache.get_any_with_age_canonical(git_root)
+        if !matches!(watch, Watch::Unwatched)
+            && let Some((stale, age)) = self.git_cache.get_any_with_age_canonical(git_root)
             && age <= MAX_IMMEDIATE_STALE_AGE
         {
             publish_and_repaint(&self.render, git_root, &stale, prev_bg);
@@ -195,6 +340,7 @@ impl GitHandler {
         max_ahead_behind: usize,
     ) -> Arc<SharedJob<SharedGitStatusResult>> {
         let cache = Arc::clone(&self.git_cache);
+        let failures = Arc::clone(&self.failures);
         let render = self.render.clone();
         let git_root_owned = git_root.to_path_buf();
         // Fallback if the job panics before finishing.
@@ -206,6 +352,7 @@ impl GitHandler {
                     max_ahead_behind,
                     git_root: git_root_owned,
                     cache,
+                    failures,
                     render,
                     guard,
                 });
@@ -214,26 +361,21 @@ impl GitHandler {
 
     fn spawn_git_status_job(job_spec: GitStatusJob) {
         let job = move || {
-            let stash_enabled = job_spec.render.config_manager.get().git.stash_enabled;
-            let started = Instant::now();
-            let result = crate::git::native::NativeGitBackend::get_complete_status(
-                &job_spec.path,
-                job_spec.max_ahead_behind,
-                stash_enabled,
-                Duration::from_secs(
-                    job_spec
-                        .render
-                        .config_manager
-                        .get()
-                        .git
-                        .timeout_seconds
-                        .get(),
-                ),
-            );
+            let config = job_spec.render.config_manager.get();
+            let (started, result) = scan_past_changes(&job_spec.cache, &job_spec.git_root, || {
+                crate::git::native::NativeGitBackend::get_complete_status(
+                    &job_spec.path,
+                    job_spec.max_ahead_behind,
+                    config.git.stash_enabled,
+                    Duration::from_secs(config.git.timeout_seconds.get()),
+                )
+            });
+            if result.is_ok() {
+                job_spec.failures.remove(&job_spec.git_root);
+            }
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical. A newer full scan was
-                    // already published, so its waiters get it instead.
+                    // `git_root` is already canonical.
                     if let Some(published) = job_spec.cache.apply_full_scan(
                         &job_spec.git_root,
                         started,
@@ -244,7 +386,15 @@ impl GitHandler {
                         // fresh status. No request context, so prev_bg is None.
                         publish_and_repaint(&job_spec.render, &job_spec.git_root, &published, None);
                         Ok(Some(published))
+                    } else if job_spec
+                        .cache
+                        .changed_since_canonical(&job_spec.git_root, started)
+                    {
+                        // Changes kept coming past the rescan cap: this scan is
+                        // still the newest view, though too old to cache.
+                        Ok(Some(status))
                     } else {
+                        // A full scan that started later was already published.
                         Ok(Some(
                             job_spec
                                 .cache
@@ -254,15 +404,20 @@ impl GitHandler {
                     }
                 }
                 Ok(None) => Ok(None),
-                Err(e) => match job_spec.cache.mark_stale_error(&job_spec.git_root, None) {
+                Err(e) => {
                     // Serve and publish the last good status with unknown
                     // upstream counts (`↑?`); no last good status keeps the error.
-                    Some(stale) => {
+                    if let Some(stale) = job_spec.cache.mark_stale_error(&job_spec.git_root, None) {
                         publish_and_repaint(&job_spec.render, &job_spec.git_root, &stale, None);
                         Ok(Some(stale))
+                    } else {
+                        let message = e.to_string();
+                        job_spec
+                            .failures
+                            .insert(job_spec.git_root.clone(), message.clone());
+                        Err(message)
                     }
-                    None => Err(e.to_string()),
-                },
+                }
             };
 
             job_spec.guard.finish(shared_result);
@@ -295,6 +450,9 @@ mod tests {
     use std::assert_matches;
     use std::collections::HashMap;
     use std::time::Duration;
+
+    /// Bound on each status load.
+    const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn make_handler() -> (GitHandler, Arc<ClientDirectory>) {
         make_handler_with_cache(Arc::new(GitStatusCache::new()))
@@ -454,7 +612,7 @@ mod tests {
             .expect("safe path");
 
         let handler_result = handler.status(&safe_path, None);
-        let oneshot_result = load_repository_state(&bare_path, 0, false);
+        let oneshot_result = load_repository_state(&bare_path, 0, false, STATUS_TIMEOUT);
 
         let Err(handler_error) = handler_result else {
             panic!("expected an error (git refuses status without a worktree), got Ok");
@@ -573,6 +731,35 @@ mod tests {
         );
     }
 
+    /// With a watcher wired in, a repository nothing watches (its last
+    /// client left, so its watch was torn down) does not answer from its
+    /// cached status: a change made meanwhile is read from git.
+    #[test]
+    fn unwatched_repo_does_not_trust_its_cached_status() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let git_root = init_dirty_repo(&temp_dir);
+        let cache = zero_cooldown_cache();
+        let (unwired, _registry) = make_handler_with_cache(Arc::clone(&cache));
+        let handler = unwired.with_watcher(Arc::new(Mutex::new(None)));
+        // A Clean status from before the change the watcher never saw.
+        cache.set_canonical(&git_root, status(0), HashMap::new());
+        let safe_path = crate::security::SafePath::new(git_root.to_str().expect("utf8 path"))
+            .expect("safe path");
+
+        let Response::RepositoryStatus(served) =
+            handler.status(&safe_path, None).expect("a rescan answers")
+        else {
+            panic!("expected a RepositoryStatus response");
+        };
+        assert_eq!(served.state, RepositoryState::Dirty);
+        assert_eq!(
+            cache
+                .get_any_canonical(&git_root)
+                .map(|cached| cached.state),
+            Some(RepositoryState::Dirty)
+        );
+    }
+
     /// A hit whose files exist only refreshes them (no repaint); a `prev_bg`
     /// the agent has not rendered takes the write path and repaints once.
     #[cfg(unix)]
@@ -667,7 +854,7 @@ mod tests {
         let job = handler.git_status_job(&git_root, git_root.clone(), 0);
         let config = handler.render.config_manager.get();
         let response = handler
-            .handle_git_status_timeout(&job, &git_root, &config, None)
+            .handle_git_status_timeout(&job, &git_root, &config, None, Watch::Untracked)
             .expect("recompute should succeed for a real repo");
 
         let Response::RepositoryStatus(served) = response else {
@@ -698,7 +885,7 @@ mod tests {
         let job = handler.git_status_job(&git_root, git_root.clone(), 0);
         let config = handler.render.config_manager.get();
         let response = handler
-            .handle_git_status_timeout(&job, &git_root, &config, None)
+            .handle_git_status_timeout(&job, &git_root, &config, None, Watch::Untracked)
             .expect("stale-serve should succeed");
 
         let Response::RepositoryStatus(served) = response else {
@@ -774,5 +961,89 @@ mod tests {
 
         assert!(result.is_err(), "got {result:?}");
         assert_eq!(cache.get_any_canonical(&root), None);
+    }
+
+    /// A failure with no status to fall back on is remembered, and answered
+    /// from memory without starting git again while it lasts.
+    #[test]
+    fn failure_without_last_good_status_is_answered_from_memory() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = init_failing_repo(&temp_dir);
+        let (handler, _registry) = make_handler();
+        let safe_path =
+            crate::security::SafePath::new(root.to_str().expect("utf8 path")).expect("safe path");
+
+        let Err(HandlerError::Git(first)) = handler.status(&safe_path, None) else {
+            panic!("a bare repository fails git status");
+        };
+        assert_eq!(handler.failures.get(&root), Some(first));
+
+        // A healthy repository with a remembered failure: a capture would succeed,
+        // so the remembered error and an idle single-flight prove none started.
+        let worktree = temp_dir.path().join("worktree");
+        let output = std::process::Command::new("git")
+            .args(["init", "--initial-branch=main"])
+            .arg(&worktree)
+            .output()
+            .expect("run git init");
+        assert!(output.status.success(), "git init failed");
+        let worktree_root = std::fs::canonicalize(&worktree).expect("canonical worktree");
+        handler
+            .failures
+            .insert(worktree_root.clone(), "remembered".to_owned());
+        let worktree_path =
+            crate::security::SafePath::new(worktree_root.to_str().expect("utf8 path"))
+                .expect("safe path");
+
+        assert_matches!(
+            handler.status(&worktree_path, None),
+            Err(HandlerError::Git(message)) if message == "remembered"
+        );
+        handler.prewarm(&worktree_root);
+        assert!(handler.in_flight.is_idle());
+    }
+
+    /// A change noted while a job's scan runs (a checkout while a prompt
+    /// request has joined the registration scan) makes the job scan again,
+    /// so every waiter gets the view from after the change.
+    #[test]
+    fn change_during_scan_rescans_before_waiters_are_answered() {
+        let cache = GitStatusCache::new();
+        let root = PathBuf::from("/repo/changed-mid-scan");
+        let mut runs = 0_u8;
+        let (_, result) = scan_past_changes(&cache, &root, || {
+            runs = runs.saturating_add(1);
+            if runs == 1 {
+                std::thread::sleep(Duration::from_millis(2));
+                cache.note_change_canonical(&root);
+                Ok("before checkout")
+            } else {
+                Ok("after checkout")
+            }
+        });
+        assert_eq!(result.ok(), Some("after checkout"));
+        assert_eq!(runs, 2);
+    }
+
+    /// Without a change one scan answers; endless churn stops at the cap.
+    #[test]
+    fn scan_past_changes_runs_once_without_change_and_caps_churn() {
+        let cache = GitStatusCache::new();
+        let root = PathBuf::from("/repo/rescan-cap");
+        let mut runs = 0_u8;
+        let (_, quiet) = scan_past_changes(&cache, &root, || {
+            runs = runs.saturating_add(1);
+            Ok(runs)
+        });
+        assert_eq!(quiet.ok(), Some(1));
+
+        let mut churn_runs = 0_u8;
+        let (_, churned) = scan_past_changes(&cache, &root, || {
+            churn_runs = churn_runs.saturating_add(1);
+            std::thread::sleep(Duration::from_millis(2));
+            cache.note_change_canonical(&root);
+            Ok(churn_runs)
+        });
+        assert_eq!(churned.ok(), Some(MAX_CHANGE_RESCANS.saturating_add(1)));
     }
 }

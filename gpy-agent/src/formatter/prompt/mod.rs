@@ -9,7 +9,9 @@ use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::status_resolver::StatusResolver;
-use crate::formatter::{Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition};
+use crate::formatter::{
+    ColorDepth, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
+};
 use crate::ipc::{LanguageInfo, Response};
 use crate::template::VariableResolver;
 
@@ -115,13 +117,24 @@ fn render_via_template(
     dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
+    render_with_prev_bg(resolver, ctx, ctx.prev_bg.clone(), dialect, format)
+}
+
+/// [`render_via_template`] with `prev_bg` overriding `ctx`'s previous background.
+fn render_with_prev_bg(
+    resolver: &dyn VariableResolver,
+    ctx: &RenderContext<'_>,
+    prev_bg: Option<crate::template::Color>,
+    dialect: PromptDialect,
+    format: &str,
+) -> crate::template::Result<String> {
     use crate::template::{EvalContext, render};
 
     let template_ctx = EvalContext::new(resolver)
-        .with_prev_colors(ctx.prev_fg.clone(), ctx.prev_bg.clone())
+        .with_prev_colors(ctx.prev_fg.clone(), prev_bg)
         .with_palette(ctx.palette.clone());
     let spans = render(format, &template_ctx)?;
-    Ok(dialect.encode(&spans))
+    Ok(dialect.encode_depth(&spans, ColorDepth::detect()))
 }
 
 /// Downgrade a template error to an empty segment (never break the live prompt),
@@ -158,6 +171,8 @@ fn render_languages_via_template(
     let selected = select_languages(ctx.config, ctx.theme, languages);
     let last_index = selected.len().saturating_sub(1);
     let mut output = String::with_capacity(160);
+    // Pill N's `prev_bg` is pill N-1's background (its language color).
+    let mut prev_bg = ctx.prev_bg.clone();
     for (index, lang) in selected.into_iter().enumerate() {
         // Only the first pill inherits `is_first`, only the last `is_last`.
         let pill_position = SegmentPosition::new(
@@ -173,10 +188,22 @@ fn render_languages_via_template(
             },
         );
         let resolver = LanguageResolver::new(lang, ctx.config, ctx.theme, pill_position);
-        output.push_str(&render_via_template(&resolver, ctx, dialect, format)?);
+        output.push_str(&render_with_prev_bg(
+            &resolver,
+            ctx,
+            prev_bg.clone(),
+            dialect,
+            format,
+        )?);
+        if let Ok(color) = crate::template::parse_color(lang.color.as_str()) {
+            prev_bg = Some(color);
+        }
     }
     Ok(output)
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pill_tests;

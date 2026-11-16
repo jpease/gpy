@@ -27,14 +27,16 @@ pub enum PythonVenv {
 }
 
 impl PythonVenv {
-    /// The venv's Python version: `pyvenv.cfg`, then, for a forwarded venv
-    /// only, a memoized interpreter probe.
+    /// The venv directory.
     #[must_use]
-    pub fn version(&self) -> Option<String> {
-        self.lookup_version(ProbePolicy::Spawn).ok().flatten()
+    pub fn dir(&self) -> &Path {
+        match self {
+            Self::Forwarded(dir) | Self::Discovered(dir) => dir,
+        }
     }
 
-    /// [`Self::version`] under `policy`.
+    /// The venv's Python version: `pyvenv.cfg`, then, for a forwarded venv
+    /// only, a memoized interpreter probe, under `policy`.
     ///
     /// # Errors
     /// [`ColdVersion`] when only an interpreter probe could answer and
@@ -138,7 +140,7 @@ fn memoized_binary_version(
     }) else {
         return Ok(None);
     };
-    VENV_BINARY_MEMO.lookup_or_probe(key, policy, || detect_python_binary_version(python))
+    VENV_BINARY_MEMO.lookup_or_probe(&key, policy, || detect_python_binary_version(python))
 }
 
 /// Max repos tracked by the forwarded-venv stash.
@@ -177,6 +179,17 @@ mod tests {
 
     use super::*;
     use std::time::{Duration, SystemTime};
+
+    /// Version under [`ProbePolicy::Spawn`], without the cold-version error.
+    trait VersionExt {
+        fn version(&self) -> Option<String>;
+    }
+
+    impl VersionExt for PythonVenv {
+        fn version(&self) -> Option<String> {
+            self.lookup_version(ProbePolicy::Spawn).ok().flatten()
+        }
+    }
 
     fn write_pyvenv(dir: &Path, version: &str) {
         std::fs::create_dir_all(dir).unwrap();

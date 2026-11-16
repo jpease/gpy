@@ -247,6 +247,41 @@ fn renudge_signals_only_the_unregistered_tracked_shell() {
     }
 }
 
+/// Once a tick has verified a shell, a tracking file that later looks older
+/// than the process (what a forward wall-clock step does on Linux) does not
+/// make it look recycled.
+#[test]
+fn renudge_keeps_a_verified_shell_whose_tracking_file_looks_older() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn stand-in shell");
+    let pid = child.id();
+    track_shells(dir.path(), &[pid]);
+    let tracking = dir.path().join(pid.to_string());
+
+    // Registered, so no tick rings it.
+    let registry = ClientDirectory::new();
+    registry.register(pid, None);
+    let mut renudger = ShellRenudger::default();
+    renudge_unregistered_shells_in(dir.path(), &mut renudger, &registry);
+    assert!(tracking.exists(), "first sight keeps a fresh tracking file");
+
+    std::fs::File::options()
+        .write(true)
+        .open(&tracking)
+        .expect("open tracking file")
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000))
+        .expect("backdate tracking file");
+    renudge_unregistered_shells_in(dir.path(), &mut renudger, &registry);
+
+    let kept = tracking.exists();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(kept, "a verified shell's tracking file must survive");
+}
+
 /// The restart nudge writes `.reregister`, and a shell without a handler survives.
 #[test]
 fn restart_nudge_writes_reregister_flag_and_spares_unhandled_shell() {

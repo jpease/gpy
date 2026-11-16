@@ -338,8 +338,8 @@ fn test_theme_migrate_turns_a_0_6_copy_into_one_that_loads() {
         keys("username"),
         ["bg_color", "root_bg_color", "root_text_color", "text_color"]
     );
-    assert_eq!(keys("hostname"), ["bg_color", "ssh_icon", "text_color"]);
-    assert!(migrated.contains("ssh_icon = \"🌐 \""), "{migrated}");
+    assert_eq!(keys("hostname"), ["bg_color", "icon", "text_color"]);
+    assert!(migrated.contains("icon = \"🌐 \""), "{migrated}");
     assert_eq!(
         plugin_setting(&env, "hostname", "show_always"),
         Some(toml::Value::Boolean(true))
@@ -360,11 +360,7 @@ fn test_theme_migrate_turns_a_0_6_copy_into_one_that_loads() {
         fs::read_to_string(env.config_dir().join("config.toml.bak")).expect("config backup"),
         config_before
     );
-    for rewrite in [
-        "removed `format`",
-        "moved `trim_at`",
-        "renamed `icon` to `ssh_icon`",
-    ] {
+    for rewrite in ["removed `format`", "moved `trim_at`"] {
         assert!(
             output.stdout.contains(rewrite),
             "missing {rewrite:?}: {output:?}"
@@ -612,7 +608,7 @@ fn test_theme_reset_warns_when_other_overlays_extend_the_moved_one() {
 }
 
 #[test]
-fn test_theme_migrate_rewrites_and_drops_unset_paths_of_an_overlay() {
+fn test_theme_migrate_drops_unset_paths_of_removed_keys_and_keeps_current_ones() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let path = write_theme_file(
         &env,
@@ -637,11 +633,11 @@ fn test_theme_migrate_rewrites_and_drops_unset_paths_of_an_overlay() {
         .collect();
     assert_eq!(
         unset,
-        ["segments.hostname.ssh_icon", "segments.directory.format"]
+        ["segments.hostname.icon", "segments.directory.format"]
     );
     assert!(
-        output.stdout.contains("renamed `segments.hostname.icon`")
-            && output.stdout.contains("dropped `segments.username.format`"),
+        output.stdout.contains("dropped `segments.username.format`")
+            && !output.stdout.contains("renamed"),
         "{output:?}"
     );
 }

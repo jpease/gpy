@@ -7,6 +7,9 @@ use git::{TestRepo, git_stdout};
 use gpy_agent::git::status::load_repository_state;
 use std::assert_matches;
 
+/// Bound on each status load.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[test]
 fn test_repo_fixture_is_an_initialized_repository() {
     let repo = TestRepo::new();
@@ -44,7 +47,7 @@ fn test_repo_fixture_with_staged_file() {
 #[test]
 fn test_load_repository_state_with_clean_repo() {
     let repo = TestRepo::new().with_initial_commit();
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load clean repository")
@@ -58,7 +61,7 @@ fn test_load_repository_state_with_clean_repo() {
 fn test_load_repository_state_with_untracked_file() {
     let repo = TestRepo::new().with_initial_commit().with_untracked_file();
 
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load repository")
@@ -72,7 +75,7 @@ fn test_load_repository_state_with_staged_file() {
         .with_initial_commit()
         .with_staged_file("new.txt", "content");
 
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load repository")
@@ -86,7 +89,7 @@ fn test_load_repository_state_with_unstaged_changes() {
         .with_initial_commit()
         .with_unstaged_changes();
 
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load repository")
@@ -101,7 +104,7 @@ fn test_load_repository_state_with_unstaged_changes() {
 fn test_load_repository_state_with_conflicts() {
     let repo = TestRepo::new().with_initial_commit().with_conflicts();
 
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load repository with conflicts")
@@ -117,7 +120,7 @@ fn test_load_repository_state_with_conflicts() {
 fn test_load_repository_state_with_detached_head() {
     let repo = TestRepo::new().with_detached_head();
 
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load repository in detached HEAD state")
@@ -134,7 +137,12 @@ fn test_load_repository_state_with_detached_head() {
 
 #[test]
 fn test_load_repository_state_invalid_path() {
-    let result = load_repository_state(std::path::Path::new("/nonexistent/path"), 0, true);
+    let result = load_repository_state(
+        std::path::Path::new("/nonexistent/path"),
+        0,
+        true,
+        STATUS_TIMEOUT,
+    );
 
     // Discovery may yield Ok(None) or an error for a nonexistent path.
     assert_matches!(result, Ok(None) | Err(_));
@@ -143,7 +151,7 @@ fn test_load_repository_state_invalid_path() {
 #[test]
 fn test_load_repository_state_not_a_repo() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let result = load_repository_state(temp_dir.path(), 0, true);
+    let result = load_repository_state(temp_dir.path(), 0, true, STATUS_TIMEOUT);
 
     assert_matches!(result, Ok(None));
 }
@@ -160,7 +168,7 @@ fn test_load_repository_state_mixed_changes() {
 
     repo.create_file("untracked.txt", "untracked content");
 
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let status = result
         .expect("Should successfully load repository")

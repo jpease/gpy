@@ -566,3 +566,26 @@ fn uninstall_asks_and_honours_the_answer() {
     assert_eq!(uninstall_on_pty(&env, b"y\n"), 0);
     assert!(is_absent(&bash_dir), "answering y must uninstall");
 }
+
+#[test]
+fn uninstall_removes_the_pre_0_9_layout_and_never_restores_its_prompt_link() {
+    let env = CliTestEnv::new().unwrap();
+    let functions = functions_dir(&env);
+    let old_tree = env.xdg_config_home().join("fish/gpy");
+    let old_prompt = old_tree.join("functions/fish_prompt.fish");
+    fs::create_dir_all(old_prompt.parent().unwrap()).unwrap();
+    fs::write(&old_prompt, repo_prompt()).unwrap();
+    let old_plugins = env.xdg_config_home().join("gpy/bundled-plugins");
+    fs::create_dir_all(&old_plugins).unwrap();
+    symlink(&old_prompt, functions.join("fish_prompt.fish")).unwrap();
+    // What an older `gpy setup` made of that link: a "backup" of GPY's own prompt.
+    symlink(&old_prompt, functions.join(BACKUP_NAME)).unwrap();
+
+    uninstall(&env, &["--yes"]).assert_success("gpy uninstall --yes");
+
+    assert!(is_absent(&old_tree) && is_absent(&old_plugins));
+    assert!(
+        is_absent(&functions.join("fish_prompt.fish")),
+        "the legacy GPY link is removed, and its backup is not restored as the user's prompt"
+    );
+}

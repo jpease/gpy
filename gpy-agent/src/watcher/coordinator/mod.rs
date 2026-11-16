@@ -3,7 +3,6 @@
 use super::{DebouncedEvent, PendingEvent, WatchRegistry, debouncer, filesystem};
 use crate::Result;
 use crate::sync_ext::MutexExt;
-use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -11,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Threads that run debounced callbacks for one coordinator.
+/// Threads that run debounced callbacks for one coordinator. Fixed so the
+/// number of concurrent callbacks (each may run git) stays bounded; a fifth
+/// busy repository's event waits in the queue until a worker frees up.
 const DISPATCH_WORKERS: usize = 4;
 
 /// Start the dispatch workers. They exit when every sender is gone, which
@@ -34,10 +35,9 @@ fn spawn_dispatch_workers(
 }
 
 /// Run callbacks for queued events until the queue closes or `stop_flag` is set.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "a panicking callback must not shrink the dispatch pool"
-)]
+///
+/// No `catch_unwind`: release builds abort on panic (ADR-0008), so a panicking
+/// callback ends the process rather than shrinking the pool.
 fn dispatch_loop(
     queue: &Mutex<mpsc::Receiver<DebouncedEvent>>,
     callback: &EventCallback,
@@ -52,10 +52,7 @@ fn dispatch_loop(
         if stop_flag.load(Ordering::Relaxed) {
             break;
         }
-        // A panicking callback must not shrink the pool.
-        if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(|| callback(event))) {
-            crate::debug_log!("watcher", "dispatch callback panicked: {panic:?}");
-        }
+        callback(event);
     }
 }
 
@@ -69,14 +66,34 @@ pub type PendingCallback = Box<dyn Fn(PendingEvent) + Send + Sync>;
 /// like an immediate event. Synchronous and cheap; the flush thread waits.
 pub type DelayedEventScheduler = Arc<dyn Fn(PendingEvent, Instant) + Send + Sync>;
 
-/// Insert under the debouncer lock, release it, then wake the flush thread.
+/// Whether moving the earliest deadline from `before` to `after` must wake the
+/// flush thread: only an earlier (or first) deadline does. A later one is
+/// found when the thread wakes at the old deadline and recomputes.
+fn deadline_moved_earlier(before: Option<Instant>, after: Option<Instant>) -> bool {
+    match (before, after) {
+        (None, Some(_)) => true,
+        (Some(old), Some(new)) => new < old,
+        (_, None) => false,
+    }
+}
+
+/// Insert under the debouncer lock, release it, then wake the flush thread if
+/// the earliest deadline moved earlier; a burst merging into pending entries
+/// sends no kicks.
 fn ingest(
     debouncer: &Mutex<debouncer::DebounceEngine>,
     kick: &mpsc::Sender<()>,
     pending: PendingEvent,
 ) {
-    debouncer.lock_or_recover().handle_event(pending);
-    let _ = kick.send(());
+    let wake = {
+        let mut engine = debouncer.lock_or_recover();
+        let before = engine.next_deadline();
+        engine.handle_event(pending);
+        deadline_moved_earlier(before, engine.next_deadline())
+    };
+    if wake {
+        let _ = kick.send(());
+    }
 }
 
 /// Single-repository file system watcher with debouncing.
@@ -122,10 +139,15 @@ impl WatchCoordinator {
         let debouncer_for_schedule = Arc::clone(&debouncer_arc);
         let kick_for_schedule = flush_kick.clone();
         let schedule_delayed: DelayedEventScheduler = Arc::new(move |pending, due| {
-            debouncer_for_schedule
-                .lock_or_recover()
-                .handle_event_due(pending, due);
-            let _ = kick_for_schedule.send(());
+            let wake = {
+                let mut engine = debouncer_for_schedule.lock_or_recover();
+                let before = engine.next_deadline();
+                engine.handle_event_due(pending, due);
+                deadline_moved_earlier(before, engine.next_deadline())
+            };
+            if wake {
+                let _ = kick_for_schedule.send(());
+            }
         });
 
         // Follow-up delay = debounce window, so contents created before the
@@ -224,6 +246,25 @@ impl WatchCoordinator {
         self.watcher
             .as_ref()
             .is_some_and(|watcher| watcher.covers(path))
+    }
+
+    /// Prepare for events from a freshly armed repository
+    /// (see [`filesystem::FileSystemWatcher::repo_armed`]).
+    pub fn prepare_armed_repo(&self, git_root: &Path, git_dir: &Path) {
+        if let Some(watcher) = &self.watcher {
+            watcher.repo_armed(git_root, git_dir);
+        }
+    }
+
+    /// Queue one whole-repository Git refresh for `repo` through the debouncer,
+    /// as an overflow rescan does: changes made before its watch went live,
+    /// or while nobody subscribed to it, were never delivered.
+    pub fn queue_refresh(&self, repo: &Path) {
+        ingest(
+            &self.debouncer,
+            &self.flush_kick,
+            PendingEvent::git_whole_repo(repo.to_path_buf()),
+        );
     }
 
     /// Release one recursive [`WatchCoordinator::watch_directory`] of `path`

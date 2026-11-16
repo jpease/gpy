@@ -291,8 +291,9 @@ function test_failed_restart_registration_retries_on_next_nudge
         touch $reregister_flag
 
         # Simulate the real trigger: the agent does not answer yet when the
-        # restart nudge lands.
-        function __gpy_agent_available; return 1; end
+        # restart nudge lands (every request is unreachable).
+        functions -c __gpy_request __gpy_request_real
+        function __gpy_request; return 1; end
 
         __gpy_doorbell_handler
 
@@ -307,7 +308,8 @@ function test_failed_restart_registration_retries_on_next_nudge
 
         # The agent has been up the whole time. The re-nudge of the agent
         # writes the flag again and must now succeed.
-        source $__gpy_root/fish/core/util.fish
+        functions -e __gpy_request
+        functions -c __gpy_request_real __gpy_request
 
         touch $reregister_flag
         __gpy_doorbell_handler

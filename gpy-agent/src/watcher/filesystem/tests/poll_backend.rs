@@ -475,22 +475,60 @@ fn poll_watch_targets_excludes_gitignored_directories() {
     );
 }
 
-/// A `.gitignore` rule (e.g. `pack/`) never prunes anything under `.git`.
+/// A `.gitignore` rule (e.g. `heads/`) never prunes anything under `.git`.
 #[test]
 fn poll_watch_targets_never_prunes_inside_git_dir() {
     let registry = test_registry(true, HashSet::new());
     let tmp = tempfile::TempDir::new().expect("temp dir");
     let repo = std::fs::canonicalize(tmp.path()).expect("canonicalize repo");
-    std::fs::write(repo.join(".gitignore"), b"pack/\n").expect("write .gitignore");
-    std::fs::create_dir_all(repo.join(".git").join("objects").join("pack"))
-        .expect(".git/objects/pack dir");
+    std::fs::write(repo.join(".gitignore"), b"heads/\n").expect("write .gitignore");
+    let heads = repo.join(".git").join("refs").join("heads");
+    std::fs::create_dir_all(&heads).expect(".git/refs/heads dir");
 
     let targets = poll_watch_targets(&repo, &registry);
 
     assert!(
-        targets.contains(&repo.join(".git").join("objects").join("pack")),
+        targets.contains(&heads),
         "a .gitignore rule must never prune a directory under .git, got: {targets:?}"
     );
+}
+
+/// `.git/objects`, `logs`, `hooks` and `refs/tags` change nothing a prompt
+/// shows, so the poll expansion never stats them, whether `.git` is reached
+/// through the worktree root or watched as its own root.
+#[test]
+fn poll_watch_targets_skip_git_noise_subdirectories() {
+    let registry = test_registry(true, HashSet::new());
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let repo = std::fs::canonicalize(tmp.path()).expect("canonicalize repo");
+    let git_dir = repo.join(".git");
+    let noise = [
+        git_dir.join("objects").join("ab"),
+        git_dir.join("logs").join("refs"),
+        git_dir.join("hooks"),
+        git_dir.join("refs").join("tags"),
+    ];
+    for dir in &noise {
+        std::fs::create_dir_all(dir).expect("noise dir");
+    }
+    std::fs::create_dir_all(git_dir.join("refs").join("heads")).expect("heads dir");
+
+    for root in [&repo, &git_dir] {
+        let targets = poll_watch_targets(root, &registry);
+        assert!(
+            targets.contains(&git_dir.join("refs").join("heads")),
+            "refs/heads must stay polled from {}, got: {targets:?}",
+            root.display()
+        );
+        for dir in &noise {
+            assert!(
+                !targets.iter().any(|target| target.starts_with(dir)),
+                "{} must not be polled from {}, got: {targets:?}",
+                dir.display(),
+                root.display()
+            );
+        }
+    }
 }
 
 /// Git metadata outside the `objects` store is polled with content comparison;

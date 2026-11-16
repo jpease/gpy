@@ -9,7 +9,7 @@ use crate::import::starship::modules::{
     translate_git, translate_hostname, translate_languages, translate_time, translate_username,
 };
 use crate::import::starship::palette::{selected_palette, translate_palette};
-use crate::import::starship::{Warnings, layout};
+use crate::import::starship::{WarningKind, Warnings, layout};
 use crate::palette::config::PaletteConfig;
 use crate::template::{Color, parse_color};
 use crate::theme::{
@@ -38,10 +38,14 @@ impl ImportArtifacts {
     /// # Errors
     /// Returns [`ImportError::Serialize`] if `theme` fails to serialize.
     pub fn theme_toml(&self) -> Result<String> {
-        let body = toml::to_string(&self.theme).map_err(|error| ImportError::Serialize {
+        // Through a `toml::Table` (sorted), not the struct: its `HashMap`
+        // fields would otherwise serialize in a different order per process.
+        let to_error = |error: &dyn std::fmt::Display| ImportError::Serialize {
             artifact: "theme",
             message: error.to_string(),
-        })?;
+        };
+        let table = toml::Table::try_from(&self.theme).map_err(|error| to_error(&error))?;
+        let body = toml::to_string(&table).map_err(|error| to_error(&error))?;
         Ok(format!("{}{body}", header("theme", &self.palette_name)))
     }
 
@@ -68,41 +72,46 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     let mut warnings = Warnings::new();
     let preset = load_preset()?;
 
-    let selected = selected_palette(model, &mut warnings);
+    let (enabled_owned, disabled) = without_disabled(model, &mut warnings);
+    let enabled = &enabled_owned;
+    let selected = selected_palette(enabled, &mut warnings);
     let mut segments = preset.segments;
     let language = translate_languages(
-        model,
+        enabled,
         std::mem::take(&mut segments.language),
         selected,
         &mut warnings,
     );
     segments.language = language.theme;
-    overlay_preset_modules(&mut segments, model, &mut warnings);
-    if let Some(table) = model.module_table("character") {
+    overlay_preset_modules(&mut segments, enabled, &mut warnings);
+    if let Some(table) = enabled.module_table("character") {
         segments.character = translate_character(table, selected, &mut warnings);
     }
-    if let Some(table) = model.module_table("time") {
+    if let Some(table) = enabled.module_table("time") {
         segments.clock = translate_time(table, &mut warnings);
     }
-    if let Some(table) = model.module_table("hostname") {
+    if let Some(table) = enabled.module_table("hostname") {
         let theme = translate_hostname(table, selected, &mut warnings);
         segments.plugin.insert("hostname".to_owned(), theme);
     }
-    if let Some(table) = model.module_table("username") {
+    if let Some(table) = enabled.module_table("username") {
         let theme = translate_username(table, selected, &mut warnings);
         segments.plugin.insert("username".to_owned(), theme);
     }
 
-    let ui = build_ui(model, &mut warnings);
+    let ui = build_ui(enabled, &mut warnings);
     let theme = ThemeConfig { ui, segments };
 
     let mut palette = translate_palette(name, selected, &language.palette_colors, &mut warnings);
     add_preset_language_roles(&mut palette, &theme.segments.language, &preset.palette);
 
-    let segments_order = model
+    let mut segments_order = enabled
         .format
         .as_deref()
         .map_or_default(|format| layout::derive_segments(format, &mut warnings));
+    if let Some(format) = enabled.format.as_deref() {
+        layout::drop_disabled(format, &mut segments_order, &disabled);
+    }
 
     Ok(ImportArtifacts {
         theme,
@@ -111,6 +120,35 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
         warnings,
         palette_name: name.to_owned(),
     })
+}
+
+/// `model` without its `disabled = true` module tables, plus those modules'
+/// names (sorted): a disabled module is not imported and not in the layout.
+fn without_disabled(
+    model: &StarshipConfig,
+    warnings: &mut Warnings,
+) -> (StarshipConfig, Vec<String>) {
+    let mut disabled: Vec<String> = model
+        .modules
+        .iter()
+        .filter(|(_, value)| {
+            value
+                .get("disabled")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    disabled.sort();
+    let mut kept = model.clone();
+    for module in &disabled {
+        kept.modules.remove(module);
+        warnings.push(
+            WarningKind::UnrepresentableOption,
+            format!("module '{module}' is disabled (disabled = true); not imported and left out of the layout"),
+        );
+    }
+    (kept, disabled)
 }
 
 /// Overlay configured `directory`, git and `cmd_duration` modules onto `segments`.
@@ -389,7 +427,7 @@ error_symbol = "[❯](bold red)"
         let artifacts = build(&model, "demo").expect("build");
         assert_eq!(
             artifacts.segments,
-            vec!["directory", "git", "language", "duration", "character"]
+            vec!["directory", "git", "language", "duration"]
         );
     }
 
@@ -420,7 +458,7 @@ error_symbol = "[❯](bold red)"
             "{:?}",
             artifacts.warnings
         );
-        assert_eq!(artifacts.segments, vec!["directory", "character"]);
+        assert_eq!(artifacts.segments, vec!["directory"]);
     }
 
     #[test]
@@ -627,5 +665,53 @@ error_symbol = "[❯](bold red)"
             Some("[$symbol](bold $style) ")
         );
         assert_eq!(lossy_warnings(&artifacts).len(), 1_usize);
+    }
+
+    #[test]
+    fn theme_toml_is_deterministic_across_builds() {
+        let model = parse(SAMPLE).unwrap();
+        let first = build(&model, "demo").expect("build").theme_toml().unwrap();
+        for _ in 0_i32..8_i32 {
+            let again = build(&model, "demo").expect("build").theme_toml().unwrap();
+            assert_eq!(first, again);
+        }
+    }
+
+    #[test]
+    fn directory_truncate_to_repo_and_duration_milliseconds_are_imported() {
+        let model = parse(
+            "[directory]\ntruncate_to_repo = false\n[cmd_duration]\nshow_milliseconds = true\nmin_time = 500\n",
+        )
+        .unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        let directory = artifacts
+            .theme
+            .ui
+            .recommended
+            .as_ref()
+            .and_then(|recommended| recommended.directory.as_ref())
+            .expect("recommended directory");
+        assert_eq!(directory.truncate_to_repo, Some(false));
+        assert!(artifacts.theme.segments.duration.show_milliseconds);
+        assert_eq!(artifacts.theme.segments.duration.show_if_exceeds_ms, 500);
+    }
+
+    #[test]
+    fn disabled_modules_are_skipped_with_a_warning() {
+        let model = parse(
+            "format = \"$directory$cmd_duration$git_branch\"\n[cmd_duration]\ndisabled = true\nshow_milliseconds = true\n",
+        )
+        .unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert_eq!(artifacts.segments, vec!["directory", "git"]);
+        assert!(!artifacts.theme.segments.duration.show_milliseconds);
+        assert!(
+            artifacts
+                .warnings
+                .iter()
+                .any(|warning| warning.message.contains("'cmd_duration' is disabled")),
+            "{:?}",
+            artifacts.warnings
+        );
     }
 }

@@ -4,7 +4,9 @@ use super::manifest::{
     EntryType, GpyVersion, PluginApiVersion, PluginId, PluginManifest, SegmentName,
     first_token_collision,
 };
-use super::script::ScriptSegmentManifest;
+use super::script::{
+    ScriptSegmentManifest, check_owned_and_not_shared, script_segment_manifest_path,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -63,10 +65,13 @@ impl DiscoveredPlugin {
         self.root.clone().unwrap_or_default()
     }
 
-    /// Load every provided segment's manifest of a `script` plugin.
+    /// Load every provided segment's manifest of a `script` plugin, then
+    /// apply the scripts' ownership check to `plugin.toml`, `segments/` and
+    /// the segment manifests themselves.
     ///
     /// # Errors
-    /// Returns the first manifest error, naming its file and key.
+    /// Returns the first manifest error, naming its file and key, or the first
+    /// manifest another user could rewrite.
     pub fn load_script_segments(
         manifest: &PluginManifest,
         root: &Path,
@@ -74,14 +79,53 @@ impl DiscoveredPlugin {
         if !matches!(manifest.entry_type, EntryType::Script) {
             return Ok(BTreeMap::new());
         }
-        manifest
+        let by_name = manifest
             .provided_segments
             .iter()
             .map(|segment| {
                 ScriptSegmentManifest::load(root, segment).map(|loaded| (segment.clone(), loaded))
             })
-            .collect()
+            .collect::<crate::Result<BTreeMap<_, _>>>()?;
+        check_manifests_not_shared(root, manifest)?;
+        Ok(by_name)
     }
+}
+
+/// The manifests of a `script` plugin decide what runs and with what
+/// (`command`, `inputs`, `env`), so `plugin.toml`, `segments/` and each
+/// `segments/<name>.toml` must stay inside the plugin root and pass
+/// [`check_owned_and_not_shared`], as the script and its directories do. The
+/// root and its ancestors are checked when each script resolves.
+fn check_manifests_not_shared(root: &Path, manifest: &PluginManifest) -> crate::Result<()> {
+    let canonical_root = root.canonicalize().map_err(|e| {
+        crate::Error::invalid(format!(
+            "Cannot resolve plugin root {}: {e}",
+            root.display()
+        ))
+    })?;
+    let paths = [root.join("plugin.toml"), root.join("segments")]
+        .into_iter()
+        .chain(
+            manifest
+                .provided_segments
+                .iter()
+                .map(|segment| script_segment_manifest_path(root, segment)),
+        );
+    for path in paths {
+        let canonical = path.canonicalize().map_err(|e| {
+            crate::Error::invalid(format!("Cannot resolve {}: {e}", path.display()))
+        })?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(crate::Error::invalid(format!(
+                "{} resolves outside the plugin root",
+                path.display()
+            )));
+        }
+        check_owned_and_not_shared(&canonical).map_err(|e| {
+            crate::Error::invalid(format!("{}: {}", path.display(), super::newtype::detail(e)))
+        })?;
+    }
+    Ok(())
 }
 
 /// A non-fatal plugin discovery/parse issue.
@@ -221,6 +265,7 @@ fn register_discovered_plugin(
 
     let checked = GpyVersion::new(env!("CARGO_PKG_VERSION"))
         .and_then(|current| manifest.check_min_gpy_version(&current))
+        .and_then(|()| manifest.check_no_builtin_segments())
         .and_then(|()| DiscoveredPlugin::load_script_segments(&manifest, &plugin_dir));
     let script_segments = match checked {
         Ok(script_segments) => script_segments,
@@ -428,9 +473,9 @@ fn reject_token_collisions(
 ///
 /// Deterministic: precedence user > bundled > first-party, same-source
 /// duplicates resolve lexically, output is sorted by id, a plugin providing a
-/// segment name another plugin owns (user over bundled, else smaller id) is
-/// dropped with a diagnostic, and so is one whose segment token collides with
-/// an earlier plugin's.
+/// built-in segment name is dropped with a diagnostic, so is one providing a
+/// segment name another plugin owns (user over bundled, else smaller id), and
+/// so is one whose segment token collides with an earlier plugin's.
 #[must_use]
 pub fn discover_plugins() -> PluginDiscovery {
     discover_plugins_in_roots(&plugin_roots())
@@ -557,6 +602,31 @@ entry_type = "command"
     }
 
     #[test]
+    fn discover_plugins_rejects_builtin_segment_names() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("gpy").join("plugins");
+        let manifest = valid_manifest("shadow").replace(r#"["shadow"]"#, r#"["git"]"#);
+        write_plugin(&root, "shadow", &manifest);
+
+        let discovery = discover_plugins_in_roots(&[(PluginSource::User, root)]);
+
+        assert!(
+            !discovery
+                .plugins
+                .iter()
+                .any(|plugin| plugin.manifest.id.as_str() == "shadow"),
+            "a plugin claiming a built-in name must not load"
+        );
+        assert!(
+            discovery.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("'git', the name of a built-in segment")),
+            "expected a built-in name diagnostic: {:?}",
+            discovery.diagnostics
+        );
+    }
+
+    #[test]
     fn discover_plugins_loads_script_segments_or_reports_them() {
         let temp = TempDir::new().expect("tempdir");
         let root = temp.path().join("gpy").join("plugins");
@@ -606,6 +676,65 @@ entry_type = "command"
             "{:?}",
             discovery.diagnostics
         );
+    }
+
+    /// `plugin.toml`, `segments/` and `segments/<name>.toml` choose what runs,
+    /// so each one that others can write drops the plugin, as a shared script
+    /// would.
+    #[cfg(unix)]
+    #[test]
+    fn discover_plugins_rejects_shared_script_manifests() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("gpy").join("plugins");
+        write_plugin(
+            &root,
+            "demo",
+            &valid_manifest("demo").replace("entry_type = \"file\"", "entry_type = \"script\""),
+        );
+        let dir = root.join("demo");
+        fs::create_dir_all(dir.join("segments")).expect("segments");
+        fs::write(dir.join("run.sh"), "echo hi\n").expect("script");
+        fs::write(dir.join("segments/demo.toml"), "command = \"run.sh\"\n").expect("manifest");
+        let set_mode = |relative: &str, mode: u32| {
+            fs::set_permissions(dir.join(relative), fs::Permissions::from_mode(mode))
+                .expect("chmod");
+        };
+        for (relative, mode) in [("", 0o755), ("segments", 0o755)] {
+            set_mode(relative, mode);
+        }
+        for relative in ["plugin.toml", "segments/demo.toml"] {
+            set_mode(relative, 0o644);
+        }
+        let roots = [(PluginSource::User, root)];
+        let loads = || {
+            discover_plugins_in_roots(&roots)
+                .plugins
+                .iter()
+                .any(|plugin| plugin.manifest.id.as_str() == "demo")
+        };
+        assert!(loads(), "a private plugin loads");
+
+        for (relative, shared, private) in [
+            ("plugin.toml", 0o664, 0o644),
+            ("segments", 0o775, 0o755),
+            ("segments/demo.toml", 0o666, 0o644),
+        ] {
+            set_mode(relative, shared);
+            let discovery = discover_plugins_in_roots(&roots);
+            assert!(!loads(), "{relative} shared: the plugin must not load");
+            assert!(
+                discovery
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains("group- or world-writable")),
+                "{relative}: {:?}",
+                discovery.diagnostics
+            );
+            set_mode(relative, private);
+        }
+        assert!(loads(), "restoring the modes loads it again");
     }
 
     #[test]

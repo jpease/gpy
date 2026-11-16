@@ -63,4 +63,21 @@ if test $vector_count -eq 0
     fail "no test vectors read from $fixture"
 end
 
+# Control bytes the fixture's mini scheme cannot carry: every other C0 byte
+# and DEL must leave as \u00XX, or the request is invalid JSON (the agent
+# then refuses it and the segment falls back to oneshot).
+check "ESC as \\u001b" 'a\u001bb' (__gpy_json_escape a\x1bb)
+check "BEL, BS, VT, FF" '\u0007\u0008\u000b\u000c' (__gpy_json_escape \x07\x08\x0b\x0c)
+check "0x01 and 0x1f" '\u0001x\u001f' (__gpy_json_escape \x01x\x1f)
+check "DEL as \\u007f" 'a\u007f' (__gpy_json_escape a\x7f)
+check "controls next to short escapes" '\u001b\n\"\\\\\u0001' (__gpy_json_escape \x1b\n'"\\'\x01)
+if command -q python3
+    set -l payload '{"cwd":"'(__gpy_json_escape /tmp/a\x1b\x01b\x7f)'"}'
+    if printf '%s' $payload | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null
+        pass "a cwd with control bytes builds valid JSON"
+    else
+        fail "a cwd with control bytes builds valid JSON: $payload"
+    end
+end
+
 test_finish "JSON-escape vector tests"

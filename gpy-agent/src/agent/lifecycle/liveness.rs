@@ -204,12 +204,12 @@ pub(crate) fn wait_for_socket_release(
 }
 
 /// Remove the socket only while the path still holds the captured socket (the
-/// check-then-unlink window is inherent).
+/// check-then-unlink window is inherent). Anything else at the path, a regular
+/// file or symlink included, or a path that cannot be inspected, is left alone.
 pub(crate) fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
-    if socket_released(socket_path, identity) {
-        return;
+    if SocketIdentity::at(socket_path).is_ok_and(|current| current == identity) {
+        let _ = std::fs::remove_file(socket_path);
     }
-    let _ = std::fs::remove_file(socket_path);
 }
 
 /// Evict an unanswering or incompatible agent: request shutdown, wait for

@@ -2,9 +2,9 @@
 
 # Environment Variables
 
-Every environment variable GPY reads, except installer-only `GPY_VERSION` (see [Installation](../INSTALL.md#environment-variables)). Config keys live in the [Configuration Reference](configuration-reference.md).
+Every environment variable GPY reads (`GPY_*`, the XDG roots, `HOME`, `ZDOTDIR`, `NO_COLOR`, `TERM`), except installer-only `GPY_VERSION` (see [Installation](../INSTALL.md#environment-variables)). Config keys live in the [Configuration Reference](configuration-reference.md).
 
-Every `GPY_*` flag accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive. An unrecognised value is ignored and logged once, a positive-integer variable ignores `0` and garbage, and an empty value counts as unset. Where a variable has a matching config key, the precedence is the environment variable, then `config.toml`, then the built-in default.
+Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive. An unrecognised value is ignored and logged once, a positive-integer variable ignores `0` and garbage, and an empty value counts as unset. Where a variable has a matching config key, the precedence is the environment variable, then `config.toml`, then the built-in default.
 
 `gpy doctor` lists each agent tunable's effective value and where it came from (the "Agent tuning" section).
 
@@ -17,8 +17,9 @@ Every `GPY_*` flag accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, cas
 | `GPY_CONFIG_PATH` | unset | Explicit path to `config.toml`, checked before the XDG and `$HOME` locations. An empty value is ignored. |
 | `XDG_CONFIG_HOME` | `~/.config` | Config root `$XDG_CONFIG_HOME/gpy`, also where user themes, palettes and plugins live. |
 | `XDG_CACHE_HOME` | `~/.cache` | Cache root `$XDG_CACHE_HOME/gpy`: theme exports, instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
+| `XDG_DATA_HOME` | `~/.local/share` | Data root `$XDG_DATA_HOME/gpy`: the installed `fish/`, `zsh/`, `bash/` trees and bundled `plugins/`. Only an absolute value counts. |
 | `XDG_RUNTIME_DIR` | unset | Runtime root `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
-| `HOME` | passwd entry | Fallback for the config and cache roots when the XDG variables are unset. An empty `HOME` counts as unset. |
+| `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. |
 | `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. See [below](#gpy_agent_socket_path). |
 | `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
 | `VISUAL`, `EDITOR` | platform editor | The editor `gpy config open` launches, in that order. |
@@ -46,7 +47,7 @@ Read by the shell scripts. Export them in `config.fish`, `.zshrc` or `.bashrc` b
 | `GPY_AGENT_SUPERVISOR_ENABLED` | on | Fish, Zsh, Bash | Overrides `agent.supervisor.enabled`. |
 | `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` | from config | Fish, Zsh, Bash | Overrides `agent.supervisor.check_interval_seconds`; `0` checks on every prompt. Not range-checked. |
 | `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` | from config | Fish, Zsh, Bash | Overrides `agent.supervisor.max_restart_attempts`; `0` never restarts. Not range-checked. |
-| `GPY_DEBUG` | off | Fish, Zsh, Bash | `1` turns on the shell integration's own debug output, including logs of unrecognised variable values. |
+| `GPY_DEBUG` | off | Fish, Zsh, Bash | Only `1` turns on the shell integration's own debug output, including logs of unrecognised variable values. |
 
 ### GPY_SHOW_STATUS
 
@@ -67,9 +68,9 @@ Read by the agent. Each is off, or at the default shown, unless set.
 | `GPY_PROFILE` | off | A true value logs `[PROFILE] <operation>: <ms>` lines for timed operations to stderr and the debug log. |
 | `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. Warnings go to it too; without it they go to `~/.cache/gpy/agent.log`. |
 | `GPY_DISABLE_WATCHER` | off | A true value skips the git/language file watcher at agent startup. See [below](#gpy_disable_watcher). |
-| `GPY_THEME_WATCH_POLL_MS` | off | Positive integer: also poll the active theme's files on this interval. `0` or unset: notifications only. |
+| `GPY_THEME_WATCH_POLL_MS` | off | Positive integer: also poll the active theme's files on this interval; the theme is re-resolved only when a directory listing or plugin manifest changes. `0` or unset: notifications only. |
 | `GPY_CONFIG_WATCH_POLL_MS` | off | The same for `config.toml`, floored at the 1-second config debounce. The fix when editing the file never applies until `gpy restart`. |
-| `GPY_RECONCILE_INTERVAL_SECS` | `45` | Seconds between reconcile scans of all watched repositories. See [Prompt freshness](#prompt-freshness). |
+| `GPY_RECONCILE_INTERVAL_SECS` | `45` | Seconds between reconcile scans of all watched repositories; capped at `86400`. See [Prompt freshness](#prompt-freshness). |
 | `GPY_WATCH_FORCE_POLL` | off | A true value starts the watchers on the polling backend with no health probe. See [below](#watcher-backends). |
 | `GPY_WATCH_PROBE_MS` | `2000` | Milliseconds the native watcher gets to deliver its probe event before polling replaces it. `0` disables the probe. |
 | `GPY_WATCH_POLL_MS` | `2000` | Interval of the polling backend, once armed or forced. See [below](#watcher-backends). |
@@ -83,7 +84,7 @@ Skips only the git/language repository watcher. It does not affect the theme and
 
 ### Watcher backends
 
-The agent starts native (`FSEvents` or `inotify`) and swaps to polling only if the probe sees nothing. Use `GPY_WATCH_FORCE_POLL` for a machine known to deliver no events, such as a repository on a WSL `/mnt/<drive>` or a network mount. Each poll tick stat-walks every watched root. Poll mode compares file contents only inside the git directory, and not in its `objects` store, so a working-tree file rewritten within the same second at the same size shows at the next prompt instead of live.
+The agent starts native (`FSEvents` or `inotify`) and swaps to polling only if the probe sees nothing. Use `GPY_WATCH_FORCE_POLL` for a machine known to deliver no events, such as a repository on a WSL `/mnt/<drive>` or a network mount. Each poll tick stat-walks every watched root. Poll mode never compares file contents: git metadata is compared by size, nanosecond mtime, inode and ctime, and `objects`, `logs`, `hooks`, `refs` and `tags` are not polled, so a working-tree file rewritten within the same second at the same size shows at the next prompt instead of live.
 
 ### GPY_WATCH_WORKTREE
 
@@ -99,6 +100,7 @@ Read by `gpy setup`.
 |---|---|---|
 | `GPY_NERD_FONT` | detect | What to assume about icons instead of asking. See [below](#gpy_nerd_font). |
 | `GPY_SHELL` | `$SHELL` | Which shell `gpy setup` wires when `--shell` is absent: `fish`, `zsh` or `bash`. The installers read it too ([Installation](../INSTALL.md#environment-variables)). |
+| `ZDOTDIR` | `~` | Directory of the Zsh `.zshrc` that `gpy setup --shell zsh` writes the GPY block to. |
 | `GPY_SHARE_DIR` | beside the binary | Where `gpy setup` finds the `fish/`, `zsh/` and `bash/` trees, after `--from`. |
 
 ### GPY_NERD_FONT
@@ -109,6 +111,20 @@ Read by `gpy setup`.
 - `auto` detects.
 
 Anything else is ignored with one warning and falls through to detection. A recognised value other than `auto` skips the confirmation prompt. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. `gpy doctor` lists the effective value in its "Agent tuning" section.
+
+---
+
+## Output and terminal
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GPY_COLOR_DEPTH` | detect | `truecolor` (or `24bit`), `256`, `16` or `none`, case-insensitive; anything else is ignored. See [below](#gpy_color_depth). |
+| `NO_COLOR` | unset | A non-empty value makes `gpy` command output (and `gpy doctor`) use ASCII status markers instead of emoji. Prompt colours are not affected. |
+| `TERM` | from the terminal | `dumb` turns off emoji in `gpy` command output. `TERM=linux` makes the prompt formatter use 256 colours. |
+
+### GPY_COLOR_DEPTH
+
+The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. Pills the shell draws itself (for example the Zsh renderer's) still emit truecolor.
 
 ---
 

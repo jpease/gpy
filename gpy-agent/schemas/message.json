@@ -57,7 +57,7 @@
         },
         "virtual_env": {
           "type": "string",
-          "description": "Client-forwarded $VIRTUAL_ENV for venv-aware Python detection"
+          "description": "Client-forwarded $VIRTUAL_ENV for venv-aware Python detection. At most 4096 characters, no control characters, nothing under /etc, /proc, /sys or /dev (a refused value gets an {\"error\":...} line)"
         },
         "format": {
           "$ref": "#/definitions/Format"

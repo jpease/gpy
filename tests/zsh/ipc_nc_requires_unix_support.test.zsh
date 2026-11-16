@@ -56,7 +56,7 @@ STUB
 # cache; leaves its status and output in send_status / send_out.
 run_send() {
     local saved_path=$PATH
-    __gpy_nc_supports_unix=""
+    __gpy_nc_supports_unix="" __gpy_nc_halfclose_flag=""
     export GPY_AGENT_SOCKET_PATH="$tmp/agent.sock" GPY_IPC_TIMEOUT_MS=300
     PATH="$tmp/bin"
     rehash
@@ -90,6 +90,25 @@ if grep -q -- "-U $tmp/agent.sock" "$log"; then
     pass "nc with -U is run against the agent socket"
 else
     fail "nc with -U never got the socket: $(tr '\n' '|' <"$log")"
+fi
+
+# OpenBSD nc (Debian/Ubuntu) half-closes only with -N, so the agent sees EOF;
+# its help line reads "Shutdown the network socket after EOF on stdin".
+make_nc "$(printf 'usage: nc [-46CDdFhklNnrStUuvZz]\n\t-N\t\tShutdown the network socket after EOF on stdin\n\t-U\t\tUse UNIX domain socket')"
+run_send
+if grep -q -- "-U $tmp/agent.sock -w 1 -N" "$log"; then
+    pass "OpenBSD nc is run with -N so it half-closes"
+else
+    fail "OpenBSD nc was not given -N: $(tr '\n' '|' <"$log")"
+fi
+
+# Apple's nc half-closes by itself; its -N takes an argument (num_probes).
+make_nc "$(printf 'usage: nc [-46AacCDdEFhklMnOortUuvz]\n\t-N num_probes                 Number of probes to send\n\t-U                            Use UNIX domain socket')"
+run_send
+if grep -q -- "-U $tmp/agent.sock" "$log" && ! grep -q -- " -N" "$log"; then
+    pass "Apple-style nc (-N num_probes) is never given -N"
+else
+    fail "Apple-style nc was invoked as: $(tr '\n' '|' <"$log")"
 fi
 
 test_finish "zsh nc capability probe"

@@ -145,7 +145,9 @@ nounset_scenario() {
     run_child "
 set -u
 PATH=\$HOME/nu-stubs:\$PATH
-unset GPY_AGENT_SOCKET_PATH $unsets" 'echo "ep=[$(__gpy_ipc_endpoint)]"
+unset GPY_AGENT_SOCKET_PATH $unsets" 'ep=""
+__gpy_ipc_endpoint_into ep
+echo "ep=[$ep]"
 ic=""
 __gpy_instant_cache_dir ic
 echo "ic=[$ic]"
@@ -197,6 +199,37 @@ exit'
     fi
 }
 
+# failglob makes an unmatched glob an error that aborts the EXIT handler; the
+# shell exits without a refresh stamp, so gpy's sweep matches nothing.
+scenario_failglob_exit_keeps_chain() {
+    run_child 'shopt -s failglob
+trap "echo chained-bye" EXIT' 'echo hi
+exit'
+    if [[ "$CHILD_OUT" == *"no match"* ]]; then
+        fail "failglob: the EXIT handler hit an unmatched glob:"
+        printf '%s\n' "$CHILD_OUT"
+    elif [[ "$(printf '%s\n' "$CHILD_OUT" | grep -c '^chained-bye$')" -ne 1 ]]; then
+        fail "failglob: the chained EXIT trap did not run exactly once:"
+        printf '%s\n' "$CHILD_OUT"
+    else
+        pass "under failglob the EXIT handler still runs the chained trap"
+    fi
+}
+
+# A printing `cd` wrapper and a CDPATH must not leak into the root gpy.bash
+# resolves for itself.
+scenario_cd_wrapper_keeps_root() {
+    run_child 'cd() { builtin cd "$@" && echo CDNOISE; }
+CDPATH=/tmp:/' 'echo "precmd=[$(declare -F __gpy_precmd)]"
+exit'
+    if [[ "$CHILD_OUT" == *"core files not found"* || "$(field precmd)" != __gpy_precmd ]]; then
+        fail "a cd wrapper or CDPATH broke the gpy.bash root:"
+        printf '%s\n' "$CHILD_OUT"
+    else
+        pass "a printing cd wrapper and CDPATH leave the gpy.bash root intact"
+    fi
+}
+
 run_scenario prior_debug_trap_fires
 run_scenario exit_trap_with_quotes
 run_scenario resource_keeps_chain
@@ -204,5 +237,7 @@ run_scenario never_chains_to_itself
 run_scenario nounset_no_xdg
 run_scenario nounset_runtime_only
 run_scenario prompt_command_sees_status
+run_scenario failglob_exit_keeps_chain
+run_scenario cd_wrapper_keeps_root
 
 test_finish

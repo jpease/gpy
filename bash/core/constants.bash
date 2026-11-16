@@ -45,3 +45,8 @@ __gpy_segment_bg() {
 # daemon costs at most one oneshot fork per render.
 # shellcheck disable=SC2034
 __gpy_seg_status_oneshot=3
+
+# Returned by the clock and status segments when they drew the pill locally
+# instead of with the agent, so the render loop never memoizes that draw.
+# shellcheck disable=SC2034
+__gpy_seg_status_local=4

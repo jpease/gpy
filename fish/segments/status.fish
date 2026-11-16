@@ -23,13 +23,26 @@ function segment_status_render --argument-names is_last is_first
 
     # The agent draws the pill when the theme has a format; an empty reply
     # (no agent, or no ipc.fish in disabled mode) falls through to the local pill.
+    # The reply depends only on the theme, success, the position and prev_bg,
+    # so it is memoized on those (cleared by __gpy_clear_render_memos); an
+    # empty reply is never memoized.
     if test -n "$__status_format"; and functions -q __gpy_request_exit_status
         # One-token locals: an empty-list binding would shift prev_bg.
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true
         set -l is_first_value ""
         test "$is_first" = true; and set is_first_value true
-        set -l result (__gpy_request_exit_status $success $is_last_value $is_first_value "$__gpy_last_segment_bg" | string collect)
+        set -l status_key "$__gpy_theme_name:$success:$is_last_value:$is_first_value:$__gpy_last_segment_bg"
+        set -l result
+        if test -n "$__gpy_status_cache_key"; and test "$status_key" = "$__gpy_status_cache_key"
+            set result $__gpy_status_cache_val
+        else
+            set result (__gpy_request_exit_status $success $is_last_value $is_first_value "$__gpy_last_segment_bg" | string collect)
+            if test -n "$result"
+                set -g __gpy_status_cache_key $status_key
+                set -g __gpy_status_cache_val $result
+            end
+        end
         if test -n "$result"
             printf '%s' "$result"
             # Use the resolved $bg_color: the raw theme var may be unset.

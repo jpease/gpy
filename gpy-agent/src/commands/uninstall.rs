@@ -7,6 +7,7 @@ use super::lifecycle;
 use super::output;
 use super::rc_block::{has_start, remove_blocks};
 use super::setup::{DataRoot, Environment, SHELLS, shell_dir_for};
+use super::setup_fish::{is_gpy_prompt_link, legacy_trees};
 use super::setup_install::{fish_completions_dir, plugins_target};
 use crate::shell::Shell;
 use crate::{Error, Result, paths};
@@ -193,6 +194,7 @@ fn build_plan(env: &Environment) -> Result<Plan> {
     integration.push(completions.join("gpy-dynamic.fish"));
     integration.push(fish_dir.join("conf.d").join("gpy_init.fish"));
     integration.push(plugins_target(&data_root));
+    integration.extend(legacy_trees(&config_home, &data_root.0));
 
     let mut candidates = vec![
         home.join(".bashrc"),
@@ -472,9 +474,10 @@ fn restore_fish_prompt(config_home: &Path, root: &DataRoot, tally: &mut Tally) {
 
     if let Ok(meta) = prompt.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            if fs::read_link(&prompt)
-                .is_ok_and(|target| target == own_dir.join("functions").join("fish_prompt.fish"))
-            {
+            if fs::read_link(&prompt).is_ok_and(|target| {
+                target == own_dir.join("functions").join("fish_prompt.fish")
+                    || is_gpy_prompt_link(&target)
+            }) {
                 tally.remove(&prompt);
             } else {
                 output::plain("fish_prompt.fish is a symlink GPY did not create; leaving it alone");
@@ -506,7 +509,7 @@ fn restore_fish_prompt(config_home: &Path, root: &DataRoot, tally: &mut Tally) {
 
 #[cfg(unix)]
 fn is_gpy_prompt_copy(path: &Path) -> bool {
-    super::setup::is_gpy_prompt_copy(path)
+    super::setup_fish::is_gpy_prompt_copy(path)
 }
 
 #[cfg(not(unix))]
@@ -539,10 +542,13 @@ fn newest_backup(prompt: &Path, own_dir: &Path) -> Option<PathBuf> {
             continue;
         };
         if meta.file_type().is_symlink() {
-            if fs::read_link(&path).is_ok_and(|target| target.starts_with(own_dir)) {
+            if fs::read_link(&path)
+                .is_ok_and(|target| target.starts_with(own_dir) || is_gpy_prompt_link(&target))
+            {
                 continue;
             }
-        } else if !meta.is_file() {
+        } else if !meta.is_file() || is_gpy_prompt_copy(&path) {
+            // A backup of an older GPY prompt is not the user's to restore.
             continue;
         }
         let key = format!("{stamp}\t{name}");

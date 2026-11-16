@@ -50,7 +50,7 @@ fn test_cache_set_and_get() {
     assert_eq!(cache.len(), 0);
 
     // Set cache entry
-    cache.set(&repo_path, status, HashMap::new());
+    cache.set_canonical(&repo_path, status, HashMap::new());
     assert_eq!(cache.len(), 1);
     assert!(!cache.is_empty());
 
@@ -83,12 +83,12 @@ fn test_cache_invalidate() {
     };
 
     // Set and verify
-    cache.set(&repo_path, status, HashMap::new());
+    cache.set_canonical(&repo_path, status, HashMap::new());
     assert_eq!(cache.len(), 1);
     assert!(cache.get(&repo_path).is_some());
 
     // Invalidate
-    cache.invalidate(&repo_path);
+    cache.invalidate_canonical(&repo_path);
     assert_eq!(cache.len(), 0);
     assert!(cache.get(&repo_path).is_none());
 }
@@ -121,9 +121,9 @@ fn test_cache_multiple_repos() {
     };
 
     // Cache all three
-    cache.set(&repo1, status1, HashMap::new());
-    cache.set(&repo2, status2, HashMap::new());
-    cache.set(&repo3, status3, HashMap::new());
+    cache.set_canonical(&repo1, status1, HashMap::new());
+    cache.set_canonical(&repo2, status2, HashMap::new());
+    cache.set_canonical(&repo3, status3, HashMap::new());
 
     assert_eq!(cache.len(), 3);
 
@@ -132,45 +132,11 @@ fn test_cache_multiple_repos() {
     assert_eq!(cache.get(&repo3).unwrap().branch, "feature");
 
     // Invalidate one
-    cache.invalidate(&repo2);
+    cache.invalidate_canonical(&repo2);
     assert_eq!(cache.len(), 2);
     assert!(cache.get(&repo1).is_some());
     assert!(cache.get(&repo2).is_none());
     assert!(cache.get(&repo3).is_some());
-}
-
-#[test]
-fn test_cache_clear() {
-    let cache = GitStatusCache::new();
-
-    let status = RepositoryStatus {
-        branch: "main".to_owned(),
-        ahead: 0,
-        behind: 0,
-        ahead_capped: false,
-        behind_capped: false,
-        staged: 0,
-        unstaged: 0,
-        untracked: 0,
-        conflicts: 0,
-        state: RepositoryState::Clean,
-        stash_count: 0,
-        detached: false,
-        stale_error: false,
-        rebase_progress: None,
-    };
-
-    // Add multiple entries
-    cache.set(&PathBuf::from("/tmp/repo1"), status.clone(), HashMap::new());
-    cache.set(&PathBuf::from("/tmp/repo2"), status.clone(), HashMap::new());
-    cache.set(&PathBuf::from("/tmp/repo3"), status, HashMap::new());
-
-    assert_eq!(cache.len(), 3);
-
-    // Clear all
-    cache.clear();
-    assert_eq!(cache.len(), 0);
-    assert!(cache.is_empty());
 }
 
 #[test]
@@ -213,12 +179,12 @@ fn test_cache_update_existing() {
     };
 
     // Set initial
-    cache.set(&repo_path, status_v1, HashMap::new());
+    cache.set_canonical(&repo_path, status_v1, HashMap::new());
     assert_eq!(cache.get(&repo_path).unwrap().ahead, 0);
     assert_eq!(cache.len(), 1);
 
     // Update with new status
-    cache.set(&repo_path, status_v2, HashMap::new());
+    cache.set_canonical(&repo_path, status_v2, HashMap::new());
     assert_eq!(cache.get(&repo_path).unwrap().ahead, 1);
     assert_eq!(cache.get(&repo_path).unwrap().staged, 2);
     assert_eq!(cache.len(), 1); // Still only one entry
@@ -254,7 +220,7 @@ fn test_cache_thread_safety() {
                 rebase_progress: None,
             };
 
-            cache_clone.set(&repo_path, status, HashMap::new());
+            cache_clone.set_canonical(&repo_path, status, HashMap::new());
             assert!(cache_clone.get(&repo_path).is_some());
         });
         handles.push(handle);
@@ -305,7 +271,7 @@ fn test_cache_symlink_keys_share_entry() {
         rebase_progress: None,
     };
 
-    cache.set(&repo_root, status, HashMap::new());
+    cache.set_canonical(&repo_root, status, HashMap::new());
     assert!(cache.get(&repo_root).is_some());
     assert!(cache.get(&symlink_path).is_some());
 }

@@ -183,3 +183,25 @@ fn count_todo_steps_gives_up_on_an_oversized_newline_free_line() {
     let todo = vec![b'x'; REBASE_TODO_READ_CAP + 10];
     assert_eq!(count_todo_steps(&todo[..]), None);
 }
+
+/// A logical path through a symlink into another repository reports that
+/// repository, as git and the agent's canonical request path do, not the
+/// repository its lexical parent belongs to.
+#[cfg(unix)]
+#[test]
+fn symlinked_path_reports_the_repository_it_resolves_to() {
+    let (_outer_dir, outer) = init_test_repo();
+    let (_other_dir, other) = init_test_repo();
+    git_ok(&other, &["checkout", "-q", "-b", "other-main"]);
+    let sub = other.join("sub");
+    std::fs::create_dir_all(&sub).expect("create sub");
+    let link = outer.join("docs");
+    std::os::unix::fs::symlink(&sub, &link).expect("symlink");
+
+    let CompleteStatus { status, .. } =
+        NativeGitBackend::get_complete_status(&link, 0, false, Duration::from_secs(10))
+            .expect("status")
+            .expect("a repository");
+
+    assert_eq!(status.branch, "other-main");
+}

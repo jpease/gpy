@@ -7,6 +7,7 @@ pub mod manager;
 pub mod model;
 pub mod overlay;
 mod parse;
+mod poll;
 mod released_hashes;
 pub mod retire;
 pub mod user_copy;

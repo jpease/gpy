@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Decide whether the release gate (Rust + shell legs, lint, perf budgets)
+# Decide whether the PR gate (Rust + shell legs, Windows leg, fresh install)
 # already passed on exactly the code being released, so release.yml's
-# `validate` job need not run it again.
+# `gate-legs`, `windows-gate` and `fresh-install` jobs can be skipped. The
+# end-to-end performance budgets are not covered by `gate-result`; release.yml's
+# `perf` job runs them every time.
 #
 # A release is tagged on a commit on main made by a squash merge. The PR gate
 # ran on the PR head commit: a different SHA, but usually the identical git
@@ -17,7 +19,7 @@
 # negative answer.
 #
 # cross-platform-test.yml (push to main) is deliberately not consulted: it has
-# no aggregate job and does not run the performance budgets, so a green run
+# no aggregate job, so a green run
 # there does not equal the PR gate's `gate-result`.
 #
 # Usage:

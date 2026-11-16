@@ -319,17 +319,19 @@ function scenario_config_reload --argument-names repo
     end
     set off3 (session_size $a)
 
-    # Settle on a fresh idle prompt after a fast command (an empty Enter
-    # keeps the previous CMD_DURATION, so the duration segment would stay),
-    # then toggle icons off: the git branch glyph disappears from the next
+    # An empty Enter runs no command, so the next prompt must not show the
+    # previous command's duration again. Settle on that idle prompt, then
+    # toggle icons off: the git branch glyph disappears from the next
     # repaint, with no keypress after the toggle.
-    session_send $a 'true\r'
+    session_send $a '\r'
     function __idle_prompt --inherit-variable a
         set -l line (latest_segment_line $a)
         test -n "$line"; and not string match -qr '[0-9]s$' -- "$line"
     end
-    if not poll_until 10 __idle_prompt
-        fail "an idle prompt without the duration segment follows a fast command" (latest_segment_line $a)
+    if poll_until 10 __idle_prompt
+        pass "an empty Enter after a slow command hides the duration segment"
+    else
+        fail "an empty Enter after a slow command hides the duration segment" (latest_segment_line $a)
         return 1
     end
     write_config 'show_icons = false' 'theme = "default"' 'enabled_segments = ["directory", "git", "duration"]'

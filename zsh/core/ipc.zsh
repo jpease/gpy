@@ -57,15 +57,31 @@ function __gpy_warn_flag_values() {
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes
-# first so later escapes aren't re-escaped. Locals are __gpy_ej_* so a
-# caller's OUTVAR is not shadowed.
+# first so later escapes aren't re-escaped. Every other C0 control and DEL
+# becomes `\u00XX`, so the request stays valid JSON whatever bytes a path
+# holds. Locals are __gpy_ej_* so a caller's OUTVAR is not shadowed.
 function __gpy_escape_json_into() {
-    local __gpy_ej_s=$2
+    local __gpy_ej_s=$2 __gpy_ej_c __gpy_ej_u
+    integer __gpy_ej_i
     __gpy_ej_s=${__gpy_ej_s//\\/\\\\}
     __gpy_ej_s=${__gpy_ej_s//\"/\\\"}
     __gpy_ej_s=${__gpy_ej_s//$'\n'/\\n}
     __gpy_ej_s=${__gpy_ej_s//$'\r'/\\r}
     __gpy_ej_s=${__gpy_ej_s//$'\t'/\\t}
+    if [[ $__gpy_ej_s == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        # 1-31, then 32 stands for DEL (127).
+        for (( __gpy_ej_i = 1; __gpy_ej_i <= 32; __gpy_ej_i++ )); do
+            if (( __gpy_ej_i == 32 )); then
+                __gpy_ej_c=$'\x7f'
+                __gpy_ej_u='\u007f'
+            else
+                __gpy_ej_c=${(#)__gpy_ej_i}
+                printf -v __gpy_ej_u '\\u%04x' "$__gpy_ej_i"
+            fi
+            [[ $__gpy_ej_s == *"$__gpy_ej_c"* ]] || continue
+            __gpy_ej_s=${__gpy_ej_s//"$__gpy_ej_c"/$__gpy_ej_u}
+        done
+    fi
     printf -v "$1" '%s' "$__gpy_ej_s"
 }
 
@@ -120,32 +136,31 @@ if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" && "$GPY_AGENT_SOCKET_PATH" != /* ]]; then
     export GPY_AGENT_SOCKET_PATH="$PWD/$GPY_AGENT_SOCKET_PATH"
 fi
 
-# XDG vars count only when non-empty and absolute, matching the agent.
+# XDG vars count only when non-empty and absolute, matching the agent. Writes
+# into variable $1 without a fork; locals are __gpy_ie_* so a caller's OUTVAR
+# is not shadowed.
 # Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
 # once at load, like `paths::absolutize`.
-function __gpy_ipc_endpoint() {
-    local home
+function __gpy_ipc_endpoint_into() {
+    local __gpy_ie_home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
-        print -r -- "$GPY_AGENT_SOCKET_PATH"
-        return
+        printf -v "$1" '%s' "$GPY_AGENT_SOCKET_PATH"
+    elif [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
+        printf -v "$1" '%s' "$XDG_RUNTIME_DIR/gpy/gpy.sock"
+    elif [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
+        printf -v "$1" '%s' "$XDG_CACHE_HOME/gpy/gpy.sock"
+    elif __gpy_home __gpy_ie_home; then
+        printf -v "$1" '%s' "$__gpy_ie_home/.cache/gpy/gpy.sock"
+    else
+        printf -v "$1" '%s' "/tmp/gpy/gpy.sock"
     fi
+}
 
-    if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
-        print -r -- "$XDG_RUNTIME_DIR/gpy/gpy.sock"
-        return
-    fi
-
-    if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
-        print -r -- "$XDG_CACHE_HOME/gpy/gpy.sock"
-        return
-    fi
-
-    if __gpy_home home; then
-        print -r -- "$home/.cache/gpy/gpy.sock"
-        return
-    fi
-
-    print -r -- "/tmp/gpy/gpy.sock"
+# Prints the socket path (for `gpy debug paths` parity and tests).
+function __gpy_ipc_endpoint() {
+    local __gpy_ie_out
+    __gpy_ipc_endpoint_into __gpy_ie_out
+    print -r -- "$__gpy_ie_out"
 }
 
 # Mirrors the agent's paths::runtime_root_for. Writes into variable $1 so hot
@@ -261,26 +276,35 @@ function __gpy_cold_timeout_ms_into() {
     printf -v "$1" '%d' "$(( 10#$__gpy_ct_cold ))"
 }
 
-# netcat-traditional lacks -U. Probed at source time too, because segment
-# subshells cannot write the cache back.
-typeset -g __gpy_nc_supports_unix=""
+# netcat-traditional lacks -U. OpenBSD's nc (the Debian/Ubuntu default)
+# half-closes only with -N ("Shutdown the network socket after EOF on
+# stdin"); without it the agent never sees EOF and nc lingers until the
+# budget runs out. Apple's nc half-closes on its own, and its own -N takes an
+# argument (num_probes), so only the OpenBSD wording turns the flag on.
+# Probed at source time too, because segment subshells cannot write the cache
+# back.
+typeset -g __gpy_nc_supports_unix="" __gpy_nc_halfclose_flag=""
 function __gpy_nc_probe_capabilities() {
     [[ -n "$__gpy_nc_supports_unix" ]] && return 0
+    setopt local_options extended_glob
     local help
+    local -a lines
     __gpy_nc_supports_unix=0
-    if (( $+commands[nc] )); then
+    if (( ${+commands[nc]} )); then
         help="$(nc -h 2>&1)"
         [[ "$help" == *-U* ]] && __gpy_nc_supports_unix=1
+        lines=("${(@f)help}")
+        (( ${lines[(I)[[:blank:]]#-N[[:blank:]]##[Ss]hutdown*]} )) && __gpy_nc_halfclose_flag=-N
     fi
     return 0
 }
-if __gpy_agent_enabled && ! (( $+commands[socat] )); then
+if __gpy_agent_enabled && ! (( ${+commands[socat]} )); then
     __gpy_nc_probe_capabilities
 fi
 
 function __gpy_ipc_client_available() {
-    (( $+commands[socat] )) && return 0
-    (( $+commands[nc] )) || return 1
+    (( ${+commands[socat]} )) && return 0
+    (( ${+commands[nc]} )) || return 1
     __gpy_nc_probe_capabilities
     [[ "$__gpy_nc_supports_unix" == 1 ]]
 }
@@ -288,9 +312,38 @@ function __gpy_ipc_client_available() {
 # Embedded reply newline: the agent sends `\n` as RS so a reply stays one line.
 typeset -g __gpy_nl=$'\n'
 
-# Prints the reply. Returns 0 on a complete reply, 1 when unreachable, 2 when
-# the request was sent but no complete reply arrived in budget (the caller
-# must not recompute via oneshot; it omits the segment).
+# Late window for an agent that accepts connections but does not answer in
+# budget (stopped, paused across sleep, wedged): until this epoch second every
+# send to that socket returns 2 at once, so a wedged agent costs one budget
+# per window, not one per request and prompt (as in Bash). A path-bearing op
+# (git, lang, directory) can be slow for its path alone, so only the ops the
+# agent answers from memory open it. Set by __gpy_send_json in its own
+# process and by the render loop for segments (subshells) that reported
+# __gpy_seg_status_late; a doorbell clears it, since the agent that rang is
+# answering.
+typeset -g __gpy_agent_late_until=0 __gpy_agent_late_socket=""
+typeset -gi __gpy_agent_late_secs=5
+# Opens the window after request $1 (none: a segment's report) went
+# unanswered.
+function __gpy_mark_agent_late() {
+    case "${1:-}" in
+        '{"op":"git"'* | '{"op":"lang"'* | '{"op":"directory"'*) return 0 ;;
+    esac
+    __gpy_ipc_endpoint_into __gpy_agent_late_socket
+    typeset -g __gpy_agent_late_until=$(( EPOCHSECONDS + __gpy_agent_late_secs ))
+}
+
+# Status 0 while the late window for socket $1 is open.
+function __gpy_agent_late_active() {
+    (( EPOCHSECONDS < ${__gpy_agent_late_until:-0} )) && [[ "$1" == "${__gpy_agent_late_socket-}" ]]
+}
+
+# Sends $1 and returns the reply: into variable $3 when given, else printed.
+# Returns 0 on a complete reply, 1 when unreachable, 2 when the request was
+# sent but no complete reply arrived in budget (the caller must not recompute
+# via oneshot; it omits the segment). An empty reply line is also 2. A reply
+# starting with `{"error"` is returned as is with status 0: requesters that
+# render treat it as a permanent refusal (__gpy_reply_is_error).
 #
 # `read` fails when timeout/EOF hits before the newline, which is how a
 # truncated reply is rejected; `$(...)` strips the newline either way, so
@@ -299,85 +352,112 @@ typeset -g __gpy_nl=$'\n'
 # refused connect (1) from a late agent (0, or 124 from `timeout`).
 # `exec 2>/dev/null`: with SIGPIPE ignored (inherited from Python/Node/CI),
 # writes after `read` closes its end print "Broken pipe" into the prompt.
+# Locals are __gpy_sj_* so a caller's OUTVAR is not shadowed.
 function __gpy_send_json() {
     # Agent-free mode never uses another shell's daemon.
     __gpy_agent_enabled || return 1
 
-    local json=$1
-    local socket_path=$(__gpy_ipc_endpoint)
-    local response="" read_status=1 client_status="" connected_codes=" 0 "
-    local zsocket_connected=0 timeout_secs
+    local __gpy_sj_json=$1 __gpy_sj_out=${3:-} __gpy_sj_socket
+    local __gpy_sj_response="" __gpy_sj_read_status=1 __gpy_sj_client_status=""
+    local __gpy_sj_connected_codes=" 0 " __gpy_sj_zsocket_connected=0 __gpy_sj_timeout_secs
+    [[ -n "$__gpy_sj_out" ]] && printf -v "$__gpy_sj_out" '%s' ""
+    __gpy_ipc_endpoint_into __gpy_sj_socket
     # One reply budget for every transport: $2 in ms, else GPY_IPC_TIMEOUT_MS.
-    __gpy_ms_to_secs "${2:-${GPY_IPC_TIMEOUT_MS:-}}" timeout_secs
+    __gpy_ms_to_secs "${2:-${GPY_IPC_TIMEOUT_MS:-}}" __gpy_sj_timeout_secs
 
-    if [[ ! -S "$socket_path" ]]; then
+    if [[ ! -S "$__gpy_sj_socket" ]]; then
         return 1
     fi
+    __gpy_agent_late_active "$__gpy_sj_socket" && return 2
 
     # zsh/net/socket: builtin, fastest.
     if zmodload zsh/net/socket 2>/dev/null; then
-        local fd
-        if zsocket "$socket_path" 2>/dev/null; then
-            zsocket_connected=1
-            fd=$REPLY
+        local __gpy_sj_fd
+        if zsocket "$__gpy_sj_socket" 2>/dev/null; then
+            __gpy_sj_zsocket_connected=1
+            __gpy_sj_fd=$REPLY
             # -r: escape interpretation would undo __gpy_escape_json_into.
-            print -r -u $fd -- "$json"
+            print -r -u $__gpy_sj_fd -- "$__gpy_sj_json"
             # `IFS=`: default IFS strips the trailing space after `❯`; -r keeps ANSI backslashes.
-            IFS= read -r -u $fd -t $timeout_secs response
-            read_status=$?
-            exec {fd}>&-
+            IFS= read -r -u $__gpy_sj_fd -t $__gpy_sj_timeout_secs __gpy_sj_response
+            __gpy_sj_read_status=$?
+            exec {__gpy_sj_fd}>&-
         fi
     fi
 
     # Once connected the request is on the wire; falling through would resend
     # it on a second connection.
-    if (( zsocket_connected )); then
-        if [[ $read_status -eq 0 && -n "$response" ]]; then
-            # The agent sends embedded newlines as RS (\036) to keep one reply line.
-            print -r -- "${response//$'\036'/${__gpy_nl}}"
+    if (( __gpy_sj_zsocket_connected )); then
+        if [[ $__gpy_sj_read_status -eq 0 && -n "$__gpy_sj_response" ]]; then
+            __gpy_send_json_reply "$__gpy_sj_response" "$__gpy_sj_out"
             return 0
         fi
+        # A read that timed out (not a prompt empty line) may open the window.
+        (( __gpy_sj_read_status != 0 )) && __gpy_mark_agent_late "$__gpy_sj_json"
         return 2
     fi
 
-    read_status=1
-    if (( $+commands[socat] )); then
-        local socat_addr
-        __gpy_socat_escape_into "$socket_path" socat_addr
-        IFS= read -r response < <(exec 2>/dev/null; print -r -- "$json" | socat -t $timeout_secs - UNIX-CONNECT:"$socat_addr" 2>/dev/null; printf '\037%s\n' "$?")
-        read_status=$?
+    __gpy_sj_read_status=1
+    if (( ${+commands[socat]} )); then
+        local __gpy_sj_socat_addr
+        __gpy_socat_escape_into "$__gpy_sj_socket" __gpy_sj_socat_addr
+        IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; print -r -- "$__gpy_sj_json" | socat -t $__gpy_sj_timeout_secs - UNIX-CONNECT:"$__gpy_sj_socat_addr" 2>/dev/null; printf '\037%s\n' "$?")
+        __gpy_sj_read_status=$?
 
     # nc -w only takes whole seconds; `timeout` gives a tighter bound.
     elif __gpy_ipc_client_available; then
-        if (( $+commands[timeout] )); then
-            IFS= read -r response < <(exec 2>/dev/null; print -r -- "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+        local -a __gpy_sj_nc=(nc -U "$__gpy_sj_socket" -w 1)
+        [[ -n "$__gpy_nc_halfclose_flag" ]] && __gpy_sj_nc+=("$__gpy_nc_halfclose_flag")
+        if (( ${+commands[timeout]} )); then
+            IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; print -r -- "$__gpy_sj_json" | timeout "$__gpy_sj_timeout_secs" "${__gpy_sj_nc[@]}" 2>/dev/null; printf '\037%s\n' "$?")
             # 124: `timeout` killed an nc that had connected and was waiting.
-            connected_codes=" 0 124 "
+            __gpy_sj_connected_codes=" 0 124 "
         else
-            IFS= read -r response < <(exec 2>/dev/null; print -r -- "$json" | nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+            IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; print -r -- "$__gpy_sj_json" | "${__gpy_sj_nc[@]}" 2>/dev/null; printf '\037%s\n' "$?")
         fi
-        read_status=$?
+        __gpy_sj_read_status=$?
     else
         return 1
     fi
 
-    if [[ "$response" == *$'\037'* ]]; then
-        client_status=${response##*$'\037'}
-        response=""
+    if [[ "$__gpy_sj_response" == *$'\037'* ]]; then
+        __gpy_sj_client_status=${__gpy_sj_response##*$'\037'}
+        __gpy_sj_response=""
     fi
 
-    if [[ $read_status -eq 0 && -n "$response" ]]; then
-        print -r -- "${response//$'\036'/${__gpy_nl}}"
+    if [[ $__gpy_sj_read_status -eq 0 && -n "$__gpy_sj_response" ]]; then
+        __gpy_send_json_reply "$__gpy_sj_response" "$__gpy_sj_out"
         return 0
     fi
 
-    # A connected client or empty reply line means the agent is alive but late.
-    if [[ -n "$client_status" ]]; then
-        [[ "$connected_codes" == *" $client_status "* ]] && return 2
-    elif [[ $read_status -eq 0 ]]; then
+    # A connected client or empty reply line means the agent is alive but late;
+    # only a client that waited out the budget marks it late for later sends.
+    if [[ -n "$__gpy_sj_client_status" ]]; then
+        if [[ "$__gpy_sj_connected_codes" == *" $__gpy_sj_client_status "* ]]; then
+            __gpy_mark_agent_late "$__gpy_sj_json"
+            return 2
+        fi
+    elif [[ $__gpy_sj_read_status -eq 0 ]]; then
         return 2
     fi
     return 1
+}
+
+# Reply $1 with RS (\036) turned back into newlines: into variable $2 when
+# named, else printed.
+function __gpy_send_json_reply() {
+    if [[ -n "$2" ]]; then
+        printf -v "$2" '%s' "${1//$'\036'/${__gpy_nl}}"
+    else
+        print -r -- "${1//$'\036'/${__gpy_nl}}"
+    fi
+}
+
+# An agent reply that refuses the request for good (a denied cwd, an invalid
+# request): never printed into the prompt and never memoized. A requester with
+# a oneshot fallback takes it; the others render nothing for the segment.
+function __gpy_reply_is_error() {
+    [[ "$1" == '{"error"'* ]]
 }
 
 # Git root above $1 into variable $2; status 1 when there is none.
@@ -596,14 +676,32 @@ function __gpy_trigger_data_refresh() {
 
 # One bounded IPC round trip, never oneshot (unbounded). The agent updates
 # its cache and notifies other shells itself. $6 is the reply budget in ms
-# (default GPY_IPC_TIMEOUT_MS).
+# (default GPY_IPC_TIMEOUT_MS). Status 1 when unreachable or nothing came
+# back, __gpy_seg_status_late when the agent timed out, and
+# __gpy_seg_status_refused when it refused the request (an error reply, which
+# is never printed).
 function __gpy_sync_data_request() {
     local op=$1 cwd=$2 is_last=${3:-} prev_bg=${4:-} is_first=${5:-} timeout_ms=${6:-}
-    local request response
+    local request response send_status
     __gpy_build_data_request_into request "$op" "$cwd" zsh-prompt "$is_last" "$prev_bg" "$is_first"
-    response=$(__gpy_send_json "$request" "$timeout_ms" 2>/dev/null) || return 1
+    __gpy_send_json "$request" "$timeout_ms" response 2>/dev/null
+    send_status=$?
+    if (( send_status == 2 )); then
+        __gpy_late_status
+        return
+    fi
+    (( send_status == 0 )) || return 1
+    __gpy_reply_is_error "$response" && return "$__gpy_seg_status_refused"
     [[ -n "$response" ]] || return 1
     printf '%s' "$response"
+}
+
+# Status for a requester whose send returned 2: __gpy_seg_status_late when
+# the agent waited out its budget (the render loop then marks it late in the
+# shell itself), else 1 (a prompt empty reply line).
+function __gpy_late_status() {
+    (( EPOCHSECONDS < ${__gpy_agent_late_until:-0} )) && return "$__gpy_seg_status_late"
+    return 1
 }
 
 # Bit tests for __gpy_read_instant_cache's status.
@@ -710,19 +808,25 @@ function __gpy_request() {
         fi
     fi
 
-    local request timeout_ms=""
+    local request timeout_ms="" response send_status
     __gpy_build_data_request_into request "$op" "$context_path" "$format" "$is_last" "$prev_bg" "$is_first"
     # A directory request means the memo had nothing to show.
     [[ "$op" == "directory" ]] && __gpy_cold_timeout_ms_into timeout_ms
 
-    __gpy_send_json "$request" "$timeout_ms"
-    local send_status=$?
+    __gpy_send_json "$request" "$timeout_ms" response
+    send_status=$?
     # 2: the agent is already computing it; omit rather than fork oneshot.
-    (( send_status == 2 )) && return 1
-    if (( send_status != 0 )); then
-        # oneshot has no --prev-bg; its status becomes ours.
-        __gpy_fallback_oneshot "$op" "$context_path" "$format" "$is_last" "$is_first"
+    if (( send_status == 2 )); then
+        __gpy_late_status
+        return
     fi
+    if (( send_status == 0 )) && ! __gpy_reply_is_error "$response"; then
+        [[ -n "$response" ]] && print -r -- "$response"
+        return 0
+    fi
+    # Unreachable, or refused for good: oneshot has no --prev-bg; its status
+    # becomes ours.
+    __gpy_fallback_oneshot "$op" "$context_path" "$format" "$is_last" "$is_first"
 }
 
 # One oneshot fork per render: segments run in nested subshells, so the
@@ -741,7 +845,7 @@ function __gpy_fallback_oneshot() {
     local is_last=${4:-false}
     local is_first=${5:-false}
 
-    (( $+commands[gpy-agent] )) || return 1
+    (( ${+commands[gpy-agent]} )) || return 1
     __gpy_oneshot_claim || return 1
 
     local -a args
@@ -757,6 +861,24 @@ function __gpy_fallback_oneshot() {
     return "$__gpy_seg_status_oneshot"
 }
 
+# Status of a requester's send $1 with reply $2 into variable $3: `ok` (a
+# reply to show), `late` (connected, no reply in budget: never oneshot), or
+# `none` (unreachable, or an `{"error"...}` refusal: oneshot where there is
+# one, else the local fallback). Locals are __gpy_rk_* so a caller's OUTVAR
+# is not shadowed.
+function __gpy_reply_kind() {
+    local __gpy_rk_kind=none
+    if (( $1 == 2 )); then
+        __gpy_rk_kind=late
+    elif (( $1 == 0 )) && [[ -n "$2" ]] && ! __gpy_reply_is_error "$2"; then
+        __gpy_rk_kind=ok
+    elif (( $1 == 0 )) && [[ -z "$2" ]]; then
+        # A complete but empty reply: nothing to show, nothing to recompute.
+        __gpy_rk_kind=late
+    fi
+    printf -v "$3" '%s' "$__gpy_rk_kind"
+}
+
 function __gpy_request_duration() {
     local duration_ms=$1
     local is_last=${2:-false}
@@ -767,13 +889,15 @@ function __gpy_request_duration() {
     __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     local request="{\"op\":\"duration\",\"duration_ms\":${duration_ms},\"format\":\"zsh-prompt\"${flags_tail}}"
 
-    local result send_status
-    result=$(__gpy_send_json "$request")
+    local result send_status kind
+    __gpy_send_json "$request" "" result
     send_status=$?
+    __gpy_reply_kind "$send_status" "$result" kind
+    [[ "$kind" == ok ]] || result=""
 
-    # Status 2 never forks oneshot: the agent is already computing it.
+    # A late agent never forks oneshot: it is already computing it.
     local used_oneshot=0
-    if [[ -z "$result" ]] && (( send_status != 2 )) && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
+    if [[ "$kind" == none ]] && (( ${+commands[gpy-agent]} )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local -a args
         args=(duration --duration-ms "$duration_ms" --format zsh-prompt)
@@ -791,11 +915,13 @@ function __gpy_request_duration() {
         return "$__gpy_seg_status_oneshot"
     fi
     [[ -n "$result" ]] && return 0
+    (( send_status == 2 )) && { __gpy_late_status; return; }
     return 1
 }
 
 # The reply embeds zsh's `%D{…}` token so the clock ticks between draws. No
-# oneshot: clock.zsh has its own pure-zsh fallback.
+# oneshot: clock.zsh has its own pure-zsh fallback. An error reply counts as
+# no reply.
 function __gpy_request_clock() {
     local is_last=${1:-}
     local prev_bg=${2:-}
@@ -805,12 +931,16 @@ function __gpy_request_clock() {
     __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     local request="{\"op\":\"clock\",\"shell\":\"zsh\",\"format\":\"zsh-prompt\"${flags_tail}}"
 
-    local result
-    result=$(__gpy_send_json "$request")
-
-    [[ -n "$result" ]] || return 1
-    print -r -- "$result"
-    return 0
+    local result send_status kind
+    __gpy_send_json "$request" "" result
+    send_status=$?
+    __gpy_reply_kind "$send_status" "$result" kind
+    if [[ "$kind" == ok ]]; then
+        print -r -- "$result"
+        return 0
+    fi
+    (( send_status == 2 )) && { __gpy_late_status; return; }
+    return 1
 }
 
 # Exit-status pill request ("exit_status": the bare "status" op is the agent
@@ -830,13 +960,15 @@ function __gpy_request_exit_status() {
     __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     local request="{\"op\":\"exit_status\",\"success\":${success_val},\"format\":\"zsh-prompt\"${flags_tail}}"
 
-    local result
-    result=$(__gpy_send_json "$request")
-
-    if [[ -n "$result" && "$result" != '{"error"'* ]]; then
+    local result send_status kind
+    __gpy_send_json "$request" "" result
+    send_status=$?
+    __gpy_reply_kind "$send_status" "$result" kind
+    if [[ "$kind" == ok ]]; then
         print -r -- "$result"
         return 0
     fi
+    (( send_status == 2 )) && { __gpy_late_status; return; }
     return 1
 }
 
@@ -853,12 +985,14 @@ function __gpy_request_character() {
     __gpy_json_flags_tail_into flags_tail "$is_last" "" "$prev_bg"
     local request="{\"op\":\"character\",\"success\":${success_val},\"format\":\"zsh-prompt\"${flags_tail}}"
 
-    local result send_status used_oneshot=0
-    result=$(__gpy_send_json "$request")
+    local result send_status kind used_oneshot=0
+    __gpy_send_json "$request" "" result
     send_status=$?
+    __gpy_reply_kind "$send_status" "$result" kind
+    [[ "$kind" == ok ]] || result=""
 
-    # Status 2 (connected, reply late) never forks a oneshot.
-    if [[ -z "$result" ]] && (( send_status != 2 )) && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
+    # A late agent (connected, reply late) never forks a oneshot.
+    if [[ "$kind" == none ]] && (( ${+commands[gpy-agent]} )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local exit_code=1
         [[ "$success" == "1" ]] && exit_code=0
@@ -875,6 +1009,7 @@ function __gpy_request_character() {
         return "$__gpy_seg_status_oneshot"
     fi
     [[ -n "$result" ]] && return 0
+    (( send_status == 2 )) && { __gpy_late_status; return; }
     return 1
 }
 

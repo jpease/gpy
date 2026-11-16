@@ -169,13 +169,28 @@ fn sibling(live: &Path, tag: &str) -> Result<PathBuf> {
     Ok(parent.join(leaf))
 }
 
+/// How deep [`copy_tree`] follows nested directories, so a symlink loop in
+/// the source ends in an error instead of recursing forever.
+const MAX_COPY_DEPTH: u8 = 32;
+
 /// Recursively copy `src` to `dst`, skipping top-level entries named in
-/// `skip` and any symlink. Errors name the path and the operation.
-#[allow(
-    clippy::filetype_is_file,
-    reason = "only regular files are copied; symlinks, sockets and FIFOs are skipped on purpose"
-)]
+/// `skip`. Symlinks are followed (Nix and stow trees are made of them); a
+/// link to nothing is skipped. Sockets and FIFOs are skipped. Errors name the
+/// path and the operation.
 fn copy_tree(src: &Path, dst: &Path, skip: &[&str]) -> io::Result<()> {
+    copy_tree_at(src, dst, skip, 0)
+}
+
+fn copy_tree_at(src: &Path, dst: &Path, skip: &[&str], depth: u8) -> io::Result<()> {
+    if depth > MAX_COPY_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "{} is nested more than {MAX_COPY_DEPTH} directories deep (a symlink loop?)",
+                src.display()
+            ),
+        ));
+    }
     fs::create_dir_all(dst).map_err(io_at("create", dst))?;
     for dirent in fs::read_dir(src).map_err(io_at("list", src))? {
         let entry = dirent.map_err(io_at("list", src))?;
@@ -185,15 +200,60 @@ fn copy_tree(src: &Path, dst: &Path, skip: &[&str]) -> io::Result<()> {
         }
         let from = entry.path();
         let target = dst.join(&name);
-        let kind = entry.file_type().map_err(io_at("inspect", &from))?;
-        if kind.is_dir() {
-            copy_tree(&from, &target, &[])?;
-        } else if kind.is_file() {
+        let meta = match fs::metadata(&from) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(io_at("inspect", &from)(err)),
+        };
+        if meta.is_dir() {
+            copy_tree_at(&from, &target, &[], depth.saturating_add(1))?;
+        } else if meta.is_file() {
             let bytes = fs::read(&from).map_err(io_at("read", &from))?;
             write_file(&target, &bytes)?;
         }
     }
     Ok(())
+}
+
+/// Whether process `pid` still runs; an unknown answer counts as running.
+#[cfg(unix)]
+fn pid_is_running(pid: u32) -> bool {
+    let Ok(raw) = i32::try_from(pid) else {
+        return true;
+    };
+    !matches!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(raw), None),
+        Err(nix::errno::Errno::ESRCH)
+    )
+}
+
+#[cfg(not(unix))]
+fn pid_is_running(_pid: u32) -> bool {
+    true
+}
+
+/// Delete the staging and old-file directories (see [`sibling`]) that a setup
+/// run killed mid-swap left beside `live`. A directory of a process that still
+/// runs belongs to a concurrent setup and stays.
+fn sweep_abandoned(live: &Path) {
+    let (Some(parent), Some(name)) = (live.parent(), live.file_name()) else {
+        return;
+    };
+    let prefix = format!(".{}.gpy-", name.to_string_lossy());
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().into_owned();
+        let owner = file.strip_prefix(&prefix).and_then(|rest| {
+            rest.strip_prefix("staging-")
+                .or_else(|| rest.strip_prefix("old-"))
+                .and_then(|pid| pid.parse::<u32>().ok())
+        });
+        if owner.is_some_and(|pid| pid != std::process::id() && !pid_is_running(pid)) {
+            discard(&entry.path());
+        }
+    }
 }
 
 /// One entry moved from the staging directory into the live tree.
@@ -335,6 +395,7 @@ fn stage_and_swap(
     if let Some(parent) = live.parent() {
         fs::create_dir_all(parent).map_err(io_at("create", parent))?;
     }
+    sweep_abandoned(live);
     remove_tree(&stage)?;
     remove_tree(&backup)?;
     fs::create_dir_all(&stage).map_err(io_at("create", &stage))?;
@@ -482,7 +543,12 @@ pub(super) fn install_files(
         },
     );
     match (written, pending) {
-        (Ok(()), Some(completion)) => completion.commit()?,
+        (Ok(()), Some(completion)) => {
+            if let Err(err) = completion.commit() {
+                completion.discard();
+                return Err(err.into());
+            }
+        }
         (Ok(()), None) => {}
         (Err(err), Some(completion)) => {
             completion.discard();

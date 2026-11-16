@@ -113,6 +113,10 @@ pub struct WizardState {
     /// Pending edits to the active theme's file (not `config.toml`); dropped
     /// when the theme changes.
     pending_theme: Option<ThemeEdits>,
+
+    /// First visible row of the help overlay; clamped to the overlay's
+    /// scrollable range each frame. Not part of `dirty()`.
+    help_scroll: u16,
 }
 
 impl WizardState {
@@ -176,6 +180,7 @@ impl WizardState {
             segment_cursor: 0,
             filter_query: String::new(),
             pending_theme: None,
+            help_scroll: 0,
         }
     }
 
@@ -285,6 +290,27 @@ impl WizardState {
 
     pub(crate) fn filter_query(&self) -> &str {
         &self.filter_query
+    }
+
+    pub(crate) const fn help_scroll(&self) -> u16 {
+        self.help_scroll
+    }
+
+    pub(crate) const fn reset_help_scroll(&mut self) {
+        self.help_scroll = 0;
+    }
+
+    pub(crate) const fn scroll_help_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(1);
+    }
+
+    pub(crate) const fn scroll_help_down(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_add(1);
+    }
+
+    /// Keep the scroll offset within the overlay's range for this frame.
+    pub(crate) fn clamp_help_scroll(&mut self, max: u16) {
+        self.help_scroll = self.help_scroll.min(max);
     }
 
     pub(crate) fn select_theme(&mut self, name: &str) {
@@ -557,6 +583,48 @@ impl WizardState {
                     &mut config.ui.enabled_segments,
                     name,
                 );
+            }
+        }
+    }
+
+    /// Apply only what the user changed since startup onto `config`, a fresh
+    /// reload of the file, so edits made elsewhere to untouched settings
+    /// survive the save.
+    pub(crate) fn apply_changes_to(&self, config: &mut Config) {
+        if self.selected_theme != self.initial_config.ui.theme.as_str()
+            && let Some(theme) = crate::config::types::ThemeName::new(self.selected_theme.clone())
+        {
+            config.ui.theme = theme;
+        }
+        if self.selected_palette != self.initial_config.ui.palette.as_str()
+            && let Some(palette) =
+                crate::config::types::PaletteName::new(self.selected_palette.clone())
+        {
+            config.ui.palette = palette;
+        }
+        if self.selected_directory_display != self.initial_config.ui.directory.display {
+            config.ui.directory.display = self.selected_directory_display;
+        }
+        if self.selected_language_display != self.initial_config.language.display {
+            config.language.display = self.selected_language_display;
+        }
+        if self.selected_language_show_versions != self.initial_config.language.show_versions {
+            config.language.show_versions = self.selected_language_show_versions;
+        }
+
+        let initial = initial_enabled_segments(&self.initial_config, &self.available_segments);
+        for name in &self.available_segments {
+            let enabled = self.is_segment_enabled(name);
+            if enabled == initial.contains(name) {
+                continue;
+            }
+            if enabled {
+                crate::commands::segments::insert_enabled_segment(
+                    &mut config.ui.enabled_segments,
+                    name,
+                );
+            } else {
+                config.ui.enabled_segments.retain(|listed| listed != name);
             }
         }
     }

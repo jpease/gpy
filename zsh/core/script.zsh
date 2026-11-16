@@ -33,7 +33,9 @@ typeset -gA __gpy_g_nm=() __gpy_g_cmd=() __gpy_g_req=() __gpy_g_root=() \
     __gpy_g_ttl=() __gpy_g_tmo=() __gpy_g_folder=() __gpy_g_skey=()
 typeset -gA __gpy_g_text=() __gpy_g_variant=() __gpy_g_key=() __gpy_g_at=() \
     __gpy_g_runfails=() __gpy_g_scanfails=() __gpy_g_off=()
-typeset -g __gpy_g_due=1 __gpy_g_pwd="" __gpy_g_cmd_seen=""
+# __gpy_g_duration: the last command's duration in ms, for the cmd_duration
+# input; set by __gpy_precmd only when a command ran.
+typeset -g __gpy_g_due=1 __gpy_g_pwd="" __gpy_g_cmd_seen="" __gpy_g_duration=""
 typeset -g __gpy_g_sh=/bin/sh __gpy_g_bash="" __gpy_g_bash_resolved=""
 typeset -g __gpy_g_src=""
 # Consecutive timeouts or over-cap outputs that disable a segment for this shell.
@@ -157,14 +159,16 @@ function __gpy_g_reload() {
     return 0
 }
 
-# Value of input word $1 into REPLY; 1 for an unknown word.
+# Value of input word $1 into REPLY; 1 for an unknown word. cmd_duration is
+# the last command's duration (kept on a prompt due only because $PWD
+# changed), empty before the first command.
 function __gpy_g_input() {
     case $1 in
         pwd) REPLY=$PWD ;;
         is_root) REPLY=${__gpy_is_root:-0} ;;
         is_sudo) REPLY=${__gpy_is_sudo:-0} ;;
         is_ssh) REPLY=${__gpy_is_ssh:-0} ;;
-        cmd_duration) REPLY=${__gpy_g_cmd_seen:+${__gpy_cmd_duration:-0}} ;;
+        cmd_duration) REPLY=${__gpy_g_cmd_seen:+${__gpy_g_duration:-0}} ;;
         prompt_icons) REPLY=${__prompt_icons-} ;;
         *) return 1 ;;
     esac
@@ -183,28 +187,37 @@ function __gpy_g_input_env() {
     esac
 }
 
+# `|<bytes>:<value>` for value $1 into REPLY; byte length whatever the locale.
+function __gpy_g_frame() {
+    local LC_ALL=C
+    REPLY="|${#1}:$1"
+}
+
 # Full cache key of token $1 into REPLY: static key, then each declared input
 # and env value framed as <bytes>:<value> (`u` for an unset env name).
+# Declared names are read with ${(P)...}, which sees every local in the call
+# chain (this function, __gpy_g_maybe_run, __gpy_precmd): those locals are
+# all `__gpy_`-prefixed so a declared name never resolves to one.
 function __gpy_g_full_key() {
-    local tok=$1 n w v k
-    local LC_ALL=C
-    k=${__gpy_g_skey[$tok]}
-    n=__gpy_script_${tok}_inputs
-    for w in "${(@P)n}"; do
-        __gpy_g_input "$w" || return 1
-        k+="|${#REPLY}:$REPLY"
+    local __gpy_gk_tok=$1 __gpy_gk_n __gpy_gk_w __gpy_gk_k
+    __gpy_gk_k=${__gpy_g_skey[$__gpy_gk_tok]}
+    __gpy_gk_n=__gpy_script_${__gpy_gk_tok}_inputs
+    for __gpy_gk_w in "${(@P)__gpy_gk_n}"; do
+        __gpy_g_input "$__gpy_gk_w" || return 1
+        __gpy_g_frame "$REPLY"
+        __gpy_gk_k+=$REPLY
     done
-    n=__gpy_script_${tok}_env
-    for w in "${(@P)n}"; do
-        __gpy_g_name_ok "$w" && [[ $w != GPY_* ]] || return 1
-        if (( ${(P)+w} )); then
-            v=${(P)w}
-            k+="|${#v}:$v"
+    __gpy_gk_n=__gpy_script_${__gpy_gk_tok}_env
+    for __gpy_gk_w in "${(@P)__gpy_gk_n}"; do
+        __gpy_g_name_ok "$__gpy_gk_w" && [[ $__gpy_gk_w != GPY_* ]] || return 1
+        if (( ${(P)+__gpy_gk_w} )); then
+            __gpy_g_frame "${(P)__gpy_gk_w}"
+            __gpy_gk_k+=$REPLY
         else
-            k+="|u"
+            __gpy_gk_k+="|u"
         fi
     done
-    REPLY=$k
+    REPLY=$__gpy_gk_k
 }
 
 # One timeout or over-cap result (kind $2: run or scan) for token $1; the
@@ -259,9 +272,10 @@ function __gpy_g_scan_child() {
         done
         hit=1
         (( ${#files} + ${#dirs} )) && hit=0
+        # Dotfiles never match (no glob_dots), as in the Bash runner's scan.
         for n in "${exts[@]}"; do
             (( hit )) || break
-            m=(*."$n"(ND-.Y1))
+            m=(*."$n"(N-.Y1))
             (( ${#m} )) || hit=0
         done
         res+=$hit
@@ -301,6 +315,8 @@ function __gpy_g_hide() {
 
 # Due on the first prompt, after a command (preexec), when $PWD changed
 # without one (a widget that cds and runs precmd) and after a theme reload.
+# Locals are __gpy_gr_*: declared env/require_env names are read with
+# ${(P)...}, which would otherwise see them.
 function __gpy_g_maybe_run() {
     (( ${#__gpy_g_toks} )) || return 0
     [[ $PWD != "$__gpy_g_pwd" ]] && __gpy_g_due=1
@@ -309,144 +325,157 @@ function __gpy_g_maybe_run() {
     # Cleared before the run, so an interrupted run is not started again.
     __gpy_g_due=""
     emulate -L zsh
-    # The run start in epoch microseconds: the runner child counts its
-    # deadlines from here, so its own start-up counts against T.
-    local -a et=($epochtime)
-    local -i t0=$(( et[1] * 1000000 + et[2] / 1000 ))
-    local -i cancel=0
+    local -i __gpy_gr_cancel=0
     # Ctrl-C ends the run, not precmd: unhandled, zsh abandons precmd and the
     # transient prompt zle-line-finish swapped in stays on screen. The runner
     # child shares this process group and gets the INT itself.
-    TRAPINT() { cancel=1; return 0 }
-    local tok n w v k i now=$EPOCHSECONDS
-    local -a cand scan run args pay_n pay_v names f
-    local -A keys
+    TRAPINT() { __gpy_gr_cancel=1; return 0 }
+    local __gpy_gr_tok __gpy_gr_n __gpy_gr_w __gpy_gr_v __gpy_gr_k __gpy_gr_i
+    local __gpy_gr_now=$EPOCHSECONDS __gpy_gr_at
+    local -a __gpy_gr_cand __gpy_gr_scan __gpy_gr_run __gpy_gr_args __gpy_gr_pay_n \
+        __gpy_gr_pay_v __gpy_gr_names __gpy_gr_f
+    local -A __gpy_gr_keys
 
-    for tok in "${__gpy_g_toks[@]}"; do
-        if [[ -n ${__gpy_g_off[$tok]-} ]]; then
-            __gpy_g_hide "$tok"
+    for __gpy_gr_tok in "${__gpy_g_toks[@]}"; do
+        if [[ -n ${__gpy_g_off[$__gpy_gr_tok]-} ]]; then
+            __gpy_g_hide "$__gpy_gr_tok"
             continue
         fi
-        n=__gpy_script_${tok}_reqenv
-        for w in "${(@P)n}"; do
-            if ! __gpy_g_name_ok "$w" || [[ -z ${(P)w-} ]]; then
-                __gpy_g_hide "$tok"
+        __gpy_gr_n=__gpy_script_${__gpy_gr_tok}_reqenv
+        for __gpy_gr_w in "${(@P)__gpy_gr_n}"; do
+            if ! __gpy_g_name_ok "$__gpy_gr_w" || [[ -z ${(P)__gpy_gr_w-} ]]; then
+                __gpy_g_hide "$__gpy_gr_tok"
                 continue 2
             fi
         done
-        k=0
-        for n in reqfiles reqfolders reqexts; do
-            n=__gpy_script_${tok}_$n
-            (( ${#${(@P)n}} )) && k=1
+        __gpy_gr_k=0
+        for __gpy_gr_n in reqfiles reqfolders reqexts; do
+            __gpy_gr_n=__gpy_script_${__gpy_gr_tok}_$__gpy_gr_n
+            (( ${#${(@P)__gpy_gr_n}} )) && __gpy_gr_k=1
         done
-        if (( k )); then scan+=("$tok"); else cand+=("$tok"); fi
+        if (( __gpy_gr_k )); then
+            __gpy_gr_scan+=("$__gpy_gr_tok")
+        else
+            __gpy_gr_cand+=("$__gpy_gr_tok")
+        fi
     done
 
-    if (( ${#scan} )); then
-        if __gpy_g_scan "${scan[@]}"; then
-            for (( i = 1; i <= ${#scan}; i++ )); do
-                tok=${scan[i]}
-                __gpy_g_scanfails[$tok]=0
-                if [[ ${reply[i]} == 1 ]]; then
-                    cand+=("$tok")
+    if (( ${#__gpy_gr_scan} )); then
+        if __gpy_g_scan "${__gpy_gr_scan[@]}"; then
+            for (( __gpy_gr_i = 1; __gpy_gr_i <= ${#__gpy_gr_scan}; __gpy_gr_i++ )); do
+                __gpy_gr_tok=${__gpy_gr_scan[__gpy_gr_i]}
+                __gpy_g_scanfails[$__gpy_gr_tok]=0
+                if [[ ${reply[__gpy_gr_i]} == 1 ]]; then
+                    __gpy_gr_cand+=("$__gpy_gr_tok")
                 else
-                    __gpy_g_hide "$tok"
+                    __gpy_g_hide "$__gpy_gr_tok"
                 fi
             done
         else
-            for tok in "${scan[@]}"; do
-                __gpy_g_hide "$tok"
-                (( cancel )) || __gpy_g_strike "$tok" scan
+            for __gpy_gr_tok in "${__gpy_gr_scan[@]}"; do
+                __gpy_g_hide "$__gpy_gr_tok"
+                (( __gpy_gr_cancel )) || __gpy_g_strike "$__gpy_gr_tok" scan
             done
         fi
     fi
-    (( cancel )) && return 0
+    (( __gpy_gr_cancel )) && return 0
 
-    for tok in "${cand[@]}"; do
-        __gpy_g_full_key "$tok" || { __gpy_g_hide "$tok"; continue; }
-        k=$REPLY
-        if (( __gpy_g_ttl[$tok] > 0 )) && [[ ${+__gpy_g_key[$tok]} == 1 && ${__gpy_g_key[$tok]} == "$k" ]] \
-            && (( now - ${__gpy_g_at[$tok]:-0} < __gpy_g_ttl[$tok] )); then
+    for __gpy_gr_tok in "${__gpy_gr_cand[@]}"; do
+        __gpy_g_full_key "$__gpy_gr_tok" || { __gpy_g_hide "$__gpy_gr_tok"; continue; }
+        __gpy_gr_k=$REPLY
+        # Fresh only while 0 <= age < ttl: a clock stepped back expires the
+        # entry instead of freezing it.
+        __gpy_gr_at=${__gpy_g_at[$__gpy_gr_tok]:-0}
+        if (( __gpy_g_ttl[$__gpy_gr_tok] > 0 )) && [[ ${+__gpy_g_key[$__gpy_gr_tok]} == 1 && ${__gpy_g_key[$__gpy_gr_tok]} == "$__gpy_gr_k" ]] \
+            && (( __gpy_gr_at <= __gpy_gr_now && __gpy_gr_now - __gpy_gr_at < __gpy_g_ttl[$__gpy_gr_tok] )); then
             continue
         fi
-        keys[$tok]=$k
-        run+=("$tok")
+        __gpy_gr_keys[$__gpy_gr_tok]=$__gpy_gr_k
+        __gpy_gr_run+=("$__gpy_gr_tok")
     done
-    (( ${#run} )) || return 0
+    (( ${#__gpy_gr_run} )) || return 0
     # The runner takes at most 40 segments per call.
-    run=("${(@)run[1,40]}")
+    __gpy_gr_run=("${(@)__gpy_gr_run[1,40]}")
     # Emptied first, so a run that ends without a record hides its segment.
-    for tok in "${run[@]}"; do __gpy_g_hide "$tok"; done
+    for __gpy_gr_tok in "${__gpy_gr_run[@]}"; do __gpy_g_hide "$__gpy_gr_tok"; done
     [[ -n $__gpy_g_bash && -n $__gpy_g_src ]] || return 0
 
     # Arguments: ID T_MS CWD CMD REQ N NAME... per segment; the value of NAME
     # for the k-th segment travels as __gpy_g_v<k>_<NAME> in the child's
-    # environment only.
-    k=0
-    for tok in "${run[@]}"; do
-        names=()
-        n=__gpy_script_${tok}_inputs
-        for w in "${(@P)n}"; do
-            __gpy_g_input "$w" || continue
-            v=$REPLY
-            __gpy_g_input_env "$w" || continue
-            names+=("$REPLY"); pay_n+=("__gpy_g_v${k}_$REPLY"); pay_v+=("$v")
+    # environment only. Deadlines count from the runner's own start, as in
+    # Bash and Fish.
+    __gpy_gr_k=0
+    for __gpy_gr_tok in "${__gpy_gr_run[@]}"; do
+        __gpy_gr_names=()
+        __gpy_gr_n=__gpy_script_${__gpy_gr_tok}_inputs
+        for __gpy_gr_w in "${(@P)__gpy_gr_n}"; do
+            __gpy_g_input "$__gpy_gr_w" || continue
+            __gpy_gr_v=$REPLY
+            __gpy_g_input_env "$__gpy_gr_w" || continue
+            __gpy_gr_names+=("$REPLY")
+            __gpy_gr_pay_n+=("__gpy_g_v${__gpy_gr_k}_$REPLY")
+            __gpy_gr_pay_v+=("$__gpy_gr_v")
         done
-        n=__gpy_script_${tok}_env
-        for w in "${(@P)n}"; do
-            __gpy_g_name_ok "$w" && [[ $w != GPY_* ]] && (( ${(P)+w} )) || continue
-            names+=("$w"); pay_n+=("__gpy_g_v${k}_$w"); pay_v+=("${(P)w}")
+        __gpy_gr_n=__gpy_script_${__gpy_gr_tok}_env
+        for __gpy_gr_w in "${(@P)__gpy_gr_n}"; do
+            __gpy_g_name_ok "$__gpy_gr_w" && [[ $__gpy_gr_w != GPY_* ]] && (( ${(P)+__gpy_gr_w} )) || continue
+            __gpy_gr_names+=("$__gpy_gr_w")
+            __gpy_gr_pay_n+=("__gpy_g_v${__gpy_gr_k}_$__gpy_gr_w")
+            __gpy_gr_pay_v+=("${(P)__gpy_gr_w}")
         done
-        n=__gpy_script_${tok}_opts
-        for w in "${(@P)n}"; do
-            v=${w%%=*}
-            __gpy_g_name_ok "$v" && [[ $v == GPY_OPT_* && $w == *=* ]] || continue
-            names+=("$v"); pay_n+=("__gpy_g_v${k}_$v"); pay_v+=("${w#*=}")
+        __gpy_gr_n=__gpy_script_${__gpy_gr_tok}_opts
+        for __gpy_gr_w in "${(@P)__gpy_gr_n}"; do
+            __gpy_gr_v=${__gpy_gr_w%%=*}
+            __gpy_g_name_ok "$__gpy_gr_v" && [[ $__gpy_gr_v == GPY_OPT_* && $__gpy_gr_w == *=* ]] || continue
+            __gpy_gr_names+=("$__gpy_gr_v")
+            __gpy_gr_pay_n+=("__gpy_g_v${__gpy_gr_k}_$__gpy_gr_v")
+            __gpy_gr_pay_v+=("${__gpy_gr_w#*=}")
         done
         # "" keeps the child's working directory, this shell's $PWD, so the
         # directory name never reaches argv.
-        v=${__gpy_g_root[$tok]}
-        [[ -n ${__gpy_g_folder[$tok]} ]] && v=""
-        args+=("$tok" "${__gpy_g_tmo[$tok]}" "$v" "${__gpy_g_cmd[$tok]}" "${__gpy_g_req[$tok]}" ${#names} "${names[@]}")
-        (( k++ ))
+        __gpy_gr_v=${__gpy_g_root[$__gpy_gr_tok]}
+        [[ -n ${__gpy_g_folder[$__gpy_gr_tok]} ]] && __gpy_gr_v=""
+        __gpy_gr_args+=("$__gpy_gr_tok" "${__gpy_g_tmo[$__gpy_gr_tok]}" "$__gpy_gr_v" \
+            "${__gpy_g_cmd[$__gpy_gr_tok]}" "${__gpy_g_req[$__gpy_gr_tok]}" \
+            ${#__gpy_gr_names} "${__gpy_gr_names[@]}")
+        (( __gpy_gr_k++ ))
     done
 
-    local res
-    res=$(
-        for (( i = 1; i <= ${#pay_n}; i++ )); do
-            export "${pay_n[i]}=${pay_v[i]}"
+    local __gpy_gr_res
+    __gpy_gr_res=$(
+        for (( __gpy_gr_i = 1; __gpy_gr_i <= ${#__gpy_gr_pay_n}; __gpy_gr_i++ )); do
+            export "${__gpy_gr_pay_n[__gpy_gr_i]}=${__gpy_gr_pay_v[__gpy_gr_i]}"
         done
-        export __gpy_g_t0=$t0
-        exec "$__gpy_g_bash" -p -c "$__gpy_g_src" gpy "$__gpy_g_sh" "${args[@]}" </dev/null 2>/dev/null
+        exec "$__gpy_g_bash" -p -c "$__gpy_g_src" gpy "$__gpy_g_sh" "${__gpy_gr_args[@]}" </dev/null 2>/dev/null
     )
 
-    local rec rs=$'\x1e' us=$'\x1f' esc
-    local -A seen
-    for rec in "${(@ps:$rs:)res}"; do
-        [[ -n $rec ]] || continue
-        f=("${(@ps:$us:)rec}")
-        tok=${f[1]}
-        [[ -n $tok && $tok != *[^a-z0-9_]* ]] && (( ${run[(Ie)$tok]} )) || continue
-        [[ -z ${seen[$tok]-} ]] || continue
-        seen[$tok]=1
-        case ${f[2]} in
+    local __gpy_gr_rec __gpy_gr_rs=$'\x1e' __gpy_gr_us=$'\x1f' __gpy_gr_esc
+    local -A __gpy_gr_seen
+    for __gpy_gr_rec in "${(@ps:$__gpy_gr_rs:)__gpy_gr_res}"; do
+        [[ -n $__gpy_gr_rec ]] || continue
+        __gpy_gr_f=("${(@ps:$__gpy_gr_us:)__gpy_gr_rec}")
+        __gpy_gr_tok=${__gpy_gr_f[1]}
+        [[ -n $__gpy_gr_tok && $__gpy_gr_tok != *[^a-z0-9_]* ]] && (( ${__gpy_gr_run[(Ie)$__gpy_gr_tok]} )) || continue
+        [[ -z ${__gpy_gr_seen[$__gpy_gr_tok]-} ]] || continue
+        __gpy_gr_seen[$__gpy_gr_tok]=1
+        case ${__gpy_gr_f[2]} in
             ok)
-                __gpy_prompt_escape "${f[3]}" esc
-                __gpy_g_text[$tok]=$esc
-                v=${f[4]}
-                [[ -n $v && ${#v} -le 32 && $v != *[^a-z0-9_]* ]] || v=""
-                __gpy_g_variant[$tok]=$v
-                __gpy_g_runfails[$tok]=0
+                __gpy_prompt_escape "${__gpy_gr_f[3]}" __gpy_gr_esc
+                __gpy_g_text[$__gpy_gr_tok]=$__gpy_gr_esc
+                __gpy_gr_v=${__gpy_gr_f[4]}
+                [[ -n $__gpy_gr_v && ${#__gpy_gr_v} -le 32 && $__gpy_gr_v != *[^a-z0-9_]* ]] || __gpy_gr_v=""
+                __gpy_g_variant[$__gpy_gr_tok]=$__gpy_gr_v
+                __gpy_g_runfails[$__gpy_gr_tok]=0
                 ;|
             ok|exit|req|c1)
-                __gpy_g_key[$tok]=${keys[$tok]}
-                __gpy_g_at[$tok]=$now
+                __gpy_g_key[$__gpy_gr_tok]=${__gpy_gr_keys[$__gpy_gr_tok]}
+                __gpy_g_at[$__gpy_gr_tok]=$__gpy_gr_now
                 ;;
             timeout|cap)
                 # With a Bash 3.2 child a Ctrl-C ends the run at its deadline
                 # and can come back as a timeout; Ctrl-C never counts.
-                [[ ${f[2]} == timeout ]] && (( cancel )) && continue
-                __gpy_g_strike "$tok" run
+                [[ ${__gpy_gr_f[2]} == timeout ]] && (( __gpy_gr_cancel )) && continue
+                __gpy_g_strike "$__gpy_gr_tok" run
                 ;;
         esac
     done
@@ -479,9 +508,21 @@ function __gpy_g_colors() {
 
 # Render token $1 as a pill: $2 is_last, $3 prev_bg, $4 is_first. The stored
 # text is already escaped; the theme's icon and caps are escaped here. The
-# variant's icon, when set and non-empty, replaces the segment icon.
+# variant's icon, when set and non-empty, replaces the segment icon. Prints
+# the pill; __gpy_g_render_into OUT_VAR ARGS... assigns it without a fork
+# (OUT_VAR must be a `__gpy_` name: the locals there are not prefixed).
 function __gpy_g_render() {
+    local __gpy_gre_out
+    __gpy_g_render_into __gpy_gre_out "$@"
+    [[ -n $__gpy_gre_out ]] && print -r -- "$__gpy_gre_out"
+    return 0
+}
+
+function __gpy_g_render_into() {
     emulate -L zsh
+    local __gpy_gre_var=$1
+    shift
+    printf -v "$__gpy_gre_var" '%s' ""
     local tok=$1 text=${__gpy_g_text[$1]-} bg fg icon n caps="" vnt=${__gpy_g_variant[$1]-}
     local od="" ofg="" obg="" cl="" cfg="" cbg=""
     [[ -n $text ]] || return 0
@@ -508,6 +549,6 @@ function __gpy_g_render() {
         n=__gpy_segment_${tok}_close_bg_color; cbg=${(P)n-}
     fi
     [[ $caps == *c* ]] || caps+=d
-    __gpy_section_standalone "$bg" "$fg" " $text" "$2" "$4" "$caps" \
+    __gpy_section_standalone_into "$__gpy_gre_var" "$bg" "$fg" " $text" "$2" "$4" "$caps" \
         "$od" "$ofg" "$obg" "$cl" "$cfg" "$cbg"
 }

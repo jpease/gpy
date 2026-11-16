@@ -153,13 +153,24 @@ pub trait ValidatableResource {
     fn hints(kind: FailureKind) -> &'static [&'static str];
 }
 
-/// Omitted → active config value; existing file → path; otherwise a name.
+/// Whether `raw` is spelled like a file path (it has a separator or a `.toml`
+/// suffix) rather than like a theme or palette name.
+fn looks_like_path(raw: &str) -> bool {
+    raw.contains(['/', std::path::MAIN_SEPARATOR])
+        || Path::new(raw)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
+}
+
+/// Omitted → active config value; an existing path spelled like one → path;
+/// otherwise a name, so a stray file or directory called `default` in the
+/// working directory never shadows the theme of that name.
 fn resolve_target<R: ValidatableResource>(
     target: Option<&str>,
 ) -> std::result::Result<ResolvedTarget, Failure> {
     if let Some(raw_target) = target {
         let path = Path::new(raw_target);
-        if path.exists() {
+        if looks_like_path(raw_target) && path.exists() {
             if path.is_file() {
                 return Ok(ResolvedTarget::Path(path.to_path_buf()));
             }
@@ -290,5 +301,16 @@ mod tests {
     fn identical_text_without_a_typed_source_is_other() {
         let lookalike = Error::config("Invalid color 'nonsuch' for field x in theme t");
         assert_eq!(Failure::from(lookalike).kind(), FailureKind::Other);
+    }
+
+    #[test]
+    fn only_path_shaped_targets_are_paths() {
+        use super::looks_like_path;
+        assert!(looks_like_path("./mine"));
+        assert!(looks_like_path("themes/mine"));
+        assert!(looks_like_path("mine.toml"));
+        assert!(looks_like_path("MINE.TOML"));
+        assert!(!looks_like_path("default"));
+        assert!(!looks_like_path("my-theme"));
     }
 }

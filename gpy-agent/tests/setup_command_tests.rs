@@ -658,3 +658,62 @@ fn setup_warns_once_on_unrecognised_nerd_font_override() {
         "{stderr}"
     );
 }
+
+#[test]
+fn fish_setup_retires_the_pre_0_9_layout_and_names_the_old_directories() {
+    let home = TempDir::new().unwrap();
+    let fish = home.path().join(".config/fish");
+    let old_tree = fish.join("gpy");
+    fs::create_dir_all(old_tree.join("functions")).unwrap();
+    fs::write(
+        old_tree.join("functions/fish_prompt.fish"),
+        "function fish_prompt; end\n",
+    )
+    .unwrap();
+    fs::create_dir_all(fish.join("conf.d")).unwrap();
+    fs::write(fish.join("conf.d/gpy_init.fish"), "# old loader\n").unwrap();
+    fs::create_dir_all(fish.join("functions")).unwrap();
+    std::os::unix::fs::symlink(
+        old_tree.join("functions/fish_prompt.fish"),
+        fish.join("functions/fish_prompt.fish"),
+    )
+    .unwrap();
+    fs::create_dir_all(home.path().join(".config/gpy/bundled-plugins")).unwrap();
+
+    let output = setup(home.path(), &["--shell", "fish"]);
+    assert_ok(&output);
+
+    assert!(!fish.join("conf.d/gpy_init.fish").exists());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("rm -rf"), "{stdout}");
+    assert!(stdout.contains(&old_tree.display().to_string()), "{stdout}");
+    assert!(stdout.contains("bundled-plugins"), "{stdout}");
+    let backups = fs::read_dir(fish.join("functions"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".backup."))
+        .count();
+    assert_eq!(
+        backups, 0,
+        "GPY's own legacy prompt link is not a user prompt"
+    );
+}
+
+#[test]
+fn setup_warns_about_an_incomplete_rc_block_instead_of_claiming_it_is_configured() {
+    let home = TempDir::new().unwrap();
+    let rc = home.path().join(".zshrc");
+    fs::write(
+        &rc,
+        "export A=1\n# >>> gpy-init >>>\n# GPY shell integration\n",
+    )
+    .unwrap();
+
+    let output = setup(home.path(), &["--shell", "zsh"]);
+    assert_ok(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("incomplete"), "{stderr}");
+    assert!(!stdout.contains("already configured"), "{stdout}");
+}

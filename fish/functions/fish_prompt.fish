@@ -25,8 +25,9 @@ function fish_prompt
     # Never leak a stale clock pre-render.
     set -e __gpy_clock_prerendered
 
-    # One `date` fork per render (Fish has no builtin epoch); the clock text rides along,
-    # split on 0x1E, a byte `date` never emits.
+    # With the clock shown, one `date` fork per render (Fish has no builtin
+    # strftime) also gives the epoch, split on 0x1E, a byte `date` never
+    # emits. Without it the epoch costs no fork.
     if contains clock $__enabled_segments; and functions -q __gpy_clock_date_format
         set -l clock_format (__gpy_clock_date_format)
         set -l sep \x1e
@@ -40,8 +41,11 @@ function fish_prompt
         else
             set -g __gpy_prompt_now
         end
+    else if functions -q __gpy_now_seconds
+        set -g __gpy_prompt_now (__gpy_now_seconds)
     else
-        set -g __gpy_prompt_now (date +%s 2>/dev/null)
+        # Disabled mode: util.fish is not sourced and no cache is read.
+        set -g __gpy_prompt_now
     end
 
     # Theme-controlled so bash/zsh match.

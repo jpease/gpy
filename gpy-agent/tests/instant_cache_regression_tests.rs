@@ -168,7 +168,8 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
         stale_error: false,
         rebase_progress: None,
     };
-    git_cache.set(repo.path(), stale_status, HashMap::new());
+    let canonical_repo = repo.path().canonicalize().expect("canonical repo");
+    git_cache.set_canonical(&canonical_repo, stale_status, HashMap::new());
 
     let client_registry = Arc::new(ClientDirectory::new());
     let handler = GitHandler::new(
@@ -221,16 +222,16 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
 
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
     let client_registry = Arc::new(ClientDirectory::new());
-    let git_cache = Arc::new(GitStatusCache::new());
     let watcher = Arc::new(Mutex::new(None)); // No watcher for this test
     let _user_dirs = isolate_user_dirs();
     let instant_cache = Arc::new(InstantPromptCache::new().expect("instant cache"));
 
-    let handler = ClientHandler::new(
-        render_deps(&config_manager, &instant_cache, &client_registry),
-        Arc::clone(&git_cache),
-        Arc::clone(&watcher),
-    );
+    let render = render_deps(&config_manager, &instant_cache, &client_registry);
+    let git_handler = Arc::new(GitHandler::new(
+        render.clone(),
+        Arc::new(GitStatusCache::new()),
+    ));
+    let handler = ClientHandler::new(render, git_handler, Arc::clone(&watcher));
 
     // Canonicalize: macOS /var -> /private/var.
     let canonical_repo_path = repo
@@ -316,8 +317,8 @@ fn test_instant_cache_updates_on_status_change() {
 
     std::fs::write(repo.path().join("newfile.txt"), "test").expect("write file");
 
-    // Clear git_cache to force fresh scan
-    git_cache.clear();
+    // Drop the cached status to force a fresh scan.
+    git_cache.invalidate_canonical(&canonical_repo_path);
 
     let updated_status = handler
         .status(&path, None)

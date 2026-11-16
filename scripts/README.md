@@ -24,9 +24,9 @@ It checks:
   Rust file size (`check-file-size.py`).
 - **Fish:** syntax of every `.fish` file; formatting with `fish_indent`.
 - **Shell scripts:** `shellcheck -x` over the installers, `scripts/*.sh`, `scripts/lib/*.sh`,
-  `tests/bash/*.test.bash`, `tests/repo/*.test.bash`, `benchmarks/*/*.sh` and the shipped `bash/` tree,
-  discovered by glob. `install-oneline.sh` is checked as POSIX `sh`. An inline
-  `# shellcheck disable=` needs a reason.
+  `tests/bash/*.test.bash`, `tests/repo/*.test.bash`, `benchmarks/*/*.sh`, the shipped `bash/` tree and
+  the bundled `plugins/*/bin/*.sh`, discovered by glob. `install-oneline.sh` and the plugin scripts are
+  checked as POSIX `sh`. An inline `# shellcheck disable=` needs a reason.
 - **Repo invariants:** `tests/repo/*.test.bash` (CI, release, toolchain and
   documentation invariants), run in the `repo` part.
 - **Shell suites:** Fish, Bash and Zsh tests against this checkout's debug
@@ -67,12 +67,12 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `test-fish.sh` | Build the debug binaries and run `tests/fish/*.test.fish`; `just test-shell` and `just check-shell fish` run it. |
 | `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the `rust-toolchain.toml` pin; names the override on a mismatch. |
 | `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
-| `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. The user allowlist matches a whole path component, so a dotted user such as `me.smith` is not the example user `me`. |
+| `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. The user allowlist matches a whole path component, so a dotted user such as `me.smith` is not the example user `me`. A failing `git grep` (exit above 1) fails the check instead of reading as clean. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
 | `check-platforms.sh [--worktree \| <rev>]` | Compile `<rev>` (default `HEAD`; `--worktree` adds uncommitted changes) in a Docker container: Linux `cargo clippy` (the same two passes as `just lint`) and Windows (mingw) `cargo check` for `--lib`, `--locked`, `--profile test --tests`. Exit 1 on a failure, 2 when Docker is unreachable. `just check-platforms`. |
 | `check-new-allows.py [--staged \| <base-rev>]` | Fail when a change adds an `allow` attribute without `reason = "..."`; existing allows are not checked. Run at pre-commit (`--staged`) and by the `new-allows` job in `pr-gate.yml`. |
 | `check-file-size.py [--update \| --init]` | Fail when a tracked Rust file (top-level inline test modules excluded) exceeds 800 lines, or a file listed in `file-size-allowlist.txt` grew or shrank without its entry being lowered (`--update`). Test files (`tests/` targets, `tests.rs`, `*_tests.rs`) are held to the same cap; those over it are listed in `file-size-allowlist.txt` until split, and no new test may be added to a listed file. Run by the `file-size` hook and `quality-check.sh`. |
-| `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
+| `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. The test root is per user, so it stops only agents whose executable is under this checkout (or `CARGO_TARGET_DIR`) and removes only sockets no process holds; another checkout's live run is left alone. |
 | `bench.sh --ci` | Rebuild the release agent, run `cargo bench` and enforce the Rust micro-benchmark budgets from `benchmarks/perf-budgets.json` (part of `just bench-ci`; the PR gate's `perf` job runs it). Lists every benchmark ID first and fails when two bench targets register the same one. Exit 1 on an exceeded budget, a duplicate ID or a failed bench; exit 2 before benchmarking when `jq`, the budget file or a budget key is missing. `PERF_BUDGETS_FILE` points it at another budget file. |
 | `ci-bench.sh` | End-to-end prompt-latency and agent-memory budgets (`just bench-ci`); same exit 2 and `PERF_BUDGETS_FILE` rules as `bench.sh`. |
 | `lib/bench-common.sh` | Sourced by both bench scripts: reads every budget in one `jq` call, rebuilds the release agent and prints the `info:`/`PASS:`/`warn:`/`FAIL:` log lines. |

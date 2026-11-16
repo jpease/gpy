@@ -5,6 +5,9 @@
 # A late-answering agent: (a) the request is sent exactly once, (b) status 2
 # with empty output so no caller forks `gpy-agent oneshot`. Only an unreachable
 # agent (status 1) falls back. Each available transport is tested alone.
+# (c) A silent connection opens the late window: further requests to that
+# socket are status 2 without connecting, until it closes or the shell
+# re-registers; a slow path-bearing op (git) never opens it.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -25,6 +28,9 @@ cleanup() {
     rm -rf "$tmp"
 }
 trap cleanup EXIT
+# The late-window stamp lives in the runtime root; the shim PATHs have no mkdir.
+export XDG_RUNTIME_DIR="$tmp/run"
+mkdir -p "$XDG_RUNTIME_DIR/gpy/refresh-throttle"
 
 real_path="$PATH"
 make_shim() {
@@ -38,9 +44,11 @@ make_shim() {
     printf '%s' "$dir"
 }
 
-# Replies after DELAY seconds, counting connections in $tmp/connections.
+# Replies after DELAY seconds, counting connections in $tmp/connections. A new
+# listener is a new agent, so no late window carries over to it.
 start_listener() {
     rm -f "$tmp/slow.sock" "$tmp/connections"
+    __gpy_agent_late_clear
     shell_e2e_stub_listener "$tmp/slow.sock" reply --reply '{"status":"ok"}' \
         --delay "$1" --lifetime 6 --connections "$tmp/connections"
 }
@@ -92,6 +100,25 @@ if command -v nc >/dev/null 2>&1; then
     fi
 fi
 [ "$ran" -gt 0 ] || test_skip "neither socat nor an nc with -U is installed"
+
+# (c) On the real PATH, whichever transport __gpy_send_json picks. The reply
+# comes after nc -w 1, so every connected request is late.
+start_listener 1.6
+export GPY_AGENT_SOCKET_PATH="$tmp/slow.sock" GPY_IPC_TIMEOUT_MS=150
+statuses=""
+for request in '{"op":"git","cwd":"/"}' '{"op":"ping"}' '{"op":"ping"}' '{"op":"clock"}'; do
+    __gpy_send_json "$request" >/dev/null
+    statuses+="$? "
+done
+__gpy_agent_late_clear
+__gpy_send_json '{"op":"ping"}' >/dev/null
+statuses+="$?"
+sleep 0.3
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
+check "every request in and around the late window is status 2" "2 2 2 2 2" "$statuses"
+# git and the first ping connect; the ping and clock inside the window (at
+# least four seconds) do not; the ping after it was closed connects again.
+check "the late window skips the connection until it is closed" "3" "$(shell_e2e_count_lines "$tmp/connections")"
 
 # __gpy_request never forks oneshot for a late agent, but does for an unreachable one.
 mkdir -p "$tmp/bin" "$tmp/cache"

@@ -1,7 +1,12 @@
 # gpy.zsh - Entry point for Zsh integration
 
-0=${(%):-%N}
-__gpy_zsh_root=${0%/*}
+# `%x` names this file whether it is sourced from a shell, a function or
+# another file (unlike $0 under NO_FUNCTION_ARGZERO). `:a` makes it absolute
+# lexically, so a symlinked tree keeps its siblings (core/script.zsh finds
+# bash/core/g_runner.bash beside the link); when that directory has no core/
+# (the entry file alone is a symlink), `:A` follows the link to the real tree.
+__gpy_zsh_root=${${(%):-%x}:a:h}
+[[ -f "$__gpy_zsh_root/core/init.zsh" ]] || __gpy_zsh_root=${${(%):-%x}:A:h}
 
 # Check every core file before sourcing any, so a partial install prints one
 # diagnostic instead of half-loading the prompt on every shell.
@@ -34,7 +39,14 @@ __gpy_warn_flag_values
 # Start only after the theme export set the flags; [agent.supervisor]
 # enabled = false disables restarts, not this start.
 # The start just made is the first check: the next probe waits one interval.
-__gpy_agent_enabled && { __gpy_start_agent; __gpy_supervisor_last_check_time=$EPOCHSECONDS; }
+# One registration attempt now, in this shell (as Bash does): a running agent
+# knows the shell before the first render, whose segments run in subshells
+# that cannot keep a registration. precmd retries after each render.
+if __gpy_agent_enabled; then
+    __gpy_start_agent
+    __gpy_supervisor_last_check_time=$EPOCHSECONDS
+    __gpy_register_with_agent &>/dev/null
+fi
 
 for __gpy_seg_file in "$__gpy_zsh_root"/segments/*.zsh; do
     source "$__gpy_seg_file"

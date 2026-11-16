@@ -41,10 +41,21 @@ function segment_git_render --argument-names is_last is_first
         if test -S (__gpy_ipc_endpoint)
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
             set -l synced (__gpy_ipc_send $payload (__gpy_ipc_cold_timeout_ms) | string collect)
+            set -l send_status $pipestatus[1]
             if test -n "$synced"
                 # The agent writes its own instant cache while handling this request.
                 printf '%s' "$synced"
                 set -g __gpy_last_segment_bg (__gpy_git_segment_bg "$root")
+                return 0
+            end
+            # Refused for good (e.g. a denied cwd): no refresh will ever fill the
+            # cache here, so render agent-free.
+            if test "$send_status" = 3
+                set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
+                if test -n "$fresh"
+                    printf '%s' "$fresh"
+                    set -g __gpy_last_segment_bg $__color_git_clean_bg
+                end
                 return 0
             end
         end
@@ -69,29 +80,29 @@ function segment_git_render --argument-names is_last is_first
 
     # Colour the pill was drawn in, unless the oneshot below drew it agent-free.
     set -l agent_free 0
+    set -l shown "$rendered_output"
 
     # `test -S`, not a ping: a connect probe can block the prompt.
-    if not __gpy_cache_status_stale $cache_status
-        printf '%s' "$rendered_output"
-    else
+    if __gpy_cache_status_stale $cache_status
         if test -S (__gpy_ipc_endpoint)
             # Agent up: serve stale, background refresh repaints via SIGURG.
-            printf '%s' "$rendered_output"
             __gpy_maybe_refresh git "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         else
             # Agent down: the refresh has no listener; stale beats empty if oneshot fails.
             set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
             if test -n "$fresh"
-                printf '%s' "$fresh"
+                set shown "$fresh"
                 set agent_free 1
-            else
-                printf '%s' "$rendered_output"
             end
         end
     end
+    printf '%s' "$shown"
 
-    # The agent records the pill's state colour; a stale file never colours an agent-free render.
-    if test $agent_free -eq 1
+    # Only a printed pill moves the chevron colour on. The agent records the
+    # pill's state colour; a stale file never colours an agent-free render.
+    if test -z "$shown"
+        return 0
+    else if test $agent_free -eq 1
         set -g __gpy_last_segment_bg $__color_git_clean_bg
     else
         set -g __gpy_last_segment_bg (__gpy_git_segment_bg "$root")

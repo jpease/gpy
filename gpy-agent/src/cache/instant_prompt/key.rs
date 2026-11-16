@@ -129,15 +129,5 @@ pub(super) fn cache_file_parts(cache_dir: &Path, key: &str, tail: &str) -> (Path
 /// Project root for a path (git root or the path itself). The shells' copy is
 /// pinned by `git_root_shared_vectors`.
 pub(super) fn find_project_root(path: &Path) -> PathBuf {
-    let mut current = path;
-    loop {
-        let git_dir = current.join(".git");
-        if git_dir.exists() {
-            return std::fs::canonicalize(current).unwrap_or_else(|_| current.to_path_buf());
-        }
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => return path.to_path_buf(),
-        }
-    }
+    crate::git::find_worktree_root(path).unwrap_or_else(|| path.to_path_buf())
 }

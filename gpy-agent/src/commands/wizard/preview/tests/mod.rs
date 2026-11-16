@@ -8,12 +8,7 @@ mod colors;
 mod segments;
 
 fn make_facts() -> PreviewFacts {
-    PreviewFacts {
-        repository_status: None,
-        languages: Vec::new(),
-        sample_duration_ms: 128,
-        sample_character_success: true,
-    }
+    PreviewFacts::empty()
 }
 
 fn make_config(enabled_segments: &[&str]) -> Config {

@@ -33,13 +33,16 @@ lowered with `python3 scripts/check-file-size.py --update` in the same commit
   - `integration_harness.rs` — daemonized agent test server with temporary repository fixtures.
   - `pty.rs` — PTY terminal test helpers.
   - `sgr.rs` — ANSI SGR interpreter for asserting rendered styles.
+  - `setup_harness.rs` — runs the real `gpy setup` binary against an isolated HOME with `--from` at the repo's shell trees.
   - `sigurg.rs` — counting SIGURG signal handler for doorbell testing.
   - `skip.rs` — skips tests with explanatory reasons.
   - `wait.rs` — polling and waiting with deadlines.
+  - `mod.rs` — declares the helpers above for binaries that use `mod common;`.
 - `fixtures/` — the base16/Starship input files the import golden tests read,
   and `released_themes/` (`text-v0.6.0.toml`, `default-v0.7.1.toml`,
   `starship-v0.7.1.toml`), builtin themes as an older release shipped them
   (theme retirement tests).
+- `golden/` — the expected ANSI renders (`default_*.ansi`, `text_*.ansi`) the theme golden tests compare against.
 - `snapshots/` — insta snapshots for the help and formatter tests.
 
 ## How the targets run

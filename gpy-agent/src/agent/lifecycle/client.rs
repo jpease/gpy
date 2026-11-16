@@ -23,6 +23,13 @@ const PING_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 /// config reload): the agent answers in microseconds unless wedged.
 const REQUEST_BUDGET: Duration = Duration::from_secs(2);
 
+/// Connect attempts that must all be refused before a socket is called stale.
+const STALE_PROBE_ATTEMPTS: u32 = 3;
+
+/// Pause between [`AgentClient::socket_is_stale`] attempts; a backlog that is
+/// full only for a moment drains well within it.
+const STALE_PROBE_BACKOFF: Duration = Duration::from_millis(50);
+
 /// How a failed connect to the socket reads as evidence about the agent.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ConnectErrorClass {
@@ -479,13 +486,36 @@ impl AgentClient {
     }
 
     /// Whether nothing is listening on the socket (connection refused or file
-    /// gone); an accepted connection means a live agent.
+    /// gone); an accepted or queued connection means a live agent.
+    ///
+    /// The connect is non-blocking and bounded, so a full accept backlog reads
+    /// as queued (Linux) instead of hanging the caller. macOS refuses a connect
+    /// to a full backlog outright, so a refusal counts only when every one of
+    /// a few spaced attempts gets it.
     #[must_use]
     pub fn socket_is_stale(&self) -> bool {
-        match std::os::unix::net::UnixStream::connect(&self.socket) {
-            Ok(_) => false,
-            Err(e) => connect_error_class(&e) == ConnectErrorClass::NotListening,
-        }
+        self.runtime.block_on(async {
+            for attempt in 0..STALE_PROBE_ATTEMPTS {
+                if attempt > 0 {
+                    tokio::time::sleep(STALE_PROBE_BACKOFF).await;
+                }
+                let connect = tokio::time::timeout(
+                    PING_CONNECT_TIMEOUT,
+                    tokio::net::UnixStream::connect(&self.socket),
+                )
+                .await;
+                // Accepted, queued, timed out in the queue, or a local
+                // failure: none of them proves the socket stale.
+                let refused = matches!(
+                    &connect,
+                    Ok(Err(e)) if connect_error_class(e) == ConnectErrorClass::NotListening
+                );
+                if !refused {
+                    return false;
+                }
+            }
+            true
+        })
     }
 
     /// Poll until the agent stops responding to pings, bounded by the shutdown
@@ -663,6 +693,31 @@ mod tests {
             Ok(true),
             "an agent that replied and closed is alive; got {alive:?}"
         );
+    }
+
+    /// A listener that never accepts still holds the socket: not stale.
+    #[test]
+    fn a_listening_socket_that_never_accepts_is_not_stale() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("silent.sock");
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+
+        assert!(!client_at(&socket_path).socket_is_stale());
+    }
+
+    /// A socket file whose listener is gone refuses every connect: stale.
+    #[test]
+    fn a_socket_without_a_listener_is_stale() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("left.sock");
+        drop(std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket"));
+
+        assert!(
+            socket_path.exists(),
+            "the socket file outlives its listener"
+        );
+        assert!(client_at(&socket_path).socket_is_stale());
     }
 
     /// `git_reply` sends a JSON-format git request for the directory and hands

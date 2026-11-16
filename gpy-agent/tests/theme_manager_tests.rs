@@ -923,7 +923,7 @@ fn test_theme_export_includes_plugin_segment_file_vars() {
 
     create_test_theme_toml(&xdg_temp.path().join("gpy"), "plugin_files", MINIMAL_THEME);
 
-    let plugin_dir = bundled_temp.path().join("demo");
+    let plugin_dir = bundled_temp.path().canonicalize().unwrap().join("demo");
     let plugin_segments_dir = plugin_dir.join("segments");
     fs::create_dir_all(&plugin_segments_dir).unwrap();
     fs::write(

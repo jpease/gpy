@@ -259,6 +259,20 @@ fn assert_reload_drops_then_restores_git_caches(
     );
 }
 
+/// A reconcile interval too large for an `Instant` is capped: scheduling its
+/// tick used to overflow and abort the daemon before it ever answered.
+#[test]
+fn huge_reconcile_interval_still_starts_the_daemon() {
+    let env = CliTestEnv::new().expect("cli env");
+    let huge = u64::MAX.to_string();
+    let daemon = Daemon::start_with(&env, &[("GPY_RECONCILE_INTERVAL_SECS", &huge)]);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        UnixStream::connect(&daemon.socket).is_ok(),
+        "the daemon must still be serving after scheduling its first reconcile tick"
+    );
+}
+
 #[test]
 fn reload_disabling_git_deletes_cached_git_prompts() {
     let env = CliTestEnv::new().expect("cli env");

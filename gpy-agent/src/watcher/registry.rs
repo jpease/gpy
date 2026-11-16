@@ -364,10 +364,14 @@ pub(super) fn is_git_significant_relative(relative: &Path) -> bool {
 type CommonGitDirs = std::collections::HashMap<PathBuf, std::collections::HashSet<PathBuf>>;
 
 /// Whether `relative` (inside a common git directory) names state shared by all
-/// worktrees: branch/remote refs, `packed-refs`, `config`. `HEAD` and `index`
-/// are per-checkout and excluded, else every `git add` would wake every worktree.
+/// worktrees: branch/remote refs, `refs/stash`, `packed-refs`, `config`. `HEAD`
+/// and `index` are per-checkout and excluded, else every `git add` would wake
+/// every worktree.
 pub(super) fn is_common_gitdir_significant_relative(relative: &Path) -> bool {
-    if relative.starts_with("refs/heads") || relative.starts_with("refs/remotes") {
+    if relative.starts_with("refs/heads")
+        || relative.starts_with("refs/remotes")
+        || relative == Path::new("refs/stash")
+    {
         return true;
     }
     let is_top_level = relative.parent().is_none_or(std::path::Path::is_empty);

@@ -47,15 +47,17 @@ pub fn execute_version_command<P: VersionSource + ?Sized>(
         return Ok(None);
     };
 
-    // Skip mise when it previously failed here. Timeouts propagate via `?`
-    // before negative caching, so a slow mise is never poisoned.
-    if !mise_known_negative(program, cwd)
-        && let Some(output) = execute_mise_version_command(program, args, cwd)?
-    {
-        if output.status.success() {
-            return Ok(parse_version_output(detector, &output));
+    // Skip mise when it previously failed here. A mise that times out or
+    // cannot be spawned falls through to the direct command, and is not
+    // recorded as a negative: only a completed, failed `mise exec` is.
+    if !mise_known_negative(program, cwd) {
+        match execute_mise_version_command(program, args, cwd) {
+            Ok(Some(output)) if output.status.success() => {
+                return Ok(parse_version_output(detector, &output));
+            }
+            Ok(Some(_failed)) => record_mise_negative(program, cwd),
+            Ok(None) | Err(_) => {}
         }
-        record_mise_negative(program, cwd);
     }
 
     let candidates = std::iter::once(*program).chain(detector.fallback_programs().iter().copied());
@@ -102,9 +104,26 @@ fn spawn_direct_version_command(
     if let Some(path) = cwd {
         command.current_dir(path);
     }
+    suppress_toolchain_auto_install(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     crate::process::spawn_in_own_process_group(&mut command);
     command.spawn()
+}
+
+/// Stop a version probe from installing a toolchain the repo asks for.
+///
+/// Probes run in the repository directory, so a `rust-toolchain.toml`, a
+/// `go.mod` `toolchain` line or a `.tool-versions` entry for something
+/// uninstalled would otherwise make rustup, the go command or mise download
+/// it from a background daemon, again every time the failed-probe window
+/// ends. The probe then fails and shows no version instead.
+fn suppress_toolchain_auto_install(command: &mut Command) {
+    command
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .env("GOTOOLCHAIN", "local")
+        .env("MISE_AUTO_INSTALL", "0")
+        .env("MISE_EXEC_AUTO_INSTALL", "0")
+        .env("MISE_NOT_FOUND_AUTO_INSTALL", "0");
 }
 
 /// Version of a forwarded venv's Python binary when its `pyvenv.cfg` has none.
@@ -145,6 +164,7 @@ fn execute_mise_version_command(
     command.args(["exec", "--", program]);
     command.args(args);
     command.current_dir(path);
+    suppress_toolchain_auto_install(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     crate::process::spawn_in_own_process_group(&mut command);
 
@@ -179,30 +199,47 @@ fn wait_with_timeout(child: Child, label: &str, timeout: Duration) -> Result<Out
     })
 }
 
-/// Whether a `.tool-versions`/`mise.toml`/`.mise.toml` governs `path`.
-/// Memoized per directory; the walk stops at `$HOME` or
-/// [`MAX_ANCESTOR_DEPTH`] levels.
+/// Whether a `.tool-versions`/`mise.toml`/`.mise.toml` governs `path`, global
+/// config in `$HOME` included. Memoized per directory; the walk stops at
+/// `$HOME` or [`MAX_ANCESTOR_DEPTH`] levels.
 fn has_tool_version_config(path: &Path) -> bool {
+    tool_config_presence(path).anywhere
+}
+
+/// Like [`has_tool_version_config`], but ignoring `$HOME`'s own (global) config.
+fn has_project_tool_version_config(path: &Path) -> bool {
+    tool_config_presence(path).below_home
+}
+
+fn tool_config_presence(path: &Path) -> ToolConfigPresence {
     let cache_key = canonical_dir_key(path);
     if let Some(cached) = TOOL_CONFIG_CACHE.get(&cache_key) {
         return cached;
     }
 
     let home = home_dir();
-    let present = bounded_ancestors(path, home.as_deref(), MAX_ANCESTOR_DEPTH).any(|ancestor| {
-        [".tool-versions", "mise.toml", ".mise.toml"]
+    let mut presence = ToolConfigPresence {
+        anywhere: false,
+        below_home: false,
+    };
+    for ancestor in bounded_ancestors(path, home.as_deref(), MAX_ANCESTOR_DEPTH) {
+        let has_config = [".tool-versions", "mise.toml", ".mise.toml"]
             .iter()
-            .any(|name| ancestor.join(name).exists())
-    });
-    TOOL_CONFIG_CACHE.insert(cache_key, present);
-    present
+            .any(|name| ancestor.join(name).exists());
+        presence.anywhere |= has_config;
+        presence.below_home |= has_config && home.as_deref() != Some(ancestor);
+    }
+    TOOL_CONFIG_CACHE.insert(cache_key, presence);
+    presence
 }
 
 /// Read the project's `.ruby-version` pin when no mise/tool-versions config
 /// governs `cwd`. mise often ignores idiomatic version files for ruby, so
 /// `mise exec -- ruby --version` would report the global Ruby.
 pub(crate) fn resolve_ruby_version_file(cwd: &Path) -> Option<String> {
-    if has_tool_version_config(cwd) {
+    // A global `~/.tool-versions` does not pin this project's ruby, and is
+    // exactly the case the idiomatic-file workaround exists for.
+    if has_project_tool_version_config(cwd) {
         return None;
     }
 
@@ -243,12 +280,6 @@ fn parse_version_output<P: VersionSource + ?Sized>(
     detector.parse_version(&text)
 }
 
-/// Cached version detection without a working directory.
-#[must_use]
-pub fn detect_version<P: VersionSource + ?Sized>(detector: &P) -> Option<String> {
-    detect_version_at(detector, None)
-}
-
 /// Whether a version lookup may run a probe command on a cache miss.
 /// See [`crate::language::display::Versions`] for the display-level form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,23 +294,12 @@ pub enum ProbePolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColdVersion;
 
-/// Cached version detection in a project directory.
+/// Cached version detection in a project directory, under `policy`;
+/// `Ok(None)` is no version (or a recent failure).
 ///
 /// The cwd is part of the cache key since version managers resolve per
 /// project. Failures are cached for [`FAILURE_TTL`](crate::language::probe_memo::FAILURE_TTL) so a broken
 /// tool costs one probe round per window.
-#[must_use]
-pub fn detect_version_at<P: VersionSource + ?Sized>(
-    detector: &P,
-    cwd: Option<&Path>,
-) -> Option<String> {
-    lookup_version_at(detector, cwd, ProbePolicy::Spawn)
-        .ok()
-        .flatten()
-}
-
-/// [`detect_version_at`] under `policy`; `Ok(None)` is no version
-/// (or a recent failure).
 ///
 /// # Errors
 /// [`ColdVersion`] when nothing is cached and `policy` forbids the probe.
@@ -289,7 +309,7 @@ pub fn lookup_version_at<P: VersionSource + ?Sized>(
     policy: ProbePolicy,
 ) -> std::result::Result<Option<String>, ColdVersion> {
     VERSION_MEMO.lookup_or_probe(
-        version_cache_key(detector.language_name(), cwd),
+        &version_cache_key(detector.language_name(), cwd),
         policy,
         || execute_version_command(detector, cwd).ok().flatten(),
     )
@@ -505,8 +525,18 @@ const TOOL_CONFIG_CACHE_CAPACITY: usize = 512;
 /// Maximum `(directory, program)` pairs tracked by the negative-mise cache.
 const MISE_NEGATIVE_CACHE_CAPACITY: usize = 1024;
 
+/// Where a mise config governs a directory, from one ancestor walk.
+#[derive(Clone, Copy)]
+struct ToolConfigPresence {
+    /// Any ancestor up to and including `$HOME` holds one.
+    anywhere: bool,
+    /// An ancestor other than `$HOME` holds one.
+    below_home: bool,
+}
+
 /// Memoizes the mise ancestor walk per canonical directory.
-static TOOL_CONFIG_CACHE: TtlMap<PathBuf, bool> = TtlMap::new(TOOL_CONFIG_CACHE_CAPACITY);
+static TOOL_CONFIG_CACHE: TtlMap<PathBuf, ToolConfigPresence> =
+    TtlMap::new(TOOL_CONFIG_CACHE_CAPACITY);
 
 /// `(directory, program)` pairs where a completed `mise exec` failed.
 static MISE_NEGATIVE_CACHE: TtlMap<(PathBuf, String), ()> =
@@ -585,6 +615,16 @@ mod tests {
     #[cfg(unix)]
     use crate::language::probe_memo::FAILURE_TTL;
     use std::time::SystemTime;
+
+    /// Cached lookup that spawns on a miss, without the cold-version error.
+    fn detect_version_at<P: VersionSource + ?Sized>(
+        detector: &P,
+        cwd: Option<&Path>,
+    ) -> Option<String> {
+        lookup_version_at(detector, cwd, ProbePolicy::Spawn)
+            .ok()
+            .flatten()
+    }
 
     #[test]
     fn parse_ruby_version_table() {

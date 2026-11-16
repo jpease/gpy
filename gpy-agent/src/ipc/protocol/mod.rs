@@ -14,42 +14,18 @@ const MAX_SHELL_VERSION_LEN: usize = 64;
 
 /// Deserialize JSON bytes into a message.
 ///
+/// Every failure here (bad JSON, unknown op, missing field, a denylisted or
+/// otherwise invalid path) is a permanent refusal of the request; the server
+/// answers it with a `{"error":...}` line whatever format was asked for.
+///
 /// # Errors
 /// Returns an error if deserialization or validation fails.
 pub fn deserialize_message(data: &[u8]) -> Result<Message> {
-    let (_, message) = deserialize_message_with_format(data);
-    message
-}
-
-/// Deserialize a message, also returning the requested format when it can be read.
-///
-/// The format is read before op dispatch and path resolution, so a request that
-/// fails later (an unknown op, a missing field, a denylisted `cwd`) can still be
-/// answered in the client's format.
-pub fn deserialize_message_with_format(data: &[u8]) -> (Option<Format>, Result<Message>) {
-    let request = match parse_request(data) {
-        Ok(request) => request,
-        Err(e) => return (requested_format(data), Err(e)),
-    };
+    let request = parse_request(data)?;
     let format = parse_format(request.format.as_deref());
-    let message = request.into_message(format).and_then(|msg| {
-        validate_message_content(&msg)?;
-        Ok(msg)
-    });
-    (format, message)
-}
-
-/// Best-effort read of `format` from a request that failed to parse; `None`
-/// when the payload is oversize, not JSON, or names no known format.
-fn requested_format(data: &[u8]) -> Option<Format> {
-    #[derive(Deserialize)]
-    struct FormatOnly {
-        format: Option<String>,
-    }
-
-    validate_message_size(data).ok()?;
-    let request = serde_json::from_slice::<FormatOnly>(data).ok()?;
-    parse_format(request.format.as_deref())
+    let message = request.into_message(format)?;
+    validate_message_content(&message)?;
+    Ok(message)
 }
 
 /// A wire `format` value, or `None` when absent or unknown.

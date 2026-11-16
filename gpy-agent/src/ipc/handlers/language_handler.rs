@@ -17,8 +17,10 @@ pub struct LanguageHandler {
     render: RenderDeps,
     language_cache: DetectionCache,
     in_flight: SingleFlight<PathBuf, Vec<crate::language::DetectedLanguage>>,
-    /// Version probes running off the request path, one per project root.
-    probes_in_flight: SingleFlight<PathBuf, ()>,
+    /// Version probes running off the request path, one per project root and
+    /// venv: a probe renders its starter's venv, so a request forwarding a
+    /// different one must not join it.
+    probes_in_flight: SingleFlight<(PathBuf, Option<PathBuf>), ()>,
 }
 
 type LanguageJob = SharedJob<Vec<crate::language::DetectedLanguage>>;
@@ -94,10 +96,10 @@ impl LanguageHandler {
             if let Some((cached, age)) = self.language_cache.get_with_age(&repo_root) {
                 // Never wait here: the stale value is served now and the job's
                 // result reaches the shell through the repaint doorbell.
-                self.revalidate_stale_hit(&repo_root, in_git_repo, age);
+                self.revalidate_stale_hit(&repo_root, cache_path, in_git_repo, age);
                 cached
             } else {
-                let job = self.language_detection_job(&repo_root);
+                let job = self.language_detection_job(&repo_root, cache_path);
                 let Some(detected) = job.wait_timeout(remaining(deadline)) else {
                     // Error rather than empty success, so a slow scan never
                     // clobbers a good prompt with a blank one.
@@ -145,8 +147,8 @@ impl LanguageHandler {
 
     /// Probe `detected`'s cold versions off the request path, publish them for
     /// `cache_path` (and `prev_bg`), repainting on change, then complete. One
-    /// job per project root; a request that finds another request's job
-    /// running waits for it, and is `false` in the returned pair.
+    /// job per project root and venv; a request that finds another request's
+    /// job running waits for it, and is `false` in the returned pair.
     fn version_probe_job(
         &self,
         cache_path: &Path,
@@ -162,55 +164,73 @@ impl LanguageHandler {
         let python_venv_owned = python_venv.cloned();
         let prev_bg_owned = prev_bg.map(str::to_owned);
         let mut started = false;
-        let job = self
-            .probes_in_flight
-            .get_or_start(repo_root.to_path_buf(), (), |guard| {
-                started = true;
-                spawn_detached(move || {
-                    let config = render.config_manager.get();
-                    let theme = render.theme_manager.get();
-                    let request = DisplayRequest::new(&detected_owned, &theme, &config.language)
-                        .with_cwd(Some(&repo_root_owned))
-                        .with_venv(python_venv_owned.as_ref());
-                    let languages = display_info(&request, Versions::Probe).unwrap_or_default();
-                    Self::publish_languages(
-                        &render,
-                        &cache_path_owned,
-                        &languages,
-                        prev_bg_owned.as_deref(),
-                    );
-                    guard.finish(());
-                });
+        let job_key = (
+            repo_root.to_path_buf(),
+            python_venv.map(|venv| venv.dir().to_path_buf()),
+        );
+        let job = self.probes_in_flight.get_or_start(job_key, (), |guard| {
+            started = true;
+            spawn_detached(move || {
+                let config = render.config_manager.get();
+                let theme = render.theme_manager.get();
+                let request = DisplayRequest::new(&detected_owned, &theme, &config.language)
+                    .with_cwd(Some(&repo_root_owned))
+                    .with_venv(python_venv_owned.as_ref());
+                let languages = display_info(&request, Versions::Probe).unwrap_or_default();
+                Self::publish_languages(
+                    &render,
+                    &cache_path_owned,
+                    &languages,
+                    prev_bg_owned.as_deref(),
+                );
+                guard.finish(());
             });
+        });
         (job, started)
     }
 
     /// Start a background re-detection for a cache hit older than
     /// [`LANGUAGE_REFRESH_INTERVAL`] in a directory the watcher does not cover:
-    /// outside a git repository, or in one the git gate excludes (`git`
-    /// unlisted or under a `git.skip_paths` entry).
-    /// Never awaited.
-    fn revalidate_stale_hit(&self, repo_root: &Path, in_git_repo: bool, age: Duration) {
+    /// outside a git repository, in one the git gate excludes (`git` unlisted
+    /// or under a `git.skip_paths` entry), or with `agent.live_updates` off,
+    /// when no watcher runs at all. The job publishes under `cache_path`, the
+    /// key the requesting shell reads. Never awaited.
+    fn revalidate_stale_hit(
+        &self,
+        repo_root: &Path,
+        cache_path: &Path,
+        in_git_repo: bool,
+        age: Duration,
+    ) {
+        let config = self.render.config_manager.get();
         let unwatched =
-            !in_git_repo || !self.render.config_manager.get().git_enabled_for(repo_root);
+            !in_git_repo || !config.git_enabled_for(repo_root) || !config.agent.live_updates;
         if unwatched && age >= LANGUAGE_REFRESH_INTERVAL {
-            drop(self.language_detection_job(repo_root));
+            drop(self.language_detection_job(repo_root, cache_path));
         }
     }
 
-    fn language_detection_job(&self, repo_root: &Path) -> Arc<LanguageJob> {
+    fn language_detection_job(&self, repo_root: &Path, cache_path: &Path) -> Arc<LanguageJob> {
         let language_cache = self.language_cache.clone();
         let render = self.render.clone();
         let repo_root_owned = repo_root.to_path_buf();
+        let cache_path_owned = cache_path.to_path_buf();
         // Fallback if the job panics before finishing.
         self.in_flight
             .get_or_start(repo_root_owned.clone(), Vec::new(), move |guard| {
-                Self::spawn_language_detection_job(repo_root_owned, language_cache, render, guard);
+                Self::spawn_language_detection_job(
+                    repo_root_owned,
+                    cache_path_owned,
+                    language_cache,
+                    render,
+                    guard,
+                );
             })
     }
 
     fn spawn_language_detection_job(
         repo_root: PathBuf,
+        cache_path: PathBuf,
         language_cache: DetectionCache,
         render: RenderDeps,
         guard: LanguageJobGuard,
@@ -223,24 +243,26 @@ impl LanguageHandler {
             );
             language_cache.set(&repo_root, detected.clone());
             guard.finish(detected.clone());
-            Self::publish_language_status(&render, &repo_root, &detected);
+            Self::publish_language_status(&render, &repo_root, &cache_path, &detected);
         };
 
         spawn_detached(job);
     }
 
-    /// Write the instant-prompt cache and repaint live shells when the detected
-    /// languages change the rendered output.
+    /// Write the instant-prompt cache under `cache_path` and repaint live
+    /// shells when the detected languages change the rendered output.
+    /// Versions are probed in `repo_root`.
     fn publish_language_status(
         deps: &RenderDeps,
         repo_root: &Path,
+        cache_path: &Path,
         detected: &[crate::language::DetectedLanguage],
     ) {
         let config = deps.config_manager.get();
         let theme = deps.theme_manager.get();
         // No request context, so prev_bg is None.
         let languages = background_display_info(detected, &theme, &config.language, repo_root);
-        Self::publish_languages(deps, repo_root, &languages, None);
+        Self::publish_languages(deps, cache_path, &languages, None);
     }
 
     /// Write `languages` into the instant cache for `cache_path` and repaint
@@ -660,6 +682,39 @@ mod tests {
         );
     }
 
+    /// With `agent.live_updates` off no watcher covers a git repository, so a
+    /// stale hit re-detects in the background like a non-git directory.
+    #[test]
+    fn git_repository_revalidates_when_live_updates_are_off() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        let root = std::fs::canonicalize(&repo_dir).expect("canonicalize");
+        let mut config = Config::default();
+        config.agent.live_updates = false;
+        let (handler, _registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
+        write_rust_project(&root);
+        seed_stale_empty_entry(&handler, &root);
+
+        detect(&handler, &root, None).expect("stale hit request");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let detected_rust = loop {
+            let found = handler
+                .language_cache
+                .get(&root)
+                .is_some_and(|langs| langs.iter().any(|l| l.name == "rust"));
+            if found || std::time::Instant::now() >= deadline {
+                break found;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(
+            detected_rust,
+            "a stale hit with live updates off must re-detect in the background"
+        );
+    }
+
     /// A stale git-root hit starts no detection job (the watcher covers it).
     #[test]
     fn stale_git_hit_does_not_trigger_redetection() {
@@ -728,6 +783,48 @@ mod tests {
         assert!(
             docs_entry_rendered,
             "the instant cache must stay keyed by the request path"
+        );
+    }
+
+    /// A stale non-git hit from a subdirectory re-detects in the background and
+    /// publishes under that subdirectory's key, the one its shell reads.
+    #[test]
+    fn background_redetection_publishes_under_the_request_path() {
+        let cache_dir = tempfile::TempDir::new().expect("cache dir");
+        let (handler, _registry) = make_handler_with(
+            InstantPromptCache::new_in_dir(cache_dir.path().to_path_buf()).expect("cache"),
+            Config::default(),
+        );
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");
+        write_rust_project(&root);
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).expect("docs dir");
+        seed_stale_empty_entry(&handler, &root);
+
+        detect(&handler, &docs, None).expect("stale hit request");
+
+        let docs_marker = if cfg!(windows) {
+            "_bdocs.lang"
+        } else {
+            "_sdocs.lang"
+        };
+        let docs_entry_rendered = || {
+            std::fs::read_dir(cache_dir.path())
+                .expect("read cache dir")
+                .flatten()
+                .filter(|entry| entry.file_name().to_string_lossy().contains(docs_marker))
+                .any(|entry| {
+                    std::fs::read_to_string(entry.path()).is_ok_and(|prompt| !prompt.is_empty())
+                })
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !docs_entry_rendered() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            docs_entry_rendered(),
+            "the background job must publish under the subdirectory's key"
         );
     }
 

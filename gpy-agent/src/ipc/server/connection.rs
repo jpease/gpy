@@ -54,9 +54,10 @@ impl ConnectionHandler {
 
     /// Handle a single client connection (NDJSON).
     ///
-    /// Complete lines are size-checked by `protocol::validate_message_size` and
-    /// answered; only an unterminated line over `max_message_size` closes the
-    /// connection.
+    /// A line whose newline arrives before the buffer passes `max_message_size`
+    /// is size-checked by `protocol::validate_message_size` and answered; once
+    /// the buffer holds more than that without a newline, the connection is
+    /// closed without a reply.
     ///
     /// # Errors
     /// Fails on non-recoverable read/write or serialization errors.
@@ -188,7 +189,8 @@ impl ConnectionHandler {
                 let response = Response::Error {
                     message: format!("Request processing failed: {join_err}"),
                 };
-                // A JSON error render touches no filesystem; safe on a worker.
+                // Like a refused request, answered with a `{"error":...}` line in
+                // any format. A JSON error render touches no filesystem; safe on a worker.
                 let payload = Self::render_payload(
                     &response,
                     Format::Json,
@@ -250,7 +252,7 @@ impl ConnectionHandler {
         theme_manager: &ThemeManager,
         palette_cache: &PaletteCache,
     ) -> BlockingLineResult {
-        let (requested_format, parsed) = protocol::deserialize_message_with_format(line_data);
+        let parsed = protocol::deserialize_message(line_data);
         match parsed {
             Ok(message) => {
                 let is_shutdown = matches!(message, Message::Shutdown);
@@ -280,15 +282,18 @@ impl ConnectionHandler {
                     payload,
                 }
             }
-            // Answer in the requested format when known, so a prompt gets an
-            // empty segment rather than protocol JSON.
+            // A request the agent refuses (bad JSON, unknown op, missing field,
+            // denylisted or invalid path) gets a `{"error":...}` line in every
+            // format. An empty line would read as "agent alive but late" to the
+            // shells, which then skip their oneshot fallback; an error line is a
+            // permanent refusal they never print or memoize.
             Err(e) => {
                 let response = Response::Error {
                     message: format!("Parse error: {e}"),
                 };
                 let payload = Self::render_payload(
                     &response,
-                    requested_format.unwrap_or(Format::Json),
+                    Format::Json,
                     SegmentPosition::MIDDLE,
                     None,
                     config_manager,
@@ -483,7 +488,7 @@ mod tests {
             Arc::new(LanguageHandler::new(render.clone(), language_cache.clone()));
         let client_handler = Arc::new(ClientHandler::new(
             render.clone(),
-            Arc::clone(&git_cache),
+            Arc::clone(&git_handler),
             Arc::clone(&watcher),
         ));
 
@@ -526,52 +531,42 @@ mod tests {
         );
     }
 
-    /// A denied `cwd` is answered in the requested format, not a JSON error line.
+    /// A refused request gets a `{"error":...}` line in every format, never the
+    /// empty line that shells read as "agent alive but late".
     #[test]
-    fn ansi_request_with_denied_path_keeps_ansi_format() {
+    fn refused_requests_get_json_error_lines_in_every_format() {
         let (registry, render, _language_cache) = test_handler_registry();
-        let result = ConnectionHandler::parse_and_route_blocking(
-            br#"{"op":"directory","cwd":"/etc","format":"ansi"}"#,
-            &registry,
-            &GuardSettings::default(),
-            &render.config_manager,
-            &render.theme_manager,
-            &render.palette_cache,
-        );
-        let payload = result.payload.expect("rendered");
-        assert!(
-            !payload.trim_start().starts_with('{'),
-            "denied ANSI request must not get a JSON line, got {payload:?}"
-        );
-        assert!(
-            matches!(result.response, Response::Error { .. }),
-            "denied path must still be an error, got {:?}",
-            result.response
-        );
-    }
-
-    /// An op the agent does not know is answered in the requested format, not a JSON error line.
-    #[test]
-    fn ansi_request_with_unknown_op_keeps_ansi_format() {
-        let (registry, render, _language_cache) = test_handler_registry();
-        let result = ConnectionHandler::parse_and_route_blocking(
-            br#"{"op":"teleport","format":"ansi"}"#,
-            &registry,
-            &GuardSettings::default(),
-            &render.config_manager,
-            &render.theme_manager,
-            &render.palette_cache,
-        );
-        let payload = result.payload.expect("rendered");
-        assert!(
-            !payload.trim_start().starts_with('{'),
-            "unknown-op ANSI request must not get a JSON line, got {payload:?}"
-        );
-        assert!(
-            matches!(result.response, Response::Error { .. }),
-            "unknown op must still be an error, got {:?}",
-            result.response
-        );
+        let esc = '\u{1b}';
+        for format in ["ansi", "bash-prompt", "zsh-prompt", "json"] {
+            let requests = [
+                // Denylisted cwd.
+                format!(r#"{{"op":"directory","cwd":"/etc","format":"{format}"}}"#),
+                // Unknown op.
+                format!(r#"{{"op":"teleport","format":"{format}"}}"#),
+                // Raw C0 control byte: not valid JSON at all.
+                format!(r#"{{"op":"directory","cwd":"/tmp/a{esc}b","format":"{format}"}}"#),
+            ];
+            for request in requests {
+                let result = ConnectionHandler::parse_and_route_blocking(
+                    request.as_bytes(),
+                    &registry,
+                    &GuardSettings::default(),
+                    &render.config_manager,
+                    &render.theme_manager,
+                    &render.palette_cache,
+                );
+                let payload = result.payload.expect("rendered");
+                assert!(
+                    payload.starts_with(r#"{"error""#),
+                    "refused {request:?} must get a JSON error line, got {payload:?}"
+                );
+                assert!(
+                    matches!(result.response, Response::Error { .. }),
+                    "refused {request:?} must be an error, got {:?}",
+                    result.response
+                );
+            }
+        }
     }
 
     /// One `LanguageDetect` writes each variant file once per dialect. The cache is

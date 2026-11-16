@@ -28,7 +28,10 @@ EOF
 chmod +x "$tmp/bin/gpy-agent"
 
 # Print how many times gpy.bash ran `gpy-agent start`; $1 STUB_AGENT, $2 STUB_SUP.
+# The start is detached (`nohup ... &`), so it may log after the shell exits:
+# wait for a line, at most the shared absence window, before counting.
 starts_for() {
+    local i
     : >"$tmp/calls.log"
     # shellcheck disable=SC2016  # $ROOT expands in the child, passed as data
     env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp/home" TERM=dumb \
@@ -37,6 +40,10 @@ starts_for() {
         GPY_AGENT_SOCKET_PATH="$tmp/run/missing.sock" \
         STUB_AGENT="$1" STUB_SUP="$2" ROOT="$ROOT" \
         bash --noprofile --norc -c 'source "$ROOT/bash/gpy.bash"' >/dev/null 2>&1
+    for ((i = 0; i < 25; i++)); do
+        grep -q '^start' "$tmp/calls.log" && break
+        sleep "$(awk "BEGIN { print $SHELL_E2E_ABSENCE_WINDOW / 25 }")"
+    done
     grep -c '^start' "$tmp/calls.log"
 }
 

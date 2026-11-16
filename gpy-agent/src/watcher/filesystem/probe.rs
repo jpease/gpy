@@ -8,7 +8,7 @@ use crate::env_config::{WATCH_FORCE_POLL, WATCH_POLL_MS, WATCH_PROBE_MS};
 use crate::sync_ext::MutexExt;
 use notify::event::{EventKind, Flag};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -159,7 +159,7 @@ pub(super) fn apply_poll_swap(
     // Drop the old watcher first so it stops before the poll backend takes over.
     backend_guard.watcher = None;
     backend_guard.watcher = Some(armed.watcher);
-    backend_guard.kind = BackendKind::Poll;
+    backend_guard.set_kind(BackendKind::Poll);
 
     let paths = rearm_poll_paths(&mut backend_guard, registry, precomputed);
     drop(backend_guard);
@@ -274,11 +274,20 @@ pub(super) fn rearm_poll_paths(
 ///
 /// Returns `true` if the probe can't be set up, so it never demotes a working backend.
 pub(super) fn native_backend_delivers_events(timeout: Duration, stop_flag: &AtomicBool) -> bool {
+    native_backend_delivers_events_in(&std::env::temp_dir(), timeout, stop_flag)
+}
+
+/// [`native_backend_delivers_events`] with the private probe directory created
+/// inside `parent`, so the probe exercises `parent`'s filesystem.
+pub(super) fn native_backend_delivers_events_in(
+    parent: &Path,
+    timeout: Duration,
+    stop_flag: &AtomicBool,
+) -> bool {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0_u128, |since| since.as_nanos());
-    let probe_dir =
-        std::env::temp_dir().join(format!("gpy-watch-probe-{}-{nanos}", std::process::id()));
+    let probe_dir = parent.join(format!("gpy-watch-probe-{}-{nanos}", std::process::id()));
     if std::fs::create_dir_all(&probe_dir).is_err() {
         return true;
     }
@@ -289,6 +298,113 @@ pub(super) fn native_backend_delivers_events(timeout: Duration, stop_flag: &Atom
 
     let _ = std::fs::remove_dir_all(&probe_dir);
     delivered
+}
+
+/// The device holding `path`; `None` where no portable id exists.
+#[cfg(unix)]
+fn device_of(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(path).ok().map(|metadata| metadata.dev())
+}
+
+/// The device holding `path`; `None` where no portable id exists.
+#[cfg(not(unix))]
+const fn device_of(_path: &Path) -> Option<u64> {
+    None
+}
+
+/// What a repository-filesystem probe needs from its watcher.
+pub(super) struct ProbeContext<'a> {
+    pub(super) backend: &'a Arc<Mutex<WatcherBackend>>,
+    pub(super) event_tx: &'a Sender<Event>,
+    pub(super) stop_flag: &'a Arc<AtomicBool>,
+    pub(super) registry: &'a Arc<WatchRegistry>,
+}
+
+/// Health probes of the filesystems repositories live on.
+///
+/// The startup probe only exercises `$TMPDIR`; a native backend can be healthy
+/// there and silent on the filesystem a repository lives on (a network or
+/// drvfs mount). Each further device gets one probe, written inside the
+/// repository's git directory (invisible to `git status`); a silent one swaps
+/// the whole watcher to polling, like a failed startup probe.
+pub(super) struct FilesystemProbes {
+    timing: ProbeTiming,
+    /// Devices probed or being probed, including the startup probe's.
+    probed: Mutex<HashSet<u64>>,
+    handles: Mutex<Vec<thread::JoinHandle<()>>>,
+}
+
+impl FilesystemProbes {
+    /// Probes with `timing`; `$TMPDIR`'s device counts as probed, since the
+    /// startup probe covers it.
+    pub(super) fn new(timing: ProbeTiming) -> Self {
+        let probed = device_of(&std::env::temp_dir()).into_iter().collect();
+        Self {
+            timing,
+            probed: Mutex::new(probed),
+            handles: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Probe `git_dir`'s filesystem in the background unless its device was
+    /// already probed or the watcher already polls.
+    pub(super) fn probe(&self, git_dir: &Path, ctx: &ProbeContext<'_>) {
+        if ctx.backend.lock_or_recover().kind == BackendKind::Poll {
+            return;
+        }
+        let Some(device) = device_of(git_dir) else {
+            return;
+        };
+        if !self.probed.lock_or_recover().insert(device) {
+            return;
+        }
+
+        let timing = self.timing;
+        let probe_parent = git_dir.to_path_buf();
+        let backend = Arc::clone(ctx.backend);
+        let event_tx = ctx.event_tx.clone();
+        let stop_flag = Arc::clone(ctx.stop_flag);
+        let registry = Arc::clone(ctx.registry);
+        let handle = thread::spawn(move || {
+            if native_backend_delivers_events_in(&probe_parent, timing.probe_timeout, &stop_flag) {
+                crate::debug_log!(
+                    "watcher",
+                    "native backend health probe passed on the filesystem of {}",
+                    probe_parent.display()
+                );
+                return;
+            }
+            crate::warn_log!(
+                "watcher",
+                "file watching delivered no events on the filesystem of {}; \
+                 switching to polling",
+                probe_parent.display()
+            );
+            engage_poll_fallback(
+                &backend,
+                &event_tx,
+                &stop_flag,
+                timing.poll_interval,
+                &registry,
+            );
+        });
+        self.handles.lock_or_recover().push(handle);
+    }
+
+    /// Join every probe thread; each checks the stop flag, so this is prompt
+    /// once the watcher is stopping.
+    pub(super) fn join_all(&self) {
+        let handles = std::mem::take(&mut *self.handles.lock_or_recover());
+        for handle in handles {
+            if let Err(e) = handle.join() {
+                crate::debug::write_debug_log(
+                    "watcher",
+                    &format!("filesystem probe thread panicked: {e:?}"),
+                );
+            }
+        }
+    }
 }
 
 /// Watch `probe_dir`, repeatedly touch a sentinel, and report whether any event arrived.

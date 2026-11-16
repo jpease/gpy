@@ -261,14 +261,17 @@ impl EndpointHandle {
         let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
         let render = deps.render();
-        let git_handler = Arc::new(GitHandler::new(render.clone(), Arc::clone(&deps.git_cache)));
+        let git_handler = Arc::new(
+            GitHandler::new(render.clone(), Arc::clone(&deps.git_cache))
+                .with_watcher(Arc::clone(&deps.watcher_slot)),
+        );
         let language_handler = Arc::new(LanguageHandler::new(
             render.clone(),
             deps.language_cache.clone(),
         ));
         let client_handler = Arc::new(ClientHandler::new(
             render,
-            Arc::clone(&deps.git_cache),
+            Arc::clone(&git_handler),
             deps.watcher_slot,
         ));
         let handler_registry = Arc::new(HandlerRegistry::new(
@@ -464,9 +467,8 @@ impl EndpointHandle {
             return; // Never bound a socket -> nothing of ours to remove.
         };
 
-        let current_socket = match std::fs::metadata(&self.socket_path) {
-            Ok(metadata) => SocketIdentity::from_metadata(&metadata),
-            Err(_) => return,
+        let Ok(current_socket) = SocketIdentity::at(&self.socket_path) else {
+            return;
         };
 
         if current_socket != bound_socket {

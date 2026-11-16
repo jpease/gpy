@@ -1,5 +1,6 @@
 //! IPC server: serves NDJSON git/language requests from shell clients over a
-//! Unix socket, with connection limits, rate limiting, and per-request timeouts.
+//! Unix socket, with connection limits, rate limiting, and per-read/per-write
+//! timeouts (handler execution itself is not cancelled).
 
 #[cfg(unix)]
 mod connection;

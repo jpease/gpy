@@ -133,10 +133,10 @@ chsh -s /opt/homebrew/bin/fish
 
 ## Known Issues
 
-### Duration shows "0ms" on the first prompt
+### No duration on the first prompt
 **Bash version**: All
-**Cause**: `PROMPT_COMMAND` hasn't timed a command yet
-**Workaround**: Displays correctly after the first command
+**Cause**: No command has run yet, so there is nothing to time; the duration segment stays hidden (it does not show `0ms`)
+**Workaround**: None needed: it appears after the first command that exceeds the threshold
 
 ### Agent updates during a command show at the next prompt
 **Bash version**: All
@@ -145,5 +145,5 @@ chsh -s /opt/homebrew/bin/fish
 
 ### Prompt renders slowly on Bash 3.2
 **Bash version**: 3.x
-**Cause**: Slow string operations
+**Cause**: Bash 3.2's array and string handling is slower than Bash 5's, and it has no builtin epoch clock. Bash older than 4.2 reads `date` once and counts `$SECONDS` from there, so it does not fork `date` per prompt; clock and status renders are memoized
 **Workaround**: Upgrade to Bash 5 or switch shells

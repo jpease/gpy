@@ -83,6 +83,37 @@ g_enable rootdir
 g_command
 check "session scope: the script runs in the plugin root" "$G_PLUGIN" "$(g_text rootdir)"
 
+# A clock stepped back (the stored run time is in the future) expires the
+# entry instead of freezing it, as in Bash and Fish.
+g_segment stepped 'printf stepped'
+__gpy_script_stepped_ttl=60
+g_enable stepped
+: >"$G_RUNS"
+g_command
+g_command
+check "within ttl a second command hits the cache" 1 "$(g_runs)"
+__gpy_g_at[stepped]=$(( EPOCHSECONDS + 100 ))
+g_command
+check "a cache entry stamped in the future runs again" 2 "$(g_runs)"
+
+# cmd_duration is the last command's duration, also on a prompt due only
+# because \$PWD changed (no command ran).
+g_segment dur 'printf "%s" "${GPY_CMD_DURATION-unset}"'
+__gpy_script_dur_inputs=(cmd_duration)
+__gpy_script_dur_ttl=0
+g_enable dur
+__gpy_preexec
+(( __gpy_cmd_start_time -= 1234 ))
+true
+__gpy_precmd
+want=$__gpy_cmd_duration
+check "cmd_duration carries the command's duration" "$want" "$(g_text dur)"
+mkdir -p "$G_SANDBOX/work/dur2" && cd "$G_SANDBOX/work/dur2"
+g_empty_enter
+check "a prompt due only to a cd keeps the last command's duration" "$want" "$(g_text dur)"
+cd "$G_SANDBOX/work"
+unset want
+
 # --- triggers before the script ----------------------------------------------
 g_segment trig 'printf on'
 __gpy_script_trig_ttl=60
@@ -112,6 +143,10 @@ mkdir -p "$G_SANDBOX/work/proj/.kube" "$G_SANDBOX/work/proj/a/b"
 cd "$G_SANDBOX/work/proj/a/b"
 g_command
 check "files and folders found upwards but no .tf here: hidden" "" "$(g_text trig)"
+# Dotfiles never satisfy require_extensions, as in the Bash and Fish scans.
+: >"$G_SANDBOX/work/proj/a/b/.hidden.tf"
+g_command
+check "a dotfile (.hidden.tf) does not satisfy require_extensions" "" "$(g_text trig)"
 : >"$G_SANDBOX/work/proj/a/b/main.tf"
 g_command
 check "every trigger holds: shown" "on" "$(g_text trig)"

@@ -201,7 +201,10 @@ impl fmt::Display for PluginApiVersion {
 pub struct GpyVersion {
     #[serde(skip)]
     core: [u64; 3],
-    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$")))]
+    #[cfg_attr(
+        test,
+        schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]*)?$"))
+    )]
     raw: String,
 }
 
@@ -210,7 +213,10 @@ impl GpyVersion {
     ///
     /// # Errors
     /// Returns an error if the value is empty, does not start with
-    /// `MAJOR.MINOR.PATCH`, or a component does not fit in a `u64`.
+    /// `MAJOR.MINOR.PATCH`, a component does not fit in a `u64`, or the
+    /// `-pre`/`+build` suffix holds anything but ASCII letters, digits, `.`,
+    /// `+` and `-` (the CLI prints the version, so it must not carry terminal
+    /// escapes). Error messages escape the rejected value.
     pub fn new(version: &str) -> crate::Result<Self> {
         let normalized = version.trim();
         if normalized.is_empty() {
@@ -222,7 +228,8 @@ impl GpyVersion {
         let parts = numeric_core.split('.').collect::<Vec<_>>();
         if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
             return Err(crate::Error::invalid(format!(
-                "Version must start with MAJOR.MINOR.PATCH, got '{normalized}'"
+                "Version must start with MAJOR.MINOR.PATCH, got '{}'",
+                normalized.escape_debug()
             )));
         }
         if parts
@@ -230,7 +237,18 @@ impl GpyVersion {
             .any(|part| !part.chars().all(|c| c.is_ascii_digit()))
         {
             return Err(crate::Error::invalid(format!(
-                "Version core must contain only digits, got '{normalized}'"
+                "Version core must contain only digits, got '{}'",
+                normalized.escape_debug()
+            )));
+        }
+        let suffix = normalized.strip_prefix(numeric_core).unwrap_or_default();
+        if !suffix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
+        {
+            return Err(crate::Error::invalid(format!(
+                "Version suffix may contain only ASCII letters, digits, '.', '+' and '-', got '{}'",
+                normalized.escape_debug()
             )));
         }
 
@@ -358,6 +376,25 @@ impl PluginManifest {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Reject a plugin that provides a built-in segment name (`git`,
+    /// `directory`, ...): the built-in always wins, so the plugin's segment
+    /// would never run. The first-party metadata is built in code and never
+    /// goes through this check.
+    ///
+    /// # Errors
+    /// Returns an error naming the first built-in name the plugin provides.
+    pub fn check_no_builtin_segments(&self) -> crate::Result<()> {
+        self.provided_segments
+            .iter()
+            .find(|segment| super::BuiltinSegment::try_from(segment.as_str()).is_ok())
+            .map_or(Ok(()), |segment| {
+                Err(crate::Error::invalid(format!(
+                    "Plugin '{}' provides '{segment}', the name of a built-in segment; rename that segment",
+                    self.id
+                )))
+            })
     }
 }
 
@@ -651,6 +688,35 @@ mod tests {
         assert_rejected(GpyVersion::new("1"), "MAJOR.MINOR.PATCH");
         assert_rejected(GpyVersion::new("1.2"), "MAJOR.MINOR.PATCH");
         assert_rejected(GpyVersion::new("1.2.x"), "only digits");
+    }
+
+    #[test]
+    fn gpy_version_suffix_rejects_terminal_escapes() {
+        assert!(GpyVersion::new("1.0.0+build.7-x").is_ok());
+        for bad in ["1.0.0+\u{1b}]0;x\u{7}", "1.0.0-a b", "1.0.0-\u{9b}31m"] {
+            let err = GpyVersion::new(bad).unwrap_err().to_string();
+            assert!(err.contains("Version suffix"), "{err}");
+            assert!(!err.chars().any(char::is_control), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn builtin_segment_names_are_rejected() {
+        let manifest = PluginManifest::parse(
+            r#"
+            id = "shadow"
+            name = "Shadow"
+            version = "1.0.0"
+            api_version = "v1"
+            provided_segments = ["demo", "git"]
+            entry_type = "script"
+        "#,
+        )
+        .unwrap();
+        assert_rejected(
+            manifest.check_no_builtin_segments(),
+            "'git', the name of a built-in segment",
+        );
     }
 
     #[test]

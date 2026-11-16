@@ -17,7 +17,9 @@ use common::endpoint::endpoint;
 use common::endpoint::wait_for_socket;
 use common::env_guard::EnvGuard;
 use gpy_agent::git::status::load_repository_state;
-use gpy_agent::language::version::{NodeDetector, detect_version, get_version_detectors};
+use gpy_agent::language::version::{
+    NodeDetector, ProbePolicy, get_version_detectors, lookup_version_at,
+};
 use std::fs;
 #[cfg(unix)]
 use std::sync::Arc;
@@ -27,6 +29,9 @@ use tempfile::TempDir;
 
 #[cfg(unix)]
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Bound on each status load.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[test]
 #[serial_test::serial]
@@ -42,7 +47,7 @@ fn test_ipc_server_creation() {
 #[serial_test::serial]
 fn test_git_status_integration() {
     let _env = set_test_env();
-    let status = load_repository_state(".", 0, true)
+    let status = load_repository_state(".", 0, true, STATUS_TIMEOUT)
         .expect("Git status loading should succeed for current repository")
         .expect("Should detect git repository in current directory");
 
@@ -64,7 +69,9 @@ fn test_language_detection_integration() {
     ); // Should have all 10 language detectors (including Fish)
 
     let node_detector = NodeDetector;
-    let version_result = detect_version(&node_detector);
+    let version_result = lookup_version_at(&node_detector, None, ProbePolicy::Spawn)
+        .ok()
+        .flatten();
 
     if let Some(version) = version_result {
         assert!(
@@ -84,9 +91,14 @@ fn test_git_status_with_temp_repo() {
     common::git::git_init(temp_path);
     fs::write(temp_path.join("test.txt"), "test content").expect("write test.txt");
 
-    let status = load_repository_state(temp_path.to_string_lossy().as_ref(), 0, true)
-        .expect("Git status should succeed for freshly initialized repository")
-        .expect("freshly initialized repository should be detected");
+    let status = load_repository_state(
+        temp_path.to_string_lossy().as_ref(),
+        0,
+        true,
+        STATUS_TIMEOUT,
+    )
+    .expect("Git status should succeed for freshly initialized repository")
+    .expect("freshly initialized repository should be detected");
     assert!(
         !status.status.branch.is_empty(),
         "Initialized repository should have default branch name"
@@ -99,7 +111,12 @@ fn test_git_status_with_temp_repo() {
 
 #[test]
 fn test_git_status_error_handling() {
-    let result = load_repository_state("/absolutely/nonexistent/path/that/cannot/exist", 0, true);
+    let result = load_repository_state(
+        "/absolutely/nonexistent/path/that/cannot/exist",
+        0,
+        true,
+        STATUS_TIMEOUT,
+    );
 
     assert!(
         matches!(result, Ok(None) | Err(_)),
@@ -451,13 +468,14 @@ async fn request_reply_line(socket_path: &std::path::Path, request: &str) -> Str
     reply
 }
 
-/// A failed prompt-segment request is answered with an empty line.
-///
-/// Holds for every prompt format and failure stage; JSON clients still get `{"error": ...}`.
+/// A prompt-segment request the handler cannot answer (here: a broken repo)
+/// gets an empty line, while a request the agent refuses outright (here: a
+/// denylisted `cwd`) gets a `{"error":...}` line in every format, so the
+/// shells can tell a permanent refusal from a late agent.
 #[cfg(unix)]
 #[tokio::test]
 #[serial_test::serial]
-async fn ansi_error_replies_are_empty_lines() {
+async fn prompt_error_replies_distinguish_refusals() {
     let _env = set_test_env();
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_ansi_errors.sock");
@@ -474,9 +492,13 @@ async fn ansi_error_replies_are_empty_lines() {
     for format in ["ansi", "bash-prompt", "zsh-prompt", "json"] {
         let git = format!(r#"{{"op":"git","cwd":"{fake_repo}","format":"{format}"}}"#);
         let directory = format!(r#"{{"op":"directory","cwd":"/etc","format":"{format}"}}"#);
-        for request in [git, directory] {
+        for (request, refused) in [(git, false), (directory, true)] {
             let reply = request_reply_line(&socket_path, &request).await;
-            if format == "json" {
+            if format == "json" || refused {
+                assert!(
+                    reply.starts_with(r#"{"error""#),
+                    "error reply to {request} must be a JSON error line, got {reply:?}"
+                );
                 let value: serde_json::Value =
                     serde_json::from_str(&reply).expect("json reply must parse");
                 assert!(

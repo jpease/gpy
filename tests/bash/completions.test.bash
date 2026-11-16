@@ -343,6 +343,50 @@ echo "Checking the next prompt refreshes the cache and keeps the exit status..."
     echo "PASS: the prompt clears the cache without changing the exit status"
 ) || failures=$((failures + 1))
 
+# Names are file stems a theme or plugin directory controls: TAB must never
+# expand one, must keep a name with a space whole, must filter on the typed
+# prefix, and must insert each candidate quoted.
+echo "Checking hostile theme names are neither expanded nor split..."
+(
+    unset __gpy_complete_cache_theme
+    pwned="$(mktemp -t gpy-complete-pwned.XXXXXX)"
+    rm -f "$pwned"
+    trap 'rm -f "$pwned"' EXIT
+    gpy() {
+        if [[ "$1" == "__complete" && "$2" == "theme" ]]; then
+            # shellcheck disable=SC2016 # the stems are literal
+            printf '%s\n' 'a$(touch "$pwned")b' 'a`touch "$pwned"`c' 'two words' 'plain'
+        fi
+    }
+    COMP_WORDS=(gpy theme use "")
+    COMP_CWORD=3
+    COMPREPLY=()
+    _gpy_dynamic gpy "" use
+    if [[ -e "$pwned" ]]; then
+        echo "FAIL: completing a hostile theme name ran its command substitution"
+        exit 1
+    fi
+    # shellcheck disable=SC2016 # the expected candidates are literal
+    for want in 'a\$\(touch\ \"\$pwned\"\)b' 'a\`touch\ \"\$pwned\"\`c' 'two\ words' plain; do
+        if ! contains "$want" "${COMPREPLY[@]}"; then
+            echo "FAIL: expected the quoted candidate [$want]; got: ${COMPREPLY[*]}"
+            exit 1
+        fi
+    done
+    if [[ ${#COMPREPLY[@]} -ne 4 ]]; then
+        echo "FAIL: expected 4 candidates, got ${#COMPREPLY[@]}: ${COMPREPLY[*]}"
+        exit 1
+    fi
+    COMP_WORDS=(gpy theme use pl)
+    COMPREPLY=()
+    _gpy_dynamic gpy "pl" use
+    if [[ ${#COMPREPLY[@]} -ne 1 || "${COMPREPLY[0]}" != plain ]]; then
+        echo "FAIL: prefix 'pl' should complete only 'plain'; got: ${COMPREPLY[*]}"
+        exit 1
+    fi
+    echo "PASS: hostile names are filtered without expansion and inserted quoted"
+) || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "FAIL: $failures completion check(s) failed"
     exit 1

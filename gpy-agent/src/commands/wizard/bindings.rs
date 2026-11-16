@@ -17,6 +17,10 @@ pub enum Command {
     /// Select the theme or palette, or toggle the segment, under the cursor.
     Activate,
     OpenFilter,
+    /// Scroll the help overlay up a row.
+    ScrollHelpUp,
+    /// Scroll the help overlay down a row.
+    ScrollHelpDown,
     /// Clear the filter query and leave filter mode.
     ClearFilter,
     DeleteFilterChar,
@@ -187,6 +191,13 @@ const BINDINGS: &[Binding] = &[
         Command::DeleteFilterChar,
         "delete last filter character",
     ),
+    bind(&[KeyCode::Up], HELP, Command::ScrollHelpUp, "scroll up"),
+    bind(
+        &[KeyCode::Down],
+        HELP,
+        Command::ScrollHelpDown,
+        "scroll down",
+    ),
     bind(
         &[KeyCode::Char('?'), KeyCode::Esc],
         HELP,
@@ -285,7 +296,11 @@ pub fn footer_hints(mode: InputMode) -> String {
             Command::Activate,
             Command::ClearFilter,
         ],
-        InputMode::Help => &[Command::CloseHelp],
+        InputMode::Help => &[
+            Command::ScrollHelpUp,
+            Command::ScrollHelpDown,
+            Command::CloseHelp,
+        ],
         InputMode::ConfirmQuit => &[],
     };
     commands
@@ -337,11 +352,12 @@ mod tests {
     /// Everything a key press can visibly change; every edit marks the state dirty.
     fn observable(state: &WizardState, mode: InputMode, action: WizardAction) -> String {
         format!(
-            "{mode:?} {action:?} {:?} {} {} {}",
+            "{mode:?} {action:?} {:?} {} {} {} {}",
             state.focus(),
             state.segment_cursor(),
             state.filter_query(),
             state.dirty(),
+            state.help_scroll(),
         )
     }
 
@@ -362,6 +378,9 @@ mod tests {
                     if binding.command == Command::DeleteFilterChar {
                         state.push_filter_char('g');
                     }
+                    if binding.command == Command::ScrollHelpUp {
+                        state.scroll_help_down();
+                    }
                     let before = observable(&state, mode, WizardAction::Continue);
 
                     let (after_mode, action) = handle_key(
@@ -380,6 +399,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn ctrl_c_quits_and_other_chords_are_ignored() {
+        let theme = ThemeConfig::default();
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+
+        let mut clean = test_state();
+        assert_eq!(
+            handle_key(&mut clean, InputMode::Normal, &theme, ctrl('c')),
+            (InputMode::Normal, WizardAction::ExitWithoutSaving)
+        );
+
+        let mut dirty = test_state();
+        dirty.toggle_segment("git");
+        assert_eq!(
+            handle_key(&mut dirty, InputMode::Filter, &theme, ctrl('c')),
+            (InputMode::ConfirmQuit, WizardAction::Continue)
+        );
+        assert_eq!(
+            handle_key(&mut dirty, InputMode::ConfirmQuit, &theme, ctrl('c')),
+            (InputMode::Normal, WizardAction::ExitWithoutSaving)
+        );
+
+        // Ctrl-S must not save, and Ctrl-letters never reach the filter query.
+        let mut state = test_state();
+        assert_eq!(
+            handle_key(&mut state, InputMode::Normal, &theme, ctrl('s')),
+            (InputMode::Normal, WizardAction::Continue)
+        );
+        assert_eq!(
+            handle_key(&mut state, InputMode::Filter, &theme, ctrl('x')),
+            (InputMode::Filter, WizardAction::Continue)
+        );
+        assert_eq!(state.filter_query(), "");
     }
 
     /// A key reaches at most one binding in any mode and focus.
@@ -434,7 +488,10 @@ mod tests {
             footer_hints(InputMode::Normal),
             "[?] help  [s] save and exit  [q/Esc] quit"
         );
-        assert_eq!(footer_hints(InputMode::Help), "[?/Esc] close help");
+        assert_eq!(
+            footer_hints(InputMode::Help),
+            "[Up] scroll up  [Down] scroll down  [?/Esc] close help"
+        );
         assert_eq!(
             footer_hints(InputMode::Filter),
             "[Tab] next section  [Space/Enter] select/toggle  [Esc] clear and leave filter"

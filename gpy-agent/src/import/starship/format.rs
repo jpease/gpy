@@ -28,6 +28,7 @@ pub fn tokens(format: &str) -> Vec<Token<'_>> {
     // Markers are ASCII, so slicing between them respects UTF-8 boundaries.
     let mut index = 0_usize;
     let bytes_len = format.len();
+    let last_close = format.rfind('}');
     while index < bytes_len {
         match format.as_bytes().get(index) {
             Some(b'\\') => {
@@ -42,7 +43,7 @@ pub fn tokens(format: &str) -> Vec<Token<'_>> {
                 index = next_index;
             }
             Some(b'$') => {
-                if let Some((name, raw_end)) = scan_var(format, index) {
+                if let Some((name, raw_end)) = scan_var(format, index, last_close) {
                     if literal_start < index
                         && let Some(text) = format.get(literal_start..index)
                     {
@@ -76,10 +77,15 @@ pub fn tokens(format: &str) -> Vec<Token<'_>> {
 }
 
 /// Scan a `$name`/`${name}` token at `start`; `None` if malformed (incl. unclosed `${`).
-fn scan_var(format: &str, start: usize) -> Option<(&str, usize)> {
+fn scan_var(format: &str, start: usize, last_close: Option<usize>) -> Option<(&str, usize)> {
     let after_dollar = start.saturating_add(1_usize);
     if format.as_bytes().get(after_dollar) == Some(&b'{') {
         let name_start = after_dollar.saturating_add(1_usize);
+        // No `}` at or after `name_start`: unclosed, and answered without a
+        // scan, so a run of `${` stays linear.
+        if last_close.is_none_or(|last| last < name_start) {
+            return None;
+        }
         let close = format.get(name_start..)?.find('}')?;
         let name_end = name_start.saturating_add(close);
         let name = format.get(name_start..name_end)?;

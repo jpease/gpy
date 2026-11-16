@@ -1,30 +1,78 @@
 //! In-process live preview facts (git/language); no agent IPC.
 
-use crate::config::Config;
+use crate::config::{Config, LanguageSettings};
 use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::LanguageInfo;
-use crate::language::detector::Detector;
+use crate::language::detector::{DetectedLanguage, Detector};
 use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::theme::ThemeConfig;
 use std::path::Path;
+use std::time::Duration;
 
 /// Live and sample facts for the wizard preview.
 pub struct PreviewFacts {
-    /// `None` outside a repo or when git is disabled or skipped for `cwd`.
+    /// `None` outside a repo, when git is disabled or skipped for `cwd`, or
+    /// when git status failed or timed out.
     pub(crate) repository_status: Option<RepositoryStatus>,
     pub(crate) languages: Vec<LanguageInfo>,
+    /// Detection result `languages` is built from, kept so a theme or
+    /// `show_versions` change rebuilds them without rescanning the directory.
+    detected: Vec<DetectedLanguage>,
+    /// Theme name and `show_versions` that `languages` was built for.
+    language_key: (String, bool),
     /// Fixed sample: there is no real "last command" in the wizard.
     pub(crate) sample_duration_ms: u64,
     /// Fixed sample for the character segment.
     pub(crate) sample_character_success: bool,
 }
 
+impl PreviewFacts {
+    /// Facts with no repository or languages, for the preview tests.
+    #[cfg(test)]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            repository_status: None,
+            languages: Vec::new(),
+            detected: Vec::new(),
+            language_key: (String::new(), false),
+            sample_duration_ms: 128,
+            sample_character_success: true,
+        }
+    }
+
+    /// Rebuild the language entries when the theme or `show_versions` changed
+    /// since they were built; colours, allow-lists and versions depend on both.
+    pub(crate) fn refresh_languages(
+        &mut self,
+        cwd: &Path,
+        theme_name: &str,
+        theme: &ThemeConfig,
+        settings: &LanguageSettings,
+    ) {
+        if self.language_key.0 == theme_name && self.language_key.1 == settings.show_versions {
+            return;
+        }
+        self.languages = language_entries(&self.detected, cwd, theme, settings);
+        theme_name.clone_into(&mut self.language_key.0);
+        self.language_key.1 = settings.show_versions;
+    }
+}
+
+fn language_entries(
+    detected: &[DetectedLanguage],
+    cwd: &Path,
+    theme: &ThemeConfig,
+    settings: &LanguageSettings,
+) -> Vec<LanguageInfo> {
+    let request = DisplayRequest::new(detected, theme, settings).with_cwd(Some(cwd));
+    display_info(&request, Versions::Probe).unwrap_or_default()
+}
+
 /// Gather preview facts for `cwd`, honoring the same config settings as the prompt.
 ///
-/// # Errors
-///
-/// Returns an error if git status collection fails; no repo is `Ok`.
-pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result<PreviewFacts> {
+/// A git status failure or timeout (bounded by `git.timeout_seconds`) only
+/// leaves the preview without git facts.
+pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> PreviewFacts {
     // Canonical, like the IPC `SafePath`, so symlinked `git.skip_paths` entries
     // match; they gate the repository root, as in the agent.
     let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
@@ -35,8 +83,11 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
             cwd,
             config.git.max_ahead_behind,
             config.git.stash_enabled,
+            Duration::from_secs(config.git.timeout_seconds.get()),
         )
-        .map_err(|e| crate::Error::config(format!("Git status failed: {e}")))?
+        .inspect_err(|error| crate::debug_log!("wizard", "git status unavailable: {error}"))
+        .ok()
+        .flatten()
         .map(|CompleteStatus { status, .. }| {
             if config.git.show_upstream {
                 status
@@ -48,18 +99,20 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
         None
     };
 
-    let languages = {
-        let detected = Detector::detect_directory_bounded(cwd, config.language.detection_mode);
-        let request = DisplayRequest::new(&detected, theme, &config.language).with_cwd(Some(cwd));
-        display_info(&request, Versions::Probe).unwrap_or_default()
-    };
+    let detected = Detector::detect_directory_bounded(cwd, config.language.detection_mode);
+    let languages = language_entries(&detected, cwd, theme, &config.language);
 
-    Ok(PreviewFacts {
+    PreviewFacts {
         repository_status,
         languages,
+        detected,
+        language_key: (
+            config.ui.theme.as_str().to_owned(),
+            config.language.show_versions,
+        ),
         sample_duration_ms: 128,
         sample_character_success: true,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -108,7 +161,7 @@ mod tests {
         let config = Config::default();
         let theme = ThemeConfig::default();
 
-        let facts = gather(repo.path(), &config, &theme).expect("gather should not error");
+        let facts = gather(repo.path(), &config, &theme);
 
         let status = facts
             .repository_status
@@ -122,7 +175,7 @@ mod tests {
         let config = Config::default();
         let theme = ThemeConfig::default();
 
-        let facts = gather(dir.path(), &config, &theme).expect("gather should not error");
+        let facts = gather(dir.path(), &config, &theme);
 
         assert!(facts.repository_status.is_none());
     }
@@ -134,7 +187,7 @@ mod tests {
         config.git.skip_paths = vec![repo.path().to_string_lossy().into_owned()];
         let theme = ThemeConfig::default();
 
-        let facts = gather(repo.path(), &config, &theme).expect("gather should not error");
+        let facts = gather(repo.path(), &config, &theme);
 
         assert!(facts.repository_status.is_none());
     }
@@ -148,7 +201,7 @@ mod tests {
         config.language.detection_mode = DetectionMode::Markers;
         let theme = ThemeConfig::default();
 
-        let facts = gather(dir.path(), &config, &theme).expect("gather should not error");
+        let facts = gather(dir.path(), &config, &theme);
 
         assert!(
             facts.languages.iter().any(|lang| lang.name == "rust"),
@@ -163,7 +216,7 @@ mod tests {
         let config = Config::default();
         let theme = ThemeConfig::default();
 
-        let facts = gather(dir.path(), &config, &theme).expect("gather should not error");
+        let facts = gather(dir.path(), &config, &theme);
 
         assert_eq!(facts.sample_duration_ms, 128);
         assert!(facts.sample_character_success);

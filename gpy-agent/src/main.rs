@@ -4,7 +4,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![expect(clippy::print_stdout, reason = "CLI output")]
-#![expect(clippy::print_stderr, reason = "CLI diagnostics")]
 
 use clap::{Parser, Subcommand};
 use gpy_agent::{
@@ -183,7 +182,7 @@ enum ConfigCommands {
 /// Log panics through `warn_log!`: the daemon's stderr is `/dev/null`.
 fn install_panic_handler() {
     gpy_agent::error::install_broken_pipe_hook(|panic_info| {
-        gpy_agent::warn_log!("agent", "PANIC: {:?}", panic_info);
+        gpy_agent::warn_log!("agent", "PANIC: {panic_info}");
     });
 }
 
@@ -320,7 +319,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
 /// Print the active theme as shell variable assignments.
 ///
 /// # Errors
-/// Returns an error if the theme cannot be loaded.
+/// Returns an error if neither the configured nor the `default` theme loads.
 fn export_theme(shell: Shell) -> Result<()> {
     // An invalid or half-written config must still export a usable prompt.
     let config = gpy_agent::config::loader::load_config().unwrap_or_else(|e| {
@@ -332,9 +331,14 @@ fn export_theme(shell: Shell) -> Result<()> {
     });
     let theme_name = &config.ui.theme;
 
-    let manager = gpy_agent::theme::ThemeManager::new(theme_name.as_str()).map_err(|e| {
-        eprintln!("Failed to load theme '{theme_name}': {e}");
-        e
+    // Same fallback as the agent and `oneshot`; a failure here is reported once, by `main`.
+    let manager = gpy_agent::theme::ThemeManager::new(theme_name.as_str()).or_else(|e| {
+        gpy_agent::debug::warn_fallback(
+            &format!("Theme '{theme_name}' loading"),
+            "using default",
+            &e,
+        );
+        gpy_agent::theme::ThemeManager::new("default")
     })?;
 
     let palette = gpy_agent::palette::active_palette(&config);

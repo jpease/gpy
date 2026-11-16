@@ -1,0 +1,5 @@
+description = "Contract fixture: c1split"
+command = "bin/c1split.sh"
+inputs = []
+ttl_secs = 3600
+timeout_ms = 500

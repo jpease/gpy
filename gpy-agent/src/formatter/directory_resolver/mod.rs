@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::config::DirectorySettings;
 use crate::config::types::DirectoryDisplay;
 use crate::formatter::chrome::SegmentChrome;
+use crate::formatter::cluster::{self, cluster_end};
 use crate::formatter::separator::Glyphs;
 use crate::formatter::{ELLIPSIS, Format, SegmentPosition};
 use crate::ipc::Response;
@@ -148,23 +149,19 @@ impl<'a> DirectoryResolver<'a> {
                 DirectoryDisplay::Full => home_contracted,
             });
 
-        // Tail-style max_length truncation.
+        // Tail-style max_length truncation, cut on cluster boundaries.
         let max = self.config.ui.directory.max_length.get();
-        let char_count = base.chars().count();
-        if char_count <= max {
+        if cluster::count(&base) <= max {
             return base;
         }
 
-        // A cap of 1 can't fit the ellipsis plus content: show the raw last character.
+        // A cap of 1 can't fit the ellipsis plus content: show the raw last cluster.
         if max <= 1 {
-            let skip = char_count.saturating_sub(max);
-            return base.chars().skip(skip).collect();
+            return cluster::tail(&base, max).to_owned();
         }
 
         // The ellipsis is one character of the cap.
-        let tail_len = max.saturating_sub(1);
-        let skip = char_count.saturating_sub(tail_len);
-        let tail: String = base.chars().skip(skip).collect();
+        let tail = cluster::tail(&base, max.saturating_sub(1));
         format!("{ELLIPSIS}{tail}")
     }
 
@@ -214,12 +211,11 @@ fn enclosing_anchor_root(cwd: &str, home: Option<&str>) -> Option<PathBuf> {
 }
 
 /// Drop `repo_root` when it is `$HOME` (dotfiles repo); Starship doesn't anchor there.
-/// `canonical_home` must already be canonical.
+/// Both must already be canonical: `find_repo_root` returns a canonical root and
+/// the caller canonicalizes `$HOME`, so no further `realpath` is needed here.
 fn anchor_root(repo_root: Option<PathBuf>, canonical_home: Option<&Path>) -> Option<PathBuf> {
     let root = repo_root?;
-    let is_home = canonical_home.is_some_and(|home| {
-        root == home || std::fs::canonicalize(&root).is_ok_and(|canonical| canonical == home)
-    });
+    let is_home = canonical_home.is_some_and(|home| root == home);
     (!is_home).then_some(root)
 }
 
@@ -367,51 +363,6 @@ fn abbreviate_component(part: &str) -> &str {
         first_end
     };
     part.get(..end).unwrap_or(part)
-}
-
-/// Byte offset just past the character cluster starting at byte `start`.
-fn cluster_end(text: &str, start: usize) -> usize {
-    let mut chars = text.get(start..).unwrap_or("").chars().peekable();
-    let Some(first) = chars.next() else {
-        return start;
-    };
-    let mut len = first.len_utf8();
-    if is_regional_indicator(first) && chars.peek().copied().is_some_and(is_regional_indicator) {
-        len = len.saturating_add(chars.next().map_or_default(char::len_utf8));
-    }
-    while let Some(next) = chars.peek().copied() {
-        if next == '\u{200D}' {
-            // Zero-width joiner glues the following character on.
-            chars.next();
-            len = len.saturating_add(next.len_utf8());
-            len = len.saturating_add(chars.next().map_or_default(char::len_utf8));
-        } else if is_cluster_extender(next) {
-            chars.next();
-            len = len.saturating_add(next.len_utf8());
-        } else {
-            break;
-        }
-    }
-    start.saturating_add(len)
-}
-
-const fn is_regional_indicator(c: char) -> bool {
-    matches!(c, '\u{1F1E6}'..='\u{1F1FF}')
-}
-
-/// Combining marks, variation selectors, emoji skin-tone modifiers, tag chars.
-const fn is_cluster_extender(c: char) -> bool {
-    matches!(
-        c,
-        '\u{0300}'..='\u{036F}'
-            | '\u{1AB0}'..='\u{1AFF}'
-            | '\u{1DC0}'..='\u{1DFF}'
-            | '\u{20D0}'..='\u{20FF}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FE20}'..='\u{FE2F}'
-            | '\u{1F3FB}'..='\u{1F3FF}'
-            | '\u{E0020}'..='\u{E007F}'
-    )
 }
 
 /// Join the repo-root basename with its in-repo sub-components by `/`.

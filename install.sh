@@ -110,8 +110,8 @@ stage_binary() {
 
     staged="$(dirname "$dest_path")/.$(basename "$dest_path").new.$$"
     case "${dest_path##*/}" in
-        gpy-agent) STAGED_AGENT=$staged ;;
-        gpy) STAGED_CLI=$staged ;;
+        gpy-agent|gpy-agent.exe) STAGED_AGENT=$staged ;;
+        gpy|gpy.exe) STAGED_CLI=$staged ;;
     esac
 
     if command -v install >/dev/null 2>&1; then
@@ -127,8 +127,10 @@ stage_binary() {
         xattr -d com.apple.quarantine "$staged" 2>/dev/null || true
     fi
 
-    if ! "$staged" --version >/dev/null 2>&1; then
-        die "the $label binary is not functional on this host; the existing install was left untouched"
+    # Keep the loader's message: it names a missing glibc symbol or interpreter.
+    if ! probe_output=$("$staged" --version 2>&1 >/dev/null); then
+        [ -z "$probe_output" ] || warn "$probe_output"
+        die "the $label binary is not functional on this host; the existing install was left untouched. The Linux binaries need glibc 2.31 or newer; musl systems (Alpine) must build from source: https://github.com/jpease/gpy/blob/main/docs/INSTALL.md#building-from-source"
     fi
 }
 
@@ -164,6 +166,15 @@ echo ""
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
+# A shell running under Rosetta reports x86_64 on an Apple Silicon Mac; install
+# the native binaries so the prompt does not run translated.
+if [ "$PLATFORM" = darwin ] && [ "$ARCH" = x86_64 ]; then
+    if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ] ||
+        [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+        ARCH=arm64
+    fi
+fi
+
 # Unlike install-oneline.sh, this also resolves Windows assets.
 case $PLATFORM in
     linux)
@@ -183,11 +194,18 @@ case $PLATFORM in
     mingw*|msys*|cygwin*)
         BINARY="gpy-agent-windows-x86_64.exe"
         CLI_BINARY="gpy-windows-x86_64.exe"
+        DEST_AGENT="gpy-agent.exe"
+        DEST_CLI="gpy.exe"
+        WINDOWS=1
         ;;
     *)
         die "unsupported platform: $PLATFORM. Build from source: https://github.com/jpease/gpy/blob/main/docs/INSTALL.md#building-from-source"
         ;;
 esac
+
+DEST_AGENT="${DEST_AGENT:-gpy-agent}"
+DEST_CLI="${DEST_CLI:-gpy}"
+WINDOWS="${WINDOWS:-0}"
 
 info "Installing GPY for $PLATFORM ($ARCH)"
 info "Agent binary: $BINARY"
@@ -212,23 +230,24 @@ case "$shell_name" in
         ;;
 esac
 
+# Native Windows runs the CLI only: `gpy setup` refuses it and the agent needs
+# Unix sockets (docs/INSTALL.md), so install the binaries and stop there.
+if [ "$WINDOWS" = 1 ]; then
+    wire_shell=0
+    warn "Native Windows: installing the CLI binaries only. For the prompt use WSL (docs/INSTALL.md#windows-wsl)"
+fi
+
 mkdir -p "$INSTALL_DIR"
 # Stage and test both binaries before committing either.
 trap 'rm -f "${STAGED_AGENT:-}" "${STAGED_CLI:-}"' EXIT
-stage_binary "bin/$BINARY" "$INSTALL_DIR/gpy-agent" "agent"
-stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/gpy" "CLI"
-# `gpy setup` refuses native Windows, so the MSYS/Cygwin arm has no shell files to check.
+stage_binary "bin/$BINARY" "$INSTALL_DIR/$DEST_AGENT" "agent"
+stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/$DEST_CLI" "CLI"
 if [ "$wire_shell" = 1 ]; then
-    case "$PLATFORM" in
-        mingw*|msys*|cygwin*) ;;
-        *)
-            CURRENT_STEP="checking the shell files (nothing is installed yet)"
-            "$STAGED_CLI" setup --check --from "$(pwd)"
-            ;;
-    esac
+    CURRENT_STEP="checking the shell files (nothing is installed yet)"
+    "$STAGED_CLI" setup --check --from "$(pwd)"
 fi
-commit_binary "$STAGED_AGENT" "$INSTALL_DIR/gpy-agent" "agent"
-commit_binary "$STAGED_CLI" "$INSTALL_DIR/gpy" "CLI"
+commit_binary "$STAGED_AGENT" "$INSTALL_DIR/$DEST_AGENT" "agent"
+commit_binary "$STAGED_CLI" "$INSTALL_DIR/$DEST_CLI" "CLI"
 trap - EXIT
 
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
@@ -240,29 +259,33 @@ fi
 if [ "$wire_shell" = 1 ]; then
     CURRENT_STEP="gpy setup (shell integration; binaries are already installed)"
     info "Installing shell integration..."
-    "$INSTALL_DIR/gpy" setup --shell "$shell_name" --from "$(pwd)"
+    "$INSTALL_DIR/$DEST_CLI" setup --shell "$shell_name" --from "$(pwd)"
 fi
 
 # Restart so an old daemon picks up the new binary; `start` is a no-op when the
-# running version already matches.
-CURRENT_STEP="restarting the agent"
-info "Restarting GPY agent..."
-rc=0
-"$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1 || rc=$?
-case $rc in
-    0) ok "GPY agent started" ;;
-    6) info "agent disabled in config (agent.enabled = false); not started" ;;
-    *) warn "could not start the agent automatically (it will start on the next shell session)" ;;
-esac
+# running version already matches. Native Windows has no agent to start.
+if [ "$WINDOWS" != 1 ]; then
+    CURRENT_STEP="restarting the agent"
+    info "Restarting GPY agent..."
+    rc=0
+    "$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1 || rc=$?
+    case $rc in
+        0) ok "GPY agent started" ;;
+        6) info "agent disabled in config (agent.enabled = false); not started" ;;
+        *) warn "could not start the agent automatically (it will start on the next shell session)" ;;
+    esac
+fi
 
 echo ""
 if [ "$wire_shell" = 1 ]; then
     ok "GPY installed successfully"
+elif [ "$WINDOWS" = 1 ]; then
+    warn "GPY CLI installed; native Windows has no prompt integration or agent. Use WSL for the prompt"
 else
     warn "GPY binaries installed; shell integration was NOT set up. Re-run with GPY_SHELL=fish, zsh or bash"
 fi
 echo ""
-echo "Agent:     $INSTALL_DIR/gpy-agent"
-echo "CLI:       $INSTALL_DIR/gpy"
+echo "Agent:     $INSTALL_DIR/$DEST_AGENT"
+echo "CLI:       $INSTALL_DIR/$DEST_CLI"
 echo "Verify:    gpy --version; gpy-agent --help"
-echo "Uninstall: $INSTALL_DIR/gpy uninstall (keeps ~/.config/gpy; --purge-config removes it)"
+echo "Uninstall: $INSTALL_DIR/$DEST_CLI uninstall (keeps ~/.config/gpy; --purge-config removes it)"

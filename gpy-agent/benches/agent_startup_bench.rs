@@ -158,7 +158,7 @@ impl VersionSource for FastStubDetector {
 }
 
 /// `execute_version_command`'s spawn, process-group, reader thread, timeout, and parse.
-/// No cache at this layer (it lives in `detect_version_at`), and
+/// No cache at this layer (it lives in `lookup_version_at`), and
 /// `cwd: None` skips the mise probe.
 fn bench_version_command_spawn(c: &mut Criterion) {
     let detector = FastStubDetector;

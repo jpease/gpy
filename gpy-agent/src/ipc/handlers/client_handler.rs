@@ -1,12 +1,8 @@
 //! IPC handlers for client registration, workspace updates, and agent control.
 
-use super::git_handler::publish_and_repaint;
-use super::{HandlerError, RenderDeps, spawn_detached};
-use crate::git::CompleteStatus;
-use crate::git::cache::GitStatusCache;
+use super::{GitHandler, HandlerError, RenderDeps};
 use crate::ipc::Response;
 use crate::sync_ext::MutexExt;
-use crate::warn_log;
 use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::sync::{Arc, Mutex};
 
@@ -15,23 +11,19 @@ type WatcherRef = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
 
 /// Handler for client lifecycle, status and config reload.
 pub struct ClientHandler {
-    /// Publishing handles; see [`ClientHandler::trigger_initial_scan`].
     render: RenderDeps,
-    git_cache: Arc<GitStatusCache>,
+    /// Runs the registration scan; see [`GitHandler::prewarm`].
+    git: Arc<GitHandler>,
     watcher: WatcherRef,
 }
 
 impl ClientHandler {
     /// Create a new `ClientHandler`.
     #[must_use]
-    pub const fn new(
-        render: RenderDeps,
-        git_cache: Arc<GitStatusCache>,
-        watcher: WatcherRef,
-    ) -> Self {
+    pub const fn new(render: RenderDeps, git: Arc<GitHandler>, watcher: WatcherRef) -> Self {
         Self {
             render,
-            git_cache,
+            git,
             watcher,
         }
     }
@@ -76,7 +68,7 @@ impl ClientHandler {
             }
 
             // Populate the instant-prompt cache immediately, watcher or not.
-            self.trigger_initial_scan(path);
+            self.git.prewarm(path);
         }
 
         Response::Ack
@@ -112,7 +104,7 @@ impl ClientHandler {
                 "client",
                 "Watcher update failed for PID={pid} (continuing): {e}"
             );
-            self.trigger_initial_scan(path_buf);
+            self.git.prewarm(path_buf);
         }
 
         Ok(Response::Ack)
@@ -137,7 +129,7 @@ impl ClientHandler {
             .as_ref()
             .map_or_default(|w| w.watched_repo_count());
         let registered_clients = self.render.client_registry.len();
-        let cache_entries = self.git_cache.len();
+        let cache_entries = self.git.cached_repo_count();
 
         Response::AgentStatus(crate::ipc::AgentStatus {
             version: crate::VERSION.to_owned(),
@@ -163,59 +155,18 @@ impl ClientHandler {
             })?;
         Ok(Response::Ack)
     }
-
-    /// Populate the instant-prompt cache for a newly registered client's repo.
-    fn trigger_initial_scan(&self, path: &std::path::Path) {
-        use crate::git::status::load_repository_state;
-
-        let Some(git_root) = crate::git::find_worktree_root(path) else {
-            return;
-        };
-
-        if !self.render.config_manager.get().git_enabled_for(&git_root) {
-            return;
-        }
-
-        let git_cache = Arc::clone(&self.git_cache);
-        let render = self.render.clone();
-        let scan_path = git_root.clone();
-
-        let job = move || {
-            let config = render.config_manager.get();
-            let started = std::time::Instant::now();
-            match load_repository_state(
-                &scan_path,
-                config.git.max_ahead_behind,
-                config.git.stash_enabled,
-            ) {
-                Ok(Some(CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical. A newer full scan was
-                    // already published, so skip republishing older content.
-                    if let Some(published) =
-                        git_cache.apply_full_scan(&git_root, started, status, files)
-                    {
-                        // No request color context, so prev_bg is None.
-                        publish_and_repaint(&render, &git_root, &published, None);
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    warn_log!("client", "Initial git scan failed on registration: {e}");
-                }
-            }
-        };
-
-        spawn_detached(job);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::InstantPromptCache;
+    use crate::cache::{CachePolicy, InstantPromptCache};
     use crate::config::manager::ConfigManager;
     use crate::config::{Config, GitSettings};
+    use crate::git::cache::GitStatusCache;
+    use crate::git::{RepositoryState, RepositoryStatus};
     use crate::ipc::fixtures::render_deps;
+    use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -232,6 +183,14 @@ mod tests {
     }
 
     fn handler_with(skip_paths: Vec<String>, cache_dir: &Path) -> ClientHandler {
+        handler_with_cache(skip_paths, cache_dir, Arc::new(GitStatusCache::new()))
+    }
+
+    fn handler_with_cache(
+        skip_paths: Vec<String>,
+        cache_dir: &Path,
+        git_cache: Arc<GitStatusCache>,
+    ) -> ClientHandler {
         let config_manager = Arc::new(
             ConfigManager::from_config(Config {
                 git: GitSettings {
@@ -248,11 +207,8 @@ mod tests {
             ),
             ..render_deps(config_manager)
         };
-        ClientHandler::new(
-            render,
-            Arc::new(GitStatusCache::new()),
-            Arc::new(Mutex::new(None)),
-        )
+        let git = Arc::new(GitHandler::new(render.clone(), git_cache));
+        ClientHandler::new(render, git, Arc::new(Mutex::new(None)))
     }
 
     fn git_cache_files(dir: &Path) -> Vec<String> {
@@ -305,5 +261,49 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert_ne!(git_cache_files(&cache_dir), Vec::<String>::new());
+    }
+
+    /// A status still within its cooldown is not rescanned on registration,
+    /// so shells re-registering together after an agent restart scan once.
+    #[test]
+    fn register_skips_scan_while_cached_status_is_fresh() {
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let repo = init_repo(&tmp.path().join("repo"));
+        let cache_dir = tmp.path().join("cache");
+        let git_cache = Arc::new(GitStatusCache::with_policy(CachePolicy {
+            ttl: Duration::from_secs(30),
+            cooldown: Duration::from_hours(1),
+        }));
+        let cached = RepositoryStatus {
+            branch: "cached-branch".to_owned(),
+            ahead: 0,
+            behind: 0,
+            ahead_capped: false,
+            behind_capped: false,
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            conflicts: 0,
+            state: RepositoryState::Clean,
+            stash_count: 0,
+            detached: false,
+            stale_error: false,
+            rebase_progress: None,
+        };
+        git_cache.set_canonical(&repo, cached, HashMap::new());
+
+        let handler = handler_with_cache(Vec::new(), &cache_dir, Arc::clone(&git_cache));
+        register(&handler, &repo);
+
+        // Absence window, as in the skipped-repo test: a real scan would have
+        // replaced the branch and written instant-cache files by now.
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(
+            git_cache
+                .get_any_canonical(&repo)
+                .map(|status| status.branch),
+            Some("cached-branch".to_owned())
+        );
+        assert_eq!(git_cache_files(&cache_dir), Vec::<String>::new());
     }
 }

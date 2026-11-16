@@ -77,4 +77,22 @@ else
     fail "nc with -U never got the socket: $(tr '\n' '|' <"$log")"
 fi
 
+# netcat-openbsd half-closes on stdin EOF only with -N, so it gets -N; Apple
+# nc has its own -N (a probe count that would swallow -U), so it never does.
+make_nc "$(printf 'usage: nc [-NU]\n\t-N\t\tShutdown the network socket after EOF on stdin\n\t-U\t\tUse UNIX domain socket')"
+run_send
+if [ "$send_status" = 0 ] && grep -q -- "^-N -U $tmp/agent.sock" "$log"; then
+    pass "netcat-openbsd gets -N so the agent sees end of request"
+else
+    fail "netcat-openbsd: status $send_status, invoked as: $(tr '\n' '|' <"$log")"
+fi
+
+make_nc "$(printf 'usage: nc [-U]\n\t-N num_probes   Number of probes to send before generating a write timeout event\n\t-U\t\tUse UNIX domain socket')"
+run_send
+if [ "$send_status" = 0 ] && grep -q -- "^-U $tmp/agent.sock" "$log"; then
+    pass "an nc whose -N is not the shutdown option never gets -N"
+else
+    fail "Apple-style nc: status $send_status, invoked as: $(tr '\n' '|' <"$log")"
+fi
+
 test_finish "bash nc capability probe"

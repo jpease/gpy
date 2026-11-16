@@ -150,15 +150,25 @@ impl InstantPromptCache {
             ),
             source: Some(Box::new(e)),
         })?;
-        // Nothing else removes entries; best-effort, never blocks startup.
-        let (entries, orphans) = prune_stale_entries(&cache_dir, SystemTime::now());
+        let cache = Self::with_dir(cache_dir);
+        // Best-effort, never blocks startup.
+        cache.sweep_stale_entries();
+        Ok(cache)
+    }
+
+    /// Remove entries unused for 14 days and orphaned temp files; run at
+    /// startup and periodically by the agent, so a long-lived agent does not
+    /// keep every visited directory's files until it restarts. Best-effort.
+    /// A swept file a write record still names is rewritten by the next
+    /// write, as any vanished file is.
+    pub fn sweep_stale_entries(&self) {
+        let (entries, orphans) = prune_stale_entries(&self.cache_dir, SystemTime::now());
         if entries > 0 || orphans > 0 {
             crate::debug_log!(
                 "cache",
                 "Pruned {entries} stale entries and {orphans} orphans from instant-prompt cache"
             );
         }
-        Ok(Self::with_dir(cache_dir))
     }
 
     /// A cache in a fresh temp directory removed when the cache drops (`new`

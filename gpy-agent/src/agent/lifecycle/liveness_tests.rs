@@ -394,3 +394,51 @@ fn a_socket_the_client_cannot_connect_to_is_indeterminate() {
     );
     assert_eq!(SocketIdentity::at(&socket_path).ok(), Some(identity));
 }
+
+/// A regular file or a symlink at the socket path is not a stale socket:
+/// `start` must never unlink it.
+#[test]
+fn a_non_socket_at_the_socket_path_is_never_removed() {
+    use super::inspect_socket;
+    use crate::agent::lifecycle::SocketCheck;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let file_path = tmp.path().join("agent.sock");
+    std::fs::write(&file_path, b"user data").unwrap();
+    let link_path = tmp.path().join("link.sock");
+    std::os::unix::fs::symlink(&file_path, &link_path).unwrap();
+
+    for path in [&file_path, &link_path] {
+        let check = inspect_socket(&client_at(path), &mut |_| {});
+        assert!(
+            matches!(check, SocketCheck::Proceed { previous: None }),
+            "{path:?}: got {check:?}"
+        );
+        assert!(
+            std::fs::symlink_metadata(path).is_ok(),
+            "{path:?} must survive"
+        );
+    }
+    assert_eq!(std::fs::read(&file_path).unwrap(), b"user data");
+}
+
+/// Cleanup unlinks only the captured socket, never a file that replaced it.
+#[test]
+fn remove_socket_if_unchanged_spares_a_file_that_replaced_the_socket() {
+    use super::remove_socket_if_unchanged;
+    use crate::ipc::socket_identity::SocketIdentity;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let socket_path = tmp.path().join("agent.sock");
+    drop(std::os::unix::net::UnixListener::bind(&socket_path).unwrap());
+    let identity = SocketIdentity::at(&socket_path).unwrap();
+    std::fs::remove_file(&socket_path).unwrap();
+    std::fs::write(&socket_path, b"user data").unwrap();
+
+    remove_socket_if_unchanged(&socket_path, identity);
+
+    assert!(
+        socket_path.exists(),
+        "a regular file must never be unlinked"
+    );
+}

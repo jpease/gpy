@@ -126,6 +126,118 @@ fn failed_refresh_without_a_last_good_status_invents_none() {
     assert_eq!(ctx.cache.get_any_canonical(&repo), None);
 }
 
+/// Backend that records whether the cache still held the repo's entry while
+/// its full scan ran, and optionally publishes `newer` as a full scan that
+/// finished first (an IPC-side job), before returning its own result.
+struct ObservingBackend {
+    cache: Arc<GitStatusCache>,
+    entry_during_scan: std::sync::atomic::AtomicBool,
+    newer: Option<RepositoryStatus>,
+}
+
+impl ObservingBackend {
+    fn new(cache: &Arc<GitStatusCache>, newer: Option<RepositoryStatus>) -> Self {
+        Self {
+            cache: Arc::clone(cache),
+            entry_during_scan: std::sync::atomic::AtomicBool::new(false),
+            newer,
+        }
+    }
+}
+
+impl GitBackend for ObservingBackend {
+    fn complete_status(
+        &self,
+        path: &Path,
+        max_ahead_behind: usize,
+        stash_enabled: bool,
+        timeout: Duration,
+    ) -> Result<Option<CompleteStatus>> {
+        self.entry_during_scan.store(
+            self.cache.get_any_canonical(path).is_some(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let scan = NativeGitBackend.complete_status(path, max_ahead_behind, stash_enabled, timeout);
+        if let Some(newer) = &self.newer {
+            self.cache
+                .set_canonical(path, newer.clone(), HashMap::new());
+        }
+        scan
+    }
+
+    fn pathspec_status(
+        &self,
+        repo_root: &Path,
+        paths: &[PathBuf],
+        timeout: Duration,
+    ) -> Result<crate::git::PathspecScan> {
+        NativeGitBackend.pathspec_status(repo_root, paths, timeout)
+    }
+}
+
+#[test]
+/// A prompt drawn during an agent-side scan (a reconcile tick, a watcher
+/// event) is served the previous status instead of missing and scanning again.
+fn full_refresh_keeps_the_cached_status_while_it_scans() {
+    let (_tmp, repo) = create_temp_repo();
+    fs::write(repo.join("a.txt"), "one\n").expect("write a.txt");
+    commit_all(&repo);
+    let ctx = make_agent_context();
+    let config = Config::default();
+    let first = refresh_repo_status_with(&NativeGitBackend, &ctx, &repo, &config, None);
+    assert!(first.status.is_some(), "first scan succeeds");
+
+    let backend = ObservingBackend::new(&ctx.cache, None);
+    refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+
+    assert!(
+        backend
+            .entry_during_scan
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "the cache entry must survive while the scan runs"
+    );
+}
+
+#[test]
+/// A full scan that started earlier never overwrites one published meanwhile.
+fn full_refresh_keeps_a_newer_full_scan_published_meanwhile() {
+    let (_tmp, repo) = create_temp_repo();
+    fs::write(repo.join("a.txt"), "one\n").expect("write a.txt");
+    commit_all(&repo);
+    let ctx = make_agent_context();
+    let config = Config::default();
+    let newer = status(7, RepositoryState::Dirty);
+    let backend = ObservingBackend::new(&ctx.cache, Some(newer.clone()));
+
+    let refresh = refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+
+    assert_eq!(refresh.status, Some(newer.clone()));
+    assert_eq!(ctx.cache.get_any_canonical(&repo), Some(newer));
+}
+
+#[test]
+/// A checkout on a clean tree moves no status count but must still make the
+/// language detection due again.
+fn language_signature_tracks_branch_and_upstream_position() {
+    let base = status(0, RepositoryState::Clean);
+    let checked_out = RepositoryStatus {
+        branch: "feature".to_owned(),
+        ..base.clone()
+    };
+    let fast_forwarded = RepositoryStatus {
+        behind: 3,
+        ..base.clone()
+    };
+    assert_ne!(
+        git_status_signature(&base),
+        git_status_signature(&checked_out)
+    );
+    assert_ne!(
+        git_status_signature(&base),
+        git_status_signature(&fast_forwarded)
+    );
+}
+
 #[test]
 /// A `.git/index` write costs one full scan, not a failed incremental round first.
 fn git_index_write_triggers_exactly_one_capture_round() {

@@ -261,6 +261,54 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
     assert!(fish_export.contains("set -g __gpy_plugin_segment_file_k8s_tools"));
 }
 
+/// Fish sources a plugin's `.fish` segment file, so the export applies the
+/// rule script segments follow: a file another user could write is left out.
+#[cfg(unix)]
+#[test]
+#[serial]
+fn plugin_segment_file_writable_by_others_is_not_exported() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let xdg = TempDir::new().expect("xdg tempdir");
+    install_plugin(xdg.path(), true);
+    let plugins = xdg.path().join("gpy").join("plugins");
+    let plugin_dir = plugins.join("k8s-tools");
+    let segment_file = plugin_dir.join("segments").join("k8s_tools.fish");
+    let private_dir = fs::Permissions::from_mode(0o755);
+    for dir in [
+        xdg.path().join("gpy"),
+        plugins,
+        plugin_dir.clone(),
+        plugin_dir.join("segments"),
+    ] {
+        fs::set_permissions(dir, private_dir.clone()).expect("chmod plugin dir");
+    }
+    fs::set_permissions(&segment_file, fs::Permissions::from_mode(0o644)).expect("chmod file");
+
+    let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", xdg.path());
+    env.set("XDG_DATA_HOME", xdg.path());
+    env.remove("GPY_BUNDLED_PLUGIN_DIR");
+    let manager = ThemeManager::builtin("default").expect("default theme");
+    let mut config = Config::default();
+    config.ui.enabled_segments = vec!["k8s_tools".to_owned()];
+    let palette = gpy_agent::template::Palette::default();
+    let file_var = "__gpy_plugin_segment_file_k8s_tools";
+
+    let canonical = segment_file.canonicalize().expect("canonical segment file");
+    let trusted = manager.export(Shell::Fish, &config, &palette);
+    assert!(
+        trusted.contains(&format!("set -g {file_var} \"{}\"", canonical.display())),
+        "a trusted segment file is exported by its canonical path:\n{trusted}"
+    );
+
+    fs::set_permissions(&segment_file, fs::Permissions::from_mode(0o664)).expect("chmod g+w");
+    let shared = manager.export(Shell::Fish, &config, &palette);
+    assert!(
+        !shared.contains(file_var),
+        "a group-writable segment file must not be exported:\n{shared}"
+    );
+}
+
 #[test]
 #[serial]
 fn e2e_plugin_runtime_loading_and_missing_file_graceful() {

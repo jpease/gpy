@@ -16,8 +16,10 @@
 #
 # Runner. Fish has no subshell, sub-second timer or read timeout, so the
 # runner is bash/core/g_runner.bash, found beside this tree in a checkout and
-# in the data root, run in one Bash
-# child per prompt: the first Bash 4 or later on PATH, else
+# in the data root, run in Bash children: on a due prompt one for the file
+# trigger scan (only when a segment declares require_files, require_folders
+# or require_extensions) and one for the batch (only when a segment misses
+# its cache). The child is the first Bash 4 or later on PATH, else
 # /bin/bash, resolved once. Command substitution returns when that direct
 # child exits, so a leftover holding the pipe cannot hold the prompt; Fish
 # starts no background job, so $last_pid and the job table never change. The
@@ -225,6 +227,15 @@ function __gpy_g_uncache --argument-names tok
     set -g __gpy_g_t_{$tok}_at 0
 end
 
+# Value of the declared variable named $argv[1], as the user's shell sees it:
+# a function body sees none of its caller's locals and this one declares
+# none, so no adapter variable can stand in for a declared name. Fails when
+# the name is unset. Quoted: one string, joined as Fish exports it.
+function __gpy_g_user_var
+    set -q $argv[1]; or return 1
+    printf '%s' "$$argv[1]"
+end
+
 # Run every due script segment: require_env, then the file scan, then the
 # cache, then the batch (require_command and command) under one deadline.
 function __gpy_g_run_due
@@ -270,7 +281,7 @@ function __gpy_g_run_due
         set -l ok 1
         set v __gpy_script_{$tok}_reqenv
         for name in $$v
-            if not string match -qr '\A[A-Za-z_][A-Za-z0-9_]*\z' -- $name; or not set -q $name; or test -z "$$name"
+            if not string match -qr '\A[A-Za-z_][A-Za-z0-9_]*\z' -- $name; or test -z "$(__gpy_g_user_var $name)"
                 set ok 0
                 break
             end
@@ -323,9 +334,9 @@ function __gpy_g_run_due
                 set ok 0
                 break
             end
-            if set -q $name
-                # Quoted: one string, joined as Fish exports it.
-                set -l val "$$name"
+            # The value may be empty, so set-ness comes from the status.
+            set -l val (__gpy_g_user_var $name | string collect -N)
+            if test $pipestatus[1] -eq 0
                 set -a names $name
                 set -a vals "$val"
                 set dkey "$dkey"s(string length -- "$val")":$val"
@@ -354,7 +365,8 @@ function __gpy_g_run_due
             set v __gpy_g_t_{$tok}_at
             set -l at "$$v"
             if test -n "$ckey"; and test "$ckey" = "$key"; and string match -qr '\A[0-9]+\z' -- "$at"
-                test (math "$now - $at") -lt $ttl; and set hit 1
+                # A clock stepped back expires the entry instead of freezing it.
+                test $at -le $now; and test (math "$now - $at") -lt $ttl; and set hit 1
             end
         end
 

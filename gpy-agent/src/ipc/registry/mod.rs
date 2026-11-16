@@ -28,7 +28,9 @@ pub(crate) use shell_tracking::{
     ShellRenudger, announce_start_in, default_shell_dir, renudge_unregistered_shells,
 };
 #[cfg(unix)]
-use shell_tracking::{process_start_time_secs, ring_doorbell, write_shell_flag};
+use shell_tracking::{
+    evict_exited_processes, process_start_time_secs, ring_doorbell, write_shell_flag,
+};
 
 /// How long a throttle entry is kept: entries older than this cannot affect a
 /// throttle decision, and dropping them keeps the map bounded.
@@ -276,8 +278,22 @@ impl ClientDirectory {
         }
 
         self.prune_throttle_map();
+        #[cfg(unix)]
+        self.evict_unregistered_processes();
 
         dead_pids
+    }
+
+    /// Drop exited processes that are no longer registered from the shared
+    /// `System`: an unregistered PID is never looked up again, so nothing
+    /// else would ever evict its entry.
+    #[cfg(unix)]
+    fn evict_unregistered_processes(&self) {
+        let registered: std::collections::HashSet<u32> =
+            self.inner.lock_or_recover().keys().copied().collect();
+        evict_exited_processes(&mut self.sysinfo.lock_or_recover(), |pid| {
+            registered.contains(&pid)
+        });
     }
 
     /// Ring the repaint doorbell for all (or matching) clients, pruning dead PIDs.

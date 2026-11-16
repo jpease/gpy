@@ -2,6 +2,7 @@
 
 mod backend;
 mod ignore;
+mod meta_poll;
 mod probe;
 
 use super::watch_set::WatchMode;
@@ -18,7 +19,7 @@ pub(crate) use ignore::IgnoreCaches;
 use ignore::{EventPathVerdict, IgnoreTokenHit, path_is_gitignored, path_matches_ignored_patterns};
 use notify::Event;
 use notify::event::{CreateKind, EventKind, MetadataKind, ModifyKind};
-use probe::{FallbackPolicy, ProbeTiming, spawn_health_probe};
+use probe::{FallbackPolicy, FilesystemProbes, ProbeContext, ProbeTiming, spawn_health_probe};
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -53,6 +54,8 @@ struct FollowupHandoff {
 struct EventThreadState {
     registry: Arc<WatchRegistry>,
     backend: Arc<Mutex<WatcherBackend>>,
+    /// [`WatcherBackend::poll_active`], read without the backend mutex.
+    poll_active: Arc<AtomicBool>,
 }
 
 /// File system watcher using notify crate.
@@ -61,6 +64,8 @@ pub struct FileSystemWatcher {
     event_tx: Option<Sender<Event>>,
     handle: Option<thread::JoinHandle<()>>,
     probe_handle: Option<thread::JoinHandle<()>>,
+    /// Probes of repositories' own filesystems; `None` unless the policy probes.
+    repo_probes: Option<FilesystemProbes>,
     stop_flag: Arc<AtomicBool>,
     /// Shared with the owning coordinator and the event thread.
     registry: Arc<WatchRegistry>,
@@ -110,7 +115,9 @@ impl FileSystemWatcher {
             kind.label()
         );
 
-        let backend = Arc::new(Mutex::new(WatcherBackend::armed(watcher, kind)));
+        let backend_state = WatcherBackend::armed(watcher, kind);
+        let poll_active = Arc::clone(&backend_state.poll_active);
+        let backend = Arc::new(Mutex::new(backend_state));
 
         let stop_flag = Arc::new(AtomicBool::new(false));
         let handle = Self::spawn_event_thread(
@@ -120,6 +127,7 @@ impl FileSystemWatcher {
             EventThreadState {
                 registry: Arc::clone(&shared_registry),
                 backend: Arc::clone(&backend),
+                poll_active,
             },
             FollowupHandoff {
                 delay: followup_delay,
@@ -127,21 +135,20 @@ impl FileSystemWatcher {
             },
         );
 
-        let probe_handle = match policy {
+        let (probe_handle, repo_probes) = match policy {
             FallbackPolicy::ProbeThenFallback {
                 probe_timeout,
                 poll_interval,
-            } => Some(spawn_health_probe(
-                &backend,
-                &event_tx,
-                &stop_flag,
-                ProbeTiming {
+            } => {
+                let timing = ProbeTiming {
                     probe_timeout,
                     poll_interval,
-                },
-                &shared_registry,
-            )),
-            FallbackPolicy::NativeOnly | FallbackPolicy::ForcePoll { .. } => None,
+                };
+                let probe_thread =
+                    spawn_health_probe(&backend, &event_tx, &stop_flag, timing, &shared_registry);
+                (Some(probe_thread), Some(FilesystemProbes::new(timing)))
+            }
+            FallbackPolicy::NativeOnly | FallbackPolicy::ForcePoll { .. } => (None, None),
         };
 
         Ok(Self {
@@ -149,6 +156,7 @@ impl FileSystemWatcher {
             event_tx: Some(event_tx),
             handle: Some(handle),
             probe_handle,
+            repo_probes,
             stop_flag,
             registry: shared_registry,
         })
@@ -169,8 +177,11 @@ impl FileSystemWatcher {
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
                 }
-                // Arm new directories before any refresh scans them.
-                track_poll_expansion(&event, &state.backend, &state.registry);
+                // Arm new directories before any refresh scans them; the
+                // native backend has no expansion, so skip its mutex there.
+                if state.poll_active.load(Ordering::Acquire) {
+                    track_poll_expansion(&event, &state.backend, &state.registry);
+                }
                 Self::process_event(
                     &event,
                     &callback_arc,
@@ -183,15 +194,56 @@ impl FileSystemWatcher {
     }
 
     /// Forward one raw notify result into the shared event channel.
+    ///
+    /// `Access` events (inotify arms `OPEN`) are never a change and are dropped
+    /// here rather than queued. A watch-limit error means some directories go
+    /// unwatched, so it is reported in the warning log, not only the debug log.
     fn forward_event(event_tx: &Sender<Event>, res: notify::Result<Event>) {
         match res {
+            Ok(event) if matches!(event.kind, EventKind::Access(_)) => {}
             Ok(event) => {
                 let _ = event_tx.send(event);
+            }
+            Err(error) if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) => {
+                crate::warn_log!(
+                    "watcher",
+                    "the OS file watch limit is reached; new directories are not \
+                     watched and their changes show only after the periodic \
+                     reconcile (raise fs.inotify.max_user_watches, or set \
+                     GPY_WATCH_FORCE_POLL=1)"
+                );
             }
             Err(error) => {
                 crate::debug_log!("watcher", "notify backend error: {error}");
             }
         }
+    }
+
+    /// Prepare for events from a repository whose watches were just armed.
+    ///
+    /// Starts its force-added listing on a background thread, so the event
+    /// thread (which never runs git) has it before the first ignored-path
+    /// event. Probes the filesystem `git_dir` lives on, once per device,
+    /// swapping to polling if the native backend is silent there (only when
+    /// the fallback policy probes, and not once stopped).
+    pub fn repo_armed(&self, git_root: &Path, git_dir: &Path) {
+        drop(ignore::force_added::force_added_set(
+            git_root,
+            &self.registry,
+            ignore::Lookup::NoWait,
+        ));
+        let (Some(probes), Some(event_tx)) = (&self.repo_probes, &self.event_tx) else {
+            return;
+        };
+        probes.probe(
+            git_dir,
+            &ProbeContext {
+                backend: &self.backend,
+                event_tx,
+                stop_flag: &self.stop_flag,
+                registry: &self.registry,
+            },
+        );
     }
 
     /// Start watching a directory recursively.
@@ -283,8 +335,17 @@ impl FileSystemWatcher {
         // `Access` (inotify only) is never a change; inotify arms OPEN, so our own
         // reads (watch-arming walks, reloads) would otherwise loop as fake changes.
         // Real writes arrive as separate `Modify`/`Create`/`Remove` events.
+        // `forward_event` already drops them; this guards rescans and tests.
         if matches!(event.kind, EventKind::Access(_)) {
             return;
+        }
+
+        // An ignore-file edit must apply to the events queued behind it, not
+        // only after the cache's revalidation interval.
+        for path in &event.paths {
+            if is_ignore_file(path) {
+                registry.ignore().invalidate_ignore_file(path);
+            }
         }
 
         for path in &event.paths {
@@ -496,7 +557,7 @@ impl FileSystemWatcher {
             let _ = tx.send(Event::new(EventKind::Other));
         }
 
-        // The probe checks `stop_flag` each iteration, so this returns promptly.
+        // Probes check `stop_flag` each iteration, so these return promptly.
         if let Some(handle) = self.probe_handle.take()
             && let Err(e) = handle.join()
         {
@@ -504,6 +565,9 @@ impl FileSystemWatcher {
                 "watcher",
                 &format!("probe worker thread panicked: {e:?}"),
             );
+        }
+        if let Some(probes) = &self.repo_probes {
+            probes.join_all();
         }
         if let Some(handle) = self.handle.take()
             && let Err(e) = handle.join()
@@ -525,6 +589,13 @@ impl Drop for FileSystemWatcher {
 fn is_in_git_dir(path: &Path) -> bool {
     path.components()
         .any(|component| component.as_os_str() == OsStr::new(".git"))
+}
+
+/// Whether `path` names an ignore file the matcher caches: a `.gitignore` or
+/// a git directory's `info/exclude`.
+fn is_ignore_file(path: &Path) -> bool {
+    path.file_name() == Some(OsStr::new(".gitignore"))
+        || super::path_ends_with_components(path, "info", "exclude")
 }
 
 /// Whether `worktree_git_repo` may accept an evidence-free `ParentGuess`.

@@ -9,10 +9,13 @@ use gpy_agent::git::status::load_repository_state;
 #[cfg(unix)]
 use std::time::Duration;
 
+/// Bound on each status load.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[test]
 fn test_detached_head_state() {
     let repo = TestRepo::new().with_detached_head();
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let CompleteStatus { status, .. } = result
         .expect("Should handle detached HEAD state without errors")
@@ -30,7 +33,7 @@ fn test_detached_head_state() {
 #[test]
 fn test_initial_commit_branch_resolution() {
     let repo = TestRepo::new();
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let CompleteStatus { status, .. } = result
         .expect("Should handle a zero-commit repository without errors")
@@ -48,7 +51,7 @@ fn test_initial_commit_branch_resolution() {
 #[test]
 fn test_merge_conflict_detection() {
     let repo = TestRepo::new().with_conflicts();
-    let result = load_repository_state(repo.path(), 0, true);
+    let result = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
 
     let CompleteStatus { status, .. } = result
         .expect("Should successfully load repository with conflicts")
@@ -69,7 +72,7 @@ fn test_merge_conflict_detection() {
 #[test]
 fn test_empty_directory_not_a_repo() {
     let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let maybe_repo = load_repository_state(temp_dir.path(), 0, true)
+    let maybe_repo = load_repository_state(temp_dir.path(), 0, true, STATUS_TIMEOUT)
         .expect("Should not error for non-git directory");
     assert!(
         maybe_repo.is_none(),
@@ -93,7 +96,7 @@ fn test_symlink_loop_handling() {
     let repo_path = repo.path().to_path_buf();
 
     std::thread::spawn(move || {
-        let result = load_repository_state(&repo_path, 0, true);
+        let result = load_repository_state(&repo_path, 0, true, STATUS_TIMEOUT);
         tx.send(result).unwrap();
     });
 
@@ -112,7 +115,7 @@ fn test_large_repository_counts_every_untracked_file() {
         repo.create_file(&format!("file{i}.txt"), "content");
     }
 
-    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT)
         .expect("Should handle large repository")
         .expect("Should find repository");
     assert_eq!(
@@ -129,7 +132,7 @@ fn test_repository_with_binary_files() {
     std::fs::write(repo.path().join("binary.dat"), binary_data)
         .expect("Failed to write binary file");
 
-    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT)
         .expect("Should handle repositories with binary files")
         .expect("Should find repository");
     assert_eq!(
@@ -163,7 +166,7 @@ fn test_file_permission_changes() {
     non_exec_perms.set_mode(0o644); // Remove execute bit
     std::fs::set_permissions(&script_path, non_exec_perms).expect("Failed to set permissions");
 
-    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT)
         .expect("Should handle permission changes")
         .expect("Should find repository");
     assert!(
@@ -182,7 +185,7 @@ fn test_mixed_encoding_files() {
     std::fs::write(repo.path().join("latin1.txt"), latin1_data)
         .expect("Failed to write Latin-1 file");
 
-    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true)
+    let CompleteStatus { status, .. } = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT)
         .expect("Should handle mixed encoding files without panicking")
         .expect("Should find repository");
     assert_eq!(
@@ -204,9 +207,10 @@ fn test_shallow_clone_handling() {
         .commit("Third commit");
 
     let shallow = TestRepo::as_shallow_clone(&source, 1);
-    let CompleteStatus { status, .. } = load_repository_state(shallow.path(), 0, true)
-        .expect("Should handle shallow clones")
-        .expect("Should find repository");
+    let CompleteStatus { status, .. } =
+        load_repository_state(shallow.path(), 0, true, STATUS_TIMEOUT)
+            .expect("Should handle shallow clones")
+            .expect("Should find repository");
 
     assert_eq!(
         status.branch, "main",
@@ -222,14 +226,14 @@ fn test_git_worktree_handling() {
 
     let worktree_path = repo.with_worktree("feature");
 
-    let result_main = load_repository_state(repo.path(), 0, true);
+    let result_main = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT);
     let CompleteStatus {
         status: status_main,
         ..
     } = result_main.unwrap().expect("Main repo should be valid");
     assert_eq!(status_main.branch, "main");
 
-    let result_wt = load_repository_state(&worktree_path, 0, true);
+    let result_wt = load_repository_state(&worktree_path, 0, true, STATUS_TIMEOUT);
     let CompleteStatus {
         status: status_wt, ..
     } = result_wt.unwrap().expect("Worktree should be valid");
@@ -240,7 +244,7 @@ fn test_git_worktree_handling() {
     let CompleteStatus {
         status: status_wt_dirty,
         ..
-    } = load_repository_state(&worktree_path, 0, true)
+    } = load_repository_state(&worktree_path, 0, true, STATUS_TIMEOUT)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -251,7 +255,7 @@ fn test_git_worktree_handling() {
     let CompleteStatus {
         status: status_main_clean,
         ..
-    } = load_repository_state(repo.path(), 0, true)
+    } = load_repository_state(repo.path(), 0, true, STATUS_TIMEOUT)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -268,9 +272,10 @@ fn test_submodule_status_detection() {
     parent.with_submodule("child-module", &child);
 
     // `with_submodule` commits the submodule.
-    let CompleteStatus { status, .. } = load_repository_state(parent.path(), 0, true)
-        .unwrap()
-        .unwrap();
+    let CompleteStatus { status, .. } =
+        load_repository_state(parent.path(), 0, true, STATUS_TIMEOUT)
+            .unwrap()
+            .unwrap();
     assert_eq!(status.untracked, 0);
     assert_eq!(status.unstaged, 0);
 
@@ -280,7 +285,7 @@ fn test_submodule_status_detection() {
     let CompleteStatus {
         status: status_dirty,
         ..
-    } = load_repository_state(parent.path(), 0, true)
+    } = load_repository_state(parent.path(), 0, true, STATUS_TIMEOUT)
         .unwrap()
         .unwrap();
 

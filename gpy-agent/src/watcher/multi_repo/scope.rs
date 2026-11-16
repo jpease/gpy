@@ -1,11 +1,20 @@
-//! What [`MultiRepoWatcher`] arms: the repository filter and the home/root
-//! exclusion from recursive worktree watching.
+//! What [`MultiRepoWatcher`] arms: the repository a client's directory
+//! resolves to, the repository filter, and the home/root exclusion from
+//! recursive worktree watching.
 
 use super::{MultiRepoWatcher, WatchTarget, WatchedRepo};
 use crate::debug_log;
 use crate::sync_ext::MutexExt;
+use crate::{Error, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Where a client's directory resolves to.
+pub(super) struct RepoTarget {
+    pub(super) git_root: PathBuf,
+    pub(super) git_dir: PathBuf,
+    pub(super) watch_worktree: bool,
+}
 
 /// A repository rooted at `/` or at the user's home directory (a dotfiles
 /// repository) owns every non-repository directory beneath it, so a recursive
@@ -16,11 +25,51 @@ fn is_home_or_filesystem_root(git_root: &Path) -> bool {
             .is_some_and(|home| fs::canonicalize(&home).unwrap_or(home) == git_root)
 }
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "the `scope` helpers live in their own submodule of the watcher"
+)]
 impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// Whether `git_root` gets a recursive worktree watch: `git.watch_worktree`
     /// is in effect and the root is neither the home directory nor `/`.
     pub(super) fn worktree_watch_wanted(&self, git_root: &Path) -> bool {
         self.registry.worktree_enabled() && !is_home_or_filesystem_root(git_root)
+    }
+
+    /// The repository `cwd` belongs to; `None` when outside any repo or the
+    /// repository filter skips it.
+    ///
+    /// # Errors
+    /// Returns an error if the repository's git directory cannot be resolved.
+    pub(super) fn discover_repo(&self, cwd: &Path) -> Result<Option<RepoTarget>> {
+        let Some(git_root) = crate::git::find_worktree_root(cwd) else {
+            debug_log!("watcher", "No git root found for {}", cwd.display());
+            return Ok(None);
+        };
+
+        if !self.registry.repo_allowed(&git_root) {
+            debug_log!(
+                "watcher",
+                "Repository {} is skipped; not watching",
+                git_root.display()
+            );
+            return Ok(None);
+        }
+
+        let git_dir = crate::git::resolve_gitdir(&git_root)
+            .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
+            .ok_or_else(|| {
+                Error::watcher(format!(
+                    "Could not resolve git directory at {}",
+                    git_root.display()
+                ))
+            })?;
+        let watch_worktree = self.worktree_watch_wanted(&git_root);
+        Ok(Some(RepoTarget {
+            git_root,
+            git_dir,
+            watch_worktree,
+        }))
     }
 
     /// Log once per arming that `git_root` gets its gitdir watched only.

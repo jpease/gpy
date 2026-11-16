@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/jpease/gpy/schemas/response.json",
   "title": "GPY Agent IPC Response (format: json)",
-  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus, which is always {\"AgentStatus\":{...}}. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests.",
+  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus, which is always {\"AgentStatus\":{...}}. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests. A request the agent refuses (unparseable, unknown op, missing field, invalid or denylisted path) gets the {\"error\":...} line in every format; a prompt-format request whose handler fails gets an empty line.",
   "oneOf": [
     {
       "type": "object",
@@ -218,6 +218,7 @@
         }
       },
       "title": "Error",
+      "description": "Sent for any failed json request, and in every format for a refused request. For a prompt-format request such a line is a permanent refusal: clients must not display or memoize it.",
       "additionalProperties": false
     },
     {

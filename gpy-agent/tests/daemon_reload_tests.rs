@@ -226,6 +226,89 @@ fn switching_to_unusable_palette_rejects_the_reload() {
     );
 }
 
+/// Theme `audit` with a template the `audit` palette cannot render.
+const UNRENDERABLE_AUDIT: &str = "[ui]\n[segments.directory]\nformat = \"[$path](fg:nosuch)\"\n";
+
+/// A theme edit whose template cannot render is not applied (ADR-0005): the
+/// last good theme keeps rendering until the edit is fixed.
+#[test]
+fn theme_edit_that_cannot_render_keeps_the_last_good_theme() {
+    let daemon = Daemon::start(palette_env("#123456"));
+    let first = daemon.directory();
+    assert!(first.contains(FIRST_FG), "initial render: {first:?}");
+
+    daemon.write("themes/audit.toml", UNRENDERABLE_AUDIT);
+    assert!(
+        daemon.reload(),
+        "a config reload keeps going past a bad theme"
+    );
+    assert_eq!(daemon.directory(), first, "the bad theme must not apply");
+
+    daemon.write(
+        "themes/audit.toml",
+        "[ui]\n[segments.directory]\nformat = \"@@[$path](fg:signal)\"\n",
+    );
+    assert!(daemon.reload(), "the fixed theme reload acks");
+    let fixed = daemon.directory();
+    assert!(
+        fixed.contains("@@") && fixed.contains(FIRST_FG),
+        "the fixed theme applies: {fixed:?}"
+    );
+}
+
+/// A palette edit dropping a color the active theme uses keeps the last good
+/// palette; selecting such a palette rejects the reload.
+#[test]
+fn palette_that_cannot_render_the_theme_is_not_applied() {
+    let daemon = Daemon::start(palette_env("#123456"));
+    let first = daemon.directory();
+    assert!(first.contains(FIRST_FG), "initial render: {first:?}");
+
+    daemon.write("palettes/audit.toml", "[colors]\nother = \"#654321\"\n");
+    assert!(daemon.reload(), "a re-read of the same palette acks");
+    assert_eq!(
+        daemon.directory(),
+        first,
+        "the last good palette keeps rendering"
+    );
+
+    daemon.write("palettes/bare.toml", "[colors]\nother = \"#654321\"\n");
+    daemon.write(
+        "config.toml",
+        "[ui]\ntheme = \"audit\"\npalette = \"bare\"\n",
+    );
+    assert!(
+        !daemon.reload(),
+        "selecting a palette the theme cannot render must reject the reload"
+    );
+    assert_eq!(daemon.directory(), first);
+}
+
+/// A configured theme that failed to load at start is stood in for by
+/// `default` and applied by the first reload after it is fixed.
+#[test]
+fn theme_broken_at_start_applies_once_fixed() {
+    let env = palette_env("#123456");
+    fs::write(env.themes_dir().join("audit.toml"), "[ui\n").expect("break the theme");
+    let daemon = Daemon::start(env);
+    let fallback = daemon.directory();
+    assert!(
+        !fallback.contains(FIRST_FG),
+        "default stands in: {fallback:?}"
+    );
+
+    daemon.write(
+        "themes/audit.toml",
+        "[ui]\n[segments.directory]\nformat = \"[$path](fg:signal)\"\n",
+    );
+    assert!(daemon.reload(), "reload after fixing the theme acks");
+    let fixed = daemon.directory();
+    assert!(
+        fixed.contains(FIRST_FG),
+        "the fixed theme applies: {fixed:?}"
+    );
+}
+
 const USER_OVERRIDE: &str = "[ui]\n[segments.directory]\nformat = \"USER_THEME:$path\"\n";
 
 /// Add then remove a user override for the active theme `name`, applying each

@@ -7,8 +7,11 @@ function __gpy_home --description 'Home directory with the passwd fallback'
     set -l home "$HOME"
     if test -z "$home"
         set -l user (id -un 2>/dev/null)
+        # Only a plausible username reaches eval; a leading - would make ~- expand to $OLDPWD.
         string match -qr '^[A-Za-z0-9_][A-Za-z0-9._-]*$' -- "$user"; or return 1
-        set home ~$user
+        # eval, not `~$user`: Fish 4.2 does not tilde-expand `~$var` (fixed in
+        # 4.3). An unknown user stays literal and the guard below rejects it.
+        eval "set home ~$user"
     end
     string match -q '/*' -- "$home"; or return 1
     printf '%s' "$home"
@@ -74,16 +77,22 @@ function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
     echo "$root/gpy.sock"
 end
 
-# Cache whether nc supports -U; netcat-traditional must read as "no client".
+# Cache whether nc supports -U (netcat-traditional must read as "no client")
+# and -N. netcat-openbsd (the Debian/Ubuntu default) shuts the socket's write
+# side on stdin EOF only with -N; without it the agent never sees EOF, so nc
+# lingers and every request waits out the whole budget. Only that -N (its
+# help line says "Shutdown") counts: Apple's nc has a `-N num_probes` option.
 function __gpy_nc_probe_capabilities
     set -q __gpy_nc_probed; and return
     set -g __gpy_nc_probed 1
     set -g __gpy_nc_supports_unix 0
+    set -g __gpy_nc_half_close
     if command -q nc
         set -l help (nc -h 2>&1)
         if string match -q '*-U*' -- $help
             set -g __gpy_nc_supports_unix 1
         end
+        string match -qr '^\s*-N\s+[Ss]hutdown' -- $help; and set -g __gpy_nc_half_close -N
     end
 end
 
@@ -122,8 +131,11 @@ function __gpy_socat_escape --argument-names path
 end
 
 # Returns 0 on a complete reply, 1 if unreachable, 2 if the request was sent
-# but no complete reply arrived in time; on 2 callers must not resend or fork
-# oneshot for the same segment.
+# but no complete reply arrived in time (an empty reply line included); on 2
+# callers must not resend or fork oneshot for the same segment. 3: the agent
+# refused the request for good (a reply starting `{"error"`, e.g. a denied cwd
+# or an unparseable request); nothing is printed, the reply is kept in
+# __gpy_ipc_error_reply, and callers take their oneshot or local fallback.
 function __gpy_ipc_send --argument-names payload timeout_ms sock
     set -q timeout_ms[1]; or set timeout_ms (__gpy_ipc_timeout_ms)
     test -n "$sock"; or set sock (__gpy_ipc_endpoint)
@@ -147,14 +159,14 @@ function __gpy_ipc_send --argument-names payload timeout_ms sock
         if command -q timeout
             # Floor at 0.05s so short budgets don't round to zero and hang.
             set -l timeout_secs (math "max(0.05, $timeout_ms / 1000)")
-            set reply (echo $payload | timeout --foreground --kill-after=0.5s --signal=TERM $timeout_secs"s" nc -U $sock 2>/dev/null | __gpy_ipc_read_complete_line)
+            set reply (echo $payload | timeout --foreground --kill-after=0.5s --signal=TERM $timeout_secs"s" nc $__gpy_nc_half_close -U $sock 2>/dev/null | __gpy_ipc_read_complete_line)
             set ps $pipestatus
             # 124: `timeout` killed a nc that had connected and was waiting.
             set connected_codes 0 124
         else
             # nc -w takes whole seconds only.
             set -l nc_w_secs (math "max(1, ceil($timeout_ms / 1000))")
-            set reply (echo $payload | nc -U $sock -w $nc_w_secs 2>/dev/null | __gpy_ipc_read_complete_line)
+            set reply (echo $payload | nc $__gpy_nc_half_close -U $sock -w $nc_w_secs 2>/dev/null | __gpy_ipc_read_complete_line)
             set ps $pipestatus
         end
     else
@@ -166,6 +178,10 @@ function __gpy_ipc_send --argument-names payload timeout_ms sock
     # when the client exits 0.
     set client_status $ps[2]
     if test "$ps[3]" = 0; and test -n "$reply"
+        if string match -q '{"error"*' -- "$reply[1]"
+            set -g __gpy_ipc_error_reply "$reply[1]"
+            return 3
+        end
         printf '%s\n' $reply
         return 0
     end
@@ -189,7 +205,7 @@ function __gpy_ipc_send_detached --argument-names payload timeout_ms --descripti
         __gpy_nc_probe_capabilities
         test "$__gpy_nc_supports_unix" -eq 1; or return 1
         set -l nc_w_secs (math "max(1, ceil($timeout_ms / 1000))")
-        printf '%s\n' $payload | command nc -U $sock -w $nc_w_secs >/dev/null 2>&1 &
+        printf '%s\n' $payload | command nc $__gpy_nc_half_close -U $sock -w $nc_w_secs >/dev/null 2>&1 &
     else
         return 1
     end
@@ -198,26 +214,20 @@ function __gpy_ipc_send_detached --argument-names payload timeout_ms --descripti
     return 0
 end
 
+# Other C0 controls and DEL as \u00XX, the rest by their short escapes: one
+# raw control byte makes the whole request invalid JSON.
 function __gpy_json_escape --argument-names str --description 'Escape a string for safe JSON inclusion'
     set -l escaped (string replace -a -- '\\' '\\\\' "$str" | string collect)
     set escaped (string replace -a -- '"' '\\"' "$escaped" | string collect)
     set escaped (string replace -a -- \n '\\n' "$escaped" | string collect)
     set escaped (string replace -a -- \r '\\r' "$escaped" | string collect)
     set escaped (string replace -a -- \t '\\t' "$escaped" | string collect)
+    if string match -qr '[\x01-\x1f\x7f]' -- "$escaped"
+        for hex in 01 02 03 04 05 06 07 08 0b 0c 0e 0f 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 7f
+            set escaped (string replace -a -- (printf "\\x$hex") "\\u00$hex" "$escaped" | string collect)
+        end
+    end
     printf '%s' "$escaped"
-end
-
-# Fork-free JSON field extraction from a flat blob.
-function __gpy_json_extract_string --argument-names field json --description 'Fork-free "field":"value" extraction from a flat JSON blob'
-    set -l matches (string match -r '"'"$field"'":"([^"]*)"' -- $json)
-    set -q matches[2]; or return 1
-    printf '%s' $matches[2]
-end
-
-function __gpy_json_extract_int --argument-names field json --description 'Fork-free "field":123 extraction from a flat JSON blob'
-    set -l matches (string match -r '"'"$field"'":([0-9]+)' -- $json)
-    set -q matches[2]; or return 1
-    printf '%s' $matches[2]
 end
 
 # Shared is_last/is_first/prev_bg JSON tail. Absent flags are omitted; the
@@ -301,9 +311,10 @@ function __gpy_request_duration --argument-names duration_ms is_last prev_bg is_
     set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
     set -l send_status $status
 
-    # Oneshot fallback when no daemon is running. Not when the daemon is
-    # running but late (send status 2): it is computing this very segment
-    #, so the segment is omitted this render.
+    # Oneshot fallback when no daemon is running or it refused the request
+    # (send status 3). Not when the daemon is running but late (send status
+    # 2): it is computing this very segment, so the segment is omitted this
+    # render.
     # NOTE: oneshot fallback does not pass prev_bg — the CLI subcommand has no
     # --prev-bg flag, so the powerline opening chevron color is skipped on
     # first-shell startup until the daemon connects. is_first IS passed
@@ -350,9 +361,9 @@ function __gpy_request_character --argument-names success is_last prev_bg --desc
     set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
     set -l send_status $status
 
-    # Oneshot fallback when no daemon is running; a late daemon (status 2) is
-    # computing this very segment, so it is omitted rather than recomputed.
-    # prev_bg is not passed (see __gpy_request_duration).
+    # Oneshot fallback when no daemon is running or it refused the request; a
+    # late daemon (status 2) is computing this very segment, so it is omitted
+    # rather than recomputed. prev_bg is not passed (see __gpy_request_duration).
     if test -z "$result"; and test $send_status -ne 2; and __gpy_resolve_agent_binary >/dev/null; and __gpy_oneshot_claim
         set -l agent_binary (__gpy_resolve_agent_binary)
         # Convert boolean back to exit-code integer for the CLI flag.
@@ -388,8 +399,8 @@ end
 
 # Exit-status pill request ("exit_status": the bare "status" op is the agent health
 # check). success is 1 when the last command exited 0. No oneshot fallback:
-# segment_status_render draws the pill locally instead. An error reply (an older
-# agent without the op) counts as no reply.
+# segment_status_render draws the pill locally instead, also when the agent
+# refuses (an older agent without the op).
 function __gpy_request_exit_status --argument-names success is_last is_first prev_bg --description 'Send status render request to agent'
     set -l success_val false
     test "$success" = 1; and set success_val true
@@ -398,7 +409,7 @@ function __gpy_request_exit_status --argument-names success is_last is_first pre
 
     set -l result (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
 
-    if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
+    if test -z "$result"
         return 1
     end
     printf '%s\n' $result
@@ -572,7 +583,7 @@ function __gpy_read_instant_cache --argument-names suffix cwd prev_bg --descript
 
     set -l now $__gpy_prompt_now
     if test -z "$now"
-        set now (date +%s 2>/dev/null)
+        set now (__gpy_now_seconds)
     end
     set -l mtime (__gpy_file_mtime "$cache_file")
 
@@ -611,20 +622,16 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
         case ping
             set payload '{"op":"ping"}'
         case register
-            set -l pid %self
-            set -l register_cwd (pwd)
-            set -l escaped_cwd (__gpy_json_escape "$register_cwd")
-            set payload (string join '' '{"op":"register","pid":' $pid ',"cwd":"' $escaped_cwd '"}' )
+            set -l escaped_cwd (__gpy_json_escape "$PWD")
+            set payload (string join '' '{"op":"register","pid":' $fish_pid ',"cwd":"' $escaped_cwd '"}' )
         case unregister
-            set -l pid %self
-            set payload (string join '' '{"op":"unregister","pid":' $pid '}' )
+            set payload (string join '' '{"op":"unregister","pid":' $fish_pid '}' )
         case git lang directory
             set payload (__gpy_build_data_payload $op $cwd ansi $is_last $prev_bg $is_first)
         case workspace
             set -q cwd[1]; or set cwd $PWD
             set -l escaped_cwd (__gpy_json_escape "$cwd")
-            set -l pid %self
-            set payload (string join '' '{"op":"workspace","pid":' $pid ',"cwd":"' $escaped_cwd '"}' )
+            set payload (string join '' '{"op":"workspace","pid":' $fish_pid ',"cwd":"' $escaped_cwd '"}' )
         case '*'
             return 1
     end
@@ -636,6 +643,7 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
     set -l send_status $status
 
     # Status 2: the daemon is computing this segment; omit it rather than fork.
+    # Status 3 (refused) and 1 (unreachable) take the oneshot fallback.
     # Oneshot has no --prev-bg, so the opening chevron color is skipped.
     if test -z "$result"; and test $send_status -ne 2; and __gpy_resolve_agent_binary >/dev/null
         switch $op
@@ -644,7 +652,9 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
         end
     end
 
+    # Nonzero, the send status where it has one (3 tells a refusal apart).
     if test -z "$result"
+        test $send_status -ne 0; and return $send_status
         return 1
     end
     printf '%s\n' $result
@@ -698,7 +708,6 @@ function __gpy_refresh_registration_after_restart --description 'Forget this she
     # Forget the stale registration; on failure the agent's re-nudge retries.
     # The agent may have restarted with another config: drop its renders too.
     set -e __gpy_registered
-    set -e __gpy_registered_pid
     set -e __gpy_last_workspace
     __gpy_clear_render_memos
     __gpy_log_debug ipc "Re-registration requested by agent for PID $fish_pid"
@@ -723,6 +732,8 @@ function __gpy_reload_if_theme_export_changed --description 'Re-apply the theme 
     set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
 end
 
+# Needs only the socket, not the gpy-agent binary: with no socket file the
+# request fails without a fork, so prompts retry until the agent answers.
 function __gpy_register_with_agent --description 'Register this Fish process with the GPY agent'
     if set -q __gpy_registered
         return 0
@@ -733,23 +744,19 @@ function __gpy_register_with_agent --description 'Register this Fish process wit
         return 1
     end
 
-    if not __gpy_agent_available
-        __gpy_log_debug ipc "Registration skipped: agent not available"
-        return 1
-    end
-
     set -l response (__gpy_request register)
-    if test $status -ne 0
-        __gpy_log_debug ipc "Registration request failed with status $status"
+    set -l request_status $status
+    if test $request_status -ne 0
+        __gpy_log_debug ipc "Registration request failed with status $request_status"
         return 1
     end
 
     if test -n "$response"; and string match -q '*"status":"ok"*' -- $response
         set -g __gpy_registered 1
-        set -g __gpy_registered_pid %self
-        set -g __gpy_last_workspace (pwd)
+        set -g __gpy_last_workspace $PWD
+        set -e __gpy_rejected_workspace
         __gpy_track_shell_for_agent_recovery
-        __gpy_log_debug ipc "Registered Fish PID %self with agent"
+        __gpy_log_debug ipc "Registered Fish PID $fish_pid with agent"
         # Exports rewritten before tracking are caught here; later ones ring .reload.
         __gpy_reload_if_theme_export_changed
         return 0
@@ -766,31 +773,35 @@ function __gpy_unregister_from_agent --description 'Remove this Fish process fro
 
     __gpy_request unregister >/dev/null 2>&1
     set -e __gpy_registered
-    set -e __gpy_registered_pid
     set -e __gpy_last_workspace
     __gpy_untrack_shell_for_agent_recovery
-    __gpy_log_debug ipc "Unregistered Fish PID %self from agent"
+    __gpy_log_debug ipc "Unregistered Fish PID $fish_pid from agent"
 end
 
+# Called once per prompt: sends only when $PWD changed since the last sync. A
+# directory the agent rejected (e.g. /etc) is not re-sent until the shell
+# leaves it; a lost registration re-registers.
 function __gpy_sync_workspace --description 'Report current workspace to the agent'
-    if not set -q __gpy_registered
-        return 0
-    end
+    set -q __gpy_registered; or return 0
+    test "$PWD" = "$__gpy_rejected_workspace"; and return 0
+    set -e __gpy_rejected_workspace
+    test "$PWD" = "$__gpy_last_workspace"; and return 0
 
-    set -l cwd (pwd)
-
-    # Always sync: detects an agent restart that lost our registration.
-    set -l response (__gpy_request workspace $cwd)
-
-    # Only a lost registration warrants re-registering.
-    if string match -q '*not registered*' -- $response
-        __gpy_log_debug ipc "Workspace sync failed (not registered), re-registering PID %self"
-        set -e __gpy_registered
-        set -e __gpy_registered_pid
-        set -e __gpy_last_workspace
-        __gpy_register_with_agent
-    else if test -n "$response"; and not string match -q '*"error"*' -- $response
-        set -g __gpy_last_workspace $cwd
+    set -l cwd $PWD
+    __gpy_request workspace $cwd >/dev/null
+    switch $status
+        case 0
+            set -g __gpy_last_workspace $cwd
+        case 3
+            # Only a lost registration warrants re-registering.
+            if string match -q '*not registered*' -- "$__gpy_ipc_error_reply"
+                __gpy_log_debug ipc "Workspace sync failed (not registered), re-registering PID $fish_pid"
+                set -e __gpy_registered
+                set -e __gpy_last_workspace
+                __gpy_register_with_agent
+            else
+                set -g __gpy_rejected_workspace $cwd
+            end
     end
 end
 
@@ -818,6 +829,10 @@ function __gpy_clear_render_memos --description 'Forget memoized agent renders'
     set -e __gpy_char_cache_val
     set -e __gpy_dir_cache_key
     set -e __gpy_dir_cache_val
+    set -e __gpy_clock_cache_key
+    set -e __gpy_clock_cache_val
+    set -e __gpy_status_cache_key
+    set -e __gpy_status_cache_val
 end
 
 function __gpy_apply_agent_reload --description 'Reload theme/config after the agent .reload doorbell'

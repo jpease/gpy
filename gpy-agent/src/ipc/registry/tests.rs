@@ -485,3 +485,40 @@ fn register_canonicalizes_symlinked_cwd() {
 
     let _ = fs::remove_dir_all(&base);
 }
+
+/// A cleanly unregistered shell leaves the shared `System` once it exits.
+#[test]
+#[cfg(unix)]
+fn prune_evicts_exited_unregistered_processes_from_sysinfo() {
+    let directory = ClientDirectory::new();
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn stand-in shell");
+    let pid = child.id();
+    let sys_pid = sysinfo::Pid::from_u32(pid);
+
+    directory.register(pid, None);
+    assert!(
+        directory
+            .sysinfo
+            .lock_or_recover()
+            .process(sys_pid)
+            .is_some(),
+        "registration records the process"
+    );
+    directory.unregister(pid);
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let _ = directory.prune_dead_clients();
+
+    assert!(
+        directory
+            .sysinfo
+            .lock_or_recover()
+            .process(sys_pid)
+            .is_none(),
+        "an exited, unregistered process must not stay in the shared System"
+    );
+}

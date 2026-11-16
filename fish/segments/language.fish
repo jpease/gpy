@@ -56,7 +56,8 @@ function segment_language_render --argument-names is_last is_first
 
     printf '%s' "$rendered_output"
 
-    set -g __gpy_last_segment_bg $__color_language_bg
+    # Only a printed pill moves the chevron colour on.
+    test -n "$rendered_output"; and set -g __gpy_last_segment_bg $__color_language_bg
 
     # Variant fallback: background refresh only, so language never blocks; throttled per prev_bg token.
     if __gpy_cache_status_variant $cache_status

@@ -86,7 +86,17 @@ const fn check_depth(depth: usize) -> Result<()> {
     Ok(())
 }
 
+/// Whether `ch` may follow a backslash (one rule for text and style specs).
+const fn is_escapable(ch: char) -> bool {
+    matches!(ch, '$' | '[' | ']' | '(' | ')' | '\\')
+}
+
 /// Parse nodes until `terminator` (or end of input when `None`).
+///
+/// A `)` or `]` that is not the active terminator is accepted as literal text
+/// (unlike Starship, which rejects it): themes may carry them, and a hostile
+/// control sequence such as `ESC ] 0;…` must degrade to sanitized text, not an
+/// empty segment.
 ///
 /// # Errors
 /// Returns [`TemplateError`] on unbalanced delimiters, invalid escapes, or excess nesting.
@@ -107,13 +117,11 @@ fn parse_nodes(
             '\\' => {
                 let escaped = chars
                     .get(pos.saturating_add(1_usize))
+                    .copied()
+                    .filter(|escaped| is_escapable(*escaped))
                     .ok_or(TemplateError::BadEscape { position: *pos })?;
-                if matches!(escaped, '$' | '[' | ']' | '(' | ')' | '\\') {
-                    literal.push(*escaped);
-                    *pos = pos.saturating_add(2_usize);
-                } else {
-                    return Err(TemplateError::BadEscape { position: *pos });
-                }
+                literal.push(escaped);
+                *pos = pos.saturating_add(2_usize);
             }
             '$' => {
                 flush_literal(&mut nodes, &mut literal);
@@ -131,12 +139,13 @@ fn parse_nodes(
             '(' => {
                 flush_literal(&mut nodes, &mut literal);
                 check_depth(depth)?;
+                let open = *pos;
                 *pos = pos.saturating_add(1_usize); // consume '('
                 let children = parse_nodes(chars, pos, Some(')'), depth.saturating_add(1_usize))?;
                 if chars.get(*pos) != Some(&')') {
                     return Err(TemplateError::Unbalanced {
                         delimiter: '(',
-                        position: *pos,
+                        position: open,
                     });
                 }
                 *pos = pos.saturating_add(1_usize); // consume ')'
@@ -157,12 +166,13 @@ fn parse_nodes(
 /// # Errors
 /// Returns [`TemplateError`] if `]` is missing or the style spec is malformed.
 fn parse_styled_group(chars: &[char], pos: &mut usize, depth: usize) -> Result<Node> {
+    let open = *pos;
     *pos = pos.saturating_add(1_usize); // consume '['
     let children = parse_nodes(chars, pos, Some(']'), depth)?;
     if chars.get(*pos) != Some(&']') {
         return Err(TemplateError::Unbalanced {
             delimiter: '[',
-            position: *pos,
+            position: open,
         });
     }
     *pos = pos.saturating_add(1_usize); // consume ']'
@@ -182,9 +192,11 @@ fn parse_styled_group(chars: &[char], pos: &mut usize, depth: usize) -> Result<N
 /// Read the raw style text between style parens. `*pos` points just past `(`.
 ///
 /// # Errors
-/// Returns [`TemplateError::Unbalanced`] if the closing `)` is not found.
+/// Returns [`TemplateError::Unbalanced`] (at the opening `(`) if the closing
+/// `)` is not found, and [`TemplateError::BadEscape`] for an escape the text
+/// grammar would also reject.
 fn parse_style_spec(chars: &[char], pos: &mut usize) -> Result<String> {
-    let open = *pos;
+    let open = pos.saturating_sub(1_usize);
     let mut spec = String::new();
     while let Some(&ch) = chars.get(*pos) {
         match ch {
@@ -195,8 +207,10 @@ fn parse_style_spec(chars: &[char], pos: &mut usize) -> Result<String> {
             '\\' => {
                 let escaped = chars
                     .get(pos.saturating_add(1_usize))
+                    .copied()
+                    .filter(|escaped| is_escapable(*escaped))
                     .ok_or(TemplateError::BadEscape { position: *pos })?;
-                spec.push(*escaped);
+                spec.push(escaped);
                 *pos = pos.saturating_add(2_usize);
             }
             _ => {
@@ -225,6 +239,7 @@ fn parse_variable(chars: &[char], pos: &mut usize) -> Result<Node> {
     *pos = pos.saturating_add(1_usize); // consume '$'
     let mut name = String::new();
     if chars.get(*pos) == Some(&'{') {
+        let open = *pos;
         *pos = pos.saturating_add(1_usize);
         while let Some(&ch) = chars.get(*pos) {
             if ch == '}' {
@@ -236,7 +251,7 @@ fn parse_variable(chars: &[char], pos: &mut usize) -> Result<Node> {
         }
         return Err(TemplateError::Unbalanced {
             delimiter: '{',
-            position: *pos,
+            position: open,
         });
     }
     while let Some(&ch) = chars.get(*pos) {
@@ -330,7 +345,7 @@ mod tests {
             err,
             TemplateError::Unbalanced {
                 delimiter: '{',
-                position: 10,
+                position: 1,
             }
         );
     }
@@ -387,7 +402,7 @@ mod tests {
             err,
             TemplateError::Unbalanced {
                 delimiter: '[',
-                position: 5
+                position: 0
             }
         );
     }
@@ -438,7 +453,7 @@ mod tests {
             err,
             TemplateError::Unbalanced {
                 delimiter: '(',
-                position: 4_usize,
+                position: 3_usize,
             }
         );
     }
@@ -451,9 +466,39 @@ mod tests {
             err,
             TemplateError::Unbalanced {
                 delimiter: '(',
-                position: 4_usize,
+                position: 0_usize,
             }
         );
+    }
+
+    #[test]
+    fn unclosed_opener_is_reported_where_it_opens() {
+        let err = parse("ok [a](b) and [unclosed").unwrap_err();
+        assert_eq!(
+            err,
+            TemplateError::Unbalanced {
+                delimiter: '[',
+                position: 14_usize,
+            }
+        );
+    }
+
+    #[test]
+    fn stray_closers_are_literal_text() {
+        assert_eq!(
+            parse("a) b").unwrap(),
+            vec![Node::Literal("a) b".to_owned())]
+        );
+        assert_eq!(
+            parse("x] y").unwrap(),
+            vec![Node::Literal("x] y".to_owned())]
+        );
+    }
+
+    #[test]
+    fn style_spec_rejects_unknown_escape() {
+        let err = parse(r"[x](a\b)").unwrap_err();
+        assert_eq!(err, TemplateError::BadEscape { position: 5_usize });
     }
 
     #[test]

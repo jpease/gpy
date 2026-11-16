@@ -26,8 +26,10 @@ __gpy_segment_status() {
         fi
     fi
 
-    # No format (or no reply): draw locally, with the one leading space every pill has.
+    # No format (or no reply): draw locally, with the one leading space every
+    # pill has. Its status keeps the render loop from memoizing it.
     icon=" $icon"
     __gpy_prompt_escape "$icon" icon
     __gpy_section_standalone "$bg" "$fg" "$icon" "$is_last" "$is_first"
+    return "${__gpy_seg_status_local:-4}"
 }

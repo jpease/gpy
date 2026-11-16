@@ -5,9 +5,13 @@ use super::{
     git_event_lacks_subscriber, git_segment_bg, handle_file_event, refresh, refresh_language_for,
 };
 use crate::config::Config;
+use crate::config::validation::templates::validate_segment_templates;
 use crate::debug_log;
+use crate::palette::PaletteCache;
 use crate::sync_ext::MutexExt;
-use crate::theme::ThemeManager;
+use crate::template::Palette;
+use crate::theme::manager::ThemeCheckFn;
+use crate::theme::{LoadedTheme, ThemeConfig, ThemeManager};
 use crate::watcher::{DebouncedEvent, WatcherConfig, multi_repo::MultiRepoWatcher};
 use crate::{Error, Result};
 use std::path::Path;
@@ -26,6 +30,9 @@ pub(in crate::agent) fn create_watcher(
     MultiRepoWatcher::builder()
         .registry(Arc::clone(&ctx.watch_registry))
         .config(watcher_config)
+        // Keep a repo armed briefly after its last client leaves, so a shell
+        // switching between repos does not re-arm the whole tree each time.
+        .teardown_grace(crate::watcher::multi_repo::DEFAULT_TEARDOWN_GRACE)
         .callback(Box::new(move |event: DebouncedEvent| {
             if git_event_lacks_subscriber(&ctx_for_callback, &event) {
                 debug_log!(
@@ -42,17 +49,39 @@ pub(in crate::agent) fn create_watcher(
         .map(Arc::new)
 }
 
+/// The check a theme must pass before a reload or switch applies it (ADR-0005:
+/// validate before applying): every segment template renders against
+/// `palette`. A theme is refused only for failures the `active` theme it
+/// replaces does not already have with that palette, so a reload never
+/// makes rendering worse but a theme already broken there can still be
+/// edited. A failure names the file and line that set the template.
+///
+/// # Errors
+/// Returns the first template that fails to render.
+fn check_theme_templates(
+    loaded: &LoadedTheme,
+    palette: &Palette,
+    active: &ThemeConfig,
+) -> Result<()> {
+    match validate_segment_templates(&loaded.theme, palette) {
+        Ok(()) => Ok(()),
+        Err(_) if validate_segment_templates(active, palette).is_err() => Ok(()),
+        Err(error) => Err(loaded.template_error(error)),
+    }
+}
+
 /// Switch to the config's theme when its name changed; returns whether it did.
 ///
 /// Runs outside [`AgentContext::announce_gate`]: `switch_theme` joins the theme
 /// poll thread, whose reloads take that gate.
 ///
 /// # Errors
-/// Returns an error when a newly selected theme cannot be loaded.
+/// Returns an error when a newly selected theme cannot be loaded or fails `check`.
 fn switch_renamed_theme(
     theme_manager: &ThemeManager,
     old_config: &Config,
     new_config: &Config,
+    check: &ThemeCheckFn<'_>,
 ) -> Result<bool> {
     if old_config.ui.theme == new_config.ui.theme {
         return Ok(false);
@@ -65,7 +94,7 @@ fn switch_renamed_theme(
         new_config.ui.theme
     );
 
-    theme_manager.switch_theme(new_config.ui.theme.as_str())?;
+    theme_manager.switch_theme_with(new_config.ui.theme.as_str(), check)?;
     debug_log!(
         "config",
         "Successfully switched to theme: {}",
@@ -76,11 +105,17 @@ fn switch_renamed_theme(
 
 /// Reload the active name from wherever it now resolves, so a user override
 /// added or removed, or an edit the theme watcher has not applied yet, takes
-/// effect. Returns whether the theme changed; an edit the watcher already
-/// applied reports `false`. A failed reload keeps the current theme, as the
-/// theme watcher does, rather than rejecting unrelated config changes.
-fn reload_active_theme(theme_manager: &ThemeManager, config: &Config) -> bool {
-    theme_manager.reload().unwrap_or_else(|error| {
+/// effect, and a configured theme a fallback stands in for is retried.
+/// Returns whether the theme changed; an edit the watcher already applied
+/// reports `false`. A failed reload, or one whose theme fails `check`, keeps
+/// the current theme, as the theme watcher does, rather than rejecting
+/// unrelated config changes.
+fn reload_active_theme(
+    theme_manager: &ThemeManager,
+    config: &Config,
+    check: &ThemeCheckFn<'_>,
+) -> bool {
+    theme_manager.reload_with(check).unwrap_or_else(|error| {
         crate::debug::warn_fallback(
             &format!("Theme '{}' reload", config.ui.theme),
             "keeping the current theme",
@@ -150,10 +185,7 @@ fn sync_watcher_state(
 ///
 /// # Errors
 /// Returns an error when a newly selected palette cannot be loaded.
-fn reload_palette(
-    old_config: &Config,
-    new_config: &Config,
-) -> Result<Option<crate::template::Palette>> {
+fn reload_palette(old_config: &Config, new_config: &Config) -> Result<Option<Palette>> {
     let name = &new_config.ui.palette;
     match crate::palette::load_active_palette(new_config) {
         Ok(palette) => Ok(Some(palette)),
@@ -171,11 +203,50 @@ fn reload_palette(
     }
 }
 
+/// `candidate`, unless the active theme, kept by this reload, renders with
+/// the current palette but not with it: a newly selected palette is then
+/// rejected, and a re-read of the same palette keeps the last good one
+/// (`None`), as a failed load does.
+///
+/// # Errors
+/// Returns an error when a newly selected palette cannot render the theme.
+fn palette_rendering_active_theme(
+    ctx: &AgentContext,
+    old_config: &Config,
+    new_config: &Config,
+    candidate: Option<Palette>,
+) -> Result<Option<Palette>> {
+    let Some(palette) = candidate else {
+        return Ok(None);
+    };
+    let theme = ctx.theme_manager.get();
+    let Err(error) = validate_segment_templates(&theme, &palette) else {
+        return Ok(Some(palette));
+    };
+    if validate_segment_templates(&theme, &ctx.palette_cache.get()).is_err() {
+        // Already broken with the current palette: this one is no worse.
+        return Ok(Some(palette));
+    }
+    let name = &new_config.ui.palette;
+    if old_config.ui.palette != *name {
+        return Err(Error::config(format!(
+            "palette '{name}' cannot render theme '{}': {error}",
+            new_config.ui.theme
+        )));
+    }
+    crate::debug::warn_fallback(
+        &format!("Palette '{name}' reload"),
+        "keeping the last good palette",
+        &Error::from(error),
+    );
+    Ok(None)
+}
+
 /// Apply non-filesystem runtime side effects for a validated config reload.
 ///
 /// # Errors
 /// Returns an error when a runtime subsystem rejects the config (e.g. unknown theme
-/// or palette); nothing is applied in that case.
+/// or palette, or a theme the palette cannot render); nothing is applied in that case.
 pub(in crate::agent) fn handle_config_reload(
     ctx: &AgentContext,
     watcher_slot: &SharedWatcherSlot,
@@ -184,16 +255,29 @@ pub(in crate::agent) fn handle_config_reload(
     old_config: &Config,
     new_config: &Config,
 ) -> Result<()> {
-    // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
-    let palette = reload_palette(old_config, new_config)?;
-    let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config)?;
-    let palette_changed = palette.is_some_and(|loaded| ctx.palette_cache.replace(loaded));
+    // Loaded before the theme switch so a rejected palette leaves nothing
+    // half-applied. Every theme this reload applies is checked against it.
+    let candidate = reload_palette(old_config, new_config)?;
+    let render_palette = candidate.clone().unwrap_or_else(|| ctx.palette_cache.get());
+    let check = |loaded: &LoadedTheme, active: &ThemeConfig| {
+        check_theme_templates(loaded, &render_palette, active)
+    };
+    let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config, &check)?;
 
-    let (theme_changed, export_changed) = {
+    let (theme_changed, palette_changed, export_changed) = {
         let _announcing = ctx.announce_gate.lock_or_recover();
-        let theme_changed = theme_switched || reload_active_theme(&ctx.theme_manager, new_config);
+        let theme_changed =
+            theme_switched || reload_active_theme(&ctx.theme_manager, new_config, &check);
+        // A theme this reload applied renders with the candidate, so only an
+        // unchanged theme can reject it here, with nothing applied yet.
+        let palette = palette_rendering_active_theme(ctx, old_config, new_config, candidate)?;
+        let palette_changed = palette.is_some_and(|loaded| ctx.palette_cache.replace(loaded));
         // Theme export must be on disk before the reload doorbell.
-        (theme_changed, write_theme_export(ctx, new_config))
+        (
+            theme_changed,
+            palette_changed,
+            write_theme_export(ctx, new_config),
+        )
     };
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
@@ -253,9 +337,50 @@ pub(in crate::agent) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn(
         return;
     }
     let config = ctx.config_manager.get();
+    adopt_disk_palette(ctx, &config);
     write_theme_export(ctx, &config);
     regenerate_instant_caches_for_theme_change(ctx, &config);
     ctx.registry.notify_reload();
+}
+
+/// The check a theme watcher or poll reload runs (see
+/// [`check_theme_templates`]): the templates render with the active palette,
+/// or with the palette the config selects as it is on disk now. The latter
+/// covers a palette edit a config reload held back because the old theme
+/// could not render it; [`handle_theme_reload`] then applies that palette.
+///
+/// # Errors
+/// Returns the active palette's first failing template.
+pub(in crate::agent) fn check_reloaded_theme(
+    palette_cache: &PaletteCache,
+    config: &Config,
+    loaded: &LoadedTheme,
+    active: &ThemeConfig,
+) -> Result<()> {
+    check_theme_templates(loaded, &palette_cache.get(), active).or_else(|error| {
+        let renders_with_disk_palette = crate::palette::load_active_palette(config)
+            .is_ok_and(|on_disk| validate_segment_templates(&loaded.theme, &on_disk).is_ok());
+        if renders_with_disk_palette {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    })
+}
+
+/// After a theme reload, apply the palette the config selects as it is on
+/// disk when the active palette cannot render the new theme but that one can
+/// (see [`check_reloaded_theme`]).
+fn adopt_disk_palette(ctx: &AgentContext, config: &Config) {
+    let theme = ctx.theme_manager.get();
+    if validate_segment_templates(&theme, &ctx.palette_cache.get()).is_ok() {
+        return;
+    }
+    if let Ok(on_disk) = crate::palette::load_active_palette(config)
+        && validate_segment_templates(&theme, &on_disk).is_ok()
+    {
+        let _changed = ctx.palette_cache.replace(on_disk);
+    }
 }
 
 /// Re-render instant-prompt caches for every registered repo from cached data

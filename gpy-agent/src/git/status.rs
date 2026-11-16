@@ -56,20 +56,18 @@ impl GitBackend for NativeGitBackend {
     }
 }
 
-/// Get complete git status for a directory using the native backend.
+/// Get complete git status for a directory using the native backend, every
+/// git command finishing within `timeout` (`git.timeout_seconds`).
 ///
 /// # Errors
 ///
-/// Returns an error if the path cannot be accessed or if git operations fail.
+/// Returns an error if the path cannot be accessed, git operations fail, or
+/// `timeout` passes.
 pub fn load_repository_state<P: AsRef<Path>>(
     path: P,
     max_ahead_behind: usize,
     stash_enabled: bool,
+    timeout: Duration,
 ) -> Result<Option<CompleteStatus>> {
-    NativeGitBackend::get_complete_status(
-        path.as_ref(),
-        max_ahead_behind,
-        stash_enabled,
-        Duration::from_secs(crate::config::types::GitTimeout::DEFAULT),
-    )
+    NativeGitBackend::get_complete_status(path.as_ref(), max_ahead_behind, stash_enabled, timeout)
 }

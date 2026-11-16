@@ -16,6 +16,9 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
+/// Bound on each status load.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Read `name` from the environment, falling back to `default` when unset or unparsable.
 fn env_or<T: FromStr>(name: &str, default: T) -> T {
     std::env::var(name)
@@ -52,7 +55,7 @@ fn bench_perf_canary(c: &mut Criterion) {
     ipc::bench_ipc_roundtrip(c, "canary_ipc_roundtrip", &rt, &socket_path);
     c.bench_function("canary_git_status_cold", |b| {
         b.iter(|| {
-            let result = load_repository_state(repo_path, 0, true);
+            let result = load_repository_state(repo_path, 0, true, STATUS_TIMEOUT);
             black_box(result).expect("load repository state");
         });
     });

@@ -170,6 +170,9 @@ pub fn render(template: &str, ctx: &EvalContext<'_>) -> Result<Vec<Span>> {
 
 /// Recursively evaluate `nodes` into styled spans.
 ///
+/// Returns whether any variable in the subtree resolved to a non-empty value,
+/// which is what keeps a `(…)` group visible.
+///
 /// # Errors
 /// Returns an error if style resolution fails.
 fn eval_nodes(
@@ -177,7 +180,8 @@ fn eval_nodes(
     inherited: &Style,
     ctx: &EvalContext<'_>,
     out: &mut Vec<Span>,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut any_nonempty = false;
     // First pass buffers each child so a whitespace-only literal can collapse
     // when both neighboring groups are empty.
     let mut per_node: Vec<Vec<Span>> = Vec::with_capacity(nodes.len());
@@ -194,7 +198,10 @@ fn eval_nodes(
                     } else {
                         SpanKind::Text
                     };
-                    push_text(&mut buf, &sanitize_control_chars(&value), inherited, kind);
+                    // Control-char-only values strip to empty, so they count as absent.
+                    let text = sanitize_control_chars(&value);
+                    any_nonempty |= !text.is_empty();
+                    push_text(&mut buf, &text, inherited, kind);
                 }
             }
             Node::Styled {
@@ -204,11 +211,15 @@ fn eval_nodes(
                 let resolved_spec = substitute_vars(style_spec, ctx);
                 let parsed = parse_style(&resolved_spec)?;
                 let style = ctx.resolve_style(&parsed)?;
-                eval_nodes(children, &style, ctx, &mut buf)?;
+                any_nonempty |= eval_nodes(children, &style, ctx, &mut buf)?;
             }
             Node::Conditional(children) => {
-                if any_var_nonempty(children, ctx) {
-                    eval_nodes(children, inherited, ctx, &mut buf)?;
+                // One walk: keep the output only when a variable in it resolved
+                // non-empty. A hidden group's errors stay hidden with it.
+                match eval_nodes(children, inherited, ctx, &mut buf) {
+                    Ok(true) => any_nonempty = true,
+                    Err(error) if any_var_nonempty(children, ctx) => return Err(error),
+                    Ok(false) | Err(_) => buf.clear(),
                 }
             }
         }
@@ -238,7 +249,7 @@ fn eval_nodes(
         }
         out.extend(buf);
     }
-    Ok(())
+    Ok(any_nonempty)
 }
 
 /// Strip every C0/C1 control character from a data-derived variable value.
@@ -707,5 +718,35 @@ mod tests {
         assert_eq!(spans.len(), 1_usize);
         assert_eq!(spans.first().unwrap().text, "hi");
         assert_eq!(spans.first().unwrap().style, Style::default());
+    }
+
+    #[test]
+    fn palette_key_named_default_does_not_shadow_the_terminal_default() {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "default".to_owned(),
+            Color::Rgb {
+                r: 16,
+                g: 16,
+                b: 16,
+            },
+        );
+        let resolver = MapResolver::from_pairs([("x", "hi")]);
+        let ctx = EvalContext::new(&resolver).with_palette(crate::template::Palette::new(map));
+        let spans = render("[$x](bg:default)", &ctx).unwrap();
+        assert_eq!(
+            spans.first().unwrap().style.bg,
+            Some(Color::Named("default".to_owned()))
+        );
+    }
+
+    #[test]
+    fn hidden_group_with_a_bad_style_stays_hidden_but_a_shown_one_errors() {
+        let resolver = MapResolver::from_pairs([("a", ""), ("b", "x")]);
+        let ctx = EvalContext::new(&resolver);
+        // No variable resolves non-empty: the group (and its bad color) is dropped.
+        assert_eq!(render("([$a](fg:nonsuch))", &ctx).unwrap().len(), 0_usize);
+        // One does: the bad color fails the segment, as before.
+        assert!(render("([$a](fg:nonsuch)[$b](red))", &ctx).is_err());
     }
 }

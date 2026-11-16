@@ -45,16 +45,30 @@ function segment_clock_render --argument-names is_last is_first
         set now (string trim (date "$format"))
     end
 
-    # Agent response carries the bare spec where the time goes.
+    # Agent response carries the bare spec where the time goes. It depends
+    # only on the theme, the spec, the position and prev_bg, so it is memoized
+    # on those like the directory and character renders (cleared by
+    # __gpy_clear_render_memos); an empty reply is never memoized.
     if test -n "$__clock_format"; and functions -q __gpy_request_clock
         # One-token local: an empty-list binding would shift prev_bg.
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true
         set -l is_first_value ""
         test "$is_first" = true; and set is_first_value true
-        set -l result (__gpy_request_clock $is_last_value $is_first_value "$__gpy_last_segment_bg" | string collect)
+        set -l spec (__gpy_clock_date_format)
+        set -l clock_key "$__gpy_theme_name:$spec:$is_last_value:$is_first_value:$__gpy_last_segment_bg"
+        set -l result
+        if test -n "$__gpy_clock_cache_key"; and test "$clock_key" = "$__gpy_clock_cache_key"
+            set result $__gpy_clock_cache_val
+        else
+            set result (__gpy_request_clock $is_last_value $is_first_value "$__gpy_last_segment_bg" | string collect)
+            if test -n "$result"
+                set -g __gpy_clock_cache_key $clock_key
+                set -g __gpy_clock_cache_val $result
+            end
+        end
         if test -n "$result"
-            printf '%s' (string replace -- (__gpy_clock_date_format) $now $result)
+            printf '%s' (string replace -- "$spec" "$now" "$result")
             # Only track bg when a pill rendered.
             set -g __gpy_last_segment_bg $__color_clock_bg
             return

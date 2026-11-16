@@ -214,7 +214,7 @@ fn dead_socket_file_is_removed() {
     let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = tmp.path().join("agent.sock");
-    std::fs::write(&socket_path, b"stale").unwrap();
+    drop(std::os::unix::net::UnixListener::bind(&socket_path).unwrap());
 
     let socket = SocketPath::resolve(Some(&socket_path)).expect("resolve test socket");
     let check = inspect(&socket);

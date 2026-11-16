@@ -141,8 +141,9 @@ impl DebounceEngine {
         }
     }
 
-    /// Remove and return events past the quiet gap or max-delay cap. Callers
-    /// must deliver them without holding this engine's lock.
+    /// Remove and return events past the quiet gap (and their `not_before`
+    /// floor) or the max-delay cap. Callers must deliver them without holding
+    /// this engine's lock.
     pub fn drain_expired_events(&mut self) -> Vec<DebouncedEvent> {
         self.drain_expired_events_at(Instant::now())
     }
@@ -150,42 +151,63 @@ impl DebounceEngine {
     fn drain_expired_events_at(&mut self, now: Instant) -> Vec<DebouncedEvent> {
         let debounce_duration = self.debounce_duration;
         let max_delay = self.max_delay;
-        self.pending_events
+        let expired: Vec<FileEventKey> = self
+            .pending_events
             .iter()
             .filter(|&(_, entry)| {
-                let debounce_elapsed = now.duration_since(entry.last_seen) >= debounce_duration
-                    || now.duration_since(entry.first_seen) >= max_delay;
-                let due_elapsed = entry.not_before.is_none_or(|due| now >= due);
-                debounce_elapsed && due_elapsed
+                let quiet = now.duration_since(entry.last_seen) >= debounce_duration
+                    && entry.not_before.is_none_or(|due| now >= due);
+                quiet || now.duration_since(entry.first_seen) >= max_delay
             })
             .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|key| self.pending_events.remove(&key))
-            .map(|entry| DebouncedEvent {
+            .collect();
+
+        let mut drained = Vec::with_capacity(expired.len());
+        for key in expired {
+            let Some(entry) = self.pending_events.remove(&key) else {
+                continue;
+            };
+            // The cap released it while its floor is still ahead: deliver now
+            // and keep a copy held to the floor, so a new directory's contents
+            // are still rescanned once its watch is armed.
+            if let Some(floor) = entry.not_before.filter(|floor| now < *floor) {
+                self.pending_events.insert(
+                    key,
+                    PendingEntry {
+                        first_seen: now,
+                        last_seen: now,
+                        pending: entry.pending.clone(),
+                        not_before: Some(floor),
+                    },
+                );
+            }
+            drained.push(DebouncedEvent {
                 event: entry.pending.event,
                 repo: entry.pending.repo,
-            })
-            .collect()
+            });
+        }
+        drained
     }
 
     /// The earliest instant [`DebounceEngine::drain_expired_events`] would
     /// release a pending entry, or `None` when nothing can fall due. Per entry
-    /// that is the quiet gap or the max-delay cap, whichever is sooner, but no
-    /// earlier than its `not_before` floor; an overflowing term never falls due.
+    /// that is the quiet gap (no earlier than its `not_before` floor) or the
+    /// max-delay cap, whichever is sooner; an overflowing term never falls due.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Instant> {
         self.pending_events
             .values()
             .filter_map(|entry| {
-                let quiet = entry.last_seen.checked_add(self.debounce_duration);
+                let quiet = entry
+                    .last_seen
+                    .checked_add(self.debounce_duration)
+                    .map(|quiet_at| quiet_at.max(entry.not_before.unwrap_or(quiet_at)));
                 let cap = entry.first_seen.checked_add(self.max_delay);
-                let due = match (quiet, cap) {
-                    (Some(quiet_at), Some(cap_at)) => quiet_at.min(cap_at),
-                    (Some(due), None) | (None, Some(due)) => due,
-                    (None, None) => return None,
-                };
-                Some(due.max(entry.not_before.unwrap_or(due)))
+                match (quiet, cap) {
+                    (Some(quiet_at), Some(cap_at)) => Some(quiet_at.min(cap_at)),
+                    (Some(due), None) | (None, Some(due)) => Some(due),
+                    (None, None) => None,
+                }
             })
             .min()
     }
@@ -506,6 +528,46 @@ mod tests {
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
         engine.handle_event_at(make_pending("/repo", "/repo/a.txt"), t0);
         assert_eq!(git_floor(&engine, "/repo"), None);
+    }
+
+    #[test]
+    /// Directory creates arriving faster than the debounce window keep raising
+    /// the floor; the max-delay cap must still flush, and a copy stays held to
+    /// the floor for the follow-up rescan.
+    fn sustained_directory_creates_still_flush_within_max_delay() {
+        let t0 = Instant::now();
+        let debounce = Duration::from_millis(20);
+        let max_delay = Duration::from_millis(50);
+        let mut engine = DebounceEngine::new(debounce).with_max_delay(max_delay);
+
+        let mut flushed_at = None;
+        for step in 0..=20_u64 {
+            let now = t0 + Duration::from_millis(step * 5);
+            engine.handle_event_due_at(
+                make_pending("/repo", &format!("/repo/dir{step}")),
+                now + debounce,
+                now,
+            );
+            if !engine.drain_expired_events_at(now).is_empty() {
+                flushed_at = Some(now);
+                break;
+            }
+        }
+
+        assert_eq!(
+            flushed_at,
+            Some(t0 + max_delay),
+            "the cap must flush the storm at first_seen + max_delay"
+        );
+        let floor = git_floor(&engine, "/repo").expect("follow-up held to the floor");
+        assert_eq!(floor, t0 + max_delay + debounce);
+        assert!(
+            engine
+                .drain_expired_events_at(t0 + max_delay + Duration::from_millis(5))
+                .is_empty()
+        );
+        assert_eq!(engine.drain_expired_events_at(floor).len(), 1);
+        assert!(engine.pending_events.is_empty());
     }
 
     #[test]

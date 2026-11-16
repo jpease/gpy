@@ -29,9 +29,18 @@ restating it.
 | Linux (x86_64, aarch64) | Supported on x86_64; aarch64 binaries are built but not run in CI. See [Linux](#linux) |
 | macOS 11+ (Intel and Apple Silicon) | Supported on Apple Silicon; Intel binaries are built but not run in CI |
 | Windows via WSL | Supported; see [Windows (WSL)](#windows-wsl) |
-| Windows native | `gpy` CLI only; the prompt needs Unix sockets |
+| Windows native | `gpy` CLI only; the prompt needs Unix sockets. `install.sh` under MSYS/Cygwin installs `gpy.exe` and `gpy-agent.exe` only: no `gpy setup`, no agent start, exit 0, and a pointer to WSL |
 
 What CI runs on each platform is in [CI coverage by platform](dev/testing.md#ci-coverage-by-platform).
+
+### Terminal requirements
+
+The prompt draws 24-bit (truecolor) colour. Apple Terminal and the Linux
+console do not support it, so the agent's formatter falls back to 256 colours
+there (`TERM_PROGRAM=Apple_Terminal` or `TERM=linux`). Set `GPY_COLOR_DEPTH` to
+`truecolor`, `256`, `16` or `none` to override the choice; see
+[Environment Variables](user/environment-variables.md#output-and-terminal).
+Shell-drawn pieces (for example the Zsh renderer's pills) still emit truecolor.
 
 ### Shells
 
@@ -128,7 +137,8 @@ curl -fsSL https://github.com/jpease/gpy/releases/download/vX.Y.Z/install-onelin
 The installer:
 
 1. **Detects your shell** (Fish, Zsh, or Bash)
-2. **Downloads the binary** for your platform (Linux/macOS, x86_64/aarch64/arm64)
+2. **Downloads the binary** for your platform (Linux/macOS, x86_64/aarch64/arm64;
+   under Rosetta on Apple Silicon it picks arm64)
    from the release the installer was published with, and **verifies its
    SHA-256 checksum** against the digest published with that release. A
    missing or mismatched checksum aborts the install without touching your
@@ -150,6 +160,12 @@ The installer:
    - Zsh: `${ZDOTDIR:-~}/.zshrc`
    - Bash: `~/.bashrc` (created if missing). If your login file (the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) does not already load `~/.bashrc` with an uncommented `.` or `source` line, a small loader block is added to it; if none exists, `~/.profile` is created
 5. **Starts the agent** (if not already running)
+
+The one-line installer fetches over HTTPS only (TLS 1.2 or newer, pinned in
+`curl` and `wget`) and removes its staged files on INT, TERM or HUP. If a
+downloaded binary cannot run on the host, it prints the loader's message and a
+hint (glibc 2.31 or newer; musl systems build from source) before touching any
+installed binary.
 
 ### What the checksums do and do not prove
 
@@ -328,7 +344,12 @@ It:
 3. Adds one `# >>> gpy-init >>>` block to your rc file (`config.fish`,
    `${ZDOTDIR:-~}/.zshrc`, or `~/.bashrc` plus a login-shell loader), only if
    it is not already there. For Fish it also links `fish_prompt`, moving any
-   existing one aside. The Bash block loads GPY only in interactive shells, and
+   existing one aside, and retires an older `conf.d/gpy_init.fish` (a link is
+   removed; any other file moves to `gpy_init.fish.backup.<stamp>`). Setup
+   prints `rm -rf '<dir>'` lines for old trees it no longer uses
+   (`~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh,bundled-plugins}`), and
+   `gpy uninstall` removes them too. A start marker with no matching end (an
+   incomplete block) is reported, and setup warns. The Bash block loads GPY only in interactive shells, and
    setup rewrites an unedited Bash block or loader from an earlier release to
    that form; a block whose text differs is left as it is.
 4. Moves a theme file in `~/.config/gpy/themes/` that is an unedited copy of a
@@ -340,8 +361,10 @@ It:
 
 It is safe to re-run, and after an upgrade it refreshes every tree in the data
 root, but wires only the shell you chose (the other shells' rc files are left
-alone). `gpy doctor` lists the shells whose rc file has the GPY block and warns
-about one whose files an older `gpy` installed. It finds the script trees via
+alone). `gpy doctor` lists the shells whose rc file has the GPY block, warns
+about one whose files an older `gpy` installed, fails on an incomplete block
+or when the file the block sources is missing, and warns when `gpy-agent` is
+not in `PATH` or the first one in `PATH` is not the one you installed. It finds the script trees via
 `--from`, then `GPY_SHARE_DIR`, then the `share/gpy` beside the binary
 (Homebrew), then the source checkout the binary was built in, and last the data
 root itself, so a later bare `gpy setup` works for installer users. When the
@@ -444,7 +467,7 @@ If you want to build GPY yourself or contribute to development:
 ### Prerequisites
 
 - **Rust**: 1.99 or later — the `rust-version` declared in `gpy-agent/Cargo.toml`, which is what `cargo build` enforces
-- **Git**: 2.0 or later
+- **Git**: 2.11 or later (`git status --porcelain=v2`)
 - **Shell**: see [Supported Platforms and Shells](#supported-platforms-and-shells)
 
 ### Build Steps
@@ -624,8 +647,9 @@ you want to `fish_prompt.fish`.
 
 Every installer moves an existing prompt that is not GPY's own link aside with `mv`,
 so a symlinked prompt (stow, yadm, chezmoi) stays a symlink to the same dotfile and is
-restored as one. A backup that is a symlink into GPY's own prompt directory is never
-restored.
+restored as one. A symlink into any `gpy/functions/fish_prompt.fish` or
+`gpy/fish/functions/fish_prompt.fish` tree is GPY's own: it is never backed up
+or restored. An edited copy of GPY's prompt is backed up.
 
 ### Manual Removal Checklist
 
@@ -675,7 +699,7 @@ What differs from a native Linux install, and what to do about it:
 
 | Item | Behaviour under WSL | What to do |
 |---|---|---|
-| Where the repositories live | A repository under `/mnt/c` (or any `/mnt/<drive>`) is on the Windows filesystem, reached over drvfs/9p. `git` is slower there, and on a mount without the `metadata` option an ordinary user cannot create a repository there at all (`git init` fails with `chmod ... Operation not permitted`, observed on the CI runner) and `inotify` may not report changes, so live updates rely on the agent's watcher probe falling back to polling, the periodic reconcile (every 45 s) and the repaint on each command. | Keep repositories in the Linux filesystem (`~/src/...`); if you must use a Windows drive, mount it with `options = "metadata"` under `[automount]` in `/etc/wsl.conf`. For one you must keep on a Windows drive, either set `git.skip_paths = ["/mnt/c"]` to drop git detection there, or start the agent with `GPY_WATCH_FORCE_POLL=1` to poll without waiting for the probe (see [troubleshooting](user/troubleshooting.md#wsl)). |
+| Where the repositories live | A repository under `/mnt/c` (or any `/mnt/<drive>`) is on the Windows filesystem, reached over drvfs/9p. `git` is slower there, and on a mount without the `metadata` option an ordinary user cannot create a repository there at all (`git init` fails with `chmod ... Operation not permitted`, observed on the CI runner) and `inotify` may not report changes, so live updates rely on the agent's watcher probe falling back to polling (besides the `$TMPDIR` probe at startup, the agent probes each further filesystem a repository lives on, once per device, by briefly creating `gpy-watch-probe-<pid>-<nanos>/` inside that repository's git directory; a silent probe moves the whole agent to polling and logs a warning; a probe from the Linux side cannot see changes made only on the Windows side of drvfs or on a remote mount), the periodic reconcile (every 45 s) and the repaint on each command. | Keep repositories in the Linux filesystem (`~/src/...`); if you must use a Windows drive, mount it with `options = "metadata"` under `[automount]` in `/etc/wsl.conf`. For one you must keep on a Windows drive, either set `git.skip_paths = ["/mnt/c"]` to drop git detection there, or start the agent with `GPY_WATCH_FORCE_POLL=1` to poll without waiting for the probe (see [troubleshooting](user/troubleshooting.md#wsl)). |
 | `$HOME`, cache and runtime directories | GPY serialises agent start with a file lock and keeps its socket in the runtime directory. Neither is tested on a drvfs or network `$HOME`. | Keep `$HOME` (WSL's default `/home/<user>`) and `XDG_RUNTIME_DIR`/`XDG_CACHE_HOME` on the Linux filesystem. |
 | Windows programs on `PATH` | WSL's interop appends the Windows `PATH` by default. The agent runs language tools by bare name (`node`, `python3`, `mise`, ...), never with `.exe`, so a Windows install is reached only if it ships an extensionless file of that name. This has not been traced on a real machine. | If the language segment shows a Windows tool's version, or is slow, set `[interop]` `appendWindowsPath = false` in `/etc/wsl.conf` and restart WSL (`wsl --shutdown`). |
 | Nerd Font detection | The terminal that draws the glyphs is a Windows application, so the Linux font directories and `fc-list` say nothing about it. `gpy setup` reports the fonts as undetectable and defaults to ASCII icons. | Install a Nerd Font on Windows and select it in your terminal, then `gpy config set ui.show_icons true`; or set `GPY_NERD_FONT=nerd` (or `none`) before running `gpy setup --redetect-icons`. |

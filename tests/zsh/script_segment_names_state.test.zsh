@@ -70,6 +70,28 @@ g_command
 check "invalid setting entries are dropped, valid ones split at the first =" "yes|v=w" "$(g_text envy)"
 check "and run nothing" false "$(made E3)"
 
+# --- declared names never resolve to the adapter's own locals -----------------
+# ${(P)...} sees every local in the call chain (__gpy_precmd, the runner
+# adapter): a name the shell does not set must read as unset, not as one of
+# them.
+unset tok now ret cancel k 2>/dev/null
+g_segment shadow 'printf "%s|%s|%s|%s" "${tok-unset}" "${now-unset}" "${ret-unset}" "${k-unset}"'
+__gpy_script_shadow_env=(tok now ret k)
+g_enable shadow
+g_command
+check "env names tok/now/ret/k are unset when the shell does not set them" \
+    "unset|unset|unset|unset" "$(g_text shadow)"
+__gpy_script_shadow_reqenv=(cancel)
+g_enable shadow
+g_command
+check "require_env cancel fails when the shell does not set it" "" "$(g_text shadow)"
+__gpy_script_shadow_reqenv=()
+tok=mine
+g_enable shadow
+g_command
+check "a value the shell sets is the one forwarded" "mine|unset|unset|unset" "$(g_text shadow)"
+unset tok
+
 # --- glob characters in trigger names ----------------------------------------
 g_segment globby 'printf matched'
 __gpy_script_globby_reqfiles=('*')

@@ -15,19 +15,16 @@ use std::process::{Command, Stdio};
 /// needs neither, and a disabled agent is never contacted, so both are
 /// skipped silently.
 ///
-/// Only ever warns, so it always returns `true`.
-pub(super) fn check_ipc_client(
-    installed: &[InstalledIntegration],
-    cfg: Option<&config::Config>,
-) -> bool {
+/// Only ever warns, so it returns nothing.
+pub(super) fn check_ipc_client(installed: &[InstalledIntegration], cfg: Option<&config::Config>) {
     if cfg.is_some_and(|loaded| !loaded.agent.enabled) {
-        return true;
+        return;
     }
     if !installed
         .iter()
         .any(|integration| matches!(integration.shell, Shell::Bash | Shell::Fish))
     {
-        return true;
+        return;
     }
 
     output::step("Checking IPC client");
@@ -41,7 +38,6 @@ pub(super) fn check_ipc_client(
             "Remediation: install socat (macOS: `brew install socat`; Debian/Ubuntu: `apt install socat`), or an `nc` that supports `-U`.",
         );
     }
-    true
 }
 
 /// Whether `nc -h` mentions `-U`, in either stream and whatever its exit

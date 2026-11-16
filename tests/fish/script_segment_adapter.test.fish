@@ -499,6 +499,40 @@ run_fish '
 ' >/dev/null 2>&1
 check "trigger back after a failure runs again (no stale cache hit)" 2 (runs $cnt)
 
+# --- A clock stepped back expires the cache entry -------------------------
+print_test_header "clock stepped back"
+new_case clockback
+set -l cnt $case_dir/out/count
+set F_ttl 60
+add_seg demo "echo run >>'$cnt'; echo hi"
+write_export
+run_fish '
+    p
+    set -g __gpy_g_t_demo_at (math (__gpy_now_seconds) + 1000)
+    c
+' >/dev/null 2>&1
+check "an entry stored after now (clock stepped back) runs again" 2 (runs $cnt)
+
+# --- Declared names never resolve to the adapter's own locals -----------
+print_test_header "declared names read the user's variables"
+new_case declnames
+set -l envout $case_dir/out/env
+set F_reqenv ok
+add_seg needok "echo needok"
+set F_env name val
+add_seg fwd "env >'$envout'; echo fwd"
+write_export
+set -l out (run_fish '
+    set -g name user-name
+    p
+    show needok fwd
+')
+check "require_env ok with no user ok hides the segment" "needok=[]" "$out[1]"
+check "env name and val: the script still runs" "fwd=[fwd]" "$out[2]"
+set -l envs (string split \n -- (string collect <$envout))
+contains -- name=user-name $envs; and pass "declared name forwards the user's value"; or fail "declared name forwards the user's value" $envs
+string match -q 'val=*' -- $envs; and fail "an unset declared val is not forwarded" $envs; or pass "an unset declared val is not forwarded"
+
 # --- Clean environment --------------------------------------------------
 print_test_header "clean environment, values never in argv"
 new_case cleanenv

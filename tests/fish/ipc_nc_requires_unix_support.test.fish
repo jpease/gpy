@@ -71,6 +71,22 @@ make_nc 'usage: nc [-U] [-w timeout] ... -U  Use UNIX domain socket'
 run_send
 check "nc with -U is the client and its reply is returned" 1 (test "$send_status" = 0 -a "$send_out" = '{"status":"ok"}'; and echo 1; or echo 0)
 check "nc with -U is run against the agent socket" 1 (string match -q -- "*-U $tmp/agent.sock*" (cat $nc_log | string collect); and echo 1; or echo 0)
+check "nc whose help lists no -N is run without it" 0 (string match -q -- "*-N*" (cat $nc_log | string collect); and echo 1; or echo 0)
+
+# Apple's nc has an unrelated `-N num_probes` that takes an argument: passing
+# it would eat `-U` as the count.
+make_nc "$(printf 'usage: nc [-46AacCDdEFhklMnOortUuvz]\n\t-N num_probes                 Number of probes to send\n\t-U                            Use UNIX domain socket')"
+run_send
+check "Apple nc is the client and its reply is returned" 1 (test "$send_status" = 0 -a "$send_out" = '{"status":"ok"}'; and echo 1; or echo 0)
+check "Apple nc's -N num_probes is never passed" 0 (string match -q -- "*-N*" (cat $nc_log | string collect); and echo 1; or echo 0)
+
+# netcat-openbsd half-closes on stdin EOF only with -N; its help lists the
+# flag on a line of its own. Without it the agent never sees EOF and every
+# request waits out the whole budget.
+make_nc "$(printf 'usage: nc [-46CDdFhklNnrStUuvZz] [-w timeout]\n\t-N\t\tShutdown the network socket after EOF on stdin\n\t-U\t\tUse UNIX domain socket')"
+run_send
+check "nc with -N is the client and its reply is returned" 1 (test "$send_status" = 0 -a "$send_out" = '{"status":"ok"}'; and echo 1; or echo 0)
+check "nc with -N is run with -N against the agent socket" 1 (string match -q -- "*-N -U $tmp/agent.sock*" (cat $nc_log | string collect); and echo 1; or echo 0)
 
 rm -rf $tmp
 test_finish "IPC nc capability probe"

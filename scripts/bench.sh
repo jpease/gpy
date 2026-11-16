@@ -67,7 +67,7 @@ if [[ " $* " == *" --ci "* ]]; then
     BUDGET_GIT_COLD=.budgets.git_status_cold.max_ms*1000000 \
     BUDGET_CACHE_WRITE=.budgets.cache_write.max_ms*1000000 \
     BUDGET_CACHE_READ=.budgets.cache_read.max_ms*1000000 \
-    BUDGET_CONFIG_LOAD=.budgets.config_validation.max_ms*1000000 \
+    BUDGET_CONFIG_LOAD=.budgets.config_load.max_ms*1000000 \
     BUDGET_THEME_LOAD=.budgets.theme_manager_load.max_ms*1000000 \
     BUDGET_THEME_EXPORT=.budgets.theme_export_write.max_ms*1000000 \
     BUDGET_VERSION_SPAWN=.budgets.version_command_spawn.max_ms*1000000 \

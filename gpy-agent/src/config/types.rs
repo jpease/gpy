@@ -544,9 +544,25 @@ impl<'de, K: NameKind> Deserialize<'de> for SafeName<K> {
     }
 }
 
+/// Implement `TryFrom<String>` through `FromStr`, so a config file spells an
+/// enum value in any case, exactly as `gpy config set` does.
+macro_rules! try_from_string_via_from_str {
+    ($($ty:ty),+) => {
+        $(impl TryFrom<String> for $ty {
+            type Error = ParseEnumError;
+
+            fn try_from(value: String) -> Result<Self, Self::Error> {
+                value.parse()
+            }
+        })+
+    };
+}
+
+try_from_string_via_from_str!(DirectoryDisplay, LanguageDisplay, DetectionMode);
+
 /// Directory segment display mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", try_from = "String")]
 pub enum DirectoryDisplay {
     /// Show only the current directory name.
     #[default]
@@ -632,7 +648,7 @@ impl TryFrom<String> for DirectoryTruncationSymbol {
 
 /// Language segment display mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", try_from = "String")]
 pub enum LanguageDisplay {
     /// Show language/tool icons (falling back to the name when no icon exists).
     #[default]
@@ -672,7 +688,7 @@ impl FromStr for LanguageDisplay {
 /// `markers` (default): require project markers; `content`: rank by file
 /// prevalence; `hybrid`: content ranking gated by a marker file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", try_from = "String")]
 pub enum DetectionMode {
     /// Recursive content scan, ranked by prevalence (opt-in).
     Content,
@@ -737,13 +753,13 @@ impl FromStr for LanguageFilter {
     type Err = ParseEnumError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_lowercase().as_str() {
             "all" => Ok(Self::All),
             "primary" => Ok(Self::Primary),
             other => other.parse::<usize>().ok().map(Self::Top).ok_or_else(|| {
                 ParseEnumError::new(
                     "language.filter",
-                    other,
+                    s,
                     "'all', 'primary', or a number (e.g. '3')",
                 )
             }),
@@ -994,5 +1010,28 @@ mod tests {
             "x".parse::<LanguageFilter>().unwrap_err().to_string(),
             "Invalid language.filter 'x'. Use 'all', 'primary', or a number (e.g. '3')"
         );
+    }
+
+    #[test]
+    fn config_enums_deserialize_in_any_case() {
+        #[derive(Deserialize)]
+        struct Doc {
+            display: DirectoryDisplay,
+            language: LanguageDisplay,
+            mode: DetectionMode,
+            filter: LanguageFilter,
+            icons: crate::config::GitIconSet,
+        }
+
+        let doc: Doc = toml::from_str(
+            "display = \"Full\"\nlanguage = \"ICON\"\nmode = \"Hybrid\"\nfilter = \"ALL\"\nicons = \"Nerd_Font\"\n",
+        )
+        .expect("any case loads, as `config set` accepts");
+
+        assert_eq!(doc.display, DirectoryDisplay::Full);
+        assert_eq!(doc.language, LanguageDisplay::Icon);
+        assert_eq!(doc.mode, DetectionMode::Hybrid);
+        assert_eq!(doc.filter, LanguageFilter::All);
+        assert_eq!(doc.icons, crate::config::GitIconSet::NerdFont);
     }
 }

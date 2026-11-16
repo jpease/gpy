@@ -10,7 +10,7 @@ use crate::plugin::{
 use crate::{Error, Result, VERSION};
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 /// Validated segment manifests of a script plugin, keyed by segment.
 type ScriptSegments = BTreeMap<SegmentName, ScriptSegmentManifest>;
@@ -50,6 +50,7 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<Script
         return Err(unsupported_entry_type(&manifest.entry_type));
     }
     manifest.check_min_gpy_version(&current_gpy_version()?)?;
+    manifest.check_no_builtin_segments()?;
 
     if !root.is_dir() {
         return Err(Error::invalid(format!(
@@ -138,7 +139,7 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, Scri
 
 /// One-line scope note printed by `gpy plugin new`, `validate` and `list`.
 ///
-/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins are not run by any shell yet.
+/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins run in every shell.
 pub(crate) const FISH_ONLY_NOTE: &str =
     "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
 
@@ -605,10 +606,58 @@ fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
     print_min_version(plugin.manifest.compatibility_constraints.as_ref());
 }
 
+/// Refuse a scaffold that would collide with what discovery already loads:
+/// an id another plugin uses (a user copy would shadow a bundled plugin
+/// without the `--force` that `gpy plugin install` asks for), or a segment name
+/// that is built in or another plugin provides (directly or through its shell
+/// variable token).
+fn check_scaffold_is_free(
+    plugin_id: &crate::plugin::PluginId,
+    segment: &SegmentName,
+) -> Result<()> {
+    if crate::plugin::BuiltinSegment::try_from(segment.as_str()).is_ok() {
+        return Err(Error::invalid(format!(
+            "'{segment}' is a built-in segment; pick another name with --segment"
+        )));
+    }
+    let discovery = discover_plugins();
+    if let Some(found) = discovery
+        .plugins
+        .iter()
+        .find(|plugin| plugin.manifest.id == *plugin_id)
+    {
+        return Err(match &found.root {
+            Some(root) if matches!(found.source, PluginSource::User) => Error::invalid(format!(
+                "plugin '{plugin_id}' already exists at {}",
+                root.display()
+            )),
+            _ => Error::invalid(format!(
+                "plugin id '{plugin_id}' is taken by the {} plugin; pick another id",
+                found.source
+            )),
+        });
+    }
+    let token = segment.variable_token();
+    if let Some(owner) = discovery.plugins.iter().find(|plugin| {
+        plugin
+            .manifest
+            .provided_segments
+            .iter()
+            .any(|provided| provided.variable_token() == token)
+    }) {
+        return Err(Error::invalid(format!(
+            "segment '{segment}' is already provided by the {} plugin '{}'; pick another name with --segment",
+            owner.source, owner.manifest.id
+        )));
+    }
+    Ok(())
+}
+
 /// Create a new plugin scaffold in the user plugin root.
 ///
 /// # Errors
-/// Returns an error if the ID is invalid, the target exists, or writing fails.
+/// Returns an error if the ID is invalid, the id or segment name is already
+/// taken (see `check_scaffold_is_free`), the target exists, or writing fails.
 #[allow(
     clippy::create_dir,
     reason = "create_dir fails with AlreadyExists, which is how a concurrent or repeated `plugin new` is refused"
@@ -616,6 +665,7 @@ fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
 pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     let plugin_id = crate::plugin::PluginId::new(id)?;
     let segment = SegmentName::new(segment_name.unwrap_or(plugin_id.as_str()))?;
+    check_scaffold_is_free(&plugin_id, &segment)?;
     let plugin_root = user_plugins_dir().join(plugin_id.as_str());
 
     let already_exists = || {
@@ -638,10 +688,11 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
         }
     };
     if let Some(parent) = plugin_root.parent() {
-        fs::create_dir_all(parent).map_err(create_failed)?;
+        super::plugin_install::ensure_dir_chain(parent)?;
     }
-    // Modes are set at creation (narrowed by the umask, never widened), so a
-    // `umask 0002` cannot leave group-writable paths the script policy rejects.
+    // Modes are set at creation (narrowed by the umask, never widened), here
+    // and for the missing parents above, so a `umask 0002` cannot leave
+    // group-writable paths the script policy rejects.
     for dir in [
         plugin_root.clone(),
         plugin_root.join("segments"),

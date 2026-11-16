@@ -8,7 +8,13 @@ use crate::theme::ThemeConfig;
 
 /// Resolver that returns a non-empty placeholder for every variable, so all
 /// conditional branches activate and every styled group is exercised.
-struct PlaceholderResolver;
+///
+/// Color-valued variables follow the runtime resolvers: `$bg` is absent for the
+/// foreground-only `character` segment and `$color` exists only for `language`,
+/// so `fg:$bg` there fails here as it would on every render.
+struct PlaceholderResolver {
+    segment: &'static str,
+}
 
 impl VariableResolver for PlaceholderResolver {
     fn resolve(&self, name: &str) -> Option<String> {
@@ -16,7 +22,9 @@ impl VariableResolver for PlaceholderResolver {
             // Must parse as a style, else `($style)` falsely fails as an unknown color.
             "style" => Some("fg:white bg:black".to_owned()),
             // Color-valued vars (`fg:$var`, powerline `bg:$bg`) must be parseable colors.
-            "color" | "bg" => Some("white".to_owned()),
+            "bg" if self.segment != "character" => Some("white".to_owned()),
+            "color" if self.segment == "language" => Some("white".to_owned()),
+            "bg" | "color" => None,
             _ => Some("x".to_owned()),
         }
     }
@@ -89,7 +97,7 @@ fn validate_style_values(
     palette: &Palette,
     errors: &mut Vec<ValidationError>,
 ) {
-    let resolver = PlaceholderResolver;
+    let resolver = PlaceholderResolver { segment };
     let ctx = EvalContext::new(&resolver).with_palette(palette.clone());
     let mut entries: Vec<(&String, &String)> = styles.iter().collect();
     entries.sort_unstable();
@@ -120,7 +128,7 @@ fn validate_one(
     format: &str,
     palette: &Palette,
 ) -> Result<(), ValidationError> {
-    let resolver = PlaceholderResolver;
+    let resolver = PlaceholderResolver { segment };
     let ctx = EvalContext::new(&resolver).with_palette(palette.clone());
     check_template_controls(format)
         .and_then(|()| render(format, &ctx).map(drop))
@@ -176,6 +184,18 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("git"));
+    }
+
+    #[test]
+    fn err_for_bg_variable_in_character_format() {
+        // `$bg` is unresolved for the foreground-only character segment, so
+        // `fg:$bg` fails on every render and must fail validation.
+        let mut theme = ThemeConfig::default();
+        theme.segments.character.format = Some("[x](fg:$bg)".to_owned());
+        assert!(validate_segment_templates(&theme, &Palette::default()).is_err());
+        theme.segments.git.format = Some("[x](fg:$bg)".to_owned());
+        theme.segments.character.format = None;
+        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
     }
 
     #[test]

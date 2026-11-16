@@ -54,7 +54,7 @@ pub fn load_config_from_file(path: &Path) -> Result<Config> {
         ))
     })?;
 
-    parse_config_toml(&contents)
+    parse_config_toml_at(path, &contents)
 }
 
 /// Parse TOML configuration content, normalizing user-spelled names.
@@ -70,14 +70,70 @@ pub fn parse_config_toml(toml_content: &str) -> Result<Config> {
     Ok(config)
 }
 
+/// [`parse_config_toml`] for the contents of `path`, naming the file in any
+/// error so the user knows which config to fix.
+///
+/// # Errors
+/// Returns an error if the TOML is malformed, doesn't deserialize, or is invalid.
+pub fn parse_config_toml_at(path: &Path, toml_content: &str) -> Result<Config> {
+    parse_config_toml(toml_content).map_err(|err| match err {
+        Error::Config { message, source } => Error::Config {
+            message: format!("{}: {message}", path.display()),
+            source,
+        },
+        other => other,
+    })
+}
+
 /// Write only changed leaves (plus `explicit_keys`) into the file in place,
 /// preserving comments and layout; symlinks are written through. `updated` is
 /// normalized first, so the file holds what the next load would produce.
+///
+/// `original` is the caller's earlier snapshot; a concurrent writer's change
+/// to a list-valued leaf (one leaf, whole array) between that snapshot and
+/// this call is overwritten. Read-modify-write commands use [`update_config`].
 ///
 /// # Errors
 /// Returns an error if `updated` is invalid or the file can't be read, parsed, or written.
 pub fn save_config(
     path: &Path,
+    original: &Config,
+    updated: &Config,
+    explicit_keys: &[&str],
+) -> Result<()> {
+    let target = resolve_write_target(path)?;
+    // Held through the rename: a second writer must read this one's result.
+    let _lock = lock_for_save(&target)?;
+    save_locked(&target, original, updated, explicit_keys)
+}
+
+/// Read-modify-write `path` under its save lock: the snapshot `mutate` sees is
+/// read after the lock is taken, so concurrent updates to list-valued leaves
+/// (`ui.enabled_segments`) never lose each other. A missing file starts from
+/// defaults; an invalid one is an error and is left untouched.
+///
+/// # Errors
+/// Returns an error if the existing file cannot be read or is invalid, the
+/// mutated config is invalid, or the file can't be written.
+pub fn update_config(
+    path: &Path,
+    explicit_keys: &[&str],
+    mutate: impl FnOnce(&mut Config),
+) -> Result<()> {
+    let target = resolve_write_target(path)?;
+    let _lock = lock_for_save(&target)?;
+    let original = match read_existing(&target)? {
+        Some(text) => parse_config_toml_at(&target, &text)?,
+        None => Config::default(),
+    };
+    let mut updated = original.clone();
+    mutate(&mut updated);
+    save_locked(&target, &original, &updated, explicit_keys)
+}
+
+/// The write half of [`save_config`]; the caller holds the lock on `target`.
+fn save_locked(
+    target: &Path,
     original: &Config,
     updated: &Config,
     explicit_keys: &[&str],
@@ -88,15 +144,12 @@ pub fn save_config(
     let original_leaves = config_leaves(original)?;
     let updated_leaves = config_leaves(&normalized)?;
 
-    let target = resolve_write_target(path)?;
-    // Held through the rename: a second writer must read this one's result.
-    let _lock = lock_for_save(&target)?;
-    let existing = read_existing(&target)?;
+    let existing = read_existing(target)?;
     let mut document: toml_edit::DocumentMut = match existing.as_deref() {
         Some(text) => text.parse().map_err(|e| {
             Error::config(format!(
                 "Failed to parse existing config {}: {e}",
-                path.display()
+                target.display()
             ))
         })?,
         None => toml_edit::DocumentMut::new(),
@@ -132,7 +185,7 @@ pub fn save_config(
     {
         return Ok(());
     }
-    write_atomically(&target, &rendered)
+    write_atomically(target, &rendered)
 }
 
 /// Flatten to sorted `dotted-path -> leaf`; arrays are single leaves.
@@ -335,13 +388,6 @@ fn lock_for_save(target: &Path) -> Result<crate::fs_util::PathLock> {
 /// # Errors
 /// Returns an error if the directory, temp file, or rename fails.
 fn write_atomically(target: &Path, contents: &str) -> Result<()> {
-    let parent = target
-        .parent()
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)
-        .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;
-
     crate::fs_util::write_atomically(target, contents.as_bytes())
         .map_err(|e| Error::config(format!("Failed to write config file: {e}")))
 }
@@ -382,5 +428,39 @@ mod agent_enabled_tests {
         assert!(agent_enabled_in(
             "[agent]\nenabled = \"no\"\n[ui]\ntheme = 42\n"
         ));
+    }
+}
+
+#[cfg(test)]
+mod update_config_tests {
+    use super::{load_config_from_file, update_config};
+
+    #[test]
+    fn update_config_applies_to_the_file_as_it_is_now() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[ui]\nenabled_segments = [\"clock\", \"git\"]\n").unwrap();
+
+        update_config(&path, &[], |config| {
+            config.ui.enabled_segments.push("directory".to_owned());
+        })
+        .unwrap();
+        update_config(&path, &[], |config| {
+            config.ui.enabled_segments.retain(|s| s != "clock");
+        })
+        .unwrap();
+
+        let config = load_config_from_file(&path).unwrap();
+        assert_eq!(config.ui.enabled_segments, ["git", "directory"]);
+    }
+
+    #[test]
+    fn parse_errors_name_the_file() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[ui\n").unwrap();
+
+        let message = load_config_from_file(&path).unwrap_err().to_string();
+        assert!(message.contains(&path.display().to_string()), "{message}");
     }
 }

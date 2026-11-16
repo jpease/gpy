@@ -458,6 +458,93 @@ fn install_refuses_a_plugin_whose_segment_name_another_plugin_owns() {
     assert!(!env.plugins_dir().join("zzz").exists());
 }
 
+/// The newcomer would win `demo` (the smaller id owns it), so the install is a
+/// takeover: refused without `--force`, and with it the loser is named.
+#[test]
+fn install_needs_force_to_take_a_segment_over_from_another_plugin() {
+    let source_env = CliTestEnv::new().expect("create source env");
+    let owner = demo_segment_plugin(&source_env, "zzz");
+    let taker = demo_segment_plugin(&source_env, "aaa");
+    let env = CliTestEnv::new().expect("create env");
+    install(&env, &owner, &[]).assert_success("install owner");
+
+    let refused = install(&env, &taker, &[]);
+    assert_eq!(refused.exit_code, 1_i32, "{refused:?}");
+    assert!(
+        refused.stderr.contains("--force") && refused.stderr.contains("'zzz'"),
+        "{refused:?}"
+    );
+    assert!(!env.plugins_dir().join("aaa").exists());
+    assert!(env.plugins_dir().join("zzz/plugin.toml").is_file());
+
+    let forced = install(&env, &taker, &["--force"]);
+    forced.assert_success("forced takeover");
+    assert!(forced.stdout.contains("Plugin 'zzz' ignored"), "{forced:?}");
+    assert!(env.plugins_dir().join("aaa/plugin.toml").is_file());
+}
+
+/// A different id that provides a bundled segment takes it over the same way.
+#[test]
+fn install_needs_force_to_take_a_bundled_segment_over() {
+    let source_env = CliTestEnv::new().expect("create source env");
+    let dir = source_env.root().join("src-myhost");
+    std::fs::create_dir_all(dir.join("segments")).expect("create segments");
+    std::fs::write(
+        dir.join("plugin.toml"),
+        "id = \"myhost\"\nname = \"myhost\"\nversion = \"1.0.0\"\napi_version = \"v1\"\n\
+         entry_type = \"file\"\nprovided_segments = [\"hostname\"]\n",
+    )
+    .expect("write manifest");
+    std::fs::write(dir.join("segments/hostname.fish"), "echo hi\n").expect("write fish");
+    let env = CliTestEnv::new().expect("create env");
+    let dir_arg = dir.to_string_lossy().into_owned();
+
+    let refused = run_with_bundled(&env, &["plugin", "install", dir_arg.as_str()]);
+    assert_eq!(refused.exit_code, 1_i32, "{refused:?}");
+    assert!(refused.stderr.contains("'hostname'"), "{refused:?}");
+    assert!(!env.plugins_dir().join("myhost").exists());
+}
+
+/// Removing a user copy that shadowed a bundled plugin brings the bundled one
+/// back, so its segment stays enabled.
+#[test]
+fn remove_keeps_a_segment_the_shadowed_bundled_plugin_provides_again() {
+    let (_source_env, dir) = scaffold("hostname");
+    let env = CliTestEnv::new().expect("create env");
+    let dir_arg = dir.to_string_lossy().into_owned();
+    run_with_bundled(&env, &["plugin", "install", dir_arg.as_str(), "--force"])
+        .assert_success("shadow install");
+    run_with_bundled(&env, &["enable", "hostname"]).assert_success("enable hostname");
+
+    let removed = run_with_bundled(&env, &["plugin", "remove", "hostname"]);
+    removed.assert_success("remove the shadowing copy");
+    assert!(
+        removed.stdout.contains("Kept hostname enabled"),
+        "{removed:?}"
+    );
+    let config = std::fs::read_to_string(env.config_path()).expect("read config");
+    assert!(config.contains("\"hostname\""), "{config}");
+}
+
+#[test]
+fn new_refuses_a_builtin_segment_or_a_taken_id() {
+    let env = CliTestEnv::new().expect("create env");
+    let builtin = env
+        .run_gpy(&["plugin", "new", "git-tools", "--segment", "git"])
+        .expect("spawn gpy");
+    assert_eq!(builtin.exit_code, 1_i32, "{builtin:?}");
+    assert!(builtin.stderr.contains("built-in segment"), "{builtin:?}");
+    assert!(!env.plugins_dir().join("git-tools").exists());
+
+    let bundled = run_with_bundled(&env, &["plugin", "new", "hostname", "--segment", "myhost"]);
+    assert_eq!(bundled.exit_code, 1_i32, "{bundled:?}");
+    assert!(
+        bundled.stderr.contains("taken by the bundled plugin"),
+        "{bundled:?}"
+    );
+    assert!(!env.plugins_dir().join("hostname").exists());
+}
+
 #[test]
 fn install_leaves_nothing_behind_when_validation_fails() {
     let (_source_env, dir) = scaffold("foo");

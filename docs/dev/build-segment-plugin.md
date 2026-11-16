@@ -173,7 +173,7 @@ For full theme documentation, see [Create a Theme](create-theme.md).
 
 ## Performance and Best Practices
 
-- **Keep execution fast**: Script timeouts are capped at 500 ms (default 300 ms).
+- **Keep execution fast**: Script timeouts are capped at 500 ms (the default is also 500 ms).
 - **Use triggers**: Use `require_env`, `require_files`, or `require_command` so scripts only run when necessary.
 - **Cache appropriately**: Configure `ttl_secs` to avoid running scripts on every single prompt.
 - Discovery budgets are documented in [Plugin Budgets](performance/plugin-budgets.md).

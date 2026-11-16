@@ -24,16 +24,20 @@ function __gpy_clock_time_spec() {
     fi
 }
 
-# Args arrive as "true"/"" (init.zsh dispatch convention).
+# Args arrive as "true"/"" (init.zsh dispatch convention). Returns 0 only for
+# the agent's render, which the render loop memoizes; the local fallback
+# returns __gpy_seg_status_late when the agent timed out, else 1.
 function __gpy_segment_clock() {
     local is_last="${1:-}"
     local prev_bg="${2:-}"
     local is_first="${3:-}"
+    local request_status=1
 
 # Agent path embeds zsh's live `%D{...}` token so the clock ticks without IPC.
-    if [[ -n "${__clock_format:-}" ]] && (( $+functions[__gpy_request_clock] )); then
+    if [[ -n "${__clock_format:-}" ]] && (( ${+functions[__gpy_request_clock]} )); then
         local rendered
         rendered=$(__gpy_request_clock "$is_last" "$prev_bg" "$is_first")
+        request_status=$?
         if [[ -n "$rendered" ]]; then
             print -r -- "$rendered"
             return 0
@@ -46,4 +50,6 @@ function __gpy_segment_clock() {
     __gpy_prompt_escape "${__prompt_time_pad- }" pad
     __gpy_section_standalone "${__color_clock_bg:-}" "${__color_clock_fg:-}" \
         "${pad}%D{${spec}}" "$is_last" "$is_first"
+    (( request_status == ${__gpy_seg_status_late:-4} )) && return "$request_status"
+    return 1
 }

@@ -3,11 +3,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # A cache-hit render reads the instant cache on every prompt, and must not
-# fork beyond the external reads bash has no builtin for: a DEBUG trap
+# fork beyond the external read bash has no builtin for: a DEBUG trap
 # inherited via functrace logs every command run with BASH_SUBSHELL > 0 while
 # __gpy_read_instant_cache and the git and language segments serve hits. Only
-# `stat` (the entry's age) and `date` (the clock on bash without a builtin
-# epoch) may run there; the canonical $PWD is memoized per directory by __gpy_resolve_pwd.
+# `stat` (the entry's age) may run there, once per read: the flavor probed at
+# load runs first, so BSD stat never runs a failing `stat -c` before it. The
+# clock is builtin, or on bash < 4.2 one `date` read at load plus $SECONDS;
+# the canonical $PWD is memoized per directory by __gpy_resolve_pwd.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -33,14 +35,16 @@ printf 'HIT' >"$cache_dir/$key.git_first_last._5277C3.bash"
 printf 'LANG' >"$cache_dir/$key.lang_first_last._5277C3.bash"
 
 forks="$SANDBOX/forks"
+stats="$SANDBOX/stats"
 out="$SANDBOX/out"
 : >"$forks"
+: >"$stats"
 saved_debug_trap="$(trap -p DEBUG)"
 set -T
 text=""
 cd "$repo" || exit 1
 __gpy_resolve_pwd
-trap '(( BASH_SUBSHELL > 0 )) && [[ "$BASH_COMMAND" != stat\ * && "$BASH_COMMAND" != date\ * ]] && printf "%s\n" "${FUNCNAME[0]}: $BASH_COMMAND" >>"$forks"' DEBUG
+trap '(( BASH_SUBSHELL > 0 )) && if [[ "$BASH_COMMAND" == stat\ * ]]; then printf "%s\n" "$BASH_COMMAND" >>"$stats"; else printf "%s\n" "${FUNCNAME[0]}: $BASH_COMMAND" >>"$forks"; fi' DEBUG
 __gpy_read_instant_cache git_first_last "$PWD" "#5277C3" text
 status=$?
 __gpy_segment_git true "#5277C3" true >"$out"
@@ -52,6 +56,8 @@ eval "$saved_debug_trap"
 
 expect_eq "cache hit served" "$status:$text" "0:HIT"
 expect_eq "segments render their hits" "$(<"$out")" "HITLANG"
-expect_eq "bash $BASH_VERSION: no subshell beyond stat/date" "$(<"$forks")" ""
+expect_eq "bash $BASH_VERSION: no subshell beyond stat" "$(<"$forks")" ""
+# Three reads: the direct one, then the git and the language segment.
+expect_eq "bash $BASH_VERSION: one stat per read" "$(wc -l <"$stats" | tr -d ' ')" "3"
 
-test_finish "a cache-hit render forks only for stat/date"
+test_finish "a cache-hit render forks only for one stat per read"

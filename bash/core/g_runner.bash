@@ -37,10 +37,11 @@
 #   One child checks every segment: NF names that must exist as files and ND
 #   as folders in the working directory or an ancestor (cwd-relative paths;
 #   on Linux the search stops at the mount holding it), and NE extensions
-#   that must match a file in the working directory. The child gets 30 ms,
-#   then SIGKILL. Prints per segment "ID US hit|miss|timeout RS". The
-#   working directory is named by __gpy_g_pwd when set, else PWD, so a caller
-#   can start Bash without PWD in its environment or argv.
+#   that must match a file (not a dotfile) in the working directory. The
+#   child gets 30 ms, then SIGKILL. Prints per segment "ID US
+#   hit|miss|timeout RS". The ancestor walk counts levels of the physical
+#   working directory, which the child resolves itself, so a caller never
+#   passes PWD and a symlinked path walks the levels the `../` lookups reach.
 #
 # Process rules per run (batch): the reader takes the segments in deadline
 # order, so each script group gets TERM and CONT at its own deadline (or on
@@ -114,26 +115,34 @@ __gpy_g_base() {
 
 # Producer for segment $1, inside <( ): starts the group and its timer,
 # then writes the records. Reads id cwd cmd req pay t tok sh of the batch.
+# The payload writers are children of this producer, not of the script: a
+# writer the script never reaps would stay a zombie in the group, and Linux
+# counts zombies in kill -0 -PGID, so every normal exit would wait out the
+# leftover grace. Fd 3 feeds CMD, fd 4 feeds REQ.
 __gpy_g_prod() {
     local c w= i s
     for ((i = 3; i < 3 + $1; i++)); do
         eval "exec $i<&-"
     done
+    exec 3< <(printf '%s' "$pay")
+    [[ -n $req ]] && exec 4< <(printf '%s' "$pay")
     set -m
     {
         set +m
+        # builtin and no CDPATH: a cd wrapper of the user (this runs in the
+        # interactive shell under Bash) must not run, nor print into a record.
         if [[ -n $cwd && $cwd != "$PWD" ]]; then
-            cd -- "$cwd" || exit 126
+            CDPATH= builtin cd -- "$cwd" >/dev/null || exit 126
         fi
         if [[ -n $req ]]; then
-            (exec -c -a sh "$sh" -c "$__gpy_g_pro" "$req" 3< <(printf '%s' "$pay") >/dev/null)
+            (exec -c -a sh "$sh" -c "$__gpy_g_pro" "$req" 3<&4 4<&- >/dev/null)
             # shellcheck disable=SC2181  # status of the subshell above
             if [[ $? != 0 ]]; then
                 printf '\036%s q\036' "$tok"
                 exit 1
             fi
         fi
-        exec -c -a sh "$sh" -c "$__gpy_g_pro" "$cmd" 3< <(printf '%s' "$pay")
+        exec -c -a sh "$sh" -c "$__gpy_g_pro" "$cmd" 4<&-
     } </dev/null 2>/dev/null &
     c=$!
     if [[ -z $__gpy_g_clock ]]; then
@@ -145,7 +154,7 @@ __gpy_g_prod() {
             kill -CONT -"$c"
             printf '\036%s t\036' "$tok"
             "$__gpy_g_sleep" "$__gpy_g_grace"
-            kill -KILL -"$c"
+            __gpy_g_kill_group "$c"
         } </dev/null 2>/dev/null &
         w=$!
     fi
@@ -168,6 +177,20 @@ __gpy_g_prod() {
     printf '\036%s r %s\036' "$tok" "$s"
 }
 
+# KILL group $1, then again while members remain, at most five times 10 ms
+# apart: a member forked while the first KILL was delivered can miss it, and
+# one that ignores TERM would then outlive the deadline. Detached callers
+# only: the prompt never waits for this.
+__gpy_g_kill_group() {
+    local n
+    kill -KILL -"$1"
+    for n in 1 2 3 4 5; do
+        kill -0 -"$1" || return 0
+        "$__gpy_g_sleep" 0.01
+        kill -KILL -"$1"
+    done
+}
+
 # Killer of a clock reader, inside >( ): reads "TIME PGID" lines (TIME in
 # epoch microseconds, in rising order) and sends each group KILL at its TIME.
 # Closes the $1 producer descriptors, so they still see their reader go.
@@ -185,7 +208,7 @@ __gpy_g_kill() {
             printf -v x '%d.%06d' $((i / 1000000)) $((i % 1000000))
             "$__gpy_g_sleep" "$x"
         fi
-        kill -KILL -"$c"
+        __gpy_g_kill_group "$c"
     done
 }
 
@@ -392,10 +415,11 @@ __gpy_g_batch() {
 }
 
 # The scan itself, in the child: one "ID US hit|miss RS" per segment, then
-# "Z" and GS once complete. Paths are relative to the working directory.
+# "Z" and GS once complete. Paths are relative to the working directory,
+# whose physical path sets how many levels the ancestor walk climbs.
 __gpy_g_scan_body() {
-    local pwd=$1 mr=/ rest a b c d mp e id nf nd ne i res n f r
-    shift
+    local pwd=$PWD mr=/ rest a b c d mp e id nf nd ne i res n f r
+    CDPATH= builtin cd -P . >/dev/null 2>&1 && pwd=$PWD
     if [[ -r /proc/self/mountinfo ]]; then
         while read -r a b c d mp e; do
             case $mp in *\\*) printf -v mp '%b' "$mp" ;; esac
@@ -452,12 +476,12 @@ __gpy_g_scan() {
     exec 2>/dev/null
     local IFS=$' \t\n'
     local LC_ALL=C
-    local pwd=${__gpy_g_pwd:-$PWD} body= pid= c w nf nd ne id
+    local body= pid= c w nf nd ne id
     if ((BASH_VERSINFO[0] >= 4)); then
         # The child names itself, so a stale $! is never signalled.
         exec 3< <(
             printf '%s\n' "$BASHPID"
-            __gpy_g_scan_body "$pwd" "$@"
+            __gpy_g_scan_body "$@"
         )
         IFS= read -r -t "$__gpy_g_scan_t" -u 3 pid
         if ! IFS= read -r -d $'\035' -t "$__gpy_g_scan_t" -u 3 body || [[ $body != *Z ]]; then
@@ -468,7 +492,7 @@ __gpy_g_scan() {
         # Bash 3.2 has only whole-second read -t: the child races the scan
         # against an absolute sleep; read -t 1 is the safety net.
         exec 3< <(
-            __gpy_g_scan_body "$pwd" "$@" &
+            __gpy_g_scan_body "$@" &
             c=$!
             (
                 "$__gpy_g_sleep" "$__gpy_g_scan_t"
