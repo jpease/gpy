@@ -90,6 +90,7 @@ Install-time and filesystem notes: [Windows (WSL)](../INSTALL.md#windows-wsl).
 ## Fish-Specific Issues
 
 - **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
+- **Registration timing**: Fish registers with the agent once its first prompt has been drawn, not while the shell starts, so a live update can reach a new Fish shell only after that first paint.
 - **Agent won't start / crash loop**: Bash, Zsh and Fish restart the agent the same way, with no background supervisor process. Each shell probes the agent on the prompt, at most once per `check_interval_seconds`; when the probe fails it runs `gpy-agent start` in the background. A crashed agent is restarted on the next checked prompt, not while the shell sits idle. A silent agent (connected, no answer) costs up to `GPY_IPC_TIMEOUT_MS` (150 ms by default) on the prompt that runs the check, and counts as down. `gpy-agent start` replaces an older-protocol agent and evicts one that is wedged and honours `shutdown`; a wedged agent that ignores `gpy-agent stop` is never killed by a shell, so stop it by hand (`gpy-agent stop`, then `kill <pid>`). A supervisor loop left running by an earlier Fish version is stopped at the first Fish prompt. Relevant `config.toml` keys, in increasing order of aggressiveness:
   - `[agent.supervisor] enabled = false` — disable only the restarts (useful while debugging a crash so it doesn't keep respawning under you). Each shell still starts the agent once at startup and registers with a running agent, so live updates keep working.
   - `[agent.supervisor] check_interval_seconds` — health-check cadence.
@@ -118,7 +119,19 @@ Bash differs in two ways: duration-segment precision varies by Bash version (dis
 
 ## Colors Look Wrong or Garbled
 
-GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so the agent already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`, then run `gpy-agent stop` and open a new prompt (the agent reads it once per process). See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
+GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so GPY already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`, then run `gpy-agent stop` and open a new prompt (the agent reads it once per process). The setting also applies to the pills the shells draw themselves (Bash, Zsh and Fish). See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
+
+## No Usable Home Directory
+
+GPY never falls back to `/tmp/gpy` or a path relative to the current directory. The runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy` and `~/.cache/gpy`; the config root is `$XDG_CONFIG_HOME/gpy` or `~/.config/gpy`; the data root is `$XDG_DATA_HOME/gpy` or `~/.local/share/gpy`. When none of them can be located (for example `HOME` is unset or not absolute):
+
+- `gpy-agent start` exits 1 and `gpy-agent status` exits 4 with `Error: Configuration error: cannot locate a runtime directory: set XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME to an absolute path`. An explicit `--socket` or `GPY_AGENT_SOCKET_PATH` still works for the agent.
+- Commands that write user files (`gpy theme new`, `gpy plugin new`, ...) exit 1 with the same error naming the config directory.
+- `gpy plugin list` prints `Bundled plugins: none (cannot locate a data directory: set XDG_DATA_HOME or HOME to an absolute path)`, and `gpy doctor` reports them missing.
+- `gpy debug paths` shows `<unresolved>`.
+- The shells keep GPY off for that session: no hooks, no agent and no oneshot mode. `GPY_DEBUG=1` prints one `gpy[init]: debug: ...` line; Fish shows its minimal fallback prompt.
+
+Fix it by exporting `HOME` (or the XDG variables) as an absolute path before the shell starts.
 
 ## Theme Fails to Load After an Upgrade
 

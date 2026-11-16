@@ -43,6 +43,10 @@ struct CacheEntry {
     /// `false` when per-file details were dropped for the byte budget;
     /// incremental updates then require a full scan.
     files_complete: bool,
+    /// The full scan started while nothing reported changes to the
+    /// repository; see [`GitStatusCache::get_canonical_unwatched`]. A scan
+    /// taken under a watch is never trusted this way once the watch is gone.
+    scanned_unwatched: bool,
 }
 
 impl CacheEntry {
@@ -198,6 +202,38 @@ impl GitStatusCache {
         Some(aggregates)
     }
 
+    /// A status of a repository nothing watches, trusted for at most
+    /// `max_age` (and the policy's TTL) without a rescan: only an entry whose
+    /// full scan itself started while the repository was unwatched (see
+    /// [`Self::apply_unwatched_full_scan`]) and with no change noted since
+    /// (see [`Self::note_change_canonical`]). A scan taken under a watch that
+    /// has since ended never qualifies: changes after the teardown went
+    /// unreported.
+    #[must_use]
+    pub fn get_canonical_unwatched(
+        &self,
+        key: &Path,
+        max_age: std::time::Duration,
+    ) -> Option<RepositoryStatus> {
+        let (aggregates, full_scan_at) = self
+            .entries
+            .lock_or_recover()
+            .get(key)
+            .filter(|entry| entry.scanned_unwatched)
+            .map(|e| (e.data.aggregates.clone(), e.full_scan_at))?;
+        let age = full_scan_at.elapsed();
+        if age >= max_age.min(self.policy.ttl()) || self.changed_since_canonical(key, full_scan_at)
+        {
+            return None;
+        }
+        debug_log!(
+            "cache",
+            "Cache HIT for unwatched {} (age: {age:?})",
+            key.display()
+        );
+        Some(aggregates)
+    }
+
     /// Get cached status regardless of TTL.
     #[must_use]
     pub fn get_any(&self, repo_path: &Path) -> Option<RepositoryStatus> {
@@ -234,7 +270,7 @@ impl GitStatusCache {
         files: HashMap<PathBuf, FileStatus>,
     ) {
         let mut entries = self.entries.lock_or_recover();
-        Self::insert_entry(&mut entries, key, status, files, Instant::now());
+        Self::insert_entry(&mut entries, key, status, files, Instant::now(), false);
     }
 
     /// Publish a full scan that began at `started`. Entries are ordered by
@@ -257,6 +293,31 @@ impl GitStatusCache {
         &self,
         key: &Path,
         started: Instant,
+        status: RepositoryStatus,
+        files: HashMap<PathBuf, FileStatus>,
+    ) -> Option<RepositoryStatus> {
+        self.apply_scan(key, started, false, status, files)
+    }
+
+    /// [`Self::apply_full_scan`] for a scan that started while nothing
+    /// reported changes to the repository (no live watch, live updates off,
+    /// or no watcher), which [`Self::get_canonical_unwatched`] may then trust.
+    #[must_use]
+    pub fn apply_unwatched_full_scan(
+        &self,
+        key: &Path,
+        started: Instant,
+        status: RepositoryStatus,
+        files: HashMap<PathBuf, FileStatus>,
+    ) -> Option<RepositoryStatus> {
+        self.apply_scan(key, started, true, status, files)
+    }
+
+    fn apply_scan(
+        &self,
+        key: &Path,
+        started: Instant,
+        unwatched: bool,
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
     ) -> Option<RepositoryStatus> {
@@ -283,6 +344,7 @@ impl GitStatusCache {
                 entry.data.aggregates = status;
                 let merged = reaggregate(entry);
                 entry.full_scan_at = started;
+                entry.scanned_unwatched = unwatched;
                 return Some(merged);
             }
         }
@@ -292,6 +354,7 @@ impl GitStatusCache {
             status,
             files,
             started,
+            unwatched,
         ))
     }
 
@@ -304,6 +367,7 @@ impl GitStatusCache {
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
         full_scan_at: Instant,
+        scanned_unwatched: bool,
     ) -> RepositoryStatus {
         debug_log!("cache", "Caching status for {}", key.display());
         entries.insert(
@@ -317,6 +381,7 @@ impl GitStatusCache {
                 updated_at: Instant::now(),
                 incremental_at: None,
                 files_complete: true,
+                scanned_unwatched,
             },
         );
         evict_to_capacity(entries, GIT_STATUS_CACHE_CAPACITY, |entry| entry.updated_at);
@@ -424,7 +489,14 @@ impl GitStatusCache {
         }
         let mut status = last_good?;
         status.stale_error = true;
-        let stale = Self::insert_entry(&mut entries, key, status, HashMap::new(), Instant::now());
+        let stale = Self::insert_entry(
+            &mut entries,
+            key,
+            status,
+            HashMap::new(),
+            Instant::now(),
+            false,
+        );
         if let Some(entry) = entries.get_mut(key) {
             entry.files_complete = false;
         }
@@ -749,6 +821,54 @@ mod tests {
             cache.get_canonical_scanned_since(&key, scanned),
             Some(dummy_status())
         );
+    }
+
+    /// Only a scan taken while the repository was unwatched is trusted
+    /// unwatched, and only within `max_age` and until a change is noted.
+    #[test]
+    fn unwatched_trust_needs_an_unwatched_scan_young_and_unchanged() {
+        const MAX_AGE: Duration = Duration::from_secs(2);
+        let cache = GitStatusCache::new();
+        let watched = PathBuf::from("/repo/scanned-under-watch");
+        let unwatched = PathBuf::from("/repo/scanned-unwatched");
+        let started = Instant::now();
+        assert!(
+            cache
+                .apply_full_scan(&watched, started, dummy_status(), HashMap::new())
+                .is_some()
+        );
+        assert!(
+            cache
+                .apply_unwatched_full_scan(&unwatched, started, dummy_status(), HashMap::new())
+                .is_some()
+        );
+
+        // A scan taken under a since-ended watch never qualifies.
+        assert_eq!(cache.get_canonical_unwatched(&watched, MAX_AGE), None);
+        assert_eq!(
+            cache.get_canonical_unwatched(&unwatched, MAX_AGE),
+            Some(dummy_status())
+        );
+
+        // Past `max_age` it rescans, though well within the TTL.
+        cache.age_entry_for_test(&unwatched, MAX_AGE, Duration::ZERO);
+        assert_eq!(cache.get_canonical_unwatched(&unwatched, MAX_AGE), None);
+        assert!(cache.get_canonical(&unwatched).is_some());
+
+        // A noted change ends the trust at once.
+        cache.age_entry_for_test(&unwatched, Duration::ZERO, Duration::ZERO);
+        assert!(cache.get_canonical_unwatched(&unwatched, MAX_AGE).is_some());
+        std::thread::sleep(Duration::from_millis(2));
+        cache.note_change_canonical(&unwatched);
+        assert_eq!(cache.get_canonical_unwatched(&unwatched, MAX_AGE), None);
+
+        // A later scan under a watch replaces the flag.
+        assert!(
+            cache
+                .apply_full_scan(&unwatched, Instant::now(), dummy_status(), HashMap::new())
+                .is_some()
+        );
+        assert_eq!(cache.get_canonical_unwatched(&unwatched, MAX_AGE), None);
     }
 
     /// Scans are ordered by when they started: an older scan finishing after

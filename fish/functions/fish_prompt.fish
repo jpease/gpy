@@ -10,6 +10,9 @@ function fish_prompt
     end
     __gpy_sync_fish_transient_prompt
 
+    # The first prompt's registration, once that prompt is drawn (core/supervisor.fish).
+    set -q __gpy_register_deferred; and __gpy_register_after_paint
+
     set -g __gpy_last_status $last_status
 
     # "black" blends the first chevron into a dark terminal.
@@ -106,10 +109,10 @@ function fish_prompt
     # Skip when the character is agent-rendered: its exit colour already shows status.
     if test (__gpy_flag_value "$GPY_SHOW_STATUS" on) = on; and test "$__gpy_char_agent_rendered" -ne 1
         if test $last_status -eq 0
-            set_color green
+            __gpy_set_fg_color green
             printf "%s " "$__icon_status_ok"
         else
-            set_color red
+            __gpy_set_fg_color red
             printf "%s " "$__icon_status_fail"
         end
         set_color normal
@@ -146,6 +149,8 @@ end
 # set_color spelling of a theme foreground: `transparent`, `match_bg`,
 # `match_text` and empty are the terminal default (set_color rejects the
 # keywords; the agent emits no SGR for them in a foreground-only render).
+# Any other colour is drawn at the colour depth core/renderer.fish chose
+# (__gpy_set_color), or by set_color at the default depth.
 # Lives here, not in core/renderer.fish, because fish_prompt also runs when
 # GPY is disabled or failed to load and the core files are not sourced.
 function __gpy_set_fg_color --argument-names color
@@ -153,7 +158,11 @@ function __gpy_set_fg_color --argument-names color
         case transparent match_bg match_text ''
             set_color normal
         case '*'
-            set_color $color
+            if test -n "$__gpy_color_depth"; and functions -q __gpy_set_color
+                __gpy_set_color $color
+            else
+                set_color $color
+            end
     end
 end
 

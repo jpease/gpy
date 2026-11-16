@@ -347,3 +347,74 @@ fn agent_theme_export_with_missing_configured_theme_falls_back_to_default() {
     );
     assert!(!result.stderr.contains("Error:"), "{result:?}");
 }
+
+/// Without a usable `HOME` or `XDG_*` root both binaries fail closed: a
+/// non-zero exit and one `Error:` line naming the variables to set, never a
+/// `/tmp/gpy` runtime root or a `./.config/gpy` config root.
+#[test]
+fn no_usable_home_or_xdg_root_fails_closed() {
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    let run = |binary: &str, args: &[&str]| {
+        let output = Command::new(binary)
+            .args(args)
+            .current_dir(cwd.path())
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", "relative/home")
+            .env("XDG_RUNTIME_DIR", "run")
+            .env("XDG_CACHE_HOME", "")
+            .env("XDG_CONFIG_HOME", "cfg")
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn");
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        (output.status.code(), stdout, stderr)
+    };
+    let agent = env!("CARGO_BIN_EXE_gpy-agent");
+    let gpy = env!("CARGO_BIN_EXE_gpy");
+    for (binary, args, message) in [
+        (agent, &["start"][..], gpy_agent::paths::NO_RUNTIME_DIR),
+        (agent, &["status"][..], gpy_agent::paths::NO_RUNTIME_DIR),
+        (
+            gpy,
+            &["theme", "new", "mine"][..],
+            gpy_agent::paths::NO_CONFIG_DIR,
+        ),
+        (
+            gpy,
+            &["plugin", "new", "mine"][..],
+            gpy_agent::paths::NO_CONFIG_DIR,
+        ),
+    ] {
+        let (code, _, stderr) = run(binary, args);
+        assert!(
+            code.is_some_and(|status| status != 0_i32),
+            "{args:?}: {code:?} {stderr}"
+        );
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+        assert_eq!(
+            stderr.trim_end().lines().count(),
+            1,
+            "{args:?}: one line: {stderr}"
+        );
+    }
+    // No data root and no GPY_BUNDLED_PLUGIN_DIR: no bundled plugins (never a
+    // relative `.local/share/gpy`), and `plugin list` says why.
+    let (code, stdout, stderr) = run(gpy, &["plugin", "list"]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "Bundled plugins: none ({})",
+            gpy_agent::paths::NO_DATA_DIR
+        )),
+        "{stdout}"
+    );
+    assert!(
+        std::fs::read_dir(cwd.path())
+            .expect("read cwd")
+            .next()
+            .is_none(),
+        "nothing may be created under the working directory"
+    );
+}

@@ -622,3 +622,100 @@ fn remove_leaves_the_plugin_when_the_id_is_path_like() {
     assert!(env.plugins_dir().join("foo/plugin.toml").is_file());
     assert!(!env.config_dir().join("plugins.bak").exists());
 }
+
+/// Create `plugins.bak/<name>` holding one file.
+fn seed_backup(env: &CliTestEnv, name: &str) {
+    let dir = env.config_dir().join("plugins.bak").join(name);
+    std::fs::create_dir_all(&dir).expect("create backup dir");
+    std::fs::write(dir.join("plugin.toml"), "x").expect("write backup file");
+}
+
+fn backup_names(env: &CliTestEnv) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(env.config_dir().join("plugins.bak"))
+        .expect("plugins.bak exists")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn force_install_keeps_only_the_newest_three_backups_of_that_plugin() {
+    let (_source_env, dir) = scaffold("foo");
+    let env = CliTestEnv::new().expect("create env");
+    install(&env, &dir, &[]).assert_success("first install");
+    for stamp in [
+        "20200101_000000",
+        "20200102_000000",
+        "20200103_000000",
+        "20200104_000000",
+    ] {
+        seed_backup(&env, &format!("foo.{stamp}"));
+    }
+    seed_backup(&env, "foo.20200101_000000.blocking");
+    seed_backup(&env, "bar.20190101_000000");
+    seed_backup(&env, "foo.notes");
+    seed_backup(&env, "foobar.20190101_000000");
+
+    let result = install(&env, &dir, &["--force"]);
+    result.assert_success("forced install");
+    assert!(
+        result.stdout.contains("Pruned 3 old backup(s) of foo"),
+        "{result:?}"
+    );
+
+    let names = backup_names(&env);
+    let foo: Vec<&String> = names
+        .iter()
+        .filter(|name| {
+            name.starts_with("foo.2") && !name.starts_with("foo.2019") && !name.contains("blocking")
+        })
+        .collect();
+    assert_eq!(foo.len(), 3_usize, "{names:?}");
+    assert!(
+        !names.contains(&"foo.20200101_000000".to_owned()),
+        "{names:?}"
+    );
+    assert!(
+        !names.contains(&"foo.20200101_000000.blocking".to_owned()),
+        "{names:?}"
+    );
+    assert!(
+        !names.contains(&"foo.20200102_000000".to_owned()),
+        "{names:?}"
+    );
+    for kept in [
+        "foo.20200103_000000",
+        "foo.20200104_000000",
+        "bar.20190101_000000",
+        "foo.notes",
+        "foobar.20190101_000000",
+    ] {
+        assert!(names.contains(&kept.to_owned()), "{kept} in {names:?}");
+    }
+}
+
+#[test]
+fn remove_prunes_old_backups_too() {
+    let (_source_env, dir) = scaffold("foo");
+    let env = CliTestEnv::new().expect("create env");
+    install(&env, &dir, &[]).assert_success("install");
+    for day in 1_u8..=4_u8 {
+        seed_backup(&env, &format!("foo.2020010{day}_000000"));
+    }
+    let result = env
+        .run_gpy(&["plugin", "remove", "foo"])
+        .expect("spawn gpy");
+    result.assert_success("remove");
+    assert!(
+        result.stdout.contains("Pruned 2 old backup(s) of foo"),
+        "{result:?}"
+    );
+    assert_eq!(backup_names(&env).len(), 3_usize);
+}

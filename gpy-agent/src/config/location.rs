@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 /// Configuration file locations in priority order, for an explicit environment.
 ///
 /// Pure so precedence is testable without `set_var` (forbidden by `unsafe_code`).
-/// Empty `GPY_CONFIG_PATH` is dropped (else `config set` writes to `""`);
+/// A non-empty `GPY_CONFIG_PATH` is the only candidate, existing or not, so
+/// a file it names is read and created there even while a global config
+/// exists; an empty one is dropped (else `config set` writes to `""`).
 /// `XDG_CONFIG_HOME` goes through [`crate::paths::xdg_path`]. No `~/.gpy.toml` or project-local file: the
 /// daemon serves every directory, so CLI and prompt must agree on one file.
 #[must_use]
@@ -15,10 +17,10 @@ pub fn config_candidates_for(
     home: Option<&Path>,
     os: crate::paths::Os,
 ) -> Vec<PathBuf> {
+    if let Some(custom) = custom_path.filter(|path| !path.as_os_str().is_empty()) {
+        return vec![custom.to_path_buf()];
+    }
     [
-        custom_path
-            .filter(|path| !path.is_empty())
-            .map(Path::to_path_buf),
         crate::paths::xdg_path(xdg_config, os).map(|xdg| xdg.join("gpy").join("config.toml")),
         crate::paths::xdg_path(home, os)
             .map(|root| root.join(".config").join("gpy").join("config.toml")),
@@ -101,24 +103,19 @@ mod config_path_tests {
         &'static [&'static str],
     );
 
-    const CANDIDATE_CASES: [CandidateCase; 9] = [
+    const CANDIDATE_CASES: [CandidateCase; 10] = [
+        // GPY_CONFIG_PATH is the only candidate, so an absent file there still
+        // wins over an existing global config.
         (
             Some("/custom.toml"),
             Some("/xdgcfg"),
             Some("/home/u"),
-            &[
-                "/custom.toml",
-                "/xdgcfg/gpy/config.toml",
-                "/home/u/.config/gpy/config.toml",
-            ],
+            &["/custom.toml"],
         ),
         // Relative GPY_CONFIG_PATH passes through; `get_config_paths` absolutizes it.
-        (
-            Some("custom.toml"),
-            None,
-            Some("/home/u"),
-            &["custom.toml", "/home/u/.config/gpy/config.toml"],
-        ),
+        (Some("custom.toml"), None, Some("/home/u"), &["custom.toml"]),
+        // Honoured even with no usable home.
+        (Some("/custom.toml"), None, None, &["/custom.toml"]),
         (
             Some(""),
             Some("/xdgcfg"),

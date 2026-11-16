@@ -90,6 +90,51 @@ fn gpy_config_path_is_used_for_both_load_and_save() {
     );
 }
 
+/// A `GPY_CONFIG_PATH` naming a file that does not exist yet still wins over an
+/// existing global config: `config set` creates it and leaves the global alone.
+#[test]
+fn missing_gpy_config_path_is_created_over_an_existing_global_config() {
+    let (temp, home, xdg) = isolated_dirs();
+    let global = xdg.join("gpy").join("config.toml");
+    fs::create_dir_all(global.parent().unwrap()).unwrap();
+    let global_contents = "[ui]\ndirectory.max_length = 77\n";
+    fs::write(&global, global_contents).unwrap();
+    let custom = temp.path().join("fresh").join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "ui.directory.max_length", "123"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let contents = fs::read_to_string(&custom).expect("GPY_CONFIG_PATH file is created");
+    assert!(
+        contents.contains("123"),
+        "new value in the custom file: {contents}"
+    );
+    assert_eq!(
+        fs::read_to_string(&global).unwrap(),
+        global_contents,
+        "the global config must not be touched while GPY_CONFIG_PATH is set"
+    );
+
+    let shown = run_gpy(
+        &["config", "get", "ui.directory.max_length"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert_eq!(String::from_utf8_lossy(&shown.stdout).trim(), "123");
+}
+
 /// A `.gpy.toml` in the current directory is not a config source: the agent
 /// is one daemon for every directory.
 #[test]

@@ -178,6 +178,66 @@ else
 end
 check "script ran twice: first prompt and one command (ttl 0)" 2 (runs $cnt)
 
+# --- One Bash child per due prompt --------------------------------------
+print_test_header "scan and batch share one Bash child"
+# A Bash stand-in counts runner children (the version probe's program never
+# names a runner function) and runs the real one.
+function bash_counter --argument-names log
+    write_script $case_dir/out/bash "case \"\$3\" in *__gpy_g_*) echo child >>'$log' ;; esac
+exec \"\$GPY_T_REAL_BASH\" \"\$@\""
+end
+set -g count_children '
+    __gpy_g_resolve_runner
+    set -gx GPY_T_REAL_BASH $__gpy_g_bash
+    set -g __gpy_g_bash $GPY_T_COUNTER
+'
+new_case onechild
+set -l kids $case_dir/out/children
+bash_counter $kids
+# The first segment misses its trigger, so the runner renumbers the values
+# of the two after it.
+set F_env T_A
+set F_reqfiles absent-marker
+add_seg gone "echo gone"
+set F_env T_B
+set F_reqfiles marker
+add_seg hitseg "printf 'b=%s\n' \"\$T_B\""
+set F_env T_C
+add_seg plain "printf 'c=%s\n' \"\$T_C\""
+write_export
+touch $case_dir/work/marker
+set -g run_extra_env GPY_T_W=$case_dir/work GPY_T_COUNTER=$case_dir/out/bash
+set -l out (run_fish $count_children'
+    cd $GPY_T_W
+    set -gx T_A a; set -gx T_B b; set -gx T_C c
+    p
+    show gone hitseg plain
+    printf "children=%s\n" (count < '$kids')
+    c
+    printf "children=%s\n" (count < '$kids')
+')
+check "a missed trigger hides its segment" "gone=[]" "$out[1]"
+check "a segment after a dropped one gets its own value" "hitseg=[b=b]" "$out[2]"
+check "a segment with no trigger gets its own value" "plain=[c=c]" "$out[3]"
+check "a due prompt with a scan and a batch starts one Bash child" children=1 "$out[4]"
+check "the next due prompt starts one more" children=2 "$out[5]"
+
+new_case nochild
+set -l kids $case_dir/out/children
+bash_counter $kids
+set F_ttl 60
+add_seg demo "echo hi"
+write_export
+set -g run_extra_env GPY_T_COUNTER=$case_dir/out/bash
+set -l out (run_fish $count_children'
+    p
+    c
+    c
+    show demo
+')
+check "cache hits keep the text" "demo=[hi]" "$out[1]"
+check "due prompts that only hit the cache start no Bash child" 1 (runs $kids)
+
 # --- Cache: ttl, key from declared values -------------------------------
 print_test_header "cache keyed by declared values, ttl"
 new_case cache

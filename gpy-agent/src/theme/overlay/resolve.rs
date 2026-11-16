@@ -24,8 +24,9 @@ use std::path::{Path, PathBuf};
 /// taken from the directory listing when it loads.
 #[must_use]
 pub fn resolve_top(name: &str) -> Option<ChainLink> {
-    let user_path = user_copy_path(name);
-    if user_path.exists() {
+    if let Ok(user_path) = user_copy_path(name)
+        && user_path.exists()
+    {
         return Some(ChainLink {
             name: name.to_owned(),
             source: Source::User,
@@ -230,13 +231,15 @@ impl Candidates {
         }
     }
 
-    /// The user theme file whose stem is exactly `name`.
+    /// The user theme file whose stem is exactly `name`; none without a
+    /// config root.
     fn user(&mut self, name: &str) -> Option<PathBuf> {
-        let user_dir = self
-            .user_dir
-            .get_or_insert_with(ThemeManager::user_themes_dir);
+        if self.user_dir.is_none() {
+            self.user_dir = ThemeManager::user_themes_dir().ok();
+        }
+        let user_dir = self.user_dir.as_deref();
         self.user
-            .get_or_insert_with(|| toml_stems(user_dir).collect())
+            .get_or_insert_with(|| user_dir.map_or_else(Vec::new, |dir| toml_stems(dir).collect()))
             .iter()
             .find(|(stem, _)| stem == name)
             .map(|(_, path)| path.clone())

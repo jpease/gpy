@@ -4,10 +4,111 @@
 
 __GPY_SGR_ESC=$'\033'
 
+# Colour depth, mirroring the agent's `ColorDepth`: GPY_COLOR_DEPTH
+# (truecolor|24bit|256|16|none, case-insensitive, surrounding blanks ignored)
+# wins; otherwise 256 on Apple_Terminal / TERM=linux, else truecolor. Unknown
+# values are ignored. Result: truecolor, 256, 16 or none.
+__gpy_color_depth() {
+    local __v="${GPY_COLOR_DEPTH-}"
+    __v=${__v#"${__v%%[![:space:]]*}"}
+    __v=${__v%"${__v##*[![:space:]]}"}
+    case "$__v" in
+        [Tt][Rr][Uu][Ee][Cc][Oo][Ll][Oo][Rr] | 24[Bb][Ii][Tt]) printf -v "$1" '%s' truecolor ;;
+        256) printf -v "$1" '%s' 256 ;;
+        16) printf -v "$1" '%s' 16 ;;
+        [Nn][Oo][Nn][Ee]) printf -v "$1" '%s' none ;;
+        *)
+            if [[ "${TERM_PROGRAM-}" == Apple_Terminal || "${TERM-}" == linux ]]; then
+                printf -v "$1" '%s' 256
+            else
+                printf -v "$1" '%s' truecolor
+            fi
+            ;;
+    esac
+}
+
+# The xterm 6x6x6 cube level (0-5) nearest to channel $1, into $2.
+__gpy_cube_level() {
+    local __c=$1 __l
+    if ((__c < 48)); then __l=0
+    elif ((__c < 115)); then __l=1
+    elif ((__c < 155)); then __l=2
+    elif ((__c < 195)); then __l=3
+    elif ((__c < 235)); then __l=4
+    else __l=5; fi
+    printf -v "$2" '%s' "$__l"
+}
+
+# The 16 ANSI colours as xterm draws them (r g b triples, SGR order).
+__GPY_ANSI16_RGB=(0 0 0 205 0 0 0 205 0 205 205 0 0 0 238 205 0 205 0 205 205 229 229 229
+    127 127 127 255 0 0 0 255 0 255 255 0 92 92 255 255 0 255 0 255 255 255 255 255)
+
+# Foreground code (30-37, 90-97) of the ANSI colour nearest to R=$1 G=$2 B=$3, into $4.
+__gpy_rgb_to_16() {
+    local __i __best=0 __bestd=-1 __d __dr __dg __db
+    for ((__i = 0; __i < 16; __i++)); do
+        __dr=$(($1 - __GPY_ANSI16_RGB[__i * 3]))
+        __dg=$(($2 - __GPY_ANSI16_RGB[__i * 3 + 1]))
+        __db=$(($3 - __GPY_ANSI16_RGB[__i * 3 + 2]))
+        __d=$((__dr * __dr + __dg * __dg + __db * __db))
+        if ((__bestd < 0 || __d < __bestd)); then __bestd=$__d __best=$__i; fi
+    done
+    if ((__best < 8)); then
+        printf -v "$4" '%s' $((30 + __best))
+    else
+        printf -v "$4" '%s' $((90 + __best - 8))
+    fi
+}
+
+# Foreground code (30-37, 90-97) nearest to 256-colour index $1, into $2.
+__gpy_index_to_16() {
+    local __xn=$1 __xc __xr __xg __xb __xgy
+    if ((__xn < 8)); then
+        printf -v "$2" '%s' $((30 + __xn))
+    elif ((__xn < 16)); then
+        printf -v "$2" '%s' $((90 + __xn - 8))
+    elif ((__xn < 232)); then
+        __xc=$((__xn - 16))
+        __xr=$((__xc / 36)) __xg=$((__xc / 6 % 6)) __xb=$((__xc % 6))
+        ((__xr == 0)) || __xr=$((55 + 40 * __xr))
+        ((__xg == 0)) || __xg=$((55 + 40 * __xg))
+        ((__xb == 0)) || __xb=$((55 + 40 * __xb))
+        __gpy_rgb_to_16 "$__xr" "$__xg" "$__xb" "$2"
+    else
+        __xgy=$((8 + 10 * (__xn - 232)))
+        __gpy_rgb_to_16 "$__xgy" "$__xgy" "$__xgy" "$2"
+    fi
+}
+
+# Nearest xterm 256 index to R=$1 G=$2 B=$3, into $4.
+__gpy_rgb_to_256() {
+    local __lr __lg __lb
+    if (($1 == $2 && $2 == $3)); then
+        if (($1 < 8)); then printf -v "$4" '%s' 16
+        elif (($1 >= 248)); then printf -v "$4" '%s' 231
+        else
+            __lr=$((($1 - 3) / 10))
+            ((__lr > 23)) && __lr=23
+            printf -v "$4" '%s' $((232 + __lr))
+        fi
+        return 0
+    fi
+    __gpy_cube_level "$1" __lr
+    __gpy_cube_level "$2" __lg
+    __gpy_cube_level "$3" __lb
+    printf -v "$4" '%s' $((16 + 36 * __lr + 6 * __lg + __lb))
+}
+
+# GPY_COLOR_DEPTH=none yields empty parameters (no colour codes).
 # Unknown names, `transparent`, `normal` and empty map to the default (39/49).
 __gpy_sgr_param() {
-    local __kind="$1" __color="$2" __base=30 __code=""
+    local __kind="$1" __color="$2" __base=30 __code="" __spd __spn __spr __spg __spb
     [[ "$__kind" == bg ]] && __base=40
+    __gpy_color_depth __spd
+    if [[ "$__spd" == none ]]; then
+        printf -v "$3" '%s' ""
+        return 0
+    fi
     case "$__color" in
         black) __code=$((__base + 0)) ;;
         red) __code=$((__base + 1)) ;;
@@ -26,11 +127,27 @@ __gpy_sgr_param() {
         brcyan | bright_cyan | bright-cyan) __code=$((__base + 66)) ;;
         brwhite | bright_white | bright-white) __code=$((__base + 67)) ;;
         \#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
-            __code="$((__base + 8));2;$((16#${__color:1:2}));$((16#${__color:3:2}));$((16#${__color:5:2}))"
+            __spr=$((16#${__color:1:2})) __spg=$((16#${__color:3:2})) __spb=$((16#${__color:5:2}))
+            case "$__spd" in
+                truecolor) __code="$((__base + 8));2;${__spr};${__spg};${__spb}" ;;
+                256)
+                    __gpy_rgb_to_256 "$__spr" "$__spg" "$__spb" __spn
+                    __code="$((__base + 8));5;${__spn}"
+                    ;;
+                *)
+                    __gpy_rgb_to_16 "$__spr" "$__spg" "$__spb" __spn
+                    __code=$((__spn + __base - 30))
+                    ;;
+            esac
             ;;
         [0-9] | [0-9][0-9] | [0-9][0-9][0-9])
             if ((10#$__color <= 255)); then
-                __code="$((__base + 8));5;$((10#$__color))"
+                if [[ "$__spd" == 16 ]]; then
+                    __gpy_index_to_16 "$((10#$__color))" __spn
+                    __code=$((__spn + __base - 30))
+                else
+                    __code="$((__base + 8));5;$((10#$__color))"
+                fi
             else
                 __code=$((__base + 9))
             fi
@@ -72,6 +189,10 @@ __gpy_sgr_pair() {
     local __f __b
     __gpy_sgr_param fg "$1" __f
     __gpy_sgr_param bg "$2" __b
+    if [[ -z "$__f" && -z "$__b" ]]; then
+        printf -v "$3" '%s' ""
+        return 0
+    fi
     printf -v "$3" '%s' "\\[${__GPY_SGR_ESC}[${__f};${__b}m\\]"
 }
 

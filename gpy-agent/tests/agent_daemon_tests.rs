@@ -449,7 +449,7 @@ fn set_test_env_with_theme(theme_toml: &str) -> TestEnv {
     let env = set_test_env();
     let config_path = std::env::var_os("GPY_CONFIG_PATH").expect("GPY_CONFIG_PATH is set");
     std::fs::write(&config_path, "[ui]\ntheme = \"audit\"\n").expect("write config");
-    let themes_dir = ThemeManager::user_themes_dir();
+    let themes_dir = ThemeManager::user_themes_dir().expect("a config root");
     std::fs::create_dir_all(&themes_dir).expect("create themes dir");
     std::fs::write(themes_dir.join("audit.toml"), theme_toml).expect("write theme");
     env

@@ -58,17 +58,21 @@ pub struct RenderDeps {
     pub client_registry: Arc<ClientDirectory>,
 }
 
-/// Repaint live shells when `write_result` reports changed output; log (never
-/// fail) on error. The change gate keeps no-op refreshes from waking terminals.
+/// Repaint live shells when `write_result` reports changed output and
+/// `agent.live_updates` is on; log (never fail) on error. This is the only
+/// request-driven ring (a reply rings nothing by itself), and the change gate
+/// keeps no-op refreshes from waking terminals.
 pub(crate) fn notify_if_changed(
-    client_registry: &ClientDirectory,
+    deps: &RenderDeps,
     root: &Path,
     write_result: crate::Result<bool>,
     context: &str,
 ) {
     match write_result {
-        Ok(true) => client_registry.notify_repaint_force(Some(root)),
-        Ok(false) => {}
+        Ok(true) if deps.config_manager.get().agent.live_updates => {
+            deps.client_registry.notify_repaint(Some(root));
+        }
+        Ok(_) => {}
         // The instant cache is an optimization; don't fail the request.
         Err(e) => warn_log!(
             "cache",
@@ -187,6 +191,58 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Config reload failed: Configuration error: missing field"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod notify_tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
+
+    use super::{RenderDeps, notify_if_changed};
+    use crate::config::Config;
+    use crate::config::manager::ConfigManager;
+    use crate::ipc::ClientDirectory;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Render deps whose registry counts rings, with `agent.live_updates` set.
+    fn deps_with(live_updates: bool) -> (RenderDeps, Arc<AtomicU64>) {
+        let mut config = Config::default();
+        config.agent.live_updates = live_updates;
+        let manager = ConfigManager::from_config(config).expect("config");
+        let mut deps = crate::ipc::fixtures::render_deps(Arc::new(manager));
+        let (registry, rings) = ClientDirectory::counting_rings();
+        deps.client_registry = registry.shared();
+        (deps, rings)
+    }
+
+    #[test]
+    fn only_changed_output_rings_once() {
+        let (deps, rings) = deps_with(true);
+        let root = Path::new("/repo");
+
+        notify_if_changed(&deps, root, Ok(false), "git");
+        assert_eq!(rings.load(Ordering::SeqCst), 0, "unchanged output rang");
+
+        notify_if_changed(&deps, root, Ok(true), "git");
+        assert_eq!(rings.load(Ordering::SeqCst), 1, "changed output rings once");
+    }
+
+    #[test]
+    fn live_updates_off_rings_nothing() {
+        let (deps, rings) = deps_with(false);
+
+        notify_if_changed(&deps, Path::new("/repo"), Ok(true), "language");
+
+        assert_eq!(
+            rings.load(Ordering::SeqCst),
+            0,
+            "agent.live_updates = false must suppress the change ring"
         );
     }
 }

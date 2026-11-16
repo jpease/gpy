@@ -138,25 +138,26 @@ if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" && "$GPY_AGENT_SOCKET_PATH" != /* ]]; then
 fi
 
 # An $XDG_* variable counts only when non-empty and absolute (XDG spec).
+# Non-zero status (and an empty $1) when there is no override and no runtime
+# root, as the agent refuses to resolve the default socket then.
 # Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
 # once at load, like `paths::absolutize`.
 __gpy_ipc_endpoint_into() {
-    local __gpy_ie_home
+    local __gpy_ie_root
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
         printf -v "$1" '%s' "$GPY_AGENT_SOCKET_PATH"
-    elif [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
-        printf -v "$1" '%s' "$XDG_RUNTIME_DIR/gpy/gpy.sock"
-    elif [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
-        printf -v "$1" '%s' "$XDG_CACHE_HOME/gpy/gpy.sock"
-    elif __gpy_home __gpy_ie_home; then
-        printf -v "$1" '%s' "$__gpy_ie_home/.cache/gpy/gpy.sock"
+    elif __gpy_runtime_root __gpy_ie_root; then
+        printf -v "$1" '%s' "$__gpy_ie_root/gpy.sock"
     else
-        printf -v "$1" '%s' "/tmp/gpy/gpy.sock"
+        printf -v "$1" '%s' ""
+        return 1
     fi
 }
 
 # Where the socket lives by default and where the agent finds shell PIDs.
-# Writes into variable $1 so hot paths need no `$(...)` fork.
+# Writes into variable $1 so hot paths need no `$(...)` fork. Non-zero status
+# when nothing is usable: there is no shared /tmp fallback, and gpy.bash
+# leaves GPY off for a session that starts that way.
 # Rust counterpart: `paths::runtime_root_for`.
 __gpy_runtime_root() {
     local __gpy_rr_home
@@ -167,18 +168,20 @@ __gpy_runtime_root() {
     elif __gpy_home __gpy_rr_home; then
         printf -v "$1" '%s' "$__gpy_rr_home/.cache/gpy"
     else
-        printf -v "$1" '%s' "/tmp/gpy"
+        return 1
     fi
 }
 
 # The file name is the PID the agent signals, so it must be numeric.
 __gpy_shell_registry_dir() {
     local root
-    __gpy_runtime_root root
+    __gpy_runtime_root root || return 1
     echo "$root/shells"
 }
 __gpy_shell_registry_file() {
-    echo "$(__gpy_shell_registry_dir)/$$"
+    local dir
+    dir="$(__gpy_shell_registry_dir)" || return 1
+    echo "$dir/$$"
 }
 
 # Record this shell so a restarted agent can nudge it, and cache the flag
@@ -186,7 +189,7 @@ __gpy_shell_registry_file() {
 __gpy_shell_flag_base=""
 __gpy_track_shell_for_agent_recovery() {
     local dir
-    dir="$(__gpy_shell_registry_dir)"
+    dir="$(__gpy_shell_registry_dir)" || return 0
     __gpy_shell_flag_base="$dir/$$"
     mkdir -p "$dir" 2>/dev/null || return 0
     echo "$$" >"$dir/$$" 2>/dev/null || true
@@ -195,9 +198,9 @@ __gpy_track_shell_for_agent_recovery() {
 __gpy_untrack_shell_for_agent_recovery() {
     local file root stamp had_failglob=0
     local -a stamps=()
-    file="$(__gpy_shell_registry_file)"
+    file="$(__gpy_shell_registry_file)" || return 0
     rm -f "$file" "$file.reload" "$file.reregister" 2>/dev/null || true
-    __gpy_runtime_root root
+    __gpy_runtime_root root || return 0
     # Runs from the EXIT trap: under failglob an unmatched glob would abort it
     # before the chained EXIT trap, so lift it and skip a literal non-match.
     shopt -q failglob && had_failglob=1 && shopt -u failglob
@@ -413,10 +416,10 @@ __gpy_agent_late_secs=5
 
 # The late-window stamp, `<until epoch seconds> <socket>`, into variable $1.
 # Per shell, under refresh-throttle/ so the exit handler's `<pid>.*` sweep
-# removes it. Locals are __gpy_alf_*.
+# removes it; non-zero status without a runtime root. Locals are __gpy_alf_*.
 __gpy_agent_late_file_into() {
     local __gpy_alf_root
-    __gpy_runtime_root __gpy_alf_root
+    __gpy_runtime_root __gpy_alf_root || return 1
     printf -v "$1" '%s' "$__gpy_alf_root/refresh-throttle/$$.agent-late"
 }
 
@@ -443,7 +446,7 @@ __gpy_agent_late_mark() {
     local __gpy_alm_file __gpy_alm_now __gpy_alm_stamp
     __gpy_now_seconds __gpy_alm_now
     [[ "$__gpy_alm_now" =~ ^[0-9]+$ ]] || return 0
-    __gpy_agent_late_file_into __gpy_alm_file
+    __gpy_agent_late_file_into __gpy_alm_file || return 0
     __gpy_alm_stamp="$((__gpy_alm_now + __gpy_agent_late_secs)) $2"
     # `>|` overrides noclobber; the directory is created only on a miss.
     if ! { printf '%s' "$__gpy_alm_stamp" >|"$__gpy_alm_file"; } 2>/dev/null; then
@@ -457,7 +460,7 @@ __gpy_agent_late_mark() {
 # re-register.
 __gpy_agent_late_clear() {
     local __gpy_alc_file
-    __gpy_agent_late_file_into __gpy_alc_file
+    __gpy_agent_late_file_into __gpy_alc_file || return 0
     [[ -f "$__gpy_alc_file" ]] && { : >|"$__gpy_alc_file"; } 2>/dev/null
     return 0
 }
@@ -808,7 +811,7 @@ __gpy_maybe_refresh() {
 
     local dir bucket stamp_name stamp stamped="" last_ms=0 now_ms path_key
     # On disk because segments run in `$(...)` subshells.
-    __gpy_runtime_root dir
+    __gpy_runtime_root dir || return 0
     dir+="/refresh-throttle"
     # The dot-free fields lead, so the bucket stays injective; the encoded
     # path has no spaces, so it is everything after the stamp's first space.
@@ -1050,11 +1053,12 @@ __gpy_debug_paths() {
         cache_root="<unresolved>"
     fi
 
-    local runtime_root
-    __gpy_runtime_root runtime_root
+    local runtime_root registry
+    __gpy_runtime_root runtime_root || runtime_root="<unresolved>"
+    registry="$(__gpy_shell_registry_dir)" || registry="<unresolved>"
     echo "runtime_root=$runtime_root"
     echo "socket=$socket"
-    echo "shell_registry_dir=$(__gpy_shell_registry_dir)"
+    echo "shell_registry_dir=$registry"
     echo "cache_root=$cache_root"
     echo "instant_prompts_dir=$instant_dir"
     echo "theme_export_file=<unimplemented>"

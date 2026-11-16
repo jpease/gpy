@@ -21,7 +21,10 @@ pub(crate) fn retire_unmodified_themes() {
             return;
         }
     }
-    let themes_dir = ThemeManager::user_themes_dir();
+    // Without a config root there are no theme files to retire.
+    let Ok(themes_dir) = ThemeManager::user_themes_dir() else {
+        return;
+    };
     let mut kept = Vec::new();
     let mut overlays = Vec::new();
     for copy in retire_unmodified_copies(&themes_dir) {

@@ -100,8 +100,8 @@ fn print_stdout(artifacts: &ImportArtifacts) -> Result<()> {
 
 /// Write palette + theme files, refusing to overwrite or shadow without `force`.
 fn write_files(artifacts: &ImportArtifacts, name: &str, force: bool) -> Result<()> {
-    let palette_path = PaletteManager::user_palettes_dir().join(format!("{name}.toml"));
-    let theme_path = ThemeManager::user_themes_dir().join(format!("{name}.toml"));
+    let palette_path = PaletteManager::palette_path(name)?;
+    let theme_path = ThemeManager::user_themes_dir()?.join(format!("{name}.toml"));
 
     if !force {
         refuse_shadowing(name)?;

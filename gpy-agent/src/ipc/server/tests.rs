@@ -2,8 +2,6 @@
 
 use super::EndpointHandle;
 use crate::config::manager::ConfigManager;
-#[cfg(unix)]
-use crate::ipc::ClientDirectory;
 use crate::ipc::fixtures::{endpoint_deps, render_deps};
 use crate::ipc::{Message, Response, Segment};
 use std::assert_matches;
@@ -39,55 +37,6 @@ fn config_manager_with(dir: &Path, toml: &str) -> Arc<ConfigManager> {
 fn reload_config(manager: &ConfigManager, dir: &Path, toml: &str) {
     std::fs::write(dir.join("config.toml"), toml).expect("write config");
     manager.reload_now().expect("reload config");
-}
-
-#[cfg(unix)]
-#[test]
-fn notify_clients_respects_agent_live_updates_flag() {
-    use super::handle::notify_clients_for_response;
-    use std::sync::atomic::Ordering;
-
-    let (directory, rings) = ClientDirectory::counting_rings();
-    let registry = directory.shared();
-    let config_dir = TempDir::new().expect("config dir");
-    let config_manager = config_manager_with(config_dir.path(), "[agent]\nlive_updates = false\n");
-
-    let response = Response::RepositoryStatus(crate::git::RepositoryStatus {
-        branch: "main".to_owned(),
-        ahead: 0,
-        behind: 0,
-        ahead_capped: false,
-        behind_capped: false,
-        staged: 0,
-        unstaged: 0,
-        untracked: 0,
-        conflicts: 0,
-        state: crate::git::RepositoryState::Clean,
-        stash_count: 0,
-        detached: false,
-        stale_error: false,
-        rebase_progress: None,
-    });
-
-    notify_clients_for_response(&config_manager, &registry, &response, None);
-    assert_eq!(
-        rings.load(Ordering::SeqCst),
-        0,
-        "live updates disabled should suppress notifications"
-    );
-
-    reload_config(
-        &config_manager,
-        config_dir.path(),
-        "[agent]\nlive_updates = true\n",
-    );
-
-    notify_clients_for_response(&config_manager, &registry, &response, None);
-    assert_eq!(
-        rings.load(Ordering::SeqCst),
-        1,
-        "live updates enabled should allow notifications"
-    );
 }
 
 #[test]

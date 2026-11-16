@@ -279,7 +279,7 @@ impl LanguageHandler {
         let result = deps
             .instant_cache
             .write_language_variants(cache_path, languages, &config, &theme, prev_bg, &palette);
-        notify_if_changed(&deps.client_registry, cache_path, result, "language");
+        notify_if_changed(deps, cache_path, result, "language");
     }
 }
 

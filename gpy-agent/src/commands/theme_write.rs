@@ -32,7 +32,7 @@ pub fn new(name: &str, from: Option<&str>, full: bool) -> Result<()> {
     validate_config_name("theme", name)?;
     let base = from.unwrap_or(DEFAULT_BASE);
     validate_config_name("theme", base)?;
-    if user_copy::user_copy_path(name).exists() {
+    if user_copy::user_copy_path(name)?.exists() {
         return Err(already_exists(name));
     }
 
@@ -153,7 +153,7 @@ pub fn save(name: Option<&str>, full: bool, yes: bool) -> Result<()> {
 /// Returns an error naming `name` when the result would not load, including
 /// an `extends` cycle the new file would close.
 pub(crate) fn check_write(name: &str, text: String) -> Result<LoadedTheme> {
-    let path = user_copy::user_copy_path(name);
+    let path = user_copy::user_copy_path(name)?;
     let link = if path.exists() {
         overlay::own_user_link(name)?
     } else {
@@ -303,7 +303,9 @@ fn cycle_once_written(chain: &ThemeChain, name: &str) -> Option<String> {
 
 /// Whether the user theme file `name` exists and is the file at `path`.
 fn same_file(name: &str, path: &Path) -> bool {
-    let target = user_copy::user_copy_path(name);
+    let Ok(target) = user_copy::user_copy_path(name) else {
+        return false;
+    };
     match (std::fs::canonicalize(target), std::fs::canonicalize(path)) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
@@ -404,7 +406,7 @@ mod tests {
         let link = ChainLink {
             name: "starship".to_owned(),
             source: Source::User,
-            path: user_copy::user_copy_path("starship"),
+            path: user_copy::user_copy_path("starship").expect("lib tests have a config root"),
             on_disk: false,
         };
         let loaded = load_text(link, "extends = \"starship\"\n".to_owned()).expect("overlay loads");

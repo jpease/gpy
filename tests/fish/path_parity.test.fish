@@ -156,6 +156,8 @@ set -g GPY_PP_CASES \
     "home_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=" \
     "home_empty_cache_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CONFIG_HOME=%T%/conf;HOME=" \
     "home_relative;XDG_CONFIG_HOME=%T%/conf;HOME=rel/home" \
+    "nothing_usable;XDG_RUNTIME_DIR=run;XDG_CACHE_HOME=;XDG_CONFIG_HOME=cfg;HOME=rel/home" \
+    "nothing_usable_socket_override;HOME=rel/home;GPY_AGENT_SOCKET_PATH=%T%/sock/custom.sock" \
     "xdg_windows_shaped;XDG_RUNTIME_DIR=C:\\x;XDG_CACHE_HOME=C:/x;XDG_CONFIG_HOME=\\\\srv\\cfg;HOME=%T%/home" \
     "all_unset;" \
     "home_only;HOME=%T%/home" \
@@ -312,13 +314,10 @@ end
 
 # --- RUN ---
 
-# A relative GPY_CONFIG_PATH resolves against the CWD, and the relative
-# runtime root an empty XDG_RUNTIME_DIR produces is CWD-sensitive too; the
-# agent's runtime-root resolver materializes the directory it returns. Run
-# everything from a scratch CWD so neither can touch this repo. The one write
-# that escapes the scratch tree is `/tmp/gpy` in the `all_unset` case, which is
-# the agent's own last-resort runtime root -- exactly what `gpy status` would
-# create there.
+# A relative GPY_CONFIG_PATH resolves against the CWD. Run everything from a
+# scratch CWD so it cannot touch this repo. `gpy debug paths` creates nothing,
+# and with no usable HOME/XDG_* every implementation reports <unresolved>
+# instead of a shared /tmp/gpy or a relative ./.config/gpy root.
 cd (realpath $GPY_PP_TMP/cwd)
 
 for spec in $GPY_PP_CASES

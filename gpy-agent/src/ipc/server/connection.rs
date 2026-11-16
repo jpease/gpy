@@ -4,9 +4,7 @@
 use crate::formatter::{
     DirectoryEnv, Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
 };
-use crate::ipc::{
-    ClientDirectory, Message, Response, Segment, handlers::HandlerRegistry, protocol,
-};
+use crate::ipc::{Message, Response, Segment, handlers::HandlerRegistry, protocol};
 use crate::palette::PaletteCache;
 use crate::security::{GuardSettings, validate_pid_liveness};
 use crate::template::{Color, parse_color};
@@ -23,15 +21,12 @@ use tokio::time::timeout;
 /// Result of routing a single message.
 pub(super) struct RouteResult {
     pub(super) response: Response,
-    pub(super) notify_path: Option<String>,
     /// Render position and format; the default (JSON, middle) for control messages.
     pub(super) segment: Segment,
 }
 
 /// Result of [`ConnectionHandler::parse_and_route_blocking`].
 struct BlockingLineResult {
-    response: Response,
-    notify_path: Option<String>,
     should_shutdown: bool,
     payload: Result<String>,
 }
@@ -57,16 +52,14 @@ impl ConnectionHandler {
     /// A line whose newline arrives before the buffer passes `max_message_size`
     /// is size-checked by `protocol::validate_message_size` and answered; once
     /// the buffer holds more than that without a newline, the connection is
-    /// closed without a reply.
+    /// closed without a reply. A reply rings no doorbell: handlers repaint
+    /// live shells only when the instant cache changed
+    /// (`handlers::notify_if_changed`).
     ///
     /// # Errors
     /// Fails on non-recoverable read/write or serialization errors.
     #[cfg(unix)]
-    pub(super) async fn handle_client(
-        &self,
-        stream: UnixStream,
-        client_registry: Arc<ClientDirectory>,
-    ) -> Result<()> {
+    pub(super) async fn handle_client(&self, stream: UnixStream) -> Result<()> {
         use tokio::io::AsyncReadExt;
 
         let (mut reader, mut writer) = stream.into_split();
@@ -86,7 +79,7 @@ impl ConnectionHandler {
                     }
 
                     if self
-                        .process_complete_lines(&mut accumulated, &mut writer, &client_registry)
+                        .process_complete_lines(&mut accumulated, &mut writer)
                         .await?
                     {
                         return Ok(());
@@ -131,7 +124,6 @@ impl ConnectionHandler {
         &self,
         accumulated: &mut Vec<u8>,
         writer: &mut tokio::net::unix::OwnedWriteHalf,
-        client_registry: &Arc<ClientDirectory>,
     ) -> Result<bool> {
         while let Some(newline_pos) = accumulated.iter().position(|&b| b == b'\n') {
             let Some(line_data) = accumulated.get(..newline_pos) else {
@@ -144,9 +136,7 @@ impl ConnectionHandler {
                 continue;
             }
 
-            let shutdown_requested = self
-                .process_message_line(line_data, writer, client_registry)
-                .await?;
+            let shutdown_requested = self.process_message_line(line_data, writer).await?;
 
             accumulated.drain(..=newline_pos);
 
@@ -201,8 +191,6 @@ impl ConnectionHandler {
                     &self.palette_cache,
                 );
                 BlockingLineResult {
-                    response,
-                    notify_path: None,
                     should_shutdown: false,
                     payload,
                 }
@@ -219,16 +207,11 @@ impl ConnectionHandler {
         &self,
         line_data: &[u8],
         writer: &mut tokio::net::unix::OwnedWriteHalf,
-        client_registry: &Arc<ClientDirectory>,
     ) -> Result<bool> {
         let BlockingLineResult {
-            response,
-            notify_path,
             should_shutdown,
             payload,
         } = self.route_line_blocking(line_data).await;
-
-        self.notify_clients(client_registry, &response, notify_path.as_deref());
 
         if let Err(e) = self.serialize_and_send_response(payload, writer).await {
             warn_log!("connection", "Failed to send response: {e}");
@@ -276,8 +259,6 @@ impl ConnectionHandler {
                     palette_cache,
                 );
                 BlockingLineResult {
-                    response,
-                    notify_path: route_result.notify_path,
                     should_shutdown: is_shutdown,
                     payload,
                 }
@@ -301,8 +282,6 @@ impl ConnectionHandler {
                     palette_cache,
                 );
                 BlockingLineResult {
-                    response,
-                    notify_path: None,
                     should_shutdown: false,
                     payload,
                 }
@@ -325,7 +304,6 @@ impl ConnectionHandler {
                 response: Response::Error {
                     message: format!("Invalid PID: {e}"),
                 },
-                notify_path: None,
                 segment: Segment::default(),
             };
         }
@@ -337,24 +315,8 @@ impl ConnectionHandler {
             });
         RouteResult {
             response,
-            notify_path: msg.notify_path(),
             segment: msg.segment().cloned().unwrap_or_default(),
         }
-    }
-
-    /// Connection-scoped wrapper over `notify_clients_for_response`.
-    fn notify_clients(
-        &self,
-        client_registry: &Arc<ClientDirectory>,
-        response: &Response,
-        notify_path: Option<&str>,
-    ) {
-        super::handle::notify_clients_for_response(
-            &self.config_manager,
-            client_registry,
-            response,
-            notify_path,
-        );
     }
 
     /// Render a reply line in the requested format.
@@ -478,7 +440,17 @@ mod tests {
         RenderDeps,
         crate::language::DetectionCache,
     ) {
-        let render = default_render_deps();
+        handler_registry_over(default_render_deps())
+    }
+
+    /// [`test_handler_registry`] over the given render deps.
+    fn handler_registry_over(
+        render: RenderDeps,
+    ) -> (
+        Arc<HandlerRegistry>,
+        RenderDeps,
+        crate::language::DetectionCache,
+    ) {
         let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
         let language_cache = crate::language::DetectionCache::new();
         let watcher: crate::ipc::server::handle::WatcherRef = Arc::new(Mutex::new(None));
@@ -501,26 +473,34 @@ mod tests {
         (handler_registry, render, language_cache)
     }
 
+    /// A connection handler over `render` and `handler_registry`.
+    fn connection_handler(
+        render: &RenderDeps,
+        handler_registry: Arc<HandlerRegistry>,
+        shutdown_tx: broadcast::Sender<()>,
+    ) -> ConnectionHandler {
+        ConnectionHandler {
+            security_config: GuardSettings::default(),
+            config_manager: Arc::clone(&render.config_manager),
+            theme_manager: Arc::clone(&render.theme_manager),
+            palette_cache: Arc::clone(&render.palette_cache),
+            shutdown_tx,
+            handler_registry,
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn shutdown_survives_client_disconnect_before_acknowledgement() {
         let (handler_registry, render, _language_cache) = test_handler_registry();
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
-        let handler = ConnectionHandler {
-            security_config: GuardSettings::default(),
-            config_manager: render.config_manager,
-            theme_manager: render.theme_manager,
-            palette_cache: render.palette_cache,
-            shutdown_tx,
-            handler_registry,
-        };
+        let handler = connection_handler(&render, handler_registry, shutdown_tx);
         let (client, server) = UnixStream::pair().expect("socket pair");
         let (_reader, mut writer) = server.into_split();
         drop(client);
-        let registry = Arc::new(ClientDirectory::new());
         assert!(
             handler
-                .process_message_line(br#"{"op":"shutdown"}"#, &mut writer, &registry)
+                .process_message_line(br#"{"op":"shutdown"}"#, &mut writer)
                 .await
                 .expect("handle shutdown")
         );
@@ -528,6 +508,52 @@ mod tests {
             shutdown_rx.try_recv(),
             Ok(()),
             "a disconnected client must not cancel an accepted shutdown"
+        );
+    }
+
+    /// A reply rings no doorbell by itself; the only ring is the handler's
+    /// change-gated publish. A first git reply therefore rings once, not
+    /// twice, and an unchanged repeat rings nothing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_reply_rings_only_for_a_published_change() {
+        let mut counting = default_render_deps();
+        let (registry, rings) = ClientDirectory::counting_rings();
+        counting.client_registry = registry.shared();
+        let (handler_registry, render, _language_cache) = handler_registry_over(counting);
+        let (shutdown_tx, _shutdown_rx) = broadcast::channel(1);
+        let handler = connection_handler(&render, handler_registry, shutdown_tx);
+        let (_client, server) = UnixStream::pair().expect("socket pair");
+        let (_reader, mut writer) = server.into_split();
+
+        let repo = tempfile::TempDir::new().expect("temp dir");
+        let init = std::process::Command::new("git")
+            .arg("init")
+            .current_dir(repo.path())
+            .output()
+            .expect("git init");
+        assert!(init.status.success(), "git init failed: {init:?}");
+        let line = serde_json::json!({"op": "git", "cwd": repo.path().to_str().expect("utf8 path"), "format": "json"})
+            .to_string();
+
+        handler
+            .process_message_line(line.as_bytes(), &mut writer)
+            .await
+            .expect("first reply");
+        assert_eq!(
+            rings.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the first git reply rings once, for the instant cache it published"
+        );
+
+        handler
+            .process_message_line(line.as_bytes(), &mut writer)
+            .await
+            .expect("repeat reply");
+        assert_eq!(
+            rings.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an unchanged repeat reply rings nothing"
         );
     }
 
@@ -559,11 +585,6 @@ mod tests {
                 assert!(
                     payload.starts_with(r#"{"error""#),
                     "refused {request:?} must get a JSON error line, got {payload:?}"
-                );
-                assert!(
-                    matches!(result.response, Response::Error { .. }),
-                    "refused {request:?} must be an error, got {:?}",
-                    result.response
                 );
             }
         }
@@ -603,10 +624,10 @@ mod tests {
             &render.theme_manager,
             &render.palette_cache,
         );
+        let payload = result.payload.expect("rendered");
         assert!(
-            !matches!(result.response, Response::Error { .. }),
-            "unexpected error response: {:?}",
-            result.response
+            !payload.starts_with(r#"{"error""#),
+            "unexpected error reply: {payload}"
         );
 
         // 4 position variants, each written once per output dialect.

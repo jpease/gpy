@@ -288,7 +288,8 @@ The agent socket location follows this priority (the first that applies wins):
 2. `$XDG_RUNTIME_DIR/gpy/gpy.sock` (if XDG_RUNTIME_DIR is set to an absolute path)
 3. `$XDG_CACHE_HOME/gpy/gpy.sock` (if XDG_CACHE_HOME is set to an absolute path)
 4. `~/.cache/gpy/gpy.sock`
-5. `/tmp/gpy/gpy.sock` (no home directory)
+
+There is no `/tmp/gpy` fallback: with no usable home and no override, `gpy-agent start` exits 1 and `status` exits 4 (see [Troubleshooting](troubleshooting.md#no-usable-home-directory)).
 
 There is no `config.toml` key for the socket. The agent only uses a socket directory that is a real directory you own; see [Troubleshooting § IPC/Socket Issues](troubleshooting.md#ipcsocket-issues).
 

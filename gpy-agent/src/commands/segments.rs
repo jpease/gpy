@@ -214,10 +214,11 @@ fn remove_from_enabled_segments(segment: &str) -> Result<()> {
 }
 
 pub(crate) fn available_segments() -> Vec<String> {
-    available_segments_with_plugin_dirs(&[
-        crate::plugin::bundled_plugins_dir(),
-        crate::plugin::user_plugins_dir(),
-    ])
+    let plugin_dirs: Vec<_> = crate::plugin::bundled_plugins_dir()
+        .into_iter()
+        .chain(crate::plugin::user_plugins_dir().ok())
+        .collect();
+    available_segments_with_plugin_dirs(&plugin_dirs)
 }
 
 /// Core of [`available_segments`], parameterized on the plugin roots so tests

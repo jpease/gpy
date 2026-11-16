@@ -124,7 +124,7 @@ pub fn save_theme(name: &str, edits: &ThemeEdits) -> Result<Option<ThemeWrite>> 
     validate_config_name("theme", name)?;
 
     let mut notes = Vec::new();
-    let text = if user_copy::user_copy_path(name).exists() {
+    let text = if user_copy::user_copy_path(name)?.exists() {
         let link = overlay::own_user_link(name)?;
         let label = link.path.display().to_string();
         let source = std::fs::read_to_string(&link.path)
@@ -349,7 +349,7 @@ mod tests {
         ChainLink {
             name: "starship".to_owned(),
             source: Source::User,
-            path: user_copy::user_copy_path("starship"),
+            path: user_copy::user_copy_path("starship").expect("lib tests have a config root"),
             on_disk: false,
         }
     }

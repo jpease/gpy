@@ -32,11 +32,12 @@ impl ResolutionInputs {
     /// only, no manifest parse or trust walk.
     fn read() -> Self {
         let mut inputs = Vec::new();
-        push_toml_files(&ThemeManager::user_themes_dir(), &mut inputs);
-        for root in [
-            crate::plugin::bundled_plugins_dir(),
-            crate::plugin::user_plugins_dir(),
-        ] {
+        if let Ok(dir) = ThemeManager::user_themes_dir() {
+            push_toml_files(&dir, &mut inputs);
+        }
+        let bundled_plugins = crate::plugin::bundled_plugins_dir();
+        let user_plugins = crate::plugin::user_plugins_dir().ok();
+        for root in bundled_plugins.into_iter().chain(user_plugins) {
             let Ok(entries) = std::fs::read_dir(&root) else {
                 continue;
             };

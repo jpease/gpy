@@ -26,7 +26,7 @@ use std::path::Path;
 /// config cannot be parsed or written, or the migrated theme still fails validation.
 pub fn migrate(name: &str) -> Result<()> {
     validate_config_name("theme", name)?;
-    let path = user_copy::user_copy_path(name);
+    let path = user_copy::user_copy_path(name)?;
     if !path.is_file() {
         return Err(Error::config(format!(
             "No user theme file for '{name}' to migrate\n  \

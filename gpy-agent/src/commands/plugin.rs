@@ -486,7 +486,16 @@ pub fn list() {
         .any(|plugin| matches!(plugin.source, PluginSource::User));
 
     output::heading("Plugins:");
-    output::plain(format_args!("User plugin root: {}", user_root.display()));
+    match &user_root {
+        Ok(root) => output::plain(format_args!("User plugin root: {}", root.display())),
+        Err(err) => output::plain(format_args!("User plugin root: none ({err})")),
+    }
+    if crate::plugin::bundled_plugins_dir().is_none() {
+        output::plain(format_args!(
+            "Bundled plugins: none ({})",
+            crate::paths::NO_DATA_DIR
+        ));
+    }
     if discovery.plugins.iter().any(is_fish_only_plugin) {
         output::plain(FISH_ONLY_NOTE);
     }
@@ -666,7 +675,7 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     let plugin_id = crate::plugin::PluginId::new(id)?;
     let segment = SegmentName::new(segment_name.unwrap_or(plugin_id.as_str()))?;
     check_scaffold_is_free(&plugin_id, &segment)?;
-    let plugin_root = user_plugins_dir().join(plugin_id.as_str());
+    let plugin_root = user_plugins_dir()?.join(plugin_id.as_str());
 
     let already_exists = || {
         Error::invalid(format!(

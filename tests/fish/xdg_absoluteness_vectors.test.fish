@@ -59,6 +59,30 @@ while read -d \t -la cols
     set -gx XDG_CACHE_HOME "$value"
     check "vector $vector_count ($value_col) instant cache dir" "$expected_root/instant-prompts" (__gpy_instant_cache_dir)
     check "vector $vector_count ($value_col) theme export path" "$expected_root/theme-export.fish" (__gpy_theme_export_cache_path)
+
+    # Nothing usable (relative HOME): an unhonoured value leaves no root, and
+    # every resolver fails instead of falling back to /tmp/gpy.
+    set -l homeless_root '<none>'
+    set -l homeless_socket '<none>'
+    set -l homeless_instant '<none>'
+    if test "$cols[2]" = yes
+        set homeless_root "$value/gpy"
+        set homeless_socket "$value/gpy/gpy.sock"
+        set homeless_instant "$value/gpy/instant-prompts"
+    end
+    set -gx HOME relative/home
+    set -gx XDG_RUNTIME_DIR "$value"
+    set -e XDG_CACHE_HOME
+    set -l got (__gpy_runtime_root); or set got '<none>'
+    check "vector $vector_count ($value_col) runtime root, no home" "$homeless_root" "$got"
+    set got (__gpy_ipc_endpoint); or set got '<none>'
+    check "vector $vector_count ($value_col) ipc endpoint, no home" "$homeless_socket" "$got"
+    set -e XDG_RUNTIME_DIR
+    set -gx XDG_CACHE_HOME "$value"
+    set got (__gpy_instant_cache_dir); or set got '<none>'
+    test -n "$got"; or set got '<none>'
+    check "vector $vector_count ($value_col) instant cache dir, no home" "$homeless_instant" "$got"
+    set -gx HOME /home/user
 end <"$fixture"
 
 if test $vector_count -eq 0

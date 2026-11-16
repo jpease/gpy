@@ -60,7 +60,7 @@ pub fn rebase(options: &RebaseOptions<'_>) -> Result<()> {
     if let Some(base) = onto {
         validate_config_name("theme", base)?;
     }
-    let path = user_copy::user_copy_path(name);
+    let path = user_copy::user_copy_path(name)?;
     if !path.is_file() {
         return Err(no_file(name, &path));
     }

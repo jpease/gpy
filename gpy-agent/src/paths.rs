@@ -226,38 +226,49 @@ impl Os {
     }
 }
 
-/// The runtime root: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`,
-/// `$HOME/.cache/gpy`, then `/tmp/gpy`. The shells' `__gpy_runtime_root` copies
-/// are pinned by `xdg_absoluteness_shared_vectors` and `path_parity`.
+/// The runtime root: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`, then
+/// `$HOME/.cache/gpy`; `None` when none is usable (no `/tmp` fallback: a
+/// shared directory would let another user squat the socket). The shells'
+/// `__gpy_runtime_root` copies are pinned by `xdg_absoluteness_shared_vectors`
+/// and `path_parity`, and disable GPY for the session on `None`.
 #[must_use]
 pub fn runtime_root_for(
     xdg_runtime_dir: Option<&Path>,
     xdg_cache_home: Option<&Path>,
     home: Option<&Path>,
-) -> PathBuf {
-    if let Some(xdg_runtime) = xdg_path(xdg_runtime_dir, Os::Unix) {
-        return xdg_runtime.join("gpy");
-    }
-    if let Some(xdg_cache) = xdg_path(xdg_cache_home, Os::Unix) {
-        return xdg_cache.join("gpy");
-    }
-    if let Some(home_dir) = xdg_path(home, Os::Unix) {
-        return home_dir.join(".cache").join("gpy");
-    }
-    PathBuf::from("/tmp/gpy")
+) -> Option<PathBuf> {
+    xdg_path(xdg_runtime_dir, Os::Unix)
+        .or_else(|| xdg_path(xdg_cache_home, Os::Unix))
+        .map(|root| root.join("gpy"))
+        .or_else(|| xdg_path(home, Os::Unix).map(|home_dir| home_dir.join(".cache").join("gpy")))
 }
 
-/// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
-/// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy`. The shells' copies are
-/// pinned by `xdg_absoluteness_shared_vectors`.
+/// The one-line reason [`runtime_dir`] fails, naming the variables to set.
+pub const NO_RUNTIME_DIR: &str = "cannot locate a runtime directory: set XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME to an absolute path";
+
+/// The one-line reason [`config_root`] fails, naming the variables to set.
+pub const NO_CONFIG_DIR: &str =
+    "cannot locate a config directory: set XDG_CONFIG_HOME or HOME to an absolute path";
+
+/// Why there are no bundled plugins without `GPY_BUNDLED_PLUGIN_DIR`: no data
+/// root ([`data_root`]), naming the variables to set.
+pub const NO_DATA_DIR: &str =
+    "cannot locate a data directory: set XDG_DATA_HOME or HOME to an absolute path";
+
+/// [`runtime_root_for`] for this process's environment: where the agent keeps
+/// its socket and the shells' PID files.
 /// Never creates it; `gpy-agent start` does (`lifecycle::ensure_runtime_dir`).
-#[must_use]
-pub fn runtime_dir() -> PathBuf {
+///
+/// # Errors
+/// Returns [`NO_RUNTIME_DIR`] when no absolute `XDG_RUNTIME_DIR`,
+/// `XDG_CACHE_HOME` or home directory is available.
+pub fn runtime_dir() -> crate::Result<PathBuf> {
     runtime_root_for(
         xdg_root("XDG_RUNTIME_DIR").as_deref(),
         xdg_root("XDG_CACHE_HOME").as_deref(),
         home_path().as_deref(),
     )
+    .ok_or_else(|| crate::Error::config(NO_RUNTIME_DIR))
 }
 
 /// The agent socket a process acts on, resolved once from the `--socket`
@@ -280,27 +291,32 @@ impl AsRef<Path> for SocketPath {
 }
 
 /// The socket for these inputs: `flag`, else a non-empty `env` value, else
-/// `<runtime_dir>/gpy.sock`. Pure, so the precedence is table-tested without
+/// `<runtime_dir>/gpy.sock`; `None` when only the default applies and there is
+/// no runtime directory. Pure, so the precedence is table-tested without
 /// touching the process environment; [`SocketPath::resolve`] feeds it the
 /// real ones.
 #[must_use]
-pub fn socket_path_for(flag: Option<&Path>, env: Option<&OsStr>, runtime_dir: &Path) -> SocketPath {
+pub fn socket_path_for(
+    flag: Option<&Path>,
+    env: Option<&OsStr>,
+    runtime_dir: Option<&Path>,
+) -> Option<SocketPath> {
     if let Some(given) = flag {
-        return SocketPath {
+        return Some(SocketPath {
             path: given.to_path_buf(),
             overridden: true,
-        };
+        });
     }
     if let Some(value) = env.filter(|value| !value.is_empty()) {
-        return SocketPath {
+        return Some(SocketPath {
             path: PathBuf::from(value),
             overridden: true,
-        };
+        });
     }
-    SocketPath {
-        path: runtime_dir.join("gpy.sock"),
+    runtime_dir.map(|dir| SocketPath {
+        path: dir.join("gpy.sock"),
         overridden: false,
-    }
+    })
 }
 
 impl SocketPath {
@@ -309,21 +325,32 @@ impl SocketPath {
     /// runs in `/` binds the path the user meant.
     ///
     /// # Errors
-    /// Returns an error if the path exceeds the platform's Unix socket path limit.
+    /// Returns an error if no runtime directory exists for the default socket
+    /// (see [`runtime_dir`]) or the path exceeds the platform's Unix socket
+    /// path limit.
     pub fn resolve(flag: Option<&Path>) -> crate::Result<Self> {
-        let socket = Self::resolve_unchecked(flag);
+        let socket = Self::resolve_unchecked(flag)?;
         check_socket_path_len(&socket.path)?;
         Ok(socket)
     }
 
     /// [`Self::resolve`] without the length check, for diagnostics that must
     /// print a path `resolve` rejects.
-    #[must_use]
-    pub fn resolve_unchecked(flag: Option<&Path>) -> Self {
+    ///
+    /// # Errors
+    /// Returns [`NO_RUNTIME_DIR`] when neither `flag` nor
+    /// `GPY_AGENT_SOCKET_PATH` is set and there is no runtime directory.
+    pub fn resolve_unchecked(flag: Option<&Path>) -> crate::Result<Self> {
         let env = crate::env_config::AGENT_SOCKET_PATH.path();
-        let mut socket = socket_path_for(flag, env.as_deref().map(Path::as_os_str), &runtime_dir());
+        let runtime = runtime_dir().ok();
+        let mut socket = socket_path_for(
+            flag,
+            env.as_deref().map(Path::as_os_str),
+            runtime.as_deref(),
+        )
+        .ok_or_else(|| crate::Error::config(NO_RUNTIME_DIR))?;
         socket.path = absolutize(&socket.path);
-        socket
+        Ok(socket)
     }
 
     /// The socket's file path.
@@ -419,24 +446,32 @@ pub fn data_root() -> Option<PathBuf> {
 }
 
 /// The config root: `$XDG_CONFIG_HOME/gpy` (absolute per `os`), then
-/// `$HOME/.config/gpy`, else relative `.config/gpy`.
+/// `$HOME/.config/gpy`; `None` when neither is usable (never a relative
+/// `.config/gpy` under the current directory).
 #[must_use]
-pub fn config_root_for(xdg_config_home: Option<&Path>, home: Option<&Path>, os: Os) -> PathBuf {
-    if let Some(xdg_config) = xdg_path(xdg_config_home, os) {
-        return xdg_config.join("gpy");
-    }
-    let home_dir = xdg_path(home, os).unwrap_or_else(|| Path::new("."));
-    home_dir.join(".config").join("gpy")
+pub fn config_root_for(
+    xdg_config_home: Option<&Path>,
+    home: Option<&Path>,
+    os: Os,
+) -> Option<PathBuf> {
+    xdg_path(xdg_config_home, os)
+        .map(|xdg_config| xdg_config.join("gpy"))
+        .or_else(|| xdg_path(home, os).map(|home_dir| home_dir.join(".config").join("gpy")))
 }
 
-/// [`config_root_for`] for this process's environment and OS.
-#[must_use]
-pub fn config_root() -> PathBuf {
+/// [`config_root_for`] for this process's environment and OS: where user
+/// themes, palettes and plugins live.
+///
+/// # Errors
+/// Returns [`NO_CONFIG_DIR`] when neither an absolute `XDG_CONFIG_HOME` nor a
+/// home directory is available.
+pub fn config_root() -> crate::Result<PathBuf> {
     config_root_for(
         xdg_config_home().as_deref(),
         home_path().as_deref(),
         Os::host(),
     )
+    .ok_or_else(|| crate::Error::config(NO_CONFIG_DIR))
 }
 
 /// `$XDG_CONFIG_HOME` as set, before the absoluteness rule of [`xdg_path`].
@@ -463,10 +498,11 @@ mod tests {
         Option<&'static str>,
         Option<&'static str>,
         Option<&'static str>,
-        &'static str,
+        Option<&'static str>,
     );
 
-    /// `XDG_CACHE_HOME` must win when `XDG_RUNTIME_DIR` is unset (macOS default).
+    /// `XDG_CACHE_HOME` must win when `XDG_RUNTIME_DIR` is unset (macOS
+    /// default); with nothing usable there is no root (never `/tmp/gpy`).
     #[test]
     fn runtime_root_precedence() {
         let cases: [RuntimeCase; 14] = [
@@ -474,34 +510,59 @@ mod tests {
                 Some("/run/user/1000"),
                 Some("/cache"),
                 Some("/home/u"),
-                "/run/user/1000/gpy",
+                Some("/run/user/1000/gpy"),
             ),
-            (None, Some("/cache"), Some("/home/u"), "/cache/gpy"),
-            (None, None, Some("/home/u"), "/home/u/.cache/gpy"),
-            (None, None, None, "/tmp/gpy"),
+            (None, Some("/cache"), Some("/home/u"), Some("/cache/gpy")),
+            (None, None, Some("/home/u"), Some("/home/u/.cache/gpy")),
+            (None, None, None, None),
             // Empty or relative $XDG_* values are unset.
-            (Some(""), Some("/cache"), Some("/home/u"), "/cache/gpy"),
-            (Some(""), Some(""), Some("/home/u"), "/home/u/.cache/gpy"),
-            (Some(""), Some(""), None, "/tmp/gpy"),
-            (Some("run"), Some("/cache"), Some("/home/u"), "/cache/gpy"),
+            (
+                Some(""),
+                Some("/cache"),
+                Some("/home/u"),
+                Some("/cache/gpy"),
+            ),
+            (
+                Some(""),
+                Some(""),
+                Some("/home/u"),
+                Some("/home/u/.cache/gpy"),
+            ),
+            (Some(""), Some(""), None, None),
+            (
+                Some("run"),
+                Some("/cache"),
+                Some("/home/u"),
+                Some("/cache/gpy"),
+            ),
             (
                 Some("run"),
                 Some("cache"),
                 Some("/home/u"),
-                "/home/u/.cache/gpy",
+                Some("/home/u/.cache/gpy"),
             ),
             // Windows-shaped values are relative on Unix and ignored.
-            (Some("C:/x"), None, Some("/home/u"), "/home/u/.cache/gpy"),
-            (Some(r"C:\x"), None, Some("/home/u"), "/home/u/.cache/gpy"),
+            (
+                Some("C:/x"),
+                None,
+                Some("/home/u"),
+                Some("/home/u/.cache/gpy"),
+            ),
+            (
+                Some(r"C:\x"),
+                None,
+                Some("/home/u"),
+                Some("/home/u/.cache/gpy"),
+            ),
             (
                 Some(r"\\srv\x"),
                 None,
                 Some("/home/u"),
-                "/home/u/.cache/gpy",
+                Some("/home/u/.cache/gpy"),
             ),
             // An empty or relative HOME is unset, as in the shells' __gpy_home.
-            (None, None, Some("relhome"), "/tmp/gpy"),
-            (None, None, Some(""), "/tmp/gpy"),
+            (None, None, Some("relhome"), None),
+            (Some("run"), Some("cache"), Some(""), None),
         ];
 
         for (xdg_runtime, xdg_cache, home, expected) in cases {
@@ -511,7 +572,7 @@ mod tests {
                     xdg_cache.map(Path::new),
                     home.map(Path::new),
                 ),
-                PathBuf::from(expected),
+                expected.map(PathBuf::from),
                 "runtime root for (XDG_RUNTIME_DIR={xdg_runtime:?}, XDG_CACHE_HOME={xdg_cache:?}, HOME={home:?})"
             );
         }
@@ -714,7 +775,10 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let odd = Path::new(OsStr::from_bytes(b"/root-\xff"));
-        assert_eq!(runtime_root_for(Some(odd), None, None), odd.join("gpy"));
+        assert_eq!(
+            runtime_root_for(Some(odd), None, None),
+            Some(odd.join("gpy"))
+        );
         assert_eq!(
             cache_root_for(Some(odd), None, None, Os::Unix),
             Some(odd.join("gpy"))
@@ -723,10 +787,13 @@ mod tests {
             cache_root_for(None, Some(odd), None, Os::Unix),
             Some(odd.join(".cache").join("gpy"))
         );
-        assert_eq!(config_root_for(Some(odd), None, Os::Unix), odd.join("gpy"));
+        assert_eq!(
+            config_root_for(Some(odd), None, Os::Unix),
+            Some(odd.join("gpy"))
+        );
         assert_eq!(
             config_root_for(None, Some(odd), Os::Unix),
-            odd.join(".config").join("gpy")
+            Some(odd.join(".config").join("gpy"))
         );
     }
 
@@ -740,28 +807,50 @@ mod tests {
         );
     }
 
-    type ConfigCase = (Option<&'static str>, Option<&'static str>, &'static str);
+    type ConfigCase = (
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+    );
 
+    /// With nothing usable there is no root (never a relative `./.config/gpy`).
     #[test]
     fn config_root_precedence() {
         let cases: [ConfigCase; 8] = [
-            (Some("/xdgcfg"), Some("/home/u"), "/xdgcfg/gpy"),
-            (None, Some("/home/u"), "/home/u/.config/gpy"),
-            (None, None, "./.config/gpy"),
+            (Some("/xdgcfg"), Some("/home/u"), Some("/xdgcfg/gpy")),
+            (None, Some("/home/u"), Some("/home/u/.config/gpy")),
+            (None, None, None),
             // Empty or relative values are unset.
-            (Some(""), Some("/home/u"), "/home/u/.config/gpy"),
-            (Some(""), None, "./.config/gpy"),
-            (Some("cfg"), Some("/home/u"), "/home/u/.config/gpy"),
-            (None, Some("relhome"), "./.config/gpy"),
-            (None, Some(""), "./.config/gpy"),
+            (Some(""), Some("/home/u"), Some("/home/u/.config/gpy")),
+            (Some(""), None, None),
+            (Some("cfg"), Some("/home/u"), Some("/home/u/.config/gpy")),
+            (None, Some("relhome"), None),
+            (Some("cfg"), Some(""), None),
         ];
 
         for (xdg_config, home, expected) in cases {
             assert_eq!(
                 config_root_for(xdg_config.map(Path::new), home.map(Path::new), Os::Unix),
-                PathBuf::from(expected),
+                expected.map(PathBuf::from),
                 "config root for (XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
+        }
+    }
+
+    /// The fail-closed errors name every variable that would fix them.
+    #[test]
+    fn missing_root_errors_name_the_variables() {
+        for (message, variables) in [
+            (
+                NO_RUNTIME_DIR,
+                &["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "HOME"][..],
+            ),
+            (NO_CONFIG_DIR, &["XDG_CONFIG_HOME", "HOME"][..]),
+        ] {
+            assert!(!message.contains('\n'), "one line: {message}");
+            for variable in variables {
+                assert!(message.contains(variable), "{variable} in: {message}");
+            }
         }
     }
 
@@ -772,11 +861,11 @@ mod tests {
         let home = Some(Path::new("/home/u"));
         assert_eq!(
             config_root_for(xdg, home, Os::Windows),
-            PathBuf::from(r"C:\Users\u\cfg").join("gpy"),
+            Some(PathBuf::from(r"C:\Users\u\cfg").join("gpy")),
         );
         assert_eq!(
             config_root_for(xdg, home, Os::Unix),
-            PathBuf::from("/home/u/.config/gpy"),
+            Some(PathBuf::from("/home/u/.config/gpy")),
         );
     }
 
@@ -852,27 +941,63 @@ mod tests {
         }
     }
 
-    /// `--socket` beats `GPY_AGENT_SOCKET_PATH`, which beats the runtime directory.
+    /// `--socket` beats `GPY_AGENT_SOCKET_PATH`, which beats the runtime
+    /// directory; without one, only an override resolves.
     #[test]
     fn socket_path_precedence_is_flag_then_env_then_default() {
-        let runtime = Path::new("/run/gpy");
+        type SocketCase<'a> = (
+            Option<&'a Path>,
+            Option<&'a OsStr>,
+            Option<&'a Path>,
+            Option<SocketPath>,
+        );
+        let run_dir = Some(Path::new("/run/gpy"));
         let flag_path = Path::new("/flag.sock");
         let env_value = OsStr::new("/env.sock");
-        let cases: [(Option<&Path>, Option<&OsStr>, SocketPath); 4] = [
+        let cases: [SocketCase<'_>; 7] = [
             (
                 Some(flag_path),
                 Some(env_value),
-                socket_at("/flag.sock", true),
+                run_dir,
+                Some(socket_at("/flag.sock", true)),
             ),
-            (Some(flag_path), None, socket_at("/flag.sock", true)),
-            (None, Some(env_value), socket_at("/env.sock", true)),
-            (None, None, socket_at("/run/gpy/gpy.sock", false)),
+            (
+                Some(flag_path),
+                None,
+                run_dir,
+                Some(socket_at("/flag.sock", true)),
+            ),
+            (
+                None,
+                Some(env_value),
+                run_dir,
+                Some(socket_at("/env.sock", true)),
+            ),
+            (
+                None,
+                None,
+                run_dir,
+                Some(socket_at("/run/gpy/gpy.sock", false)),
+            ),
+            (
+                Some(flag_path),
+                None,
+                None,
+                Some(socket_at("/flag.sock", true)),
+            ),
+            (
+                None,
+                Some(env_value),
+                None,
+                Some(socket_at("/env.sock", true)),
+            ),
+            (None, None, None, None),
         ];
-        for (flag, env, expected) in cases {
+        for (flag, env, runtime, expected) in cases {
             assert_eq!(
                 socket_path_for(flag, env, runtime),
                 expected,
-                "flag {flag:?}, env {env:?}"
+                "flag {flag:?}, env {env:?}, runtime {runtime:?}"
             );
         }
     }
@@ -880,13 +1005,15 @@ mod tests {
     /// An empty `GPY_AGENT_SOCKET_PATH` falls through to the default, as in the shells.
     #[test]
     fn empty_socket_env_counts_as_unset() {
-        let resolved = socket_path_for(None, Some(OsStr::new("")), Path::new("/run/gpy"));
-        assert_eq!(resolved, socket_at("/run/gpy/gpy.sock", false));
-        assert!(!resolved.is_override());
+        let resolved = socket_path_for(None, Some(OsStr::new("")), Some(Path::new("/run/gpy")));
+        assert_eq!(resolved, Some(socket_at("/run/gpy/gpy.sock", false)));
+        assert!(!resolved.is_some_and(|socket| socket.is_override()));
+        assert_eq!(socket_path_for(None, Some(OsStr::new("")), None), None);
     }
 
     /// Every row of `xdg_absoluteness_vectors.tsv`: an `XDG_*` value is honoured
-    /// on Unix iff absolute; otherwise each root falls through as if unset.
+    /// on Unix iff absolute; otherwise each root falls through as if unset, to
+    /// the home fallback or, with no usable home, to no root at all.
     #[test]
     fn xdg_absoluteness_shared_vectors() {
         let home = Path::new("/home/u");
@@ -903,27 +1030,31 @@ mod tests {
                 other => panic!("absolute must be yes or no, got {other:?} in {row:?}"),
             };
             assert_eq!(xdg_path(given, Os::Unix).is_some(), honoured, "row {row:?}");
-            let runtime = runtime_root_for(given, None, Some(home));
-            let cache = cache_root_for(given, Some(home), None, Os::Unix);
-            let config = config_root_for(given, Some(home), Os::Unix);
-            if honoured {
-                let expected = Path::new(&value).join("gpy");
-                assert_eq!(runtime, expected, "runtime root for {row:?}");
-                assert_eq!(cache, Some(expected.clone()), "cache root for {row:?}");
-                assert_eq!(config, expected, "config root for {row:?}");
-            } else {
-                assert_eq!(runtime, runtime_root_for(None, None, Some(home)), "{row:?}");
-                assert_eq!(
-                    cache,
-                    cache_root_for(None, Some(home), None, Os::Unix),
-                    "{row:?}"
-                );
-                assert_eq!(
-                    config,
-                    config_root_for(None, Some(home), Os::Unix),
-                    "{row:?}"
-                );
-            }
+            let rooted = honoured.then(|| Path::new(&value).join("gpy"));
+            let home_or = |fallback: PathBuf| rooted.clone().or(Some(fallback));
+            assert_eq!(
+                runtime_root_for(given, None, Some(home)),
+                home_or(home.join(".cache").join("gpy")),
+                "runtime root for {row:?}"
+            );
+            assert_eq!(
+                cache_root_for(given, Some(home), None, Os::Unix),
+                home_or(home.join(".cache").join("gpy")),
+                "cache root for {row:?}"
+            );
+            assert_eq!(
+                config_root_for(given, Some(home), Os::Unix),
+                home_or(home.join(".config").join("gpy")),
+                "config root for {row:?}"
+            );
+            // Nothing usable: an unhonoured value leaves no root to fall back on.
+            assert_eq!(runtime_root_for(given, None, None), rooted, "{row:?}");
+            assert_eq!(
+                cache_root_for(given, None, None, Os::Unix),
+                rooted,
+                "{row:?}"
+            );
+            assert_eq!(config_root_for(given, None, Os::Unix), rooted, "{row:?}");
             checked = checked.saturating_add(1);
         }
         assert!(checked > 0, "no XDG absoluteness vectors were checked");

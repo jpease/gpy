@@ -59,5 +59,35 @@ set -l out (segment_git_render true "" | string collect)
 check "agent-free render prints the oneshot" ONESHOT "$out"
 check "agent-free render leaves the clean colour" green "$__gpy_last_segment_bg"
 
+# --- no endpoint (no runtime root): never a socket ---
+
+set -g GPY_AGENT_ENABLED 1
+set -gx GPY_AGENT_SOCKET_PATH "$tmp_dir/agent.sock"
+test_stub_listener "$tmp_dir/agent.sock" bind-only >/dev/null
+if __gpy_git_socket_present
+    pass "an existing socket file counts as present"
+else
+    fail "an existing socket file counts as present"
+end
+functions -c __gpy_ipc_endpoint __t_ipc_endpoint_real
+function __gpy_ipc_endpoint
+    return 1
+end
+if __gpy_git_socket_present
+    fail "no endpoint is no socket (test -S with no argument is true)"
+else
+    pass "no endpoint is no socket (test -S with no argument is true)"
+end
+mkdir -p "$tmp_dir/cold/.git"
+cd "$tmp_dir/cold"
+if segment_git_omit
+    pass "a cold miss with no endpoint omits the segment"
+else
+    fail "a cold miss with no endpoint omits the segment"
+end
+functions -e __gpy_ipc_endpoint
+functions -c __t_ipc_endpoint_real __gpy_ipc_endpoint
+set -e GPY_AGENT_SOCKET_PATH
+
 rm -rf "$tmp_dir"
 test_finish "git segment background from cache tests"

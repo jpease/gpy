@@ -47,9 +47,13 @@ pub(super) fn announce_start_to_tracked_shells(
     config: &crate::config::Config,
     palette: &crate::template::Palette,
 ) {
-    announce_start_in(&default_shell_dir(), || {
-        crate::cache::write_theme_export_cache(theme_manager, config, palette)
-    });
+    // No runtime dir means no cache root either (both fall back to HOME), so
+    // there is neither a shell to announce to nor an export to warm.
+    if let Some(shell_dir) = default_shell_dir() {
+        announce_start_in(&shell_dir, || {
+            crate::cache::write_theme_export_cache(theme_manager, config, palette)
+        });
+    }
 }
 
 /// The default socket when `socket` overrides it with another path, else
@@ -61,9 +65,9 @@ pub(super) fn overridden_default_socket(
     if !socket.is_override() {
         return None;
     }
-    let runtime_dir = crate::paths::runtime_dir();
-    let default =
-        crate::paths::absolutize(crate::paths::socket_path_for(None, None, &runtime_dir).path());
+    let runtime_dir = crate::paths::runtime_dir().ok()?;
+    let default_socket = crate::paths::socket_path_for(None, None, Some(&runtime_dir))?;
+    let default = crate::paths::absolutize(default_socket.path());
     (default.as_path() != socket.path()).then_some(default)
 }
 
@@ -243,11 +247,15 @@ mod tests {
     /// default socket, whose shells this agent must then not assume are its own.
     #[test]
     fn only_an_overriding_socket_names_the_default_socket() {
-        let runtime = crate::paths::runtime_dir();
-        let default = crate::paths::socket_path_for(None, None, &runtime);
+        let runtime_dir = crate::paths::runtime_dir().expect("lib tests have a runtime root");
+        let runtime = Some(runtime_dir.as_path());
+        let socket = |flag: Option<&Path>| {
+            crate::paths::socket_path_for(flag, None, runtime).expect("a runtime root resolves")
+        };
+        let default = socket(None);
         let default_path = crate::paths::absolutize(default.path());
-        let same = crate::paths::socket_path_for(Some(default_path.as_path()), None, &runtime);
-        let custom = crate::paths::socket_path_for(Some(Path::new("/x/gpy.sock")), None, &runtime);
+        let same = socket(Some(default_path.as_path()));
+        let custom = socket(Some(Path::new("/x/gpy.sock")));
 
         assert_eq!(overridden_default_socket(&default), None);
         assert_eq!(overridden_default_socket(&same), None);

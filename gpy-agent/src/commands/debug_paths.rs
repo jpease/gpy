@@ -7,6 +7,7 @@
 //! harness compare an implementation with itself.
 
 use super::output;
+use crate::paths::SocketPath;
 use std::path::Path;
 
 /// Emitted when a resolver ran but produced no path (unset environment, or an
@@ -47,9 +48,9 @@ fn show(path: Option<&Path>) -> String {
 /// set is stable.
 #[must_use]
 pub fn resolved_paths() -> Vec<(&'static str, String)> {
-    let runtime_root = Some(crate::paths::runtime_dir());
+    let runtime_root = crate::paths::runtime_dir().ok();
     // Unvalidated: this is the diagnostic for when `SocketPath::resolve` rejects the length.
-    let socket = crate::paths::SocketPath::resolve_unchecked(None);
+    let socket = crate::paths::SocketPath::resolve_unchecked(None).ok();
     let shell_registry_dir = runtime_root.as_ref().map(|root| root.join("shells"));
 
     // `get_instant_cache_dir` is private; derive it from a real cache file's
@@ -73,11 +74,11 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
     let theme_export_file = crate::cache::theme_export::fish_theme_export_path().ok();
     let config_path = super::utils::active_config_path().ok();
     let config_candidates = config_candidates().join(LIST_SEPARATOR);
-    let theme_dir = crate::theme::ThemeManager::user_themes_dir();
+    let theme_dir = crate::theme::ThemeManager::user_themes_dir().ok();
 
     vec![
         ("runtime_root", show(runtime_root.as_deref())),
-        ("socket", show(Some(socket.path()))),
+        ("socket", show(socket.as_ref().map(SocketPath::path))),
         ("shell_registry_dir", show(shell_registry_dir.as_deref())),
         ("cache_root", show(cache_root.as_deref())),
         ("instant_prompts_dir", show(instant_prompts_dir.as_deref())),
@@ -91,7 +92,7 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
                 config_candidates
             },
         ),
-        ("theme_dir", show(Some(theme_dir.as_path()))),
+        ("theme_dir", show(theme_dir.as_deref())),
     ]
 }
 

@@ -28,9 +28,7 @@ pub use coordinator::{DelayedEventScheduler, EventCallback, PendingCallback, Wat
 pub(crate) use registry::RepoFilter;
 pub use registry::WatchRegistry;
 
-use crate::env_config::{
-    DEBOUNCE_MS, DEFAULT_DEBOUNCE_MS, DEFAULT_THROTTLE_MS, SIGURG_THROTTLE_MS,
-};
+use crate::env_config::{DEBOUNCE_MS, DEFAULT_DEBOUNCE_MS};
 use registry::is_git_significant_relative;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -372,23 +370,21 @@ fn is_language_cache_trigger(file_name: &str) -> bool {
 #[derive(Clone, Copy, Debug)]
 pub struct WatcherConfig {
     debounce: u64,
-    throttle: u64,
 }
 
 impl WatcherConfig {
-    /// Create a new watcher configuration with explicit values in milliseconds.
+    /// Create a new watcher configuration with an explicit debounce in milliseconds.
     #[must_use]
-    pub const fn new(debounce_ms: u64, throttle_ms: u64) -> Self {
+    pub const fn new(debounce_ms: u64) -> Self {
         Self {
             debounce: debounce_ms,
-            throttle: throttle_ms,
         }
     }
 
     /// Load watcher configuration from environment variables.
     #[must_use]
     pub fn from_env() -> Self {
-        Self::new(DEBOUNCE_MS.positive(), SIGURG_THROTTLE_MS.positive())
+        Self::new(DEBOUNCE_MS.positive())
     }
 
     /// Debounce duration as a `Duration`.
@@ -396,17 +392,11 @@ impl WatcherConfig {
     pub const fn debounce_duration(self) -> Duration {
         Duration::from_millis(self.debounce)
     }
-
-    /// Per-repository throttle duration in milliseconds.
-    #[must_use]
-    pub const fn throttle_ms(self) -> u64 {
-        self.throttle
-    }
 }
 
 impl Default for WatcherConfig {
     fn default() -> Self {
-        Self::new(DEFAULT_DEBOUNCE_MS, DEFAULT_THROTTLE_MS)
+        Self::new(DEFAULT_DEBOUNCE_MS)
     }
 }
 

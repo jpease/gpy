@@ -239,11 +239,17 @@ fn check_segments(enabled_segments: &[String], discovery: &crate::plugin::Plugin
         let bundled_dir = crate::plugin::bundled_plugins_dir();
         let (uninstalled, unknown): (Vec<_>, Vec<_>) = invalid
             .into_iter()
-            .partition(|seg| is_uninstalled_bundled(seg, &bundled_dir));
+            .partition(|seg| is_uninstalled_bundled(seg, bundled_dir.as_deref()));
         for seg in uninstalled.iter().chain(&unknown) {
             output::detail_at(2, format_args!("- '{seg}'"));
         }
         if !uninstalled.is_empty() {
+            if bundled_dir.is_none() {
+                output::detail(format_args!(
+                    "No bundled plugins: {}",
+                    crate::paths::NO_DATA_DIR
+                ));
+            }
             output::detail(SETUP_REMEDIATION);
         }
         if !unknown.is_empty() {

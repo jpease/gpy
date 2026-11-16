@@ -67,7 +67,9 @@ impl ChainLink {
         Self {
             name: name.to_owned(),
             source: Source::Builtin,
-            path: user_copy_path(name),
+            // Without a config root there is no user path; the bare file name
+            // only labels the builtin, which is never read from or written to it.
+            path: user_copy_path(name).unwrap_or_else(|_| PathBuf::from(format!("{name}.toml"))),
             on_disk: false,
         }
     }
@@ -197,7 +199,7 @@ pub(crate) fn own_user_link(name: &str) -> Result<ChainLink> {
         ChainLink {
             name: name.to_owned(),
             source: Source::User,
-            path: user_copy_path(name),
+            path: user_copy_path(name)?,
             on_disk: true,
         },
         OwnName::Listed,

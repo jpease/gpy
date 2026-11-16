@@ -17,12 +17,14 @@ This document covers `config.toml` only — the file that controls agent behavio
 
 ## File Location
 
-The agent searches for a config file in this order and uses the first one found:
+The agent reads one config file, chosen in this order:
 
-1. `$GPY_CONFIG_PATH` (explicit override; a relative path is resolved against the directory you run the command or start the agent from)
+1. `$GPY_CONFIG_PATH`, when set and non-empty. It is the only config file: read, and created by `gpy config open`, at that path even if it does not exist yet and a global config does. A relative value is made absolute against the directory you run the command or start the agent from; an empty value is ignored.
 2. `$XDG_CONFIG_HOME/gpy/config.toml` (only an absolute `XDG_CONFIG_HOME` counts)
 3. `~/.config/gpy/config.toml` (also read when `XDG_CONFIG_HOME` is set but has no `gpy/config.toml`)
-4. Built-in defaults, if no file exists anywhere above
+4. Built-in defaults, if no file exists at 2 or 3
+
+With no usable home there is no relative `./.config/gpy` fallback; see [Troubleshooting](troubleshooting.md#no-usable-home-directory).
 
 There is no per-directory config: a `.gpy.toml` in the current directory is not read.
 
@@ -94,7 +96,7 @@ Controls the background agent process that serves prompt data over IPC.
 |---|---|---|---|---|
 | `enabled` | bool | `true` | — | Enables background agent mode. When `false`, every prompt render falls back to oneshot mode (slower, no persistent process). |
 | `timeout_seconds` | integer | `5` | `1`–`300` | How long the agent waits for one request on a connection before dropping it, and the deadline for a language request including version probes. A connection is closed after four times this value. This is the agent's limit, not the shell's: the shell waits [`GPY_IPC_TIMEOUT_MS`](environment-variables.md#shell-integration) and omits a segment whose reply is late. |
-| `live_updates` | bool | `true` | — | Enables live prompt updates pushed via signals (e.g., when a file watcher detects a git change) instead of only refreshing on the next command. With `false` no repository is watched, so every prompt past a 150 ms cooldown rescans the repository (bounded by `git.timeout_seconds`). |
+| `live_updates` | bool | `true` | — | Enables live prompt updates pushed via signals (e.g., when a file watcher detects a git change) instead of only refreshing on the next command. Shells are repainted only when the agent's rendered output actually changes, so a request whose reply carries nothing new rings no shell. With `false` no repository is watched and requests never trigger a repaint (reload and re-register signals are still sent). A git status scanned while the repository is unwatched is reused for up to 2 s (fixed), so a prompt after that rescans the repository (bounded by `git.timeout_seconds`). |
 
 ### `[agent.supervisor]`
 
@@ -258,7 +260,7 @@ The theme's `format` and `user_format` keys for these segments are gone. Style t
 
 ## Applying Changes
 
-`config.toml` is hot-reloaded by the running agent — no restart needed for most edits. Every reload re-resolves which config file is in effect (the highest-priority one that exists), so the agent also follows a config file that you fix after it failed to load at startup, create at a higher-priority location, or delete — deleting the active `config.toml` returns the agent to the built-in defaults. A file that exists but is invalid keeps the last good configuration.
+`config.toml` is hot-reloaded by the running agent — no restart needed for most edits. Every reload re-resolves which config file is in effect (`$GPY_CONFIG_PATH` when set, else the highest-priority one that exists), so the agent also follows a config file that you fix after it failed to load, create at a higher-priority location, or delete — deleting the active `config.toml` returns the agent to the built-in defaults. A file that exists but is invalid keeps the last good configuration.
 
 Every reload also re-reads the active palette file, so palette edits apply without a restart. A palette file that cannot be read, does not parse, or fails validation (for example a color reference cycle) keeps the last good palette and logs a warning; switching `ui.palette` to such a palette rejects the reload and keeps the previous configuration. When no earlier palette exists (at startup, or in `gpy-agent oneshot`), an unusable palette falls back to the builtin `default` palette, so palette colours keep rendering.
 

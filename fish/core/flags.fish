@@ -62,3 +62,39 @@ function __gpy_warn_flag_values --description 'One-time warnings for GPY_* flag 
         end
     end
 end
+
+# The path resolvers live here, not in ipc.fish, because conf.d/gpy_init.fish
+# needs __gpy_runtime_root to decide whether GPY may load at all, before any
+# other core file is sourced.
+
+# Home directory with the agent's passwd fallback: an empty $HOME counts as
+# unset, else a blanked HOME resolves /.cache/gpy while the agent uses passwd.
+# Rust counterpart: the `home` argument `paths::xdg_path`'s callers pass.
+function __gpy_home --description 'Home directory with the passwd fallback'
+    set -l home "$HOME"
+    if test -z "$home"
+        set -l user (id -un 2>/dev/null)
+        # Only a plausible username reaches eval; a leading - would make ~- expand to $OLDPWD.
+        string match -qr '^[A-Za-z0-9_][A-Za-z0-9._-]*$' -- "$user"; or return 1
+        # eval, not `~$user`: Fish 4.2 does not tilde-expand `~$var` (fixed in
+        # 4.3). An unknown user stays literal and the guard below rejects it.
+        eval "set home ~$user"
+    end
+    string match -q '/*' -- "$home"; or return 1
+    printf '%s' "$home"
+end
+
+# Runtime root, agent precedence. Per the XDG spec, empty or relative values
+# count as unset. Status 1 and no output when nothing is usable: there is no
+# shared /tmp fallback, and gpy_init.fish keeps GPY off for such a session.
+# Rust counterpart: `paths::runtime_root_for`.
+function __gpy_runtime_root --description 'XDG runtime root for GPY'
+    if set -q XDG_RUNTIME_DIR; and test -n "$XDG_RUNTIME_DIR"; and string match -q '/*' -- "$XDG_RUNTIME_DIR"
+        echo "$XDG_RUNTIME_DIR/gpy"
+    else if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"
+        echo "$XDG_CACHE_HOME/gpy"
+    else
+        set -l home (__gpy_home); or return 1
+        echo "$home/.cache/gpy"
+    end
+end

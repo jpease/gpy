@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn palette_by_name_ignores_a_broken_user_default_palette() {
-        let path = PaletteManager::palette_path("default");
+        let path = PaletteManager::palette_path("default").expect("lib tests have a config root");
         std::fs::create_dir_all(path.parent().expect("palettes dir")).expect("create dir");
         std::fs::write(&path, "name = [\n").expect("write broken palette");
         let palette = palette_by_name("default");

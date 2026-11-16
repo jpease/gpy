@@ -51,8 +51,9 @@ impl PaletteManager {
     /// Returns an error if the name is invalid or no such palette exists.
     pub fn new(name: &str) -> Result<Self> {
         discovery::validate_config_name("palette", name)?;
-        let user_path = Self::palette_path(name);
-        let palette = if user_path.exists() {
+        // Without a config root there is no user palette, only builtins.
+        let user_file = Self::palette_path(name).ok().filter(|path| path.exists());
+        let palette = if let Some(user_path) = user_file {
             Self::load_from_path(&user_path, name)?
         } else {
             Self::load_builtin(name)?
@@ -88,15 +89,19 @@ impl PaletteManager {
     }
 
     /// Return the user palettes directory (honors `$XDG_CONFIG_HOME`).
-    #[must_use]
-    pub fn user_palettes_dir() -> PathBuf {
-        crate::paths::config_root().join("palettes")
+    ///
+    /// # Errors
+    /// Returns an error when there is no config root ([`crate::paths::config_root`]).
+    pub fn user_palettes_dir() -> Result<PathBuf> {
+        Ok(crate::paths::config_root()?.join("palettes"))
     }
 
     /// Return the canonical user path for a palette by name.
-    #[must_use]
-    pub fn palette_path(name: &str) -> PathBuf {
-        Self::user_palettes_dir().join(format!("{name}.toml"))
+    ///
+    /// # Errors
+    /// Returns an error when there is no config root ([`crate::paths::config_root`]).
+    pub fn palette_path(name: &str) -> Result<PathBuf> {
+        Ok(Self::user_palettes_dir()?.join(format!("{name}.toml")))
     }
 
     /// Load only the embedded builtin `name`; never reads a user file.
@@ -146,7 +151,9 @@ impl PaletteManager {
     }
 
     fn insert_user_palettes(merged: &mut BTreeMap<String, Discovered>) {
-        discovery::insert_toml_dir(merged, &Self::user_palettes_dir(), &Source::User);
+        if let Ok(dir) = Self::user_palettes_dir() {
+            discovery::insert_toml_dir(merged, &dir, &Source::User);
+        }
     }
 }
 

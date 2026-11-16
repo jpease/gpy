@@ -149,32 +149,33 @@ pub struct PluginDiscovery {
 }
 
 /// Return the user plugin installation root.
-#[must_use]
-pub fn user_plugins_dir() -> PathBuf {
-    crate::paths::config_root().join("plugins")
+///
+/// # Errors
+/// Returns an error when there is no config root ([`crate::paths::config_root`]).
+pub fn user_plugins_dir() -> crate::Result<PathBuf> {
+    Ok(crate::paths::config_root()?.join("plugins"))
 }
 
 /// Return the bundled plugin root: `GPY_BUNDLED_PLUGIN_DIR` when set, else
 /// `plugins` in the data root, where `gpy setup` installs the plugins GPY ships
-/// (`username`, `hostname`).
+/// (`username`, `hostname`). `None` without either (never a relative
+/// `.local/share/gpy`): there are no bundled plugins then.
 #[must_use]
-pub fn bundled_plugins_dir() -> PathBuf {
+pub fn bundled_plugins_dir() -> Option<PathBuf> {
     if let Some(dir) = crate::env_config::BUNDLED_PLUGIN_DIR.path() {
-        return crate::paths::absolutize(&dir);
+        return Some(crate::paths::absolutize(&dir));
     }
-    crate::paths::data_root()
-        .unwrap_or_else(|| PathBuf::from(".local/share/gpy"))
-        .join(BUNDLED_PLUGINS_SOURCE_DIR)
+    crate::paths::data_root().map(|root| root.join(BUNDLED_PLUGINS_SOURCE_DIR))
 }
 
 /// Directory name of the bundled plugin root under the data root.
 const BUNDLED_PLUGINS_SOURCE_DIR: &str = "plugins";
 
+/// The roots discovery scans; a root that cannot be located is skipped.
 fn plugin_roots() -> Vec<(PluginSource, PathBuf)> {
-    vec![
-        (PluginSource::Bundled, bundled_plugins_dir()),
-        (PluginSource::User, user_plugins_dir()),
-    ]
+    let bundled = bundled_plugins_dir().map(|dir| (PluginSource::Bundled, dir));
+    let user = user_plugins_dir().ok().map(|dir| (PluginSource::User, dir));
+    bundled.into_iter().chain(user).collect()
 }
 
 /// Plugin id of the built-in segment metadata.

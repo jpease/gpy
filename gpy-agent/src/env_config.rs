@@ -43,10 +43,6 @@ pub(crate) const DEFAULT_RECONCILE_INTERVAL_SECS: u64 = 45;
 /// Debounce window for filesystem events, in milliseconds (`GPY_DEBOUNCE_MS`).
 pub(crate) const DEFAULT_DEBOUNCE_MS: u64 = 100;
 
-/// Minimum gap between `SIGURG` notifications, in milliseconds
-/// (`GPY_SIGURG_THROTTLE_MS`).
-pub(crate) const DEFAULT_THROTTLE_MS: u64 = 150;
-
 /// How long a native watcher has to deliver a probe event before the
 /// backend falls back to polling, in milliseconds (`GPY_WATCH_PROBE_MS`).
 pub(crate) const DEFAULT_WATCH_PROBE_MS: u64 = 2_000;
@@ -191,13 +187,6 @@ pub(crate) const DEBOUNCE_MS: EnvVar = EnvVar {
         default: DEFAULT_DEBOUNCE_MS,
     },
 };
-/// `GPY_SIGURG_THROTTLE_MS`: gap between `SIGURG` notifications.
-pub(crate) const SIGURG_THROTTLE_MS: EnvVar = EnvVar {
-    name: "GPY_SIGURG_THROTTLE_MS",
-    kind: EnvKind::Positive {
-        default: DEFAULT_THROTTLE_MS,
-    },
-};
 /// `GPY_WATCH_FORCE_POLL`: always poll instead of using native events.
 pub(crate) const WATCH_FORCE_POLL: EnvVar = EnvVar {
     name: "GPY_WATCH_FORCE_POLL",
@@ -263,7 +252,6 @@ pub(crate) const AGENT_ENV_VARS: &[&EnvVar] = &[
     &DISABLE_WATCHER,
     &RECONCILE_INTERVAL_SECS,
     &DEBOUNCE_MS,
-    &SIGURG_THROTTLE_MS,
     &WATCH_FORCE_POLL,
     &WATCH_PROBE_MS,
     &WATCH_POLL_MS,

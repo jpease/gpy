@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use super::ThrottleRecord;
+use super::IDENTITY_TRUST;
 use super::{ClientDirectory, ClientInfo, PidIdentity};
 use crate::sync_ext::MutexExt;
 use std::path::{Path, PathBuf};
@@ -7,9 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(unix)]
-use std::time::Duration;
-#[cfg(unix)]
 use std::time::Instant;
 
 impl ClientDirectory {
@@ -21,16 +18,6 @@ impl ClientDirectory {
             .and_then(|info| info.cwd.clone())
     }
 
-    #[cfg(unix)]
-    fn throttle_allows(&self, repo: &Path) -> bool {
-        self.should_notify_repo(repo, None)
-    }
-
-    #[cfg(unix)]
-    fn throttle_allows_token(&self, repo: &Path, token: u64) -> bool {
-        self.should_notify_repo(repo, Some(token))
-    }
-
     /// Registered PIDs.
     #[must_use]
     pub fn clients(&self) -> Vec<u32> {
@@ -38,20 +25,42 @@ impl ClientDirectory {
     }
 
     /// Register with an explicit `started_at`, to test PID-recycle handling.
+    /// The start time has never been verified, so the next ring looks it up.
     pub(crate) fn register_with_started_at_for_test(
         &self,
         pid: u32,
         cwd: Option<PathBuf>,
         started_at: Option<u64>,
     ) {
+        self.inner.lock_or_recover().insert(
+            pid,
+            ClientInfo {
+                cwd,
+                started_at,
+                verified_at: None,
+            },
+        );
+    }
+
+    /// When `pid`'s start time last matched, if it is registered.
+    fn verified_at(&self, pid: u32) -> Option<Instant> {
         self.inner
             .lock_or_recover()
-            .insert(pid, ClientInfo { cwd, started_at });
+            .get(&pid)
+            .and_then(|info| info.verified_at)
+    }
+
+    /// Overwrite when `pid`'s start time last matched.
+    #[cfg(unix)]
+    fn set_verified_at_for_test(&self, pid: u32, verified_at: Option<Instant>) {
+        if let Some(info) = self.inner.lock_or_recover().get_mut(&pid) {
+            info.verified_at = verified_at;
+        }
     }
 
     /// A directory whose doorbell counts rings into the returned counter
-    /// instead of signalling. Unthrottled, with this process as its one
-    /// client, subscribed to every repository.
+    /// instead of signalling, with this process as its one client,
+    /// subscribed to every repository.
     #[cfg(unix)]
     pub(crate) fn counting_rings() -> (Self, Arc<AtomicU64>) {
         let rings = Arc::new(AtomicU64::new(0));
@@ -63,7 +72,6 @@ impl ClientDirectory {
             }),
             ..Self::new()
         };
-        directory.set_throttle_ms(0);
         directory.register(std::process::id(), None);
         (directory, rings)
     }
@@ -71,141 +79,8 @@ impl ClientDirectory {
 
 #[cfg(unix)]
 #[test]
-fn throttle_suppresses_within_window() {
-    let directory = ClientDirectory::new();
-    directory.set_throttle_ms(60_000);
-    let repo = Path::new("/repo");
-
-    assert!(directory.throttle_allows(repo));
-    assert!(!directory.throttle_allows(repo));
-}
-
-#[cfg(unix)]
-#[test]
-/// Latest-wins: a distinct token inside the window is delivered; duplicates coalesce.
-fn throttle_delivers_distinct_token_within_window() {
-    let directory = ClientDirectory::new();
-    directory.set_throttle_ms(60_000);
-    let repo = Path::new("/repo");
-
-    assert!(directory.throttle_allows_token(repo, 1));
-    assert!(!directory.throttle_allows_token(repo, 1));
-    assert!(directory.throttle_allows_token(repo, 2));
-    assert!(!directory.throttle_allows_token(repo, 2));
-}
-
-#[cfg(unix)]
-#[test]
-fn throttle_decision_no_prior_record_allows_and_stamps() {
-    let now = Instant::now();
-    let window = Duration::from_millis(50);
-
-    let (allow, record) = ClientDirectory::throttle_decision(None, now, window, Some(7));
-
-    assert!(allow, "a first push with no prior record must be allowed");
-    assert_eq!(record.at, now);
-    assert_eq!(record.token, Some(7));
-}
-
-#[cfg(unix)]
-#[test]
-/// The suppressed record must not be bumped to `now`.
-fn throttle_decision_inside_window_same_token_suppresses_and_keeps_record() {
-    let recorded_at = Instant::now();
-    let prev = ThrottleRecord {
-        at: recorded_at,
-        token: Some(3),
-    };
-    let now = recorded_at + Duration::from_millis(10);
-    let window = Duration::from_millis(50);
-
-    let (allow, record) = ClientDirectory::throttle_decision(Some(prev), now, window, Some(3));
-
-    assert!(
-        !allow,
-        "a same-token duplicate inside the window must be suppressed"
-    );
-    assert_eq!(
-        record.at, recorded_at,
-        "a suppressed decision must not refresh the record's timestamp"
-    );
-    assert_eq!(record.token, Some(3));
-}
-
-#[cfg(unix)]
-#[test]
-fn throttle_decision_inside_window_distinct_token_allows_and_refreshes() {
-    let recorded_at = Instant::now();
-    let prev = ThrottleRecord {
-        at: recorded_at,
-        token: Some(1),
-    };
-    let now = recorded_at + Duration::from_millis(10);
-    let window = Duration::from_millis(50);
-
-    let (allow, record) = ClientDirectory::throttle_decision(Some(prev), now, window, Some(2));
-
-    assert!(
-        allow,
-        "a distinct token inside the window must still be delivered"
-    );
-    assert_eq!(
-        record.at, now,
-        "an allowed decision must refresh the record's timestamp"
-    );
-    assert_eq!(record.token, Some(2));
-}
-
-#[cfg(unix)]
-#[test]
-/// Tokenless pushes fall back to time-based suppression.
-fn throttle_decision_tokenless_inside_window_suppresses() {
-    let recorded_at = Instant::now();
-    let prev = ThrottleRecord {
-        at: recorded_at,
-        token: Some(1),
-    };
-    let now = recorded_at + Duration::from_millis(10);
-    let window = Duration::from_millis(50);
-
-    let (allow, record) = ClientDirectory::throttle_decision(Some(prev), now, window, None);
-
-    assert!(
-        !allow,
-        "a tokenless push inside the window must be suppressed"
-    );
-    assert_eq!(record.at, recorded_at);
-    assert_eq!(record.token, Some(1));
-}
-
-#[cfg(unix)]
-#[test]
-fn throttle_decision_outside_window_allows_and_refreshes() {
-    let recorded_at = Instant::now();
-    let prev = ThrottleRecord {
-        at: recorded_at,
-        token: Some(1),
-    };
-    let now = recorded_at + Duration::from_millis(60);
-    let window = Duration::from_millis(50);
-
-    let (allow, record) = ClientDirectory::throttle_decision(Some(prev), now, window, Some(1));
-
-    assert!(
-        allow,
-        "a push outside the window must be delivered even with the same token"
-    );
-    assert_eq!(
-        record.at, now,
-        "an allowed decision must refresh the record's timestamp"
-    );
-    assert_eq!(record.token, Some(1));
-}
-
-#[cfg(unix)]
-#[test]
-/// The throttle is decided once per broadcast, so a second client in the same
-/// repo is not starved; both nonexistent PIDs get ESRCH and are pruned.
+/// Every related client is signaled in one broadcast, not just the first one
+/// `HashMap` iteration visits; both nonexistent PIDs get ESRCH and are pruned.
 fn notify_delivers_to_both_clients_in_same_repo_within_one_broadcast() {
     let directory = ClientDirectory::new();
     let repo = PathBuf::from("/repo");
@@ -220,7 +95,7 @@ fn notify_delivers_to_both_clients_in_same_repo_within_one_broadcast() {
         directory.len(),
         0,
         "both clients in the same repo must be signaled (and pruned via ESRCH) \
-         within one broadcast, not just the first one HashMap iteration visits"
+         within one broadcast"
     );
 }
 
@@ -521,4 +396,85 @@ fn prune_evicts_exited_unregistered_processes_from_sysinfo() {
             .is_none(),
         "an exited, unregistered process must not stay in the shared System"
     );
+}
+
+/// A start time that matched within `IDENTITY_TRUST` is trusted without a
+/// lookup: a client recorded with an impossible start time is still rung.
+#[test]
+#[cfg(unix)]
+fn recent_identity_match_skips_the_start_time_lookup() {
+    let (directory, rings) = ClientDirectory::counting_rings();
+    let pid = std::process::id();
+    // No process started in 1970 is still running, so a lookup would prune.
+    directory.register_with_started_at_for_test(pid, None, Some(1));
+    directory.set_verified_at_for_test(pid, Some(Instant::now()));
+
+    directory.notify_repaint(None);
+
+    assert_eq!(rings.load(Ordering::SeqCst), 1, "a trusted client is rung");
+    assert!(
+        directory.is_registered(pid),
+        "a recently verified client must not be looked up again"
+    );
+}
+
+/// Past the trust window the start time is looked up again, and a mismatch
+/// prunes the client before it is rung.
+#[test]
+#[cfg(unix)]
+fn expired_identity_match_is_looked_up_again() {
+    let (directory, rings) = ClientDirectory::counting_rings();
+    let pid = std::process::id();
+    directory.register_with_started_at_for_test(pid, None, Some(1));
+    // `None` (an uptime shorter than the offset) forces the lookup as well.
+    let expired = Instant::now().checked_sub(IDENTITY_TRUST.saturating_mul(2));
+    directory.set_verified_at_for_test(pid, expired);
+
+    directory.notify_repaint(None);
+
+    assert_eq!(
+        rings.load(Ordering::SeqCst),
+        0,
+        "a recycled PID is not rung"
+    );
+    assert!(
+        !directory.is_registered(pid),
+        "an expired match must be looked up again and the recycle pruned"
+    );
+}
+
+/// A lookup that matches renews the trust window for the next ring.
+#[test]
+#[cfg(unix)]
+fn matching_lookup_renews_the_trust_window() {
+    let (directory, rings) = ClientDirectory::counting_rings();
+    let pid = std::process::id();
+    assert!(
+        directory.verified_at(pid).is_some(),
+        "registration counts as a match"
+    );
+    directory.set_verified_at_for_test(pid, None);
+    let before = Instant::now();
+
+    directory.notify_repaint(None);
+
+    assert_eq!(rings.load(Ordering::SeqCst), 1);
+    assert!(
+        directory.verified_at(pid).is_some_and(|at| at >= before),
+        "the matching lookup must be recorded"
+    );
+}
+
+/// A match for one start time never vouches for a re-registration of the
+/// same PID with another.
+#[test]
+fn mark_verified_ignores_a_replaced_registration() {
+    let directory = ClientDirectory::new();
+    directory.register_with_started_at_for_test(4242, None, Some(5));
+
+    directory.mark_verified(4242, 4);
+    assert_eq!(directory.verified_at(4242), None);
+
+    directory.mark_verified(4242, 5);
+    assert!(directory.verified_at(4242).is_some());
 }

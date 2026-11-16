@@ -24,6 +24,12 @@
 # the value iff `absolute` is yes, and each of `runtime_root_for`,
 # `cache_root_for` and `config_root_for` either roots at `value/gpy` or falls
 # through as if the value were unset.
+#
+# Every reader also replays each row with NO usable home (a relative HOME):
+# then an unhonoured value leaves nothing usable, and the runtime root, the
+# socket, the cache root (and in Rust the config root) must all fail to
+# resolve, never fall back to /tmp/gpy or a relative ./.config/gpy. The shells
+# keep GPY off for a session that starts that way.
 /abs	yes
 relative	no
 ./x	no
