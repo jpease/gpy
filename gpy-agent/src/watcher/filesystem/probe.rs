@@ -309,7 +309,7 @@ fn device_of(path: &Path) -> Option<u64> {
 
 /// The device holding `path`; `None` where no portable id exists.
 #[cfg(not(unix))]
-fn device_of(_path: &Path) -> Option<u64> {
+const fn device_of(_path: &Path) -> Option<u64> {
     None
 }
 

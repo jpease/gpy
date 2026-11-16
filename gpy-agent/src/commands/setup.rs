@@ -892,6 +892,7 @@ mod tests {
         assert!(check_sourceable(Path::new("/opt/a\"b")).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn installed_integrations_follow_the_path_the_rc_block_sources() {
         let home = tempfile::tempdir().unwrap();

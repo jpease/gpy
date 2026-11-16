@@ -34,7 +34,7 @@ function __gpy_segment_clock() {
     local request_status=1
 
 # Agent path embeds zsh's live `%D{...}` token so the clock ticks without IPC.
-    if [[ -n "${__clock_format:-}" ]] && (( $+functions[__gpy_request_clock] )); then
+    if [[ -n "${__clock_format:-}" ]] && (( ${+functions[__gpy_request_clock]} )); then
         local rendered
         rendered=$(__gpy_request_clock "$is_last" "$prev_bg" "$is_first")
         request_status=$?

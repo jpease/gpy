@@ -62,9 +62,17 @@ assert_shows "oneshot directory render" "$oneshot_out" '$(echo GPY_EXPANDED)'
 
 # --- Git branch: fresh IPC render, then instant-cache hit ---
 branch='feat/$HOME-100%_x'
+cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
+# Sourcing registered this shell from the repo, and registration starts a
+# background git scan of it (the prewarm, which writes the cache files). Let
+# it land before the checkout: a scan in flight across the checkout can store
+# the old branch after the watcher's invalidation (an agent race this test is
+# not about), which then outlives the poll below.
+__gpy_path_to_cache_key "${SHELL_E2E_REPO:A}" prewarm_key
+git_prewarmed() { local -a f=("$cache_dir/$prewarm_key".git*(N)); (( ${#f} )); }
+shell_e2e_poll 5 git_prewarmed
 cd "$SHELL_E2E_REPO" || exit 1
 git checkout -q -b "$branch"
-cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
 
 # A fresh IPC render (no cache file to serve) once the agent has seen the
 # checkout. The lone git segment is both first and last.

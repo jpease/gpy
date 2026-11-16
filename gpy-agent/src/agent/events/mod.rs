@@ -468,8 +468,9 @@ fn refresh_repo_status_with<B: GitBackend>(
     // The entry stays in place during the scan: a prompt drawn meanwhile is
     // served the previous status (the doorbell repaints it on change) instead
     // of missing and starting a second scan, and a failed scan can still
-    // publish it as stale. `apply_full_scan` keeps a newer full scan that
-    // finished first (an IPC-side job started after this one).
+    // publish it as stale. `apply_full_scan` keeps a full scan that started
+    // later (an IPC-side job) and discards this one if the entry was
+    // invalidated after it started.
     let started = Instant::now();
     match backend.complete_status(
         git_root,
@@ -486,11 +487,18 @@ fn refresh_repo_status_with<B: GitBackend>(
                 "Refreshing cache (full scan) for: {}",
                 git_root.display()
             );
-            let status = ctx
+            let Some(status) = ctx
                 .cache
-                .apply_full_scan(git_root, started, scanned.clone(), files)
+                .apply_full_scan(git_root, started, scanned, files)
                 .or_else(|| ctx.cache.get_any_canonical(git_root))
-                .unwrap_or(scanned);
+            else {
+                // Invalidated while scanning: this scan predates the change,
+                // so publish nothing; the next request or event rescans.
+                return RepoRefresh {
+                    status: None,
+                    cache_write: CacheWriteOutcome::NotAttempted,
+                };
+            };
             let cache_write = write_status_caches(ctx, git_root, config, &status);
             RepoRefresh {
                 status: Some(status),

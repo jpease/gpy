@@ -290,7 +290,7 @@ function __gpy_nc_probe_capabilities() {
     local help
     local -a lines
     __gpy_nc_supports_unix=0
-    if (( $+commands[nc] )); then
+    if (( ${+commands[nc]} )); then
         help="$(nc -h 2>&1)"
         [[ "$help" == *-U* ]] && __gpy_nc_supports_unix=1
         lines=("${(@f)help}")
@@ -298,13 +298,13 @@ function __gpy_nc_probe_capabilities() {
     fi
     return 0
 }
-if __gpy_agent_enabled && ! (( $+commands[socat] )); then
+if __gpy_agent_enabled && ! (( ${+commands[socat]} )); then
     __gpy_nc_probe_capabilities
 fi
 
 function __gpy_ipc_client_available() {
-    (( $+commands[socat] )) && return 0
-    (( $+commands[nc] )) || return 1
+    (( ${+commands[socat]} )) && return 0
+    (( ${+commands[nc]} )) || return 1
     __gpy_nc_probe_capabilities
     [[ "$__gpy_nc_supports_unix" == 1 ]]
 }
@@ -398,7 +398,7 @@ function __gpy_send_json() {
     fi
 
     __gpy_sj_read_status=1
-    if (( $+commands[socat] )); then
+    if (( ${+commands[socat]} )); then
         local __gpy_sj_socat_addr
         __gpy_socat_escape_into "$__gpy_sj_socket" __gpy_sj_socat_addr
         IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; print -r -- "$__gpy_sj_json" | socat -t $__gpy_sj_timeout_secs - UNIX-CONNECT:"$__gpy_sj_socat_addr" 2>/dev/null; printf '\037%s\n' "$?")
@@ -408,7 +408,7 @@ function __gpy_send_json() {
     elif __gpy_ipc_client_available; then
         local -a __gpy_sj_nc=(nc -U "$__gpy_sj_socket" -w 1)
         [[ -n "$__gpy_nc_halfclose_flag" ]] && __gpy_sj_nc+=("$__gpy_nc_halfclose_flag")
-        if (( $+commands[timeout] )); then
+        if (( ${+commands[timeout]} )); then
             IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; print -r -- "$__gpy_sj_json" | timeout "$__gpy_sj_timeout_secs" "${__gpy_sj_nc[@]}" 2>/dev/null; printf '\037%s\n' "$?")
             # 124: `timeout` killed an nc that had connected and was waiting.
             __gpy_sj_connected_codes=" 0 124 "
@@ -845,7 +845,7 @@ function __gpy_fallback_oneshot() {
     local is_last=${4:-false}
     local is_first=${5:-false}
 
-    (( $+commands[gpy-agent] )) || return 1
+    (( ${+commands[gpy-agent]} )) || return 1
     __gpy_oneshot_claim || return 1
 
     local -a args
@@ -897,7 +897,7 @@ function __gpy_request_duration() {
 
     # A late agent never forks oneshot: it is already computing it.
     local used_oneshot=0
-    if [[ "$kind" == none ]] && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
+    if [[ "$kind" == none ]] && (( ${+commands[gpy-agent]} )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local -a args
         args=(duration --duration-ms "$duration_ms" --format zsh-prompt)
@@ -992,7 +992,7 @@ function __gpy_request_character() {
     [[ "$kind" == ok ]] || result=""
 
     # A late agent (connected, reply late) never forks a oneshot.
-    if [[ "$kind" == none ]] && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
+    if [[ "$kind" == none ]] && (( ${+commands[gpy-agent]} )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local exit_code=1
         [[ "$success" == "1" ]] && exit_code=0

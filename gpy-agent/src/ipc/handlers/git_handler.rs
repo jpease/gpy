@@ -284,8 +284,10 @@ impl GitHandler {
             }
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical. A newer full scan was
-                    // already published, so its waiters get it instead.
+                    // `git_root` is already canonical. A full scan that started
+                    // later was already published, so its waiters get it
+                    // instead; an invalidation since this scan started leaves
+                    // nothing cached, and the waiters get this scan unpublished.
                     if let Some(published) = job_spec.cache.apply_full_scan(
                         &job_spec.git_root,
                         started,

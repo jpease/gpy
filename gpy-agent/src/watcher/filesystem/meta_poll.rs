@@ -5,7 +5,9 @@
 //! mode is its only way to see a same-second rewrite; that re-reads every file
 //! of every target on each tick, including a `.git/index` of hundreds of MB.
 //! Git rewrites metadata by lock file and rename (a new inode), and any write
-//! moves the ctime, so this stat-only comparison sees the same changes.
+//! moves the ctime, so this stat-only comparison sees the same changes. Where
+//! no inode or ctime exists (Windows), small files (refs, `HEAD`) are hashed
+//! instead; larger ones rely on size and the full-precision mtime.
 
 use super::FileSystemWatcher;
 use crate::sync_ext::MutexExt;
@@ -18,6 +20,11 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+/// Largest file whose contents are hashed where no inode or ctime exists:
+/// covers refs, `HEAD`, `ORIG_HEAD` and small `packed-refs`, never an index.
+#[cfg(not(unix))]
+const HASHED_FILE_LIMIT: u64 = 16_384;
+
 /// What a scan compares for one entry.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct EntryStamp {
@@ -28,10 +35,16 @@ struct EntryStamp {
     /// user space, so it catches a rewrite whose mtime was pinned.
     #[cfg(unix)]
     identity: (u64, i64, i64),
+    /// Content hash of a file up to [`HASHED_FILE_LIMIT`] bytes, standing in
+    /// for the ctime this platform lacks.
+    #[cfg(not(unix))]
+    content: Option<u64>,
 }
 
 impl EntryStamp {
-    fn of(metadata: &Metadata) -> Self {
+    fn of(path: &Path, metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        let _ = path;
         Self {
             is_dir: metadata.is_dir(),
             len: metadata.len(),
@@ -41,6 +54,16 @@ impl EntryStamp {
                 use std::os::unix::fs::MetadataExt as _;
                 (metadata.ino(), metadata.ctime(), metadata.ctime_nsec())
             },
+            #[cfg(not(unix))]
+            content: (metadata.is_file() && metadata.len() <= HASHED_FILE_LIMIT)
+                .then(|| std::fs::read(path).ok())
+                .flatten()
+                .map(|bytes| {
+                    use std::hash::{Hash as _, Hasher as _};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    bytes.hash(&mut hasher);
+                    hasher.finish()
+                }),
         }
     }
 }
@@ -56,7 +79,7 @@ fn snapshot(target: &Path) -> TargetSnapshot {
         return entries;
     };
     let is_dir = metadata.is_dir();
-    entries.insert(target.to_path_buf(), EntryStamp::of(&metadata));
+    entries.insert(target.to_path_buf(), EntryStamp::of(target, &metadata));
     if !is_dir {
         return entries;
     }
@@ -66,7 +89,9 @@ fn snapshot(target: &Path) -> TargetSnapshot {
     for child in children.flatten() {
         // `DirEntry::metadata` does not follow symlinks.
         if let Ok(child_metadata) = child.metadata() {
-            entries.insert(child.path(), EntryStamp::of(&child_metadata));
+            let path = child.path();
+            let stamp = EntryStamp::of(&path, &child_metadata);
+            entries.insert(path, stamp);
         }
     }
     entries

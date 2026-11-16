@@ -68,4 +68,11 @@ TRAPURG
 check "a ring outside precmd consumes the reload flag at once" "x" "$(<"$RELOADS")"
 check "and marks no repaint pending" "" "$__gpy_repaint_pending"
 
+# A ring that interrupts a function defined under `emulate sh` (KSH_ARRAYS on,
+# as in plugin managers and test harnesses) runs the handler without errors.
+emulate sh -c 'gpy_test_sh_loop() { i=0; while [ $i -lt 3 ]; do kill -URG $$; i=$((i+1)); done; echo done; }'
+# In this shell, not `$(...)`: `kill -URG $$` rings this shell.
+{ gpy_test_sh_loop >/dev/null; } 2>"$SANDBOX/urg.err"
+check "a ring inside an emulate-sh function prints no error" "" "$(<"$SANDBOX/urg.err")"
+
 test_finish "a doorbell during precmd is repainted at zle-line-init"

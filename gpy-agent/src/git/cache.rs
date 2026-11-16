@@ -32,10 +32,14 @@ pub struct CachedRepoStatus {
 struct CacheEntry {
     data: CachedRepoStatus,
     /// When the head fields (branch, upstream counts, stash, in-progress
-    /// state) were last read by a full scan; the TTL counts from here.
+    /// state) were read by the full scan that set them: the time that scan
+    /// started. The TTL counts from here.
     full_scan_at: Instant,
     /// Last write of any kind; the cooldown and eviction recency count from here.
     updated_at: Instant,
+    /// Last incremental (pathspec) update since the entry's full scan, whose
+    /// file map a full scan started earlier must not overwrite.
+    incremental_at: Option<Instant>,
     /// `false` when per-file details were dropped for the byte budget;
     /// incremental updates then require a full scan.
     files_complete: bool,
@@ -103,6 +107,10 @@ fn paths_equal(left: &Path, right: &Path, ignore_case: bool) -> bool {
 #[derive(Clone)]
 pub struct GitStatusCache {
     entries: Arc<Mutex<HashMap<PathBuf, CacheEntry>>>,
+    /// When each key was last invalidated, so a full scan that started
+    /// before the invalidation is discarded instead of reinstating what the
+    /// invalidation dropped. Locked after `entries`, never before.
+    invalidated: Arc<Mutex<HashMap<PathBuf, Instant>>>,
     policy: CachePolicy,
 }
 
@@ -123,6 +131,7 @@ impl GitStatusCache {
     pub(crate) fn with_policy(policy: CachePolicy) -> Self {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
+            invalidated: Arc::new(Mutex::new(HashMap::new())),
             policy,
         }
     }
@@ -198,13 +207,17 @@ impl GitStatusCache {
         files: HashMap<PathBuf, FileStatus>,
     ) {
         let mut entries = self.entries.lock_or_recover();
-        Self::insert_entry(&mut entries, key, status, files);
+        Self::insert_entry(&mut entries, key, status, files, Instant::now());
     }
 
-    /// Publish a full scan that began at `started`.
+    /// Publish a full scan that began at `started`. Entries are ordered by
+    /// when their scan started, since that is when its view was taken.
     ///
-    /// - An entry holding a full scan newer than `started` is kept and `None`
-    ///   returned.
+    /// - A key invalidated at or after `started` stays as the invalidation
+    ///   left it and `None` is returned: the scan predates whatever made the
+    ///   cached status untrue.
+    /// - An entry holding a full scan that started after `started` is kept
+    ///   and `None` returned.
     /// - An entry that only took incremental updates since `started` keeps its
     ///   newer file map; the scan's branch, upstream counts, stash count and
     ///   in-progress state replace the entry's, the counts are recomputed from
@@ -221,12 +234,25 @@ impl GitStatusCache {
         files: HashMap<PathBuf, FileStatus>,
     ) -> Option<RepositoryStatus> {
         let mut entries = self.entries.lock_or_recover();
+        if self
+            .invalidated
+            .lock_or_recover()
+            .get(key)
+            .is_some_and(|invalidated_at| *invalidated_at >= started)
+        {
+            debug_log!(
+                "cache",
+                "Discarded full scan started before invalidation of {}",
+                key.display()
+            );
+            return None;
+        }
         if let Some(entry) = entries.get_mut(key) {
             if entry.full_scan_at > started {
                 debug_log!("cache", "Kept newer full scan for {}", key.display());
                 return None;
             }
-            if entry.updated_at > started && entry.files_complete {
+            if entry.incremental_at.is_some_and(|at| at > started) && entry.files_complete {
                 debug_log!(
                     "cache",
                     "Merged full scan into incremental entry for {}",
@@ -238,19 +264,26 @@ impl GitStatusCache {
                 return Some(merged);
             }
         }
-        Some(Self::insert_entry(&mut entries, key, status, files))
+        Some(Self::insert_entry(
+            &mut entries,
+            key,
+            status,
+            files,
+            started,
+        ))
     }
 
-    /// Insert a full-scan entry, then enforce the entry-count and file-detail
-    /// byte bounds. Returns the stored aggregates.
+    /// Insert a full-scan entry whose head fields were read at `full_scan_at`,
+    /// then enforce the entry-count and file-detail byte bounds. Returns the
+    /// stored aggregates.
     fn insert_entry(
         entries: &mut HashMap<PathBuf, CacheEntry>,
         key: &Path,
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
+        full_scan_at: Instant,
     ) -> RepositoryStatus {
         debug_log!("cache", "Caching status for {}", key.display());
-        let now = Instant::now();
         entries.insert(
             key.to_path_buf(),
             CacheEntry {
@@ -258,8 +291,9 @@ impl GitStatusCache {
                     aggregates: status.clone(),
                     files,
                 },
-                full_scan_at: now,
-                updated_at: now,
+                full_scan_at,
+                updated_at: Instant::now(),
+                incremental_at: None,
                 files_complete: true,
             },
         );
@@ -340,6 +374,7 @@ impl GitStatusCache {
         }
 
         let aggregates = reaggregate(entry);
+        entry.incremental_at = Some(entry.updated_at);
 
         drop(guard);
         Some(aggregates)
@@ -367,7 +402,7 @@ impl GitStatusCache {
         }
         let mut status = last_good?;
         status.stale_error = true;
-        let stale = Self::insert_entry(&mut entries, key, status, HashMap::new());
+        let stale = Self::insert_entry(&mut entries, key, status, HashMap::new(), Instant::now());
         if let Some(entry) = entries.get_mut(key) {
             entry.files_complete = false;
         }
@@ -384,10 +419,17 @@ impl GitStatusCache {
             .is_some_and(|entry| entry.updated_at.elapsed() < self.policy.cooldown())
     }
 
-    /// Drop the cached status for an already-canonical key.
+    /// Drop the cached status for an already-canonical key. A full scan that
+    /// started before this is discarded by [`Self::apply_full_scan`].
     pub fn invalidate_canonical(&self, key: &Path) {
         debug_log!("cache", "Invalidating cache for {}", key.display());
-        self.entries.lock_or_recover().remove(key);
+        let mut entries = self.entries.lock_or_recover();
+        entries.remove(key);
+        let mut invalidated = self.invalidated.lock_or_recover();
+        invalidated.insert(key.to_path_buf(), Instant::now());
+        evict_to_capacity(&mut invalidated, GIT_STATUS_CACHE_CAPACITY, |at| *at);
+        drop(invalidated);
+        drop(entries);
     }
 
     /// Number of cached repositories.
@@ -565,6 +607,67 @@ mod tests {
                 .is_some()
         );
         assert_eq!(cache.get_any_canonical(&key), Some(newer));
+    }
+
+    /// A scan that started before an invalidation must not reinstate the
+    /// status the invalidation dropped.
+    #[test]
+    fn apply_full_scan_discards_a_scan_started_before_invalidation() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/invalidated-mid-scan");
+        let started = Instant::now();
+        cache.invalidate_canonical(&key);
+
+        assert!(
+            cache
+                .apply_full_scan(&key, started, dummy_status(), HashMap::new())
+                .is_none()
+        );
+        assert_eq!(cache.get_any_canonical(&key), None);
+
+        // A scan started after the invalidation is stored.
+        let rescan = Instant::now();
+        assert!(
+            cache
+                .apply_full_scan(&key, rescan, dummy_status(), HashMap::new())
+                .is_some()
+        );
+        assert_eq!(cache.get_any_canonical(&key), Some(dummy_status()));
+    }
+
+    /// Scans are ordered by when they started: an older scan finishing after
+    /// a newer one started cannot make that newer one look stale.
+    #[test]
+    fn apply_full_scan_orders_scans_by_start() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/overlapping-scans");
+        let old_view = RepositoryStatus {
+            branch: "main".to_owned(),
+            ..dummy_status()
+        };
+        let new_view = RepositoryStatus {
+            branch: "feature".to_owned(),
+            ..dummy_status()
+        };
+        let older_start = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("instant");
+        let newer_start = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("instant");
+
+        // The older scan finishes first, then the newer one.
+        assert!(
+            cache
+                .apply_full_scan(&key, older_start, old_view, HashMap::new())
+                .is_some()
+        );
+        assert!(
+            cache
+                .apply_full_scan(&key, newer_start, new_view.clone(), HashMap::new())
+                .is_some()
+        );
+        assert_eq!(cache.get_any_canonical(&key), Some(new_view));
     }
 
     #[test]
@@ -748,7 +851,7 @@ mod tests {
             HashMap::new(),
         );
         let started = Instant::now();
-        // Coarse clocks can tie; the merge needs `updated_at > started`.
+        // Coarse clocks can tie; the merge needs an incremental update after `started`.
         std::thread::sleep(Duration::from_millis(2));
         incremental_update(&cache, &key, "x.rs");
 

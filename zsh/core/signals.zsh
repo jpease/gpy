@@ -72,11 +72,11 @@ function __gpy_consume_shell_flags() {
 # body (this version's or an older one's) so a re-source never saves it. A
 # string trap is read from a pipeline because `$(trap)` runs in a subshell
 # that has no traps.
-if (( $+functions[TRAPURG] )); then
+if (( ${+functions[TRAPURG]} )); then
     if [[ ${functions[TRAPURG]} != *__gpy_on_doorbell* && ${functions[TRAPURG]} != *__gpy_consume_shell_flags* ]]; then
         functions[__gpy_prev_TRAPURG]=${functions[TRAPURG]}
     fi
-elif (( ! $+functions[__gpy_prev_TRAPURG] && ! $+__gpy_prev_urg_trap )); then
+elif (( ! ${+functions[__gpy_prev_TRAPURG]} && ! ${+__gpy_prev_urg_trap} )); then
     trap | while IFS= read -r __gpy_l; do
         if [[ $__gpy_l == "trap -- "*" URG" ]]; then
             typeset -g __gpy_prev_urg_trap=${(Q)${${__gpy_l#trap -- }% URG}}
@@ -94,10 +94,12 @@ fi
 # A ring during precmd (zle inactive, the prompt half drawn) only marks a
 # repaint pending: zle-line-init consumes the flags and repaints, so neither
 # the late pill nor a reload lands in the middle of the render.
-# The user's own handler runs outside GPY's option emulation.
+# The user's own handler runs outside GPY's option emulation, so this body
+# must hold under any options the interrupted code runs with (KSH_ARRAYS in a
+# function defined under `emulate sh`, for one): braced expansions only.
 function TRAPURG() {
     __gpy_on_doorbell
-    if (( $+functions[__gpy_prev_TRAPURG] )); then
+    if (( ${+functions[__gpy_prev_TRAPURG]} )); then
         __gpy_prev_TRAPURG "$@"
         return $?
     elif [[ -n ${__gpy_prev_urg_trap:-} ]]; then

@@ -20,7 +20,7 @@ function __gpy_segment_status() {
     # agent's render, which the render loop memoizes; the local pill returns
     # __gpy_seg_status_late when the agent timed out, else 1.
     local request_status=1
-    if [[ -n "${__status_format:-}" ]] && (( $+functions[__gpy_request_exit_status] )); then
+    if [[ -n "${__status_format:-}" ]] && (( ${+functions[__gpy_request_exit_status]} )); then
         local rendered
         rendered=$(__gpy_request_exit_status "$success" "$is_last" "$prev_bg" "$is_first")
         request_status=$?

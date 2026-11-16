@@ -169,16 +169,16 @@ function __gpy_segment_would_render() {
         [[ -n ${__gpy_g_text[$tok]-} ]]
         return
     fi
-    if (( ! $+functions[__gpy_segment_$seg] )); then
+    if (( ! ${+functions[__gpy_segment_$seg]} )); then
         return 1
     fi
 
     local detect_fn="__gpy_segment_${seg}_detect"
-    if (( $+functions[$detect_fn] )); then
+    if (( ${+functions[$detect_fn]} )); then
         "$detect_fn" || return 1
     fi
     local omit_fn="__gpy_segment_${seg}_omit"
-    if (( $+functions[$omit_fn] )) && "$omit_fn"; then
+    if (( ${+functions[$omit_fn]} )) && "$omit_fn"; then
         return 1
     fi
 
@@ -261,7 +261,7 @@ function __gpy_render_prompt() {
     local segment_index=1
     for seg in $segments_to_render; do
         local g_tok=""
-        if __gpy_g_token "$seg" g_tok || (( $+functions[__gpy_segment_$seg] )); then
+        if __gpy_g_token "$seg" g_tok || (( ${+functions[__gpy_segment_$seg]} )); then
             local is_last=""
             if (( segment_index == segment_count )); then
                 is_last="true"
@@ -437,7 +437,7 @@ function __gpy_update_prompts() {
 
     local t=""
     [[ "${__gpy_add_newline:-1}" == "1" ]] && t=$'\n'
-    if (( has_clock )) && (( $+functions[__gpy_clock_time_spec] )); then
+    if (( has_clock )) && (( ${+functions[__gpy_clock_time_spec]} )); then
         local spec pad sgr
         __gpy_clock_time_spec spec
         __gpy_prompt_escape "${__prompt_time_pad- }" pad
