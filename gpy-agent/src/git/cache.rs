@@ -107,10 +107,12 @@ fn paths_equal(left: &Path, right: &Path, ignore_case: bool) -> bool {
 #[derive(Clone)]
 pub struct GitStatusCache {
     entries: Arc<Mutex<HashMap<PathBuf, CacheEntry>>>,
-    /// When each key was last invalidated, so a full scan that started
-    /// before the invalidation is discarded instead of reinstating what the
-    /// invalidation dropped. Locked after `entries`, never before.
-    invalidated: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    /// When each key last changed in a way a full scan must see: an
+    /// invalidation, or a watcher event that needs a full scan. A full scan
+    /// that started before it is discarded instead of storing the old view,
+    /// and an entry scanned before it is never fresh. Locked after
+    /// `entries`, never before.
+    changed: Arc<Mutex<HashMap<PathBuf, Instant>>>,
     policy: CachePolicy,
 }
 
@@ -131,7 +133,7 @@ impl GitStatusCache {
     pub(crate) fn with_policy(policy: CachePolicy) -> Self {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
-            invalidated: Arc::new(Mutex::new(HashMap::new())),
+            changed: Arc::new(Mutex::new(HashMap::new())),
             policy,
         }
     }
@@ -213,9 +215,9 @@ impl GitStatusCache {
     /// Publish a full scan that began at `started`. Entries are ordered by
     /// when their scan started, since that is when its view was taken.
     ///
-    /// - A key invalidated at or after `started` stays as the invalidation
-    ///   left it and `None` is returned: the scan predates whatever made the
-    ///   cached status untrue.
+    /// - A key changed (see [`Self::note_change_canonical`]) after `started`
+    ///   is left as it is and `None` is returned: the scan predates the
+    ///   change, so its view is already out of date.
     /// - An entry holding a full scan that started after `started` is kept
     ///   and `None` returned.
     /// - An entry that only took incremental updates since `started` keeps its
@@ -234,15 +236,10 @@ impl GitStatusCache {
         files: HashMap<PathBuf, FileStatus>,
     ) -> Option<RepositoryStatus> {
         let mut entries = self.entries.lock_or_recover();
-        if self
-            .invalidated
-            .lock_or_recover()
-            .get(key)
-            .is_some_and(|invalidated_at| *invalidated_at >= started)
-        {
+        if self.changed_since_canonical(key, started) {
             debug_log!(
                 "cache",
-                "Discarded full scan started before invalidation of {}",
+                "Discarded full scan started before a change to {}",
                 key.display()
             );
             return None;
@@ -410,25 +407,43 @@ impl GitStatusCache {
     }
 
     /// Whether the entry for an already-canonical key was updated within the
-    /// policy's cooldown window.
+    /// policy's cooldown window and its full scan started after the key's
+    /// last noted change.
     #[must_use]
     pub fn is_fresh_canonical(&self, key: &Path) -> bool {
-        self.entries
-            .lock_or_recover()
-            .get(key)
-            .is_some_and(|entry| entry.updated_at.elapsed() < self.policy.cooldown())
+        let entries = self.entries.lock_or_recover();
+        let Some(entry) = entries.get(key) else {
+            return false;
+        };
+        entry.updated_at.elapsed() < self.policy.cooldown()
+            && !self.changed_since_canonical(key, entry.full_scan_at)
     }
 
-    /// Drop the cached status for an already-canonical key. A full scan that
-    /// started before this is discarded by [`Self::apply_full_scan`].
+    /// Record that `key` changed in a way only a full scan sees (HEAD, refs,
+    /// index), so full scans that started before now are discarded and the
+    /// cached entry stops counting as fresh until a newer scan lands.
+    pub fn note_change_canonical(&self, key: &Path) {
+        let mut changed = self.changed.lock_or_recover();
+        changed.insert(key.to_path_buf(), Instant::now());
+        evict_to_capacity(&mut changed, GIT_STATUS_CACHE_CAPACITY, |at| *at);
+    }
+
+    /// Whether `key` changed (see [`Self::note_change_canonical`]) after `at`.
+    #[must_use]
+    pub fn changed_since_canonical(&self, key: &Path, at: Instant) -> bool {
+        self.changed
+            .lock_or_recover()
+            .get(key)
+            .is_some_and(|changed_at| *changed_at > at)
+    }
+
+    /// Drop the cached status for an already-canonical key and note the
+    /// change, so a full scan that started before this cannot reinstate it.
     pub fn invalidate_canonical(&self, key: &Path) {
         debug_log!("cache", "Invalidating cache for {}", key.display());
         let mut entries = self.entries.lock_or_recover();
         entries.remove(key);
-        let mut invalidated = self.invalidated.lock_or_recover();
-        invalidated.insert(key.to_path_buf(), Instant::now());
-        evict_to_capacity(&mut invalidated, GIT_STATUS_CACHE_CAPACITY, |at| *at);
-        drop(invalidated);
+        self.note_change_canonical(key);
         drop(entries);
     }
 
@@ -616,6 +631,8 @@ mod tests {
         let cache = GitStatusCache::new();
         let key = PathBuf::from("/repo/invalidated-mid-scan");
         let started = Instant::now();
+        // Coarse clocks can tie; the discard needs the change after `started`.
+        std::thread::sleep(Duration::from_millis(2));
         cache.invalidate_canonical(&key);
 
         assert!(
@@ -633,6 +650,57 @@ mod tests {
                 .is_some()
         );
         assert_eq!(cache.get_any_canonical(&key), Some(dummy_status()));
+    }
+
+    /// A noted change (a watcher event needing a full scan) discards scans
+    /// that started before it and stops the entry counting as fresh, so a
+    /// cooldown cannot skip the rescan the change needs.
+    #[test]
+    fn noted_change_discards_older_scans_and_ends_freshness() {
+        let cache = GitStatusCache::with_policy(CachePolicy {
+            ttl: Duration::from_secs(30),
+            cooldown: Duration::from_hours(1),
+        });
+        let key = PathBuf::from("/repo/noted-change");
+        let before = RepositoryStatus {
+            branch: "main".to_owned(),
+            ..dummy_status()
+        };
+        let started = Instant::now();
+        assert!(
+            cache
+                .apply_full_scan(&key, started, before.clone(), HashMap::new())
+                .is_some()
+        );
+        assert!(cache.is_fresh_canonical(&key));
+
+        std::thread::sleep(Duration::from_millis(2));
+        cache.note_change_canonical(&key);
+        assert!(cache.changed_since_canonical(&key, started));
+        assert!(!cache.is_fresh_canonical(&key));
+        let in_flight = RepositoryStatus {
+            branch: "in-flight".to_owned(),
+            ..dummy_status()
+        };
+        assert!(
+            cache
+                .apply_full_scan(&key, started, in_flight, HashMap::new())
+                .is_none()
+        );
+        assert_eq!(cache.get_any_canonical(&key), Some(before));
+
+        std::thread::sleep(Duration::from_millis(2));
+        let after = RepositoryStatus {
+            branch: "feature".to_owned(),
+            ..dummy_status()
+        };
+        assert!(
+            cache
+                .apply_full_scan(&key, Instant::now(), after.clone(), HashMap::new())
+                .is_some()
+        );
+        assert_eq!(cache.get_any_canonical(&key), Some(after));
+        assert!(cache.is_fresh_canonical(&key));
     }
 
     /// Scans are ordered by when they started: an older scan finishing after

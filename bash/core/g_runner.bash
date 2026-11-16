@@ -154,7 +154,7 @@ __gpy_g_prod() {
             kill -CONT -"$c"
             printf '\036%s t\036' "$tok"
             "$__gpy_g_sleep" "$__gpy_g_grace"
-            kill -KILL -"$c"
+            __gpy_g_kill_group "$c"
         } </dev/null 2>/dev/null &
         w=$!
     fi
@@ -177,6 +177,20 @@ __gpy_g_prod() {
     printf '\036%s r %s\036' "$tok" "$s"
 }
 
+# KILL group $1, then again while members remain, at most five times 10 ms
+# apart: a member forked while the first KILL was delivered can miss it, and
+# one that ignores TERM would then outlive the deadline. Detached callers
+# only: the prompt never waits for this.
+__gpy_g_kill_group() {
+    local n
+    kill -KILL -"$1"
+    for n in 1 2 3 4 5; do
+        kill -0 -"$1" || return 0
+        "$__gpy_g_sleep" 0.01
+        kill -KILL -"$1"
+    done
+}
+
 # Killer of a clock reader, inside >( ): reads "TIME PGID" lines (TIME in
 # epoch microseconds, in rising order) and sends each group KILL at its TIME.
 # Closes the $1 producer descriptors, so they still see their reader go.
@@ -194,7 +208,7 @@ __gpy_g_kill() {
             printf -v x '%d.%06d' $((i / 1000000)) $((i % 1000000))
             "$__gpy_g_sleep" "$x"
         fi
-        kill -KILL -"$c"
+        __gpy_g_kill_group "$c"
     done
 }
 

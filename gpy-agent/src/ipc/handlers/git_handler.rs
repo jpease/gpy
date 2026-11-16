@@ -66,6 +66,34 @@ pub(super) fn publish_and_repaint(
     notify_if_changed(&deps.client_registry, git_root, result, "git");
 }
 
+/// How many times a status job scans again because the repository changed
+/// while it ran, before it settles for its last view.
+const MAX_CHANGE_RESCANS: u8 = 2;
+
+/// Run `scan` again while the repository changed (see
+/// [`GitStatusCache::note_change_canonical`]) after the latest run started,
+/// at most [`MAX_CHANGE_RESCANS`] times. Requests that join a job in flight
+/// across a change (a checkout during the registration scan) thereby get the
+/// view from after it. Returns the last run's start and result.
+fn scan_past_changes<T>(
+    cache: &GitStatusCache,
+    git_root: &Path,
+    mut scan: impl FnMut() -> crate::Result<T>,
+) -> (Instant, crate::Result<T>) {
+    let mut started = Instant::now();
+    let mut result = scan();
+    let mut rescans = 0_u8;
+    while rescans < MAX_CHANGE_RESCANS
+        && result.is_ok()
+        && cache.changed_since_canonical(git_root, started)
+    {
+        rescans = rescans.saturating_add(1);
+        started = Instant::now();
+        result = scan();
+    }
+    (started, result)
+}
+
 impl GitHandler {
     /// Create a new `GitHandler`.
     #[must_use]
@@ -263,31 +291,21 @@ impl GitHandler {
 
     fn spawn_git_status_job(job_spec: GitStatusJob) {
         let job = move || {
-            let stash_enabled = job_spec.render.config_manager.get().git.stash_enabled;
-            let started = Instant::now();
-            let result = crate::git::native::NativeGitBackend::get_complete_status(
-                &job_spec.path,
-                job_spec.max_ahead_behind,
-                stash_enabled,
-                Duration::from_secs(
-                    job_spec
-                        .render
-                        .config_manager
-                        .get()
-                        .git
-                        .timeout_seconds
-                        .get(),
-                ),
-            );
+            let config = job_spec.render.config_manager.get();
+            let (started, result) = scan_past_changes(&job_spec.cache, &job_spec.git_root, || {
+                crate::git::native::NativeGitBackend::get_complete_status(
+                    &job_spec.path,
+                    job_spec.max_ahead_behind,
+                    config.git.stash_enabled,
+                    Duration::from_secs(config.git.timeout_seconds.get()),
+                )
+            });
             if result.is_ok() {
                 job_spec.failures.remove(&job_spec.git_root);
             }
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical. A full scan that started
-                    // later was already published, so its waiters get it
-                    // instead; an invalidation since this scan started leaves
-                    // nothing cached, and the waiters get this scan unpublished.
+                    // `git_root` is already canonical.
                     if let Some(published) = job_spec.cache.apply_full_scan(
                         &job_spec.git_root,
                         started,
@@ -298,7 +316,15 @@ impl GitHandler {
                         // fresh status. No request context, so prev_bg is None.
                         publish_and_repaint(&job_spec.render, &job_spec.git_root, &published, None);
                         Ok(Some(published))
+                    } else if job_spec
+                        .cache
+                        .changed_since_canonical(&job_spec.git_root, started)
+                    {
+                        // Changes kept coming past the rescan cap: this scan is
+                        // still the newest view, though too old to cache.
+                        Ok(Some(status))
                     } else {
+                        // A full scan that started later was already published.
                         Ok(Some(
                             job_spec
                                 .cache
@@ -876,5 +902,49 @@ mod tests {
         );
         handler.prewarm(&worktree_root);
         assert!(handler.in_flight.is_idle());
+    }
+
+    /// A change noted while a job's scan runs (a checkout while a prompt
+    /// request has joined the registration scan) makes the job scan again,
+    /// so every waiter gets the view from after the change.
+    #[test]
+    fn change_during_scan_rescans_before_waiters_are_answered() {
+        let cache = GitStatusCache::new();
+        let root = PathBuf::from("/repo/changed-mid-scan");
+        let mut runs = 0_u8;
+        let (_, result) = scan_past_changes(&cache, &root, || {
+            runs = runs.saturating_add(1);
+            if runs == 1 {
+                std::thread::sleep(Duration::from_millis(2));
+                cache.note_change_canonical(&root);
+                Ok("before checkout")
+            } else {
+                Ok("after checkout")
+            }
+        });
+        assert_eq!(result.ok(), Some("after checkout"));
+        assert_eq!(runs, 2);
+    }
+
+    /// Without a change one scan answers; endless churn stops at the cap.
+    #[test]
+    fn scan_past_changes_runs_once_without_change_and_caps_churn() {
+        let cache = GitStatusCache::new();
+        let root = PathBuf::from("/repo/rescan-cap");
+        let mut runs = 0_u8;
+        let (_, quiet) = scan_past_changes(&cache, &root, || {
+            runs = runs.saturating_add(1);
+            Ok(runs)
+        });
+        assert_eq!(quiet.ok(), Some(1));
+
+        let mut churn_runs = 0_u8;
+        let (_, churned) = scan_past_changes(&cache, &root, || {
+            churn_runs = churn_runs.saturating_add(1);
+            std::thread::sleep(Duration::from_millis(2));
+            cache.note_change_canonical(&root);
+            Ok(churn_runs)
+        });
+        assert_eq!(churned.ok(), Some(MAX_CHANGE_RESCANS.saturating_add(1)));
     }
 }

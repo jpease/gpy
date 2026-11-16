@@ -74,6 +74,11 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
             // `event.repo` is canonical, so the cache `*_canonical` fast paths apply.
             let git_root = &event.repo;
             let paths_hint = git_paths_hint(paths, git_root);
+            if paths_hint.is_none() {
+                // HEAD, refs or the index may have moved: a full scan already
+                // in flight (an IPC job or prewarm) took its view too early.
+                ctx.cache.note_change_canonical(git_root);
+            }
             refresh_and_notify_coalesced(ctx, git_root, config, paths_hint.as_deref());
         }
         FileEvent::Language { path } => {
