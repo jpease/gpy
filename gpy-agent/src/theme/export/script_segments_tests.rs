@@ -90,15 +90,20 @@ fn fixture() -> Fixture {
     let root = temp.path().join("k8s-tools");
     fs::create_dir_all(root.join("bin")).unwrap();
     fs::create_dir_all(root.join("segments")).unwrap();
+    fs::write(root.join("plugin.toml"), PLUGIN).unwrap();
     fs::write(root.join("bin/seg.sh"), "echo hi\n").unwrap();
     fs::write(root.join("bin/check.sh"), "exit 0\n").unwrap();
     fs::write(root.join("segments/k8s-ctx.toml"), SEGMENT).unwrap();
     fs::write(root.join("segments/git.toml"), "command = \"bin/seg.sh\"\n").unwrap();
     for (relative, mode) in [
         ("", 0o755),
+        ("plugin.toml", 0o644),
         ("bin", 0o755),
         ("bin/seg.sh", 0o644),
         ("bin/check.sh", 0o644),
+        ("segments", 0o755),
+        ("segments/k8s-ctx.toml", 0o644),
+        ("segments/git.toml", 0o644),
     ] {
         set_mode(&root.join(relative), mode);
     }

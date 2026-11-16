@@ -328,3 +328,22 @@ fn read_only_list_key_names_the_command_to_use() {
         );
     }
 }
+
+/// `theme export` falls back to the `default` theme like the agent and
+/// `oneshot` do, instead of failing (and printing the error twice).
+#[test]
+fn agent_theme_export_with_missing_configured_theme_falls_back_to_default() {
+    let env = CliTestEnv::with_config("[ui]\ntheme = \"no-such-theme\"\n")
+        .expect("create isolated CLI test env");
+
+    let result = env
+        .run_gpy_agent(&["theme", "export", "--shell", "fish"])
+        .expect("spawn gpy-agent");
+
+    assert_eq!(result.exit_code, 0_i32, "{result:?}");
+    assert!(
+        result.stdout.contains("__enabled_segments"),
+        "the default theme is exported: {result:?}"
+    );
+    assert!(!result.stderr.contains("Error:"), "{result:?}");
+}

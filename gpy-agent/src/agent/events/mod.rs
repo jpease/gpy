@@ -16,7 +16,7 @@ use crate::watcher::{DebouncedEvent, FileEvent, GitPaths, multi_repo::MultiRepoW
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod coalesce;
 mod refresh;
@@ -24,7 +24,9 @@ mod reload;
 pub use coalesce::RepoRefreshCoordinator;
 use coalesce::run_coalesced;
 pub(crate) use refresh::{config_refresh_required, git_repo_filter, git_segment_bg};
-pub(in crate::agent) use reload::{create_watcher, handle_config_reload, handle_theme_reload};
+pub(in crate::agent) use reload::{
+    check_reloaded_theme, create_watcher, handle_config_reload, handle_theme_reload,
+};
 
 /// Shared thread-safe storage for the file watcher, allowing it to be replaced or stopped
 pub type SharedWatcherSlot = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
@@ -463,23 +465,32 @@ fn refresh_repo_status_with<B: GitBackend>(
         }
     }
 
-    // Invalidate first so the scan reflects the triggering mutation; keep the
-    // last good status so a failed scan can still publish it as stale.
-    let last_good = ctx.cache.get_any_canonical(git_root);
-    ctx.cache.invalidate_canonical(git_root);
+    // The entry stays in place during the scan: a prompt drawn meanwhile is
+    // served the previous status (the doorbell repaints it on change) instead
+    // of missing and starting a second scan, and a failed scan can still
+    // publish it as stale. `apply_full_scan` keeps a newer full scan that
+    // finished first (an IPC-side job started after this one).
+    let started = Instant::now();
     match backend.complete_status(
         git_root,
         config.git.max_ahead_behind,
         config.git.stash_enabled,
         Duration::from_secs(config.git.timeout_seconds.get()),
     ) {
-        Ok(Some(CompleteStatus { status, files })) => {
+        Ok(Some(CompleteStatus {
+            status: scanned,
+            files,
+        })) => {
             debug_log!(
                 "agent",
                 "Refreshing cache (full scan) for: {}",
                 git_root.display()
             );
-            ctx.cache.set_canonical(git_root, status.clone(), files);
+            let status = ctx
+                .cache
+                .apply_full_scan(git_root, started, scanned.clone(), files)
+                .or_else(|| ctx.cache.get_any_canonical(git_root))
+                .unwrap_or(scanned);
             let cache_write = write_status_caches(ctx, git_root, config, &status);
             RepoRefresh {
                 status: Some(status),
@@ -492,6 +503,8 @@ fn refresh_repo_status_with<B: GitBackend>(
                 "Repository state unavailable for: {}",
                 git_root.display()
             );
+            // No longer a repository: nothing about the old status is true.
+            ctx.cache.invalidate_canonical(git_root);
             RepoRefresh {
                 status: None,
                 cache_write: CacheWriteOutcome::NotAttempted,
@@ -504,21 +517,16 @@ fn refresh_repo_status_with<B: GitBackend>(
                 git_root.display(),
                 error
             );
-            publish_stale_status(ctx, git_root, config, last_good)
+            publish_stale_status(ctx, git_root, config)
         }
     }
 }
 
-/// After a failed full scan, serve and publish the last good status with its
+/// After a failed full scan, serve and publish the cached status with its
 /// upstream counts marked unknown (`↑?`) instead of leaving a stale segment
-/// that looks current. Without a last good status nothing is invented.
-fn publish_stale_status(
-    ctx: &AgentContext,
-    git_root: &Path,
-    config: &Config,
-    last_good: Option<RepositoryStatus>,
-) -> RepoRefresh {
-    let Some(stale) = ctx.cache.mark_stale_error(git_root, last_good) else {
+/// that looks current. Without a cached status nothing is invented.
+fn publish_stale_status(ctx: &AgentContext, git_root: &Path, config: &Config) -> RepoRefresh {
+    let Some(stale) = ctx.cache.mark_stale_error(git_root, None) else {
         return RepoRefresh {
             status: None,
             cache_write: CacheWriteOutcome::NotAttempted,
@@ -593,6 +601,11 @@ fn schedule_language_refresh_from_git_status(
     crate::ipc::handlers::spawn_detached(job);
 }
 
+/// What a git status says about the worktree's content, for re-detection
+/// gating: the file counts, plus the branch and upstream position, so a
+/// checkout or a fast-forward on a clean tree (counts unchanged) still
+/// re-detects once the refresh interval has passed. Changes this misses
+/// (a pull with no prior fetch) wait for the detection cache's age limit.
 fn git_status_signature(status: &crate::git::RepositoryStatus) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (
@@ -600,6 +613,10 @@ fn git_status_signature(status: &crate::git::RepositoryStatus) -> u64 {
         status.unstaged,
         status.untracked,
         status.conflicts,
+        &status.branch,
+        status.detached,
+        status.ahead,
+        status.behind,
     )
         .hash(&mut hasher);
     hasher.finish()

@@ -38,24 +38,21 @@ fn watcher_disabled_by_env() -> bool {
     crate::env_config::DISABLE_WATCHER.flag()
 }
 
-/// Connect attempts the start announcement makes before announcing anyway;
-/// with [`ANNOUNCE_CONNECT_POLL`], a 5 s wait for the socket to accept.
-#[cfg(unix)]
-const ANNOUNCE_CONNECT_ATTEMPTS: u32 = 100;
-
-/// Pause between the start announcement's connect attempts.
-#[cfg(unix)]
-const ANNOUNCE_CONNECT_POLL: Duration = Duration::from_millis(50);
+/// Longest reconcile interval honoured (one day): tokio adds the period to
+/// `Instant::now()`, which panics, aborting the daemon, on overflow.
+const MAX_RECONCILE_INTERVAL_SECS: u64 = 86_400;
 
 /// Longest shutdown waits for the IPC server task to stop, so a stuck
 /// connection handler cannot keep the agent from exiting.
 const SERVER_STOP_WAIT_MAX: Duration = Duration::from_secs(5);
 
 /// Resolve the reconcile interval from `GPY_RECONCILE_INTERVAL_SECS`, else
-/// [`crate::env_config::DEFAULT_RECONCILE_INTERVAL_SECS`]. For setups where
-/// `FSEvents` never arrive.
+/// [`crate::env_config::DEFAULT_RECONCILE_INTERVAL_SECS`], capped at
+/// [`MAX_RECONCILE_INTERVAL_SECS`]. For setups where `FSEvents` never arrive.
 fn reconcile_interval_secs() -> u64 {
-    crate::env_config::RECONCILE_INTERVAL_SECS.positive()
+    crate::env_config::RECONCILE_INTERVAL_SECS
+        .positive()
+        .min(MAX_RECONCILE_INTERVAL_SECS)
 }
 
 /// Runs `scan_fn` over `repos` on a blocking thread (git status is a subprocess).
@@ -104,9 +101,10 @@ async fn run_reconcile_scan<R, F>(
     in_flight.store(false, Ordering::Release);
 }
 
-/// Prune dead clients from `registry` and unregister them from the watcher;
-/// returns the pruned PIDs. The watcher `Arc` is cloned out of the slot so
-/// the slot lock is not held across watcher calls.
+/// Prune dead clients from `registry` and unregister them from the watcher,
+/// then release repos left without clients for longer than the watcher's
+/// teardown grace; returns the pruned PIDs. The watcher `Arc` is cloned out of
+/// the slot so the slot lock is not held across watcher calls.
 fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSlot) -> Vec<u32> {
     let mut pruned_pids = registry.prune_dead_clients();
 
@@ -125,6 +123,7 @@ fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSl
                 }
             }
         }
+        watcher.release_idle_repos();
     }
 
     if !pruned_pids.is_empty() {
@@ -252,13 +251,18 @@ pub struct Agent {
     watcher: SharedWatcherSlot,
     /// Shared subsystem handles (managers, registry, caches, refresh coordinator).
     ctx: events::AgentContext,
+    /// The default socket, when this agent listens on another one: the shells
+    /// tracked under the runtime dir talk to it, not to this agent.
+    #[cfg(unix)]
+    default_socket: Option<PathBuf>,
 }
 
 impl Agent {
     /// Create a new agent instance that will listen on `socket`.
     ///
     /// # Errors
-    /// Returns an error if the IPC server or file watcher cannot be initialized.
+    /// Returns an error if the config, theme, instant-prompt cache, cache dir
+    /// or runtime dir cannot be initialized.
     pub fn new(socket: SocketPath) -> Result<Self> {
         let watcher_config = WatcherConfig::from_env();
         let client_registry = ClientDirectory::new().shared();
@@ -314,6 +318,8 @@ impl Agent {
         crate::agent::lifecycle::ensure_runtime_dir(&socket)?;
         #[cfg(unix)]
         let socket_dir_repair = crate::agent::lifecycle::socket_dir_repair(&socket);
+        #[cfg(unix)]
+        let default_socket = startup::overridden_default_socket(&socket);
         let server = EndpointHandle::new(EndpointDeps {
             socket_path: socket.into_path(),
             #[cfg(unix)]
@@ -333,6 +339,8 @@ impl Agent {
             server,
             watcher: watcher_slot,
             ctx,
+            #[cfg(unix)]
+            default_socket,
         })
     }
 
@@ -353,6 +361,9 @@ impl Agent {
         Ok(Arc::new(config_manager_inner))
     }
 
+    /// Load the configured theme, else `default` standing in for it until it
+    /// loads (every theme reload retries it).
+    ///
     /// # Errors
     /// Returns an error if the theme manager fails to initialize.
     fn init_theme_manager(config: &crate::config::Config) -> Result<Arc<ThemeManager>> {
@@ -361,10 +372,10 @@ impl Agent {
             .or_else(|e| {
                 crate::debug::warn_fallback(
                     &format!("Theme '{theme_name}' loading"),
-                    "using default",
+                    "using default until it loads",
                     &e,
                 );
-                ThemeManager::new("default")
+                ThemeManager::standing_in_for(theme_name.as_str(), "default")
             })
             .map_err(|err| {
                 Error::agent(format!(
@@ -404,6 +415,20 @@ impl Agent {
             .set_reload_callback(Arc::new(move |reload| {
                 events::handle_theme_reload(&ctx_for_theme_callback, reload);
             }));
+        // A reloaded theme whose templates fail with the palette is not
+        // applied (ADR-0005); config reloads check against their own palette.
+        let palette_for_check = Arc::clone(&ctx.palette_cache);
+        let config_for_check = Arc::clone(&ctx.config_manager);
+        ctx.theme_manager.set_reload_check(Arc::new(
+            move |loaded: &crate::theme::LoadedTheme, active: &crate::theme::ThemeConfig| {
+                events::check_reloaded_theme(
+                    &palette_for_check,
+                    &config_for_check.get(),
+                    loaded,
+                    active,
+                )
+            },
+        ));
 
         if let Err(e) = ctx
             .config_manager
@@ -466,8 +491,16 @@ impl Agent {
             mut server,
             watcher,
             ctx,
+            #[cfg(unix)]
+            default_socket,
         } = self;
         startup::startup_checks(server.socket_path());
+        // Set once the IPC server task ends, so a pending start announcement gives up.
+        let server_stopped = Arc::new(AtomicBool::new(false));
+        // Whether the tracked shells belong to an agent on the default socket;
+        // unknown (so assumed) on an overridden socket until the announcement decides.
+        #[cfg(unix)]
+        let shells_foreign = Arc::new(AtomicBool::new(default_socket.is_some()));
 
         // Once the socket accepts, warm the theme-export cache on a blocking
         // thread (racing requests fall back to `gpy-agent theme export`) and
@@ -480,20 +513,26 @@ impl Agent {
             let palette_for_export = ctx.palette_cache.get();
             #[cfg(unix)]
             let socket_path = server.socket_path().to_path_buf();
+            #[cfg(unix)]
+            let server_stopped_for_announce = Arc::clone(&server_stopped);
+            #[cfg(unix)]
+            let shells_foreign_for_announce = Arc::clone(&shells_foreign);
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 {
-                    for _ in 0..ANNOUNCE_CONNECT_ATTEMPTS {
-                        if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
-                            break;
-                        }
-                        std::thread::sleep(ANNOUNCE_CONNECT_POLL);
-                    }
-                    startup::announce_start_to_tracked_shells(
-                        &theme_manager_for_export,
-                        &config_for_export,
-                        &palette_for_export,
+                    let foreign = startup::announce_start_when_accepting(
+                        &socket_path,
+                        default_socket.as_deref(),
+                        &server_stopped_for_announce,
+                        || {
+                            startup::announce_start_to_tracked_shells(
+                                &theme_manager_for_export,
+                                &config_for_export,
+                                &palette_for_export,
+                            );
+                        },
                     );
+                    shells_foreign_for_announce.store(foreign, Ordering::Release);
                 }
                 #[cfg(not(unix))]
                 if let Err(e) = crate::cache::write_theme_export_cache(
@@ -514,6 +553,7 @@ impl Agent {
         let watcher_for_pruning = Arc::clone(&watcher);
         let mut clock_timer = startup::create_clock_timer();
         let mut pruning_timer = startup::create_pruning_timer();
+        let mut cache_sweep_timer = startup::create_cache_sweep_timer();
         // Bounded per-PID re-nudge budget; see [`ShellRenudger`].
         #[cfg(unix)]
         let mut shell_renudger = ShellRenudger::default();
@@ -538,6 +578,7 @@ impl Agent {
             // arm fires.
             tokio::select! {
                 joined = &mut server_task => {
+                    server_stopped.store(true, Ordering::Release);
                     let result = joined.unwrap_or_else(|join_error| {
                         Err(Error::agent(format!("IPC server task failed: {join_error}")))
                     });
@@ -559,6 +600,7 @@ impl Agent {
                     }
                     // Ends the accept loop, which unlinks the socket if it is still ours.
                     let _ = shutdown_tx.send(());
+                    server_stopped.store(true, Ordering::Release);
                     match tokio::time::timeout(SERVER_STOP_WAIT_MAX, &mut server_task).await {
                         Ok(Ok(Err(e))) => {
                             debug_log!("agent", "IPC server stopped with error: {e}");
@@ -595,7 +637,16 @@ impl Agent {
                     // Re-nudge live tracked shells missing from the registry
                     // (e.g. their circuit breaker was backing off at restart).
                     #[cfg(unix)]
-                    renudge_unregistered_shells(&mut shell_renudger, &registry_for_pruning);
+                    if !shells_foreign.load(Ordering::Acquire) {
+                        renudge_unregistered_shells(&mut shell_renudger, &registry_for_pruning);
+                    }
+                }
+                _ = cache_sweep_timer.tick() => {
+                    // Age sweep of instant-prompt files a long-lived agent
+                    // would otherwise keep until restart; walks the cache dir,
+                    // so off the event loop.
+                    let instant_cache = Arc::clone(&ctx.instant_cache);
+                    tokio::task::spawn_blocking(move || instant_cache.sweep_stale_entries());
                 }
                 _ = reconcile_timer.tick() => {
                     let reconcile_config = ctx.config_manager.get();

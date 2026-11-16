@@ -27,7 +27,7 @@ Every message is one JSON object with an `op` field naming the operation:
 
 The schemas can be used with standard JSON Schema validators to ensure protocol compliance. `gpy-agent/tests/schema_validation_tests.rs` checks them against the code: the `format` enum against `Format`, the ops against the `into_message` dispatch table, and real agent replies against `response.json`.
 
-An unrecognized `format` silently falls back to `json`.
+An unrecognized `format` silently falls back to `json`. A refused request (unparseable, unknown `op`, missing field, invalid or denylisted `cwd` or `virtual_env`) gets one `{"error":"Parse error: ..."}` line in every format; a prompt-format request whose handler fails gets an empty line.
 
 ## Version Compatibility
 
@@ -41,4 +41,14 @@ These schemas correspond to the protocol version defined by `PROTOCOL_VERSION` i
 
 ## Examples
 
-See the doc comments in `gpy-agent/src/ipc/mod.rs` for examples of each message and response type.
+Requests (a clock request takes `shell` of `fish`, `zsh` or `bash`, and an unrecognized value falls back to `fish`):
+
+```json
+{"op":"lang","cwd":"/path/to/repo","virtual_env":"/path/to/venv","format":"json"}
+{"op":"clock","shell":"zsh","format":"zsh-prompt"}
+{"op":"nosuchop"}
+```
+
+The last one is answered with `{"error":"Parse error: ..."}`.
+
+See the doc comments in `gpy-agent/src/ipc/mod.rs` for each message and response type.

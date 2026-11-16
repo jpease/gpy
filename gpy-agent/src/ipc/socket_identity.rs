@@ -28,12 +28,24 @@ impl SocketIdentity {
         }
     }
 
-    /// Identity of whatever is at `path` right now (one `stat`).
+    /// Identity of the socket at `path` right now (one `lstat`).
+    ///
+    /// Anything that is not a socket (a regular file, a directory, a symlink,
+    /// even one to a socket) is reported as `NotFound`: no socket is there, so
+    /// nothing at the path is ever treated as ours to unlink.
     ///
     /// # Errors
     ///
-    /// Returns the `stat` error, e.g. `NotFound` when nothing is at `path`.
+    /// Returns the `lstat` error, or `NotFound` when no socket is at `path`.
     pub fn at(path: &Path) -> std::io::Result<Self> {
-        std::fs::metadata(path).map(|metadata| Self::from_metadata(&metadata))
+        use std::os::unix::fs::FileTypeExt;
+        let metadata = std::fs::symlink_metadata(path)?;
+        if !metadata.file_type().is_socket() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("{} is not a socket", path.display()),
+            ));
+        }
+        Ok(Self::from_metadata(&metadata))
     }
 }

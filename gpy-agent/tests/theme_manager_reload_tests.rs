@@ -327,3 +327,73 @@ fn a_plugin_providing_a_self_named_base_appearing_and_disappearing_reloads() {
         "the overlay is merged over every base"
     );
 }
+
+/// A fallback standing in for a theme that failed to load is replaced by
+/// that theme on the first reload after it is fixed, with no restart.
+#[test]
+#[serial]
+fn a_fallback_is_replaced_by_the_requested_theme_once_it_loads() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let user_themes = temp_dir.path().join("gpy").join("themes");
+    fs::create_dir_all(&user_themes).unwrap();
+    let mine = user_themes.join("mine.toml");
+    fs::write(&mine, "[ui\n").unwrap();
+    assert!(ThemeManager::new("mine").is_err(), "the broken theme fails");
+
+    let manager = ThemeManager::standing_in_for("mine", "default").unwrap();
+    let fallback_icon = prompt_symbol(&manager);
+    assert!(
+        !manager.reload().unwrap(),
+        "still broken: the fallback stays"
+    );
+    assert_eq!(prompt_symbol(&manager), fallback_icon);
+
+    fs::write(&mine, icon_theme("M")).unwrap();
+    assert!(
+        manager.reload().unwrap(),
+        "the fixed theme replaces the fallback"
+    );
+    assert_eq!(prompt_symbol(&manager), "M");
+    assert_eq!(manager.chain_for_test().to_string(), "mine (user)");
+    assert!(!manager.reload().unwrap(), "and is then the active theme");
+}
+
+/// A reload whose theme fails the registered check keeps the current theme;
+/// the next one that passes applies.
+#[test]
+#[serial]
+fn a_reload_failing_the_check_keeps_the_current_theme() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let user_themes = temp_dir.path().join("gpy").join("themes");
+    fs::create_dir_all(&user_themes).unwrap();
+    let mine = user_themes.join("mine.toml");
+    fs::write(&mine, icon_theme("A")).unwrap();
+    let manager = ThemeManager::new("mine").unwrap();
+    manager.set_reload_check(std::sync::Arc::new(
+        |loaded: &gpy_agent::theme::LoadedTheme, _active: &gpy_agent::theme::ThemeConfig| {
+            if loaded.theme.segments.character.success_symbol == "B" {
+                Err(gpy_agent::Error::config("rejected"))
+            } else {
+                Ok(())
+            }
+        },
+    ));
+
+    fs::write(&mine, icon_theme("B")).unwrap();
+    assert!(
+        manager.reload().is_err(),
+        "a theme failing the check is rejected"
+    );
+    assert_eq!(prompt_symbol(&manager), "A", "the current theme is kept");
+    assert!(
+        manager.switch_theme("mine").is_err(),
+        "a switch is checked too"
+    );
+    assert_eq!(prompt_symbol(&manager), "A");
+
+    fs::write(&mine, icon_theme("C")).unwrap();
+    assert!(manager.reload().unwrap(), "a passing theme applies");
+    assert_eq!(prompt_symbol(&manager), "C");
+}

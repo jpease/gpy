@@ -43,9 +43,10 @@ pub fn write_theme_export_cache(
 
 /// Write fish/bash/zsh theme exports atomically into `cache_dir`.
 ///
-/// Files with identical content are left untouched so their mtime only moves
-/// on change (shells compare it). Returns `true` if any file was rewritten.
-/// Takes an explicit dir so tests and benches avoid mutating env vars.
+/// The three files are rendered from one theme snapshot and one plugin
+/// discovery. Files with identical content are left untouched so their mtime
+/// only moves on change (shells compare it). Returns `true` if any file was
+/// rewritten. Takes an explicit dir so tests and benches avoid mutating env vars.
 ///
 /// # Errors
 ///
@@ -58,9 +59,10 @@ pub fn write_theme_export_to_dir(
 ) -> Result<bool> {
     create_private_dir(cache_dir)?;
 
+    let shells = EXPORT_FILES.map(|(shell, _)| shell);
+    let exports = theme_manager.export_all(&shells, config, palette);
     let mut changed = false;
-    for (shell, file_name) in EXPORT_FILES {
-        let content = theme_manager.export(shell, config, palette);
+    for ((_, file_name), content) in EXPORT_FILES.into_iter().zip(exports) {
         // Any read failure (typically: no file yet) means "write it".
         if std::fs::read(cache_dir.join(file_name))
             .is_ok_and(|current| current == content.as_bytes())

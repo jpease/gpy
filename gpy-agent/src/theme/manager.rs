@@ -11,10 +11,11 @@ use crate::template::Palette;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
 use crate::theme::overlay::{self, ChainLink, LoadedTheme, ThemeChain};
+use crate::theme::poll::{PollPaths, PollSubject};
 use crate::watcher::hot_reload::{HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -29,7 +30,7 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
 /// The link the theme `name` resolves to as the requested theme (user, then
 /// plugin, then builtin). Unresolvable names get the embedded link; the
 /// loader reports the error.
-fn resolve_top(name: &str) -> ChainLink {
+pub(super) fn resolve_top(name: &str) -> ChainLink {
     overlay::resolve_top(name).unwrap_or_else(|| ChainLink::embedded(name))
 }
 
@@ -52,31 +53,8 @@ fn watch_paths(chain: &ThemeChain, user_themes_dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// The files the poll fallback fingerprints for the active name, re-resolving
-/// its chain now. A chain that no longer loads is polled at the file its name
-/// resolves to and at the files of the chain last loaded, so fixing any of
-/// them reloads.
-fn poll_paths(active: &ThemeState) -> Vec<PathBuf> {
-    let top = resolve_top(&active.name);
-    let top_path = top.path.clone();
-    overlay::load_link(top).map_or_else(
-        |_| chain_files(&active.chain, vec![top_path]),
-        |loaded| chain_files(&loaded.chain, Vec::new()),
-    )
-}
-
-/// `paths` plus every file of `chain` on disk and the requested file's path,
-/// where an override appears even while the embedded builtin is loaded.
-fn chain_files(chain: &ThemeChain, mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    push_unique(&mut paths, &chain.top().path);
-    for link in chain.iter().filter(|link| link.on_disk) {
-        push_unique(&mut paths, &link.path);
-    }
-    paths
-}
-
 /// Append `path` unless `paths` already holds it.
-fn push_unique(paths: &mut Vec<PathBuf>, path: &Path) {
+pub(super) fn push_unique(paths: &mut Vec<PathBuf>, path: &Path) {
     if !paths.iter().any(|known| known == path) {
         paths.push(path.to_path_buf());
     }
@@ -86,6 +64,9 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: &Path) {
 #[derive(Debug, Clone)]
 struct ThemeState {
     name: String,
+    /// The name the config asks for. Equal to `name` unless it failed to load
+    /// and `name` stands in for it; every reload then retries it first.
+    requested: String,
     /// The files the theme was merged from, one link per file (path, source,
     /// on disk): the requested file first, then each base it extends.
     chain: ThemeChain,
@@ -98,6 +79,7 @@ struct ThemeState {
 impl ThemeState {
     fn new(name: String, loaded: LoadedTheme) -> Self {
         Self {
+            requested: name.clone(),
             name,
             chain: loaded.chain,
             fingerprint: loaded.fingerprint,
@@ -123,8 +105,25 @@ enum Reloaded {
 /// in the active theme and reports whether it changed; ringing shells is the
 /// callback's job.
 pub type ThemeReloadCallback = Arc<dyn Fn(&dyn Fn() -> bool) + Send + Sync>;
+/// A check a loaded theme must pass before a reload or switch applies it
+/// (see [`ThemeManager::set_reload_check`]); it gets the loaded theme, then
+/// the active one.
+pub type ThemeCheck = Arc<dyn Fn(&LoadedTheme, &ThemeConfig) -> Result<()> + Send + Sync>;
+/// [`ThemeCheck`] as a borrowed function: loaded theme, then active theme.
+pub type ThemeCheckFn<'check> = dyn Fn(&LoadedTheme, &ThemeConfig) -> Result<()> + 'check;
 type ReloadHookSlot = Arc<Mutex<Option<ThemeReloadCallback>>>;
+type CheckSlot = Arc<Mutex<Option<ThemeCheck>>>;
 type WatcherSlot = Arc<Mutex<Option<WatchCoordinator>>>;
+
+/// Run the check registered in `slot` on `loaded`, replacing `active`;
+/// passes without one.
+///
+/// # Errors
+/// Returns the registered check's error.
+fn run_check(slot: &CheckSlot, loaded: &LoadedTheme, active: &ThemeConfig) -> Result<()> {
+    let registered = slot.lock_or_recover().clone();
+    registered.map_or(Ok(()), |check| check(loaded, active))
+}
 
 /// Manages theme loading, caching, and hot-reloading.
 pub struct ThemeManager {
@@ -133,6 +132,8 @@ pub struct ThemeManager {
     /// When set, runs each hot reload so the owner can serialize it, refresh
     /// caches and ring the shell doorbell.
     on_reload: ReloadHookSlot,
+    /// Checked on every reload and switch before a theme is applied.
+    reload_check: CheckSlot,
     watch_debounce: Arc<Mutex<Duration>>,
     /// Registry last armed with, so `switch_theme` re-arms on the shared one.
     watch_registry: Arc<Mutex<Option<Arc<WatchRegistry>>>>,
@@ -150,6 +151,7 @@ struct ReloadTarget {
     state: Arc<RwLock<Arc<ThemeState>>>,
     reload_gate: Arc<Mutex<()>>,
     on_reload: ReloadHookSlot,
+    reload_check: CheckSlot,
     watcher: WatcherSlot,
     source_watches: Arc<Mutex<Vec<PathBuf>>>,
 }
@@ -171,11 +173,18 @@ impl ReloadTarget {
     /// Reload the active name from its current chain, logging failures, and
     /// re-arm the source watches if the theme changed. Returns whether it did.
     fn reload_step(&self, context: &str) -> bool {
-        match ThemeManager::reload_state(&self.state, &self.reload_gate) {
+        let check = |loaded: &LoadedTheme, active: &ThemeConfig| {
+            run_check(&self.reload_check, loaded, active)
+        };
+        match ThemeManager::reload_state(&self.state, &self.reload_gate, &check) {
             Ok(Reloaded::Unchanged) => return false,
             Ok(Reloaded::Content | Reloaded::Source) => {}
             Err(e) => {
-                debug_log!("theme", "Failed to reload theme ({context}): {e}");
+                crate::debug::warn_fallback(
+                    &format!("Theme reload ({context})"),
+                    "keeping the current theme",
+                    &e,
+                );
                 return false;
             }
         }
@@ -212,16 +221,35 @@ impl ThemeManager {
         Ok(Self::with_state(theme_name, loaded))
     }
 
+    /// Load `fallback` in place of `requested`, which failed to load. Every
+    /// reload (theme watcher, poll fallback, [`reload`](Self::reload)) then
+    /// retries `requested` first and switches to it once it loads and passes
+    /// the reload check, so fixing the theme needs no restart. A `requested`
+    /// that is not a valid theme name is never retried.
+    ///
+    /// # Errors
+    /// Returns an error if `fallback` can't be loaded.
+    pub fn standing_in_for(requested: &str, fallback: &str) -> Result<Self> {
+        discovery::validate_config_name("theme", fallback)?;
+        let mut state = ThemeState::new(fallback.to_owned(), Self::load_name(fallback)?);
+        if discovery::validate_config_name("theme", requested).is_ok() {
+            requested.clone_into(&mut state.requested);
+        }
+        Ok(Self::from_state(state))
+    }
+
     fn with_state(name: &str, loaded: LoadedTheme) -> Self {
+        Self::from_state(ThemeState::new(name.to_owned(), loaded))
+    }
+
+    fn from_state(state: ThemeState) -> Self {
         Self {
-            state: Arc::new(RwLock::new(Arc::new(ThemeState::new(
-                name.to_owned(),
-                loaded,
-            )))),
+            state: Arc::new(RwLock::new(Arc::new(state))),
             // A removed override falls back to a lower-priority source, so a
             // vanished file is a change for the poller too.
             hot_reload: HotReloadSlot::new().reloading_on_missing(),
             on_reload: Arc::new(Mutex::new(None)),
+            reload_check: Arc::new(Mutex::new(None)),
             watch_debounce: Arc::new(Mutex::new(HOT_RELOAD_DEBOUNCE)),
             watch_registry: Arc::new(Mutex::new(None)),
             source_watches: Arc::new(Mutex::new(Vec::new())),
@@ -270,8 +298,19 @@ impl ThemeManager {
         *self.on_reload.lock_or_recover() = Some(callback);
     }
 
+    /// Register the check every reload and switch runs on the theme it
+    /// loaded before applying it (the agent renders the segment templates
+    /// against the active palette). A theme that fails it is not applied:
+    /// the current one is kept and the reload or switch reports the error.
+    /// Without a check, every theme that loads is applied.
+    pub fn set_reload_check(&self, check: ThemeCheck) {
+        *self.reload_check.lock_or_recover() = Some(check);
+    }
+
     /// Reload the active theme from wherever its name now resolves (user, then
-    /// plugin, then builtin), re-arming the watcher if its chain changed.
+    /// plugin, then builtin), re-arming the watcher if its chain changed. A
+    /// fallback standing in for a requested theme that failed to load is
+    /// replaced by that theme once it loads.
     ///
     /// Returns whether the loaded theme changed: a different chain, or new
     /// content in one of its files. Identical content swaps nothing, so a
@@ -279,9 +318,22 @@ impl ThemeManager {
     /// current theme is kept on error.
     ///
     /// # Errors
-    /// Returns an error if the resolved theme can't be read or parsed.
+    /// Returns an error if the resolved theme can't be read or parsed, or
+    /// fails the reload check.
     pub fn reload(&self) -> Result<bool> {
-        let reloaded = Self::reload_state(&self.state, &self.reload_gate)?;
+        let check = |loaded: &LoadedTheme, active: &ThemeConfig| {
+            run_check(&self.reload_check, loaded, active)
+        };
+        self.reload_with(&check)
+    }
+
+    /// [`reload`](Self::reload) with `check` in place of the registered
+    /// check, for a config reload whose palette is not applied yet.
+    ///
+    /// # Errors
+    /// As [`reload`](Self::reload), with `check` as the reload check.
+    pub fn reload_with(&self, check: &ThemeCheckFn<'_>) -> Result<bool> {
+        let reloaded = Self::reload_state(&self.state, &self.reload_gate, check)?;
         if reloaded == Reloaded::Source {
             self.rearm_source_watches_now();
         }
@@ -289,20 +341,52 @@ impl ThemeManager {
     }
 
     /// Re-resolve and load the active name's chain, swapping it in unless
-    /// unchanged. A no-op if a concurrent `switch_theme` replaced the name meanwhile.
+    /// unchanged; first, while a fallback stands in for the requested name,
+    /// try that name and switch to it if it now loads and passes `check`. A
+    /// no-op if a concurrent `switch_theme` replaced the state meanwhile.
     ///
     /// # Errors
-    /// Returns an error if the resolved theme can't be read or parsed.
+    /// Returns an error if the resolved theme can't be read or parsed, or
+    /// fails `check`.
     fn reload_state(
         state_lock: &RwLock<Arc<ThemeState>>,
         reload_gate: &Mutex<()>,
+        check: &ThemeCheckFn<'_>,
     ) -> Result<Reloaded> {
         let _serialized = reload_gate.lock_or_recover();
-        let name = state_lock.read_or_recover().name.clone();
-        let loaded = Self::load_name(&name)?;
+        let (name, requested, current) = {
+            let active = state_lock.read_or_recover();
+            (
+                active.name.clone(),
+                active.requested.clone(),
+                Arc::clone(&active.theme),
+            )
+        };
+        let replaced = |active: &ThemeState| active.name != name || active.requested != requested;
 
+        if requested != name {
+            match Self::load_checked(&requested, check, &current) {
+                Ok(loaded) => {
+                    let mut guard = state_lock.write_or_recover();
+                    if replaced(&guard) {
+                        return Ok(Reloaded::Unchanged);
+                    }
+                    *guard = Arc::new(ThemeState::new(requested, loaded));
+                    drop(guard);
+                    return Ok(Reloaded::Source);
+                }
+                Err(e) => {
+                    debug_log!(
+                        "theme",
+                        "Theme '{requested}' still fails to load; keeping '{name}' ({e})"
+                    );
+                }
+            }
+        }
+
+        let loaded = Self::load_checked(&name, check, &current)?;
         let mut guard = state_lock.write_or_recover();
-        let reloaded = if guard.name != name {
+        let reloaded = if replaced(&guard) {
             Reloaded::Unchanged
         } else if guard.chain != loaded.chain {
             Reloaded::Source
@@ -312,7 +396,9 @@ impl ThemeManager {
             Reloaded::Unchanged
         };
         if reloaded != Reloaded::Unchanged {
-            *guard = Arc::new(ThemeState::new(name, loaded));
+            let mut state = ThemeState::new(name, loaded);
+            state.requested = requested;
+            *guard = Arc::new(state);
         }
         drop(guard);
         Ok(reloaded)
@@ -328,6 +414,21 @@ impl ThemeManager {
         crate::theme::load::load_top_annotated(resolve_top(name))
     }
 
+    /// [`load_name`](Self::load_name), then `check` on the loaded theme
+    /// against `active`, the theme it would replace.
+    ///
+    /// # Errors
+    /// As [`load_name`](Self::load_name), or `check`'s error.
+    fn load_checked(
+        name: &str,
+        check: &ThemeCheckFn<'_>,
+        active: &ThemeConfig,
+    ) -> Result<LoadedTheme> {
+        let loaded = Self::load_name(name)?;
+        check(&loaded, active)?;
+        Ok(loaded)
+    }
+
     /// Re-arm the source watches from a non-watcher thread.
     fn rearm_source_watches_now(&self) {
         let target = self.reload_target();
@@ -339,9 +440,22 @@ impl ThemeManager {
     /// Switch to a different theme, installed in a single write.
     ///
     /// # Errors
-    /// Returns an error if the theme can't be found/parsed or a lock is poisoned.
+    /// Returns an error if the theme can't be found/parsed, fails the reload
+    /// check, or a lock is poisoned.
     pub fn switch_theme(&self, new_theme_name: &str) -> Result<()> {
-        let loaded = Self::load_name(new_theme_name)?;
+        let check = |loaded: &LoadedTheme, active: &ThemeConfig| {
+            run_check(&self.reload_check, loaded, active)
+        };
+        self.switch_theme_with(new_theme_name, &check)
+    }
+
+    /// [`switch_theme`](Self::switch_theme) with `check` in place of the
+    /// registered check, for a config reload whose palette is not applied yet.
+    ///
+    /// # Errors
+    /// As [`switch_theme`](Self::switch_theme), with `check` as the reload check.
+    pub fn switch_theme_with(&self, new_theme_name: &str, check: &ThemeCheckFn<'_>) -> Result<()> {
+        let loaded = Self::load_checked(new_theme_name, check, &self.get())?;
         let new_state = Arc::new(ThemeState::new(new_theme_name.to_owned(), loaded));
 
         self.stop_watching();
@@ -453,6 +567,7 @@ impl ThemeManager {
             state: Arc::clone(&self.state),
             reload_gate: Arc::clone(&self.reload_gate),
             on_reload: Arc::clone(&self.on_reload),
+            reload_check: Arc::clone(&self.reload_check),
             watcher: self.hot_reload.watcher_handle(),
             source_watches: Arc::clone(&self.source_watches),
         }
@@ -503,20 +618,49 @@ impl ThemeManager {
     #[must_use]
     pub fn export(&self, shell: Shell, config: &Config, palette: &Palette) -> String {
         let state = self.state();
+        let plugins = Self::plugin_exports(matches!(shell, Shell::Fish), config);
+        export::theme_to_shell(&state.theme, &state.name, config, shell, palette, &plugins)
+    }
+
+    /// [`export`](Self::export) for each of `shells`, in order, from one
+    /// state snapshot and one plugin discovery, so exports written together
+    /// always come from the same theme.
+    #[must_use]
+    pub fn export_all(&self, shells: &[Shell], config: &Config, palette: &Palette) -> Vec<String> {
+        let state = self.state();
+        let fish = shells.iter().any(|shell| matches!(shell, Shell::Fish));
+        let plugins = Self::plugin_exports(fish, config);
+        shells
+            .iter()
+            .map(|&shell| {
+                export::theme_to_shell(&state.theme, &state.name, config, shell, palette, &plugins)
+            })
+            .collect()
+    }
+
+    /// The plugin data of an export from one discovery; the `.fish` segment
+    /// files only when `fish` (no other shell writes them).
+    fn plugin_exports(fish: bool, config: &Config) -> export::PluginExports {
         let discovery = discover_plugins();
-        let plugins = export::PluginExports {
-            segment_files: if matches!(shell, Shell::Fish) {
+        export::PluginExports {
+            segment_files: if fish {
                 Self::collect_plugin_segment_files(&discovery)
             } else {
                 BTreeMap::new()
             },
             scripts: export::collect_script_segments(&discovery, config),
-        };
-        export::theme_to_shell(&state.theme, &state.name, config, shell, palette, &plugins)
+        }
     }
 
-    /// Third-party `.fish` plugin segment file paths, keyed by segment name.
+    /// Third-party `.fish` plugin segment files by segment name, as canonical
+    /// paths. Fish sources them, so each must pass the rule script segments
+    /// follow ([`ScriptPath::resolve`](crate::plugin::ScriptPath::resolve)):
+    /// a regular file inside the plugin root that neither it nor a directory up
+    /// to the root lets another user write, under no ancestor another user
+    /// could replace. The first plugin providing a segment claims it; a file
+    /// that fails the rule is left out with a debug log line.
     fn collect_plugin_segment_files(discovery: &PluginDiscovery) -> BTreeMap<String, String> {
+        let mut claimed = BTreeSet::new();
         let mut files = BTreeMap::new();
         for plugin in &discovery.plugins {
             if matches!(plugin.source, crate::plugin::PluginSource::FirstParty)
@@ -529,13 +673,38 @@ impl ThemeManager {
             };
             for provided_segment in &plugin.manifest.provided_segments {
                 let segment_name = provided_segment.to_string();
-                let segment_file = root.join("segments").join(format!("{segment_name}.fish"));
-                files
-                    .entry(segment_name)
-                    .or_insert_with(|| segment_file.to_string_lossy().into_owned());
+                if !claimed.insert(segment_name.clone()) {
+                    continue;
+                }
+                match Self::trusted_segment_file(root, &segment_name) {
+                    Ok(segment_file) => {
+                        files.insert(segment_name, segment_file);
+                    }
+                    Err(e) => {
+                        debug_log!("theme", "Skipped plugin segment file {segment_name}: {e}");
+                    }
+                }
             }
         }
         files
+    }
+
+    /// The canonical path of `<root>/segments/<segment_name>.fish`, when it
+    /// passes [`ScriptPath::resolve`](crate::plugin::ScriptPath::resolve).
+    ///
+    /// # Errors
+    /// Returns the rule's error, or one for a path that is not UTF-8.
+    fn trusted_segment_file(root: &Path, segment_name: &str) -> Result<String> {
+        crate::plugin::ScriptPath::new(&format!("segments/{segment_name}.fish"))?
+            .resolve(root)?
+            .into_os_string()
+            .into_string()
+            .map_err(|raw| {
+                Error::invalid(format!(
+                    "'{}' is not UTF-8",
+                    raw.to_string_lossy().escape_debug()
+                ))
+            })
     }
 
     /// List available themes with source metadata and resolved path (if file-backed).
@@ -572,17 +741,23 @@ impl ThemeManager {
         discovery::insert_toml_dir(merged, &Self::user_themes_dir(), &Source::User);
     }
 
-    /// Poll target. The chain is re-resolved each tick (see [`poll_paths`]):
-    /// `switch_theme` can repoint it, an override appearing or vanishing moves
-    /// its top, and a base can move to another source.
+    /// Poll target. The chain is re-resolved whenever theme resolution's
+    /// inputs change (see [`PollPaths`]): `switch_theme` can repoint it, an
+    /// override appearing or vanishing moves its top, and a base can move to
+    /// another source.
     fn poll_target(&self) -> PollTarget {
         let path_state = Arc::clone(&self.state);
         let target = self.reload_target();
+        let poll_paths = PollPaths::default();
 
         PollTarget {
             path_of: Box::new(move || {
                 let active = Arc::clone(&path_state.read_or_recover());
-                poll_paths(&active)
+                poll_paths.get(PollSubject {
+                    name: active.name.clone(),
+                    requested: active.requested.clone(),
+                    chain: active.chain.clone(),
+                })
             }),
             reload: Box::new(move || target.reload_and_apply("poll fallback")),
         }

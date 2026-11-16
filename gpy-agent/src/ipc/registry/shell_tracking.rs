@@ -24,7 +24,10 @@
 //!   register is not repainted forever.
 //! - **Pruning.** Tracking and flag files of dead shells are removed, and so
 //!   are those of a recycled PID: a process that started more than a second
-//!   after its tracking file was written is not the shell that wrote it.
+//!   after its tracking file was written is not the shell that wrote it. That
+//!   wall-clock comparison is made once per PID (first sight); afterwards a
+//!   running agent compares the start time it recorded, which a wall-clock
+//!   step cannot move (see [`ShellRenudger`]).
 
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
@@ -119,17 +122,112 @@ pub(super) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Op
     sys.process(sys_pid).map(sysinfo::Process::start_time)
 }
 
+/// Drop from `sys` every process `keep` rejects once it has exited. A
+/// long-lived `System` otherwise holds an entry (and on Linux an open
+/// `/proc/<pid>/stat`) for every PID it was ever asked about.
+#[cfg(unix)]
+pub(super) fn evict_exited_processes(sys: &mut sysinfo::System, keep: impl Fn(u32) -> bool) {
+    let candidates: Vec<sysinfo::Pid> = sys
+        .processes()
+        .keys()
+        .filter(|pid| !keep(pid.as_u32()))
+        .copied()
+        .collect();
+    if candidates.is_empty() {
+        return;
+    }
+    // Refreshing with `remove_dead_processes` removes exactly the dead ones.
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&candidates),
+        true,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
+}
+
 /// Max re-nudges per tracked shell PID per agent lifetime, so a shell that can
 /// never register is not repainted every minute forever. One or two rounds
 /// normally clear a shell's 60s circuit-breaker backoff.
 #[cfg(unix)]
 const MAX_RENUDGE_ATTEMPTS: u32 = 5;
 
-/// Bounded per-PID re-nudge attempts.
+/// Bounded per-PID re-nudge attempts, and the identity of every tracked shell
+/// verified so far.
 #[cfg(unix)]
 #[derive(Default)]
 pub(crate) struct ShellRenudger {
     attempts: std::collections::HashMap<u32, u32>,
+    identities: TrackedShellIdentities,
+}
+
+/// Start times of tracked shells already verified against their tracking
+/// file, read through one long-lived `System`.
+///
+/// On Linux sysinfo derives a start time from the boot time it read when the
+/// `System` was created, and that boot time moves with the wall clock. Two
+/// reads through one `System` therefore agree across a clock step, while a
+/// fresh read compared with a tracking file's mtime makes every older shell
+/// look recycled after a forward step.
+#[cfg(unix)]
+#[derive(Default)]
+struct TrackedShellIdentities {
+    sys: sysinfo::System,
+    verified: std::collections::HashMap<u32, u64>,
+    /// A `System` created during the current scan for first-sight checks, so
+    /// their start times are in the wall-clock scale of now; dropped by
+    /// [`Self::end_scan`].
+    fresh: Option<sysinfo::System>,
+}
+
+#[cfg(unix)]
+impl TrackedShellIdentities {
+    /// Whether `pid` is alive and still the shell that wrote its tracking file
+    /// (`tracked_mtime`; `None` for flag files, which only need liveness).
+    /// A PID seen before must keep its recorded start time; a new one gets the
+    /// mtime check of [`tracked_shell_liveness`]. Uncertain probes count as
+    /// alive.
+    fn is_same_shell(&mut self, pid: u32, tracked_mtime: Option<SystemTime>) -> bool {
+        if !ClientDirectory::is_client_alive(pid) {
+            self.verified.remove(&pid);
+            return false;
+        }
+        let Some(written) = tracked_mtime else {
+            return true;
+        };
+        let Some(started) = process_start_time_secs(&mut self.sys, pid) else {
+            return true;
+        };
+        if let Some(&seen) = self.verified.get(&pid) {
+            if seen == started {
+                return true;
+            }
+            self.verified.remove(&pid);
+            return false;
+        }
+        let fresh = self.fresh.get_or_insert_with(sysinfo::System::new);
+        let same = process_start_time_secs(fresh, pid)
+            .is_none_or(|now_scale| !started_after_tracking(now_scale, written));
+        if same {
+            self.verified.insert(pid, started);
+        }
+        same
+    }
+
+    /// Forget every PID that no longer has a tracking file, and the scan's
+    /// fresh `System`.
+    fn end_scan(&mut self, tracked: &std::collections::HashSet<u32>) {
+        self.fresh = None;
+        self.verified.retain(|pid, _| tracked.contains(pid));
+        evict_exited_processes(&mut self.sys, |pid| tracked.contains(&pid));
+    }
+}
+
+/// One scan of the tracking directory.
+#[cfg(unix)]
+struct NudgeScan {
+    /// Alive, unregistered PIDs within their re-nudge budget.
+    targets: Vec<u32>,
+    /// Every PID whose tracking file survived the scan.
+    tracked: std::collections::HashSet<u32>,
 }
 
 #[cfg(unix)]
@@ -146,65 +244,79 @@ impl ShellRenudger {
     ) -> Vec<u32>
     where
         R: Fn(u32) -> bool,
-        A: Fn(u32, Option<SystemTime>) -> bool,
+        A: FnMut(u32, Option<SystemTime>) -> bool,
     {
-        let Ok(entries) = std::fs::read_dir(shell_dir) else {
-            return Vec::new();
+        scan_tracked_shells(&mut self.attempts, shell_dir, is_registered, is_alive).targets
+    }
+}
+
+/// [`ShellRenudger::pids_to_nudge`] over the attempt budget alone, so the
+/// caller can lend the liveness probe the renudger's identities.
+#[cfg(unix)]
+fn scan_tracked_shells<R, A>(
+    attempts: &mut std::collections::HashMap<u32, u32>,
+    shell_dir: &Path,
+    is_registered: R,
+    mut is_alive: A,
+) -> NudgeScan
+where
+    R: Fn(u32) -> bool,
+    A: FnMut(u32, Option<SystemTime>) -> bool,
+{
+    let mut targets = Vec::new();
+    let mut tracked = std::collections::HashSet::new();
+    let Ok(entries) = std::fs::read_dir(shell_dir) else {
+        return NudgeScan { targets, tracked };
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        if let Some((stem, suffix)) = name.split_once('.') {
+            // Flag files are only cleaned up when their shell is gone.
+            let is_flag =
+                suffix == ShellFlag::Reload.suffix() || suffix == ShellFlag::Reregister.suffix();
+            if is_flag
+                && let Ok(flag_pid) = stem.parse::<u32>()
+                && !is_alive(flag_pid, None)
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+            continue;
+        }
+        let Ok(pid) = name.parse::<u32>() else {
+            continue;
         };
 
-        let mut targets = Vec::new();
-        let mut tracked = std::collections::HashSet::new();
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-                continue;
-            };
-            if let Some((stem, suffix)) = name.split_once('.') {
-                // Flag files are only cleaned up when their shell is gone.
-                let is_flag = suffix == ShellFlag::Reload.suffix()
-                    || suffix == ShellFlag::Reregister.suffix();
-                if is_flag
-                    && let Ok(flag_pid) = stem.parse::<u32>()
-                    && !is_alive(flag_pid, None)
-                {
-                    let _ = std::fs::remove_file(&path);
-                }
-                continue;
+        let modified = entry.metadata().and_then(|m| m.modified()).ok();
+        if !is_alive(pid, modified) {
+            let _ = std::fs::remove_file(&path);
+            for flag in [ShellFlag::Reload, ShellFlag::Reregister] {
+                let _ = std::fs::remove_file(shell_dir.join(format!("{pid}.{}", flag.suffix())));
             }
-            let Ok(pid) = name.parse::<u32>() else {
-                continue;
-            };
-            tracked.insert(pid);
+            continue;
+        }
+        tracked.insert(pid);
 
-            let modified = entry.metadata().and_then(|m| m.modified()).ok();
-            if !is_alive(pid, modified) {
-                let _ = std::fs::remove_file(&path);
-                for flag in [ShellFlag::Reload, ShellFlag::Reregister] {
-                    let _ =
-                        std::fs::remove_file(shell_dir.join(format!("{pid}.{}", flag.suffix())));
-                }
-                continue;
-            }
-
-            if is_registered(pid) {
-                self.attempts.remove(&pid);
-                continue;
-            }
-
-            let attempts = self.attempts.entry(pid).or_insert(0_u32);
-            if *attempts >= MAX_RENUDGE_ATTEMPTS {
-                continue;
-            }
-            *attempts = attempts.saturating_add(1_u32);
-            targets.push(pid);
+        if is_registered(pid) {
+            attempts.remove(&pid);
+            continue;
         }
 
-        // Keep the map bounded over a long-lived agent.
-        self.attempts.retain(|pid, _| tracked.contains(pid));
-
-        targets
+        let count = attempts.entry(pid).or_insert(0_u32);
+        if *count >= MAX_RENUDGE_ATTEMPTS {
+            continue;
+        }
+        *count = count.saturating_add(1_u32);
+        targets.push(pid);
     }
+
+    // Keep the map bounded over a long-lived agent.
+    attempts.retain(|pid, _| tracked.contains(pid));
+
+    NudgeScan { targets, tracked }
 }
 
 /// Production liveness for tracked shells: alive and not started more than 1 s
@@ -244,19 +356,28 @@ pub(crate) fn renudge_unregistered_shells(
 }
 
 /// [`renudge_unregistered_shells`] against an explicit tracking directory.
+/// Unlike [`announce_start_in`], liveness goes through the renudger's
+/// identities, so a shell verified on an earlier tick is never pruned by a
+/// wall-clock step.
 #[cfg(unix)]
 fn renudge_unregistered_shells_in(
     shell_dir: &Path,
     renudger: &mut ShellRenudger,
     registry: &ClientDirectory,
 ) {
-    let pids = renudger.pids_to_nudge(
+    let ShellRenudger {
+        attempts,
+        identities,
+    } = renudger;
+    let scan = scan_tracked_shells(
+        attempts,
         shell_dir,
         |pid| registry.is_registered(pid),
-        tracked_shell_liveness(),
+        |pid, tracked_mtime| identities.is_same_shell(pid, tracked_mtime),
     );
+    identities.end_scan(&scan.tracked);
 
-    for pid in pids {
+    for pid in scan.targets {
         debug_log!("agent", "Re-nudging unregistered tracked shell {pid}");
         raise_shell_flag(shell_dir, pid, ShellFlag::Reregister);
     }

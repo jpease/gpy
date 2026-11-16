@@ -1,5 +1,6 @@
-//! Best-effort removal of cache files: the startup age sweep, the restart
-//! clear of unrefreshable entries, and one repository's git caches.
+//! Best-effort removal of cache files: the age sweep (at startup and hourly in
+//! the agent), the restart clear of unrefreshable entries, and one
+//! repository's git caches.
 
 use super::key::{CACHE_KEY_CHUNK_CHARS, cache_key_path, split_key_path};
 use super::name::parse_cache_file_name;
@@ -7,7 +8,7 @@ use crate::debug_log;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-/// Age (by mtime) after which the startup sweep removes an unused entry.
+/// Age (by mtime) after which the age sweep removes an unused entry.
 pub(super) const CACHE_ENTRY_MAX_AGE: Duration = Duration::from_hours(14 * 24);
 
 /// Age after which a `.tmp-*` file is an orphan from a killed writer.
@@ -130,5 +131,37 @@ pub(super) fn remove_git_files(cache_dir: &Path, key: &str) {
                 entry.path().display()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::InstantPromptCache;
+    use super::CACHE_ENTRY_MAX_AGE;
+    use std::time::{Duration, SystemTime};
+
+    /// The agent's periodic sweep removes entries past the age limit from a
+    /// live cache, not only the startup sweep in `new`.
+    #[test]
+    fn live_cache_sweep_removes_ancient_entries() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(dir.path().to_path_buf()).expect("cache");
+        let fresh = dir.path().join("repo.git.none.ansi");
+        let ancient = dir.path().join("old.git.none.ansi");
+        std::fs::write(&fresh, "x").expect("write fresh entry");
+        std::fs::write(&ancient, "x").expect("write ancient entry");
+        let long_ago = SystemTime::now()
+            .checked_sub(CACHE_ENTRY_MAX_AGE.saturating_add(Duration::from_mins(1)))
+            .expect("backdating stays within SystemTime range");
+        std::fs::set_times(&ancient, std::fs::FileTimes::new().set_modified(long_ago))
+            .expect("set mtime");
+
+        cache.sweep_stale_entries();
+
+        assert!(fresh.exists(), "a recently used entry must survive");
+        assert!(
+            !ancient.exists(),
+            "an entry unused for weeks must be removed"
+        );
     }
 }
