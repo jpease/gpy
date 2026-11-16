@@ -27,7 +27,6 @@ It checks:
   `tests/bash/*.test.bash`, `tests/repo/*.test.bash`, `benchmarks/*/*.sh`, the shipped `bash/` tree and
   the bundled `plugins/*/bin/*.sh`, discovered by glob. `install-oneline.sh` and the plugin scripts are
   checked as POSIX `sh`. An inline `# shellcheck disable=` needs a reason.
-- **Workflows:** `actionlint` over `.github/workflows` and the composite actions (optional tool).
 - **Repo invariants:** `tests/repo/*.test.bash` (CI, release, toolchain and
   documentation invariants), run in the `repo` part.
 - **Shell suites:** Fish, Bash and Zsh tests against this checkout's debug
@@ -44,7 +43,7 @@ Required: the pinned Rust toolchain with clippy and rustfmt, `cargo-nextest`,
 `fish`, `zsh` (for the `zsh` part), `cargo-audit`, `cargo-deny` and, for the
 `repo` part, mikefarah `yq` ≥ 4.52.4
 (`brew install yq`, or the release binary from github.com/mikefarah/yq; not
-Debian's `apt install yq`). Optional: `fish_indent`, `shellcheck`, `actionlint`,
+Debian's `apt install yq`). Optional: `fish_indent`, `shellcheck`,
 `cargo-machete`. A missing optional tool prints `SKIP:` and passes
 locally (the end-of-run summary lists it); under CI or with `GPY_GATE_STRICT=1`
 a skip is a failure. `just check` sets `GPY_GATE_STRICT=1`, so it is the one

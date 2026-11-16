@@ -7,8 +7,11 @@ function __gpy_home --description 'Home directory with the passwd fallback'
     set -l home "$HOME"
     if test -z "$home"
         set -l user (id -un 2>/dev/null)
+        # Only a plausible username reaches eval; a leading - would make ~- expand to $OLDPWD.
         string match -qr '^[A-Za-z0-9_][A-Za-z0-9._-]*$' -- "$user"; or return 1
-        set home ~$user
+        # eval, not `~$user`: Fish 4.2 does not tilde-expand `~$var` (fixed in
+        # 4.3). An unknown user stays literal and the guard below rejects it.
+        eval "set home ~$user"
     end
     string match -q '/*' -- "$home"; or return 1
     printf '%s' "$home"
