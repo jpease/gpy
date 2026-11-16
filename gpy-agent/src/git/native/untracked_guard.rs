@@ -88,7 +88,7 @@ fn index_key(git_dir: &Path) -> Option<IndexKey> {
 }
 
 /// Whether git is mid-operation, when rewriting the index would collide with it.
-fn operation_in_progress(git_dir: &Path) -> bool {
+pub(super) fn operation_in_progress(git_dir: &Path) -> bool {
     git_dir.join("index.lock").exists()
         || [
             "rebase-merge",
@@ -102,10 +102,49 @@ fn operation_in_progress(git_dir: &Path) -> bool {
         .any(|name| git_dir.join(name).exists())
 }
 
+/// Signature of git's untracked-cache index extension.
+const UNTRACKED_SIGNATURE: &[u8; 4] = b"UNTR";
+
+/// Bytes of the index read per step while looking for [`UNTRACKED_SIGNATURE`].
+const INDEX_SCAN_CHUNK: usize = 1 << 16;
+
 /// Whether the index carries an untracked-cache extension. A path named like
 /// the signature gives a false positive, which costs one extra check.
 fn index_has_untracked_cache(git_dir: &Path) -> bool {
-    fs::read(git_dir.join("index")).is_ok_and(|bytes| bytes.windows(4).any(|w| w == b"UNTR"))
+    crate::fs_util::open_regular_file(&git_dir.join("index")).is_ok_and(has_untracked_signature)
+}
+
+/// Whether `source` contains [`UNTRACKED_SIGNATURE`], read in fixed chunks
+/// (keeping the last bytes of each so a signature split across two reads is
+/// still found), so memory stays bounded whatever the index size. A read
+/// error counts as not found.
+fn has_untracked_signature(mut source: impl std::io::Read) -> bool {
+    let carry = UNTRACKED_SIGNATURE.len().saturating_sub(1);
+    let mut buf = vec![0_u8; INDEX_SCAN_CHUNK.saturating_add(carry)];
+    let mut kept = 0_usize;
+    loop {
+        let Some(free) = buf.get_mut(kept..) else {
+            return false;
+        };
+        let count = match source.read(free) {
+            Ok(0) => return false,
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
+        };
+        let filled = kept.saturating_add(count);
+        let Some(window) = buf.get(..filled) else {
+            return false;
+        };
+        if window
+            .windows(UNTRACKED_SIGNATURE.len())
+            .any(|bytes| bytes == UNTRACKED_SIGNATURE)
+        {
+            return true;
+        }
+        kept = carry.min(filled);
+        buf.copy_within(filled.saturating_sub(kept)..filled, 0);
+    }
 }
 
 /// Start a check for `repo` when its index changed since it was last verified.
@@ -297,4 +336,71 @@ pub(super) fn status(
         reconcile(held, &mut parsed, uncached, deadline);
     }
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{INDEX_SCAN_CHUNK, UNTRACKED_SIGNATURE, has_untracked_signature};
+    use std::io::Read;
+
+    /// A reader handing out at most `step` bytes per call.
+    struct Trickle<'a> {
+        bytes: &'a [u8],
+        step: usize,
+    }
+
+    impl Read for Trickle<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.step.min(buf.len()).min(self.bytes.len());
+            let (head, tail) = self.bytes.split_at(count);
+            buf.iter_mut()
+                .zip(head)
+                .for_each(|(slot, byte)| *slot = *byte);
+            self.bytes = tail;
+            Ok(count)
+        }
+    }
+
+    fn with_signature_at(offset: usize) -> Vec<u8> {
+        let mut bytes = vec![b'x'; offset];
+        bytes.extend_from_slice(UNTRACKED_SIGNATURE);
+        bytes.extend_from_slice(b"yyyyy");
+        bytes
+    }
+
+    /// The signature is found however the reads split it.
+    #[test]
+    fn signature_split_across_short_reads_is_found() {
+        for step in 1..=5_usize {
+            for offset in 0..=12_usize {
+                let bytes = with_signature_at(offset);
+                let reader = Trickle {
+                    bytes: &bytes,
+                    step,
+                };
+                assert!(
+                    has_untracked_signature(reader),
+                    "step {step}, offset {offset}"
+                );
+            }
+        }
+    }
+
+    /// The signature straddling a full buffer is found through the kept tail.
+    #[test]
+    fn signature_across_a_full_buffer_is_found() {
+        for back in 0..=4_usize {
+            let bytes = with_signature_at(INDEX_SCAN_CHUNK.saturating_sub(back));
+            assert!(has_untracked_signature(bytes.as_slice()), "back {back}");
+        }
+    }
+
+    /// Bytes resembling the signature, or none at all, are not a match.
+    #[test]
+    fn missing_signature_is_not_found() {
+        assert!(!has_untracked_signature(b"UNT UNTx NTR".as_slice()));
+        assert!(!has_untracked_signature(b"".as_slice()));
+        let filler = vec![b'x'; INDEX_SCAN_CHUNK.saturating_mul(3)];
+        assert!(!has_untracked_signature(filler.as_slice()));
+    }
 }

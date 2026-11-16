@@ -2,12 +2,21 @@
 //!
 //! One shared [`WatchCoordinator`] watches every repository (one debouncer and
 //! flush thread total); `watched_repos` maps each git root to the client PIDs
-//! using it, and the watch stops when the last client leaves.
+//! using it. When the last client leaves, the watch stops, at once or after
+//! the builder's teardown grace, so a shell alternating between two
+//! repositories does not re-arm a whole tree on every `cd`.
+//!
+//! `ops_lock` serializes arming and teardown. A client joining a repository
+//! that is already watched, or leaving one that keeps other clients, needs
+//! neither and so does not wait behind another repository's arming walk.
 //!
 //! Worktree watching defaults on; `git.watch_worktree` sets it and
 //! `GPY_WATCH_WORKTREE` (`0`/`false`/`no`/`off` disables) overrides the config.
 
+mod arming;
 mod common_dir;
+#[cfg(test)]
+mod lifecycle_tests;
 mod scope;
 #[cfg(test)]
 mod scope_tests;
@@ -17,11 +26,17 @@ use super::{EventCallback, WatchCoordinator, WatchRegistry, WatcherConfig};
 use crate::debug_log;
 use crate::sync_ext::MutexExt;
 use crate::{Error, Result};
-use common_dir::{acquire_common_dir_watches, release_common_dir_watches};
+use common_dir::release_common_dir_watches;
+use scope::RepoTarget;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Teardown grace the agent uses: how long a repository with no clients
+/// stays armed before [`MultiRepoWatcher::release_idle_repos`] releases it.
+pub const DEFAULT_TEARDOWN_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 struct WatchedRepo {
@@ -34,6 +49,10 @@ struct WatchedRepo {
     /// Exactly the paths armed for this repo; teardown unwatches only these.
     armed: Vec<PathBuf>,
     clients: HashSet<u32>,
+    /// Last attempt to arm the worktree watch; paces retries while degraded.
+    last_arm_attempt: Instant,
+    /// When the last client left; the repo stays armed for the teardown grace.
+    idle_since: Option<Instant>,
 }
 
 /// Requested vs. effective worktree-watch state; `effective && !requested`
@@ -120,6 +139,10 @@ pub trait WatchTarget {
 
     /// Stop all watching.
     fn stop_watching(&mut self);
+
+    /// Prepare for events from a freshly armed repository (force-added
+    /// listing, filesystem probe); a no-op unless overridden.
+    fn repo_armed(&self, _git_root: &Path, _git_dir: &Path) {}
 }
 
 impl WatchTarget for WatchCoordinator {
@@ -146,6 +169,10 @@ impl WatchTarget for WatchCoordinator {
     fn stop_watching(&mut self) {
         self.stop();
     }
+
+    fn repo_armed(&self, git_root: &Path, git_dir: &Path) {
+        self.prepare_armed_repo(git_root, git_dir);
+    }
 }
 
 /// Release one `mode` watch of `path`; failures are logged, not propagated.
@@ -168,20 +195,18 @@ pub struct MultiRepoWatcher<T = WatchCoordinator> {
     /// Keyed by canonical common directory.
     common_watches: Mutex<HashMap<PathBuf, CommonDirWatch>>,
     ops_lock: Mutex<()>,
+    /// How long a client-free repo stays armed; zero tears it down at once.
+    teardown_grace: Duration,
 }
 
 impl MultiRepoWatcher {
     /// Create a new builder for `MultiRepoWatcher`.
     #[must_use]
-    pub fn builder() -> MultiRepoWatcherBuilder {
+    pub const fn builder() -> MultiRepoWatcherBuilder {
         MultiRepoWatcherBuilder::new()
     }
 }
 
-#[expect(
-    clippy::multiple_inherent_impl,
-    reason = "the arming and scope helpers live in the `scope` submodule"
-)]
 impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// Attach `pid` to the repository containing `cwd` and begin watching it,
     /// detaching the client from any repository it was in before. When the new
@@ -191,17 +216,39 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// # Errors
     /// Returns an error if the repository cannot be discovered or watched.
     pub fn attach_client(&self, pid: u32, cwd: &Path) -> Result<()> {
+        let target = self.discover_repo(cwd);
+        if let Ok(Some(found)) = &target
+            && self.attach_without_arming(pid, found)
+        {
+            return Ok(());
+        }
         let _ops_guard = self.ops_lock.lock_or_recover();
-        self.attach_pid_to(pid, cwd)
+        self.release_expired_idle_repos();
+        self.attach_pid_to_target(pid, cwd, target)
     }
 
     /// Attach `pid` to the repo containing `cwd` and detach it from all others.
-    /// Caller holds `ops_lock`. Attach happens first so a kept repo is never
-    /// torn down and re-armed.
+    /// Caller holds `ops_lock`.
     ///
     /// # Errors
     /// Returns an error if the repository cannot be discovered or watched.
     fn attach_pid_to(&self, pid: u32, cwd: &Path) -> Result<()> {
+        let target = self.discover_repo(cwd);
+        self.attach_pid_to_target(pid, cwd, target)
+    }
+
+    /// Attach `pid` to `target` (discovered from `cwd`) and detach it from all
+    /// other repos. Caller holds `ops_lock`. Attach happens first so a kept
+    /// repo is never torn down and re-armed.
+    ///
+    /// # Errors
+    /// Returns the discovery error, or an error if the repository cannot be watched.
+    fn attach_pid_to_target(
+        &self,
+        pid: u32,
+        cwd: &Path,
+        target: Result<Option<RepoTarget>>,
+    ) -> Result<()> {
         debug_log!(
             "watcher",
             "attach_pid_to: pid={}, cwd={}",
@@ -209,7 +256,9 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             cwd.display()
         );
 
-        let attached = self.attach_to_repo_containing(pid, cwd);
+        let attached = target.and_then(|found| {
+            found.map_or_else(|| Ok(None), |repo| self.attach_to_repo(pid, repo).map(Some))
+        });
         // On failure the pid also leaves the repo whose re-arm failed.
         let keep = attached.as_ref().ok().and_then(Option::as_deref);
         self.detach_pid_except(pid, keep);
@@ -217,35 +266,51 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         Ok(())
     }
 
-    /// Attach `pid` to the repo containing `cwd`; `None` when outside any repo.
+    /// Attach `pid` to an already watched `target` whose watches are current,
+    /// leaving its other repos, when that needs neither arming nor teardown;
+    /// `false` (nothing changed) otherwise, for the `ops_lock` path. A repo
+    /// with no clients is never joined here: it may be mid-teardown.
+    fn attach_without_arming(&self, pid: u32, target: &RepoTarget) -> bool {
+        let current_id = dir_identity(&target.git_dir);
+        let mut repos = self.watched_repos.lock_or_recover();
+        let current = repos.get(&target.git_root).is_some_and(|repo| {
+            // An unknown identity on either side counts as unchanged, as in
+            // `attach_or_rearm_existing_repo`.
+            let same_git_dir = repo.git_dir == target.git_dir
+                && (repo.git_dir_id.is_none()
+                    || current_id.is_none()
+                    || repo.git_dir_id == current_id);
+            !repo.clients.is_empty()
+                && same_git_dir
+                && repo.worktree.requested() == target.watch_worktree
+                && repo.worktree != WorktreeWatch::Degraded
+        });
+        let empties_another = repos.iter().any(|(root, repo)| {
+            root != &target.git_root && repo.clients.contains(&pid) && repo.clients.len() == 1
+        });
+        if !current || empties_another {
+            return false;
+        }
+        for (root, repo) in repos.iter_mut() {
+            if root == &target.git_root {
+                repo.clients.insert(pid);
+            } else {
+                repo.clients.remove(&pid);
+            }
+        }
+        true
+    }
+
+    /// Attach `pid` to `target`, arming it if untracked; returns its root.
     ///
     /// # Errors
-    /// Returns an error if the repository cannot be discovered or watched.
-    fn attach_to_repo_containing(&self, pid: u32, cwd: &Path) -> Result<Option<PathBuf>> {
-        let Some(git_root) = crate::git::find_worktree_root(cwd) else {
-            debug_log!("watcher", "No git root found for {}", cwd.display());
-            return Ok(None);
-        };
-
-        if !self.registry.repo_allowed(&git_root) {
-            debug_log!(
-                "watcher",
-                "Repository {} is skipped; not watching",
-                git_root.display()
-            );
-            return Ok(None);
-        }
-
-        let git_dir = crate::git::resolve_gitdir(&git_root)
-            .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
-            .ok_or_else(|| {
-                Error::watcher(format!(
-                    "Could not resolve git directory at {}",
-                    git_root.display()
-                ))
-            })?;
-        let watch_worktree = self.worktree_watch_wanted(&git_root);
-
+    /// Returns an error if the repository cannot be watched.
+    fn attach_to_repo(&self, pid: u32, target: RepoTarget) -> Result<PathBuf> {
+        let RepoTarget {
+            git_root,
+            git_dir,
+            watch_worktree,
+        } = target;
         debug_log!("watcher", "Found git root: {}", git_root.display());
         if watch_worktree {
             debug_log!(
@@ -255,7 +320,8 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         }
 
         if self.attach_or_rearm_existing_repo(pid, &git_root, &git_dir, watch_worktree)? {
-            return Ok(Some(git_root));
+            self.retry_degraded_worktrees(Some(&git_root), false);
+            return Ok(git_root);
         }
 
         self.log_gitdir_only_scope(&git_root);
@@ -269,17 +335,40 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         // A failed worktree watch degrades to .git-only rather than failing.
         let repo_watches = self.start_repo_watches(&git_root, &git_dir, watch_worktree)?;
         self.track_new_repo(pid, git_root.clone(), git_dir, repo_watches);
-        Ok(Some(git_root))
+        Ok(git_root)
     }
 
-    /// Remove a client and stop watching the repository if no clients remain.
+    /// Remove a client and stop watching the repository if no clients remain
+    /// (after the teardown grace, if one is set).
     pub fn unregister_client(&self, pid: u32) {
+        if self.detach_without_teardown(pid) {
+            return;
+        }
         let _ops_guard = self.ops_lock.lock_or_recover();
+        self.release_expired_idle_repos();
         self.detach_pid_except(pid, None);
     }
 
-    /// Remove `pid` from every repo except `keep`, tearing down emptied ones.
+    /// Remove `pid` from every repo when none is left client-free; `false`
+    /// (nothing changed) otherwise, for the `ops_lock` path.
+    fn detach_without_teardown(&self, pid: u32) -> bool {
+        let mut repos = self.watched_repos.lock_or_recover();
+        if repos
+            .values()
+            .any(|repo| repo.clients.contains(&pid) && repo.clients.len() == 1)
+        {
+            return false;
+        }
+        for repo in repos.values_mut() {
+            repo.clients.remove(&pid);
+        }
+        true
+    }
+
+    /// Remove `pid` from every repo except `keep`. An emptied repo is torn down
+    /// now, or parked for the teardown grace. Caller holds `ops_lock`.
     fn detach_pid_except(&self, pid: u32, keep: Option<&Path>) {
+        let now = Instant::now();
         let mut repos_to_remove = Vec::new();
         {
             let mut repos = self.watched_repos.lock_or_recover();
@@ -289,7 +378,17 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                     continue;
                 }
                 if repo.clients.remove(&pid) && repo.clients.is_empty() {
-                    repos_to_remove.push(repo.clone());
+                    if self.teardown_grace.is_zero() {
+                        repos_to_remove.push(repo.clone());
+                    } else {
+                        debug_log!(
+                            "watcher",
+                            "{} has no clients; keeping it armed for {:?}",
+                            repo.git_root.display(),
+                            self.teardown_grace
+                        );
+                        repo.idle_since = Some(now);
+                    }
                 }
             }
         }
@@ -297,8 +396,41 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         self.tear_down_repos(&repos_to_remove);
     }
 
-    /// Stop watching `repos` (already client-free) and drop their state.
+    /// Tear down repos that have had no clients for the teardown grace. The
+    /// agent calls this on its periodic reconcile; attach and unregister also
+    /// release them.
+    pub fn release_idle_repos(&self) {
+        let _ops_guard = self.ops_lock.lock_or_recover();
+        self.release_expired_idle_repos();
+    }
+
+    /// [`Self::release_idle_repos`] for a caller already holding `ops_lock`.
+    fn release_expired_idle_repos(&self) {
+        if self.teardown_grace.is_zero() {
+            return;
+        }
+        let expired: Vec<WatchedRepo> = self
+            .watched_repos
+            .lock_or_recover()
+            .values()
+            .filter(|repo| {
+                repo.clients.is_empty()
+                    && repo
+                        .idle_since
+                        .is_some_and(|since| since.elapsed() >= self.teardown_grace)
+            })
+            .cloned()
+            .collect();
+        self.tear_down_repos(&expired);
+    }
+
+    /// Stop watching `repos` (already client-free) and drop their state, then
+    /// give degraded repos a chance at the watch budget just released. Caller
+    /// holds `ops_lock`.
     fn tear_down_repos(&self, repos_to_remove: &[WatchedRepo]) {
+        if repos_to_remove.is_empty() {
+            return;
+        }
         if let Some(w) = self.watcher.lock_or_recover().as_mut() {
             for repo in repos_to_remove {
                 for path in &repo.armed {
@@ -321,6 +453,8 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             self.registry.unregister_external_gitdir(&repo.git_dir);
             release_common_dir_watches(self, &repo.git_root);
         }
+
+        self.retry_degraded_worktrees(None, true);
     }
 
     /// Stop watching all repositories and clear state.
@@ -397,186 +531,12 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                     pid
                 );
                 repo.clients.insert(pid);
+                repo.idle_since = None;
                 return Ok(true);
             }
         }
 
         Ok(false)
-    }
-
-    /// Re-arm a tracked repo's stale watches and refresh its entry. `pid` is
-    /// `None` for a config-driven re-arm, which must not change the refcount.
-    ///
-    /// # Errors
-    /// Returns an error if the essential `.git` watch cannot be re-established.
-    fn rearm_repo_watch(
-        &self,
-        pid: Option<u32>,
-        git_root: &Path,
-        git_dir: &Path,
-        watch_worktree: bool,
-    ) -> Result<()> {
-        debug_log!(
-            "watcher",
-            "Re-arming stale watch for {} (client {:?}): gitdir {}",
-            git_root.display(),
-            pid,
-            git_dir.display()
-        );
-
-        let stale = {
-            let repos = self.watched_repos.lock_or_recover();
-            repos
-                .get(git_root)
-                .map(|repo| (repo.git_dir.clone(), repo.armed.clone()))
-        };
-
-        if let Some((_, stale_armed)) = &stale
-            && let Some(w) = self.watcher.lock_or_recover().as_mut()
-        {
-            for path in stale_armed {
-                unwatch_logged(w, path, WatchMode::Recursive);
-            }
-        }
-
-        // A relocated gitdir can move the common dir; re-acquire against the new one.
-        release_common_dir_watches(self, git_root);
-
-        let repo_watches = self.start_repo_watches(git_root, git_dir, watch_worktree)?;
-
-        if let Some((stale_git_dir, _)) = &stale {
-            self.registry.unregister_external_gitdir(stale_git_dir);
-        }
-        self.register_external_gitdir_if_needed(git_dir, git_root);
-
-        {
-            let mut repos = self.watched_repos.lock_or_recover();
-            if let Some(repo) = repos.get_mut(git_root) {
-                repo.git_dir = git_dir.to_path_buf();
-                repo.git_dir_id = dir_identity(git_dir);
-                repo.worktree = repo_watches.worktree;
-                repo.armed = repo_watches.armed;
-                if let Some(client_pid) = pid {
-                    repo.clients.insert(client_pid);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Arm watches for a repo and log one `Watch ready` line, the marker the
-    /// e2e tests wait on before touching the tree.
-    ///
-    /// # Errors
-    /// Returns an error if the coordinator is gone or `.git` cannot be watched.
-    fn start_repo_watches(
-        &self,
-        git_root: &Path,
-        git_dir: &Path,
-        watch_worktree: bool,
-    ) -> Result<RepoWatches> {
-        let watches = self.arm_watches(git_root, git_dir, watch_worktree)?;
-        debug_log!("watcher", "Watch ready for {}", git_root.display());
-        Ok(watches)
-    }
-
-    /// Arm watches for a repo. `.git` failure is fatal; a worktree-watch failure
-    /// (likely watch-budget exhaustion) degrades to `.git`-only.
-    ///
-    /// # Errors
-    /// Returns an error if the coordinator is gone or `.git` cannot be watched.
-    fn arm_watches(
-        &self,
-        git_root: &Path,
-        git_dir: &Path,
-        watch_worktree: bool,
-    ) -> Result<RepoWatches> {
-        let mut watcher_guard = self.watcher.lock_or_recover();
-        let Some(w) = watcher_guard.as_mut() else {
-            return Err(Error::watcher(
-                "No watch coordinator available; repository would not actually be watched",
-            ));
-        };
-
-        // macOS FSEvents rebuilds its stream on each added path, and a rebuilt
-        // stream can drop its first event. A nested `.git` is already covered
-        // by the recursive `git_root` watch, so skip the second call.
-        let gitdir_covered_by_worktree_watch = git_dir.starts_with(git_root);
-
-        if watch_worktree && gitdir_covered_by_worktree_watch {
-            if let Err(e) = w.watch(git_root) {
-                return Self::fall_back_to_gitdir_only(w, git_root, git_dir, &e.to_string());
-            }
-            debug_log!(
-                "watcher",
-                "Watching worktree {} (single recursive watch covers .git)",
-                git_root.display()
-            );
-            return Ok(RepoWatches {
-                armed: vec![git_root.to_path_buf()],
-                worktree: WorktreeWatch::Armed,
-            });
-        }
-
-        w.watch(git_dir)?;
-        debug_log!(
-            "watcher",
-            "Successfully started watching {}",
-            git_dir.display()
-        );
-        let mut armed = vec![git_dir.to_path_buf()];
-
-        // Linked worktrees only. Best-effort; refcounted in `common_watches`,
-        // not in this repo's `armed`.
-        acquire_common_dir_watches(self, w, git_root, git_dir);
-
-        let worktree = if watch_worktree {
-            if let Err(e) = w.watch(git_root) {
-                debug_log!(
-                    "watcher",
-                    "Worktree watch failed for {} ({}); falling back to .git-only watching",
-                    git_root.display(),
-                    e
-                );
-                WorktreeWatch::Degraded
-            } else {
-                debug_log!("watcher", "Watching worktree {}", git_root.display());
-                armed.push(git_root.to_path_buf());
-                WorktreeWatch::Armed
-            }
-        } else {
-            WorktreeWatch::Disabled
-        };
-
-        Ok(RepoWatches { armed, worktree })
-    }
-
-    /// Watch `git_dir` alone after a worktree-root watch failed.
-    ///
-    /// # Errors
-    /// Returns an error if the `.git`-only watch also fails.
-    fn fall_back_to_gitdir_only(
-        w: &mut T,
-        git_root: &Path,
-        git_dir: &Path,
-        reason: &str,
-    ) -> Result<RepoWatches> {
-        debug_log!(
-            "watcher",
-            "Worktree watch failed for {} ({reason}); falling back to .git-only watching",
-            git_root.display()
-        );
-        w.watch(git_dir)?;
-        debug_log!(
-            "watcher",
-            "Successfully started watching {}",
-            git_dir.display()
-        );
-        Ok(RepoWatches {
-            armed: vec![git_dir.to_path_buf()],
-            worktree: WorktreeWatch::Degraded,
-        })
     }
 
     /// Insert a newly watched repository into the internal map.
@@ -607,6 +567,8 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                     worktree: repo_watches.worktree,
                     armed: repo_watches.armed,
                     clients,
+                    last_arm_attempt: Instant::now(),
+                    idle_since: None,
                 },
             );
         }
@@ -673,10 +635,15 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         }
     }
 
-    /// Number of repositories currently being watched.
+    /// Number of repositories watched for at least one client (repos kept
+    /// armed through their teardown grace are not counted).
     #[must_use]
     pub fn watched_repo_count(&self) -> usize {
-        self.watched_repos.lock_or_recover().len()
+        self.watched_repos
+            .lock_or_recover()
+            .values()
+            .filter(|repo| !repo.clients.is_empty())
+            .count()
     }
 
     /// Sorted, deduplicated PIDs across all watched repos.
@@ -693,13 +660,14 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         pids
     }
 
-    /// Snapshot of the git roots currently being watched.
+    /// Snapshot of the git roots watched for at least one client.
     #[must_use]
     pub fn watched_roots(&self) -> Vec<PathBuf> {
         self.watched_repos
             .lock_or_recover()
-            .keys()
-            .cloned()
+            .values()
+            .filter(|repo| !repo.clients.is_empty())
+            .map(|repo| repo.git_root.clone())
             .collect()
     }
 }
@@ -709,16 +677,18 @@ pub struct MultiRepoWatcherBuilder {
     config: Option<WatcherConfig>,
     callback: Option<EventCallback>,
     registry: Option<Arc<WatchRegistry>>,
+    teardown_grace: Duration,
 }
 
 impl MultiRepoWatcherBuilder {
     /// Create a new builder with default values.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             config: None,
             callback: None,
             registry: None,
+            teardown_grace: Duration::ZERO,
         }
     }
 
@@ -740,6 +710,16 @@ impl MultiRepoWatcherBuilder {
     #[must_use]
     pub fn registry(mut self, registry: Arc<WatchRegistry>) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    /// Keep a repository armed for `grace` after its last client leaves
+    /// (default: zero, tear down at once). With a grace, call
+    /// [`MultiRepoWatcher::release_idle_repos`] periodically; see
+    /// [`DEFAULT_TEARDOWN_GRACE`].
+    #[must_use]
+    pub const fn teardown_grace(mut self, grace: Duration) -> Self {
+        self.teardown_grace = grace;
         self
     }
 
@@ -769,6 +749,7 @@ impl MultiRepoWatcherBuilder {
             registry,
             common_watches: Mutex::new(HashMap::new()),
             ops_lock: Mutex::new(()),
+            teardown_grace: self.teardown_grace,
         })
     }
 }

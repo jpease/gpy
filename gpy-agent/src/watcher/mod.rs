@@ -5,9 +5,11 @@
 //!
 //! A flush thread sleeps until the earliest pending deadline (or, with nothing
 //! pending, until the next event), drains expired events under the debouncer
-//! lock, and hands each to its own dispatch thread, so a slow callback for one
-//! repo never stalls ingestion or delivery for others. The timer thread is
-//! needed because expiry must happen even when events stop.
+//! lock, and queues them for a fixed pool of dispatch threads, so a slow
+//! callback never stalls ingestion or the flush loop. The pool bounds how many
+//! callbacks (and so git scans) run at once; once every worker is busy, further
+//! events wait in the queue. The timer thread is needed because expiry must
+//! happen even when events stop.
 //!
 //! Entries flush once quiet for the debounce window (default
 //! [`crate::env_config::DEFAULT_DEBOUNCE_MS`], `GPY_DEBOUNCE_MS`) or once older than the max-delay
@@ -202,19 +204,36 @@ fn path_contains_git_subdir(path: &Path, subdir_components: &[&str]) -> bool {
 /// stays unfiltered: `info/exclude` is git-significant.
 const GIT_NOISE_SUBDIRS: &[&[&str]] = &[&["objects"], &["logs"], &["hooks"], &["refs", "tags"]];
 
+/// Whether `path` lies in a [`GIT_NOISE_SUBDIRS`] subtree of a `.git` directory.
+fn is_git_noise_path(path: &Path) -> bool {
+    GIT_NOISE_SUBDIRS
+        .iter()
+        .any(|subdir| path_contains_git_subdir(path, subdir))
+}
+
+/// Whether `relative` (a path inside a git directory) lies in a
+/// [`GIT_NOISE_SUBDIRS`] subtree.
+fn is_git_noise_relative(relative: &Path) -> bool {
+    GIT_NOISE_SUBDIRS.iter().any(|subdir| {
+        let mut components = relative.components();
+        subdir.iter().all(|expected| {
+            components
+                .next()
+                .is_some_and(|component| component.as_os_str() == OsStr::new(*expected))
+        })
+    })
+}
+
 fn filter_ignored(path: &Path) -> Option<()> {
-    // Match file names, not path substrings (`foo.socket.rs` must pass).
-    if path.file_name() == Some(OsStr::new("gpy-agent.log")) {
+    // Match file names, not path substrings (`foo.socket.rs` must pass). The
+    // agent's warning log is `agent.log`; its own writes are never a change.
+    if path.file_name() == Some(OsStr::new("agent.log")) {
         return None;
     }
     if path.extension() == Some(OsStr::new("sock")) {
         return None;
     }
-
-    if GIT_NOISE_SUBDIRS
-        .iter()
-        .any(|subdir| path_contains_git_subdir(path, subdir))
-    {
+    if is_git_noise_path(path) {
         return None;
     }
 

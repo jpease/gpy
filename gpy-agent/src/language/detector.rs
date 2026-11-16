@@ -1,14 +1,19 @@
 //! Linguist-grade language detection, path-first: a file is read only when
-//! its path is ambiguous or unmatched.
+//! its path is ambiguous (up to 50 KB) or unmatched (a shebang-sized prefix).
 
 use crate::Result;
 use crate::language::filters;
+use crate::language::project_root::MARKER_SCAN_LIMIT;
 use gengo_language::Language;
 use std::path::Path;
 
 /// Fallback read cap; matches `hyperpolyglot`'s `MAX_CONTENT_SIZE_BYTES`,
 /// which the heuristic test corpus is calibrated against.
 const READ_LIMIT: usize = 51_200;
+
+/// Bytes read from a file no path rule names: `gengo-language` looks only at a
+/// first line of at most 50 bytes (`MAX_SHEBANG_LENGTH`) there, so 64 covers it.
+const SHEBANG_READ_LIMIT: usize = 64;
 
 /// Suffixes stripped before matching. `Language::pick` strips these too, so
 /// the path-only pre-check must agree with it (e.g. `foo.rs.bak`).
@@ -165,7 +170,7 @@ impl Detector {
 }
 
 /// Count marker-file (and optionally extension) hits per language among
-/// `path`'s immediate entries; empty if unreadable.
+/// `path`'s first [`MARKER_SCAN_LIMIT`] entries; empty if unreadable.
 #[must_use]
 fn marker_evidence(
     path: &Path,
@@ -180,7 +185,7 @@ fn marker_evidence(
 
     let mut evidence: HashMap<&'static str, usize> = HashMap::new();
     let mut weak_hits: Vec<&'static str> = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries.take(MARKER_SCAN_LIMIT).flatten() {
         let raw_name = entry.file_name();
         let name = raw_name.to_string_lossy();
         for (file, language) in WEAK_MARKER_FILES {
@@ -287,12 +292,17 @@ fn walk_directory(path: &Path, include_file_sizes: bool) -> Vec<(Language, u64)>
 }
 
 /// Resolves a file's language: strip [`STRIPPED_SUFFIX_EXTENSIONS`], then
-/// filename/glob/extension match; a unique candidate wins without reading,
-/// otherwise read up to [`READ_LIMIT`] bytes and call [`Language::pick`].
+/// filename/glob/extension match; a unique candidate wins without reading.
+/// An ambiguous path reads up to [`READ_LIMIT`] bytes for [`Language::pick`];
+/// an unmatched one reads only [`SHEBANG_READ_LIMIT`] bytes, since a shebang
+/// is all that can name it.
 ///
 /// The unique-candidate step can't be `pick` with empty contents: that
-/// tie-breaks by static priority (`.h` → C) instead of reading. Checking the
-/// extension before the shebang matches `hyperpolyglot`.
+/// tie-breaks by static priority (`.h` → C) instead of reading. It also means
+/// a unique-extension file ignores its shebang (`run.js` with a python
+/// shebang is `JavaScript`), whereas `pick` lets the shebang win over an
+/// extension shared by several languages. Honouring the shebang everywhere
+/// would mean reading every file, which the path-first design avoids.
 ///
 /// # Errors
 /// If the fallback read fails.
@@ -300,11 +310,17 @@ fn detect_language(path: &Path) -> std::io::Result<Option<Language>> {
     let stripped = strip_suffix_extensions(path);
     let probe = stripped.as_deref().unwrap_or(path);
 
-    if let [only_candidate] = path_candidates(probe).as_slice() {
+    let candidates = path_candidates(probe);
+    if let [only_candidate] = candidates.as_slice() {
         return Ok(Some(*only_candidate));
     }
 
-    let contents = crate::fs_util::read_regular_file_capped(path, READ_LIMIT)?;
+    let read_limit = if candidates.is_empty() {
+        SHEBANG_READ_LIMIT
+    } else {
+        READ_LIMIT
+    };
+    let contents = crate::fs_util::read_regular_file_capped(path, read_limit)?;
     Ok(Language::pick(path, &contents, READ_LIMIT))
 }
 

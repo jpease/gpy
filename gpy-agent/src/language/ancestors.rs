@@ -1,13 +1,19 @@
 //! Bounded ancestor walks shared by tool-config, `.ruby-version` and project-root lookups.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 /// Ancestor-walk depth bound outside `$HOME` (guards pathological paths).
 pub(crate) const MAX_ANCESTOR_DEPTH: usize = 64;
 
-/// The user's home directory, if known.
+/// The user's home directory, canonicalized once: callers walk canonical
+/// paths (`find_worktree_root`, `non_git_root`), so a `$HOME` reached through
+/// a symlink would otherwise never match an ancestor and the walk would run
+/// past it.
 pub(crate) fn home_dir() -> Option<PathBuf> {
-    crate::paths::home_path()
+    static HOME: LazyLock<Option<PathBuf>> =
+        LazyLock::new(|| crate::paths::home_path().map(|home| home.canonicalize().unwrap_or(home)));
+    HOME.clone()
 }
 
 /// `path` and its ancestors, nearest first, ending at `home` (inclusive) or

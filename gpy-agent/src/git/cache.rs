@@ -189,18 +189,8 @@ impl GitStatusCache {
             .map(|e| (e.data.aggregates.clone(), e.full_scan_at.elapsed()))
     }
 
-    /// Cache status for a repository.
-    pub fn set(
-        &self,
-        repo_path: &Path,
-        status: RepositoryStatus,
-        files: HashMap<PathBuf, FileStatus>,
-    ) {
-        self.set_canonical(&Self::canonical_key(repo_path), status, files);
-    }
-
-    /// [`set`](Self::set) for an already-canonical key; enforces the entry-count
-    /// and file-detail byte bounds.
+    /// Cache a full-scan status under an already-canonical key; enforces the
+    /// entry-count and file-detail byte bounds.
     pub fn set_canonical(
         &self,
         key: &Path,
@@ -384,13 +374,8 @@ impl GitStatusCache {
         Some(stale)
     }
 
-    /// Whether the entry was updated within the policy's cooldown window.
-    #[must_use]
-    pub fn is_fresh(&self, repo_path: &Path) -> bool {
-        self.is_fresh_canonical(&Self::canonical_key(repo_path))
-    }
-
-    /// [`is_fresh`](Self::is_fresh) for an already-canonical key.
+    /// Whether the entry for an already-canonical key was updated within the
+    /// policy's cooldown window.
     #[must_use]
     pub fn is_fresh_canonical(&self, key: &Path) -> bool {
         self.entries
@@ -399,20 +384,10 @@ impl GitStatusCache {
             .is_some_and(|entry| entry.updated_at.elapsed() < self.policy.cooldown())
     }
 
-    /// Invalidate cached status for a repository.
-    pub fn invalidate(&self, repo_path: &Path) {
-        self.invalidate_canonical(&Self::canonical_key(repo_path));
-    }
-
-    /// [`invalidate`](Self::invalidate) for an already-canonical key.
+    /// Drop the cached status for an already-canonical key.
     pub fn invalidate_canonical(&self, key: &Path) {
         debug_log!("cache", "Invalidating cache for {}", key.display());
         self.entries.lock_or_recover().remove(key);
-    }
-
-    /// Clear all cached entries
-    pub fn clear(&self) {
-        self.entries.lock_or_recover().clear();
     }
 
     /// Number of cached repositories.
@@ -466,6 +441,26 @@ mod tests {
                 .lock_or_recover()
                 .get(key)
                 .map(|entry| entry.data.files.clone())
+        }
+
+        /// [`GitStatusCache::set_canonical`] after canonicalizing `repo_path`.
+        pub(crate) fn set(
+            &self,
+            repo_path: &Path,
+            status: RepositoryStatus,
+            files: HashMap<PathBuf, FileStatus>,
+        ) {
+            self.set_canonical(&Self::canonical_key(repo_path), status, files);
+        }
+
+        /// [`GitStatusCache::is_fresh_canonical`] after canonicalizing `repo_path`.
+        pub(crate) fn is_fresh(&self, repo_path: &Path) -> bool {
+            self.is_fresh_canonical(&Self::canonical_key(repo_path))
+        }
+
+        /// [`GitStatusCache::invalidate_canonical`] after canonicalizing `repo_path`.
+        pub(crate) fn invalidate(&self, repo_path: &Path) {
+            self.invalidate_canonical(&Self::canonical_key(repo_path));
         }
     }
 

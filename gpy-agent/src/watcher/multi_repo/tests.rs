@@ -3,7 +3,6 @@ use crate::watcher::DebouncedEvent;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -27,7 +26,7 @@ type HeldWatches = (
 pub(super) struct RecordingTarget {
     inner: WatchCoordinator,
     fault: WatchFault,
-    unwatched: Vec<PathBuf>,
+    pub(super) unwatched: Vec<PathBuf>,
 }
 
 impl WatchTarget for RecordingTarget {
@@ -72,6 +71,7 @@ pub(super) fn recording_watcher(
         registry,
         common_watches,
         ops_lock,
+        teardown_grace,
     } = MultiRepoWatcher::builder()
         .registry(watch_registry)
         .callback(Box::new(|_event: DebouncedEvent| {}))
@@ -93,10 +93,10 @@ pub(super) fn recording_watcher(
         registry,
         common_watches,
         ops_lock,
+        teardown_grace,
     }
 }
 
-/// A [`WatchFault`] that never fires.
 /// A temp dir holding a bare `.git` directory.
 fn temp_repo() -> TempDir {
     let temp_dir = TempDir::new().unwrap();

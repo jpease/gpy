@@ -335,9 +335,11 @@ fn main_info_exclude_applies_in_linked_worktree() {
     );
 }
 
-/// Feed a content edit of `file` through `process_event` with `root` watched.
+/// Feed a content edit of `file` through `process_event` with `root` watched
+/// and its force-added set listed, as arming does before events arrive.
 fn events_for_edit(root: &Path, file: &Path) -> Vec<PendingEvent> {
     let registry = test_registry(true, HashSet::from([root.to_path_buf()]));
+    super::super::ignore::force_added::prime_force_added(root, &registry);
     events_for(
         &registry,
         EventKind::Modify(ModifyKind::Data(DataChange::Content)),

@@ -1,7 +1,8 @@
 #![allow(clippy::missing_panics_doc)]
 
 use super::backend::poll_watch_targets;
-use super::ignore::{force_added_set, is_force_added};
+use super::ignore::Lookup;
+use super::ignore::force_added::{force_added_set, is_force_added};
 use super::probe::{engage_poll_fallback, native_backend_delivers_events};
 use super::*;
 use crate::env_config::{DEFAULT_WATCH_POLL_MS, DEFAULT_WATCH_PROBE_MS};
@@ -57,9 +58,13 @@ impl FileSystemWatcher {
 const TEST_FOLLOWUP_DELAY: Duration = Duration::from_millis(50);
 
 /// A private [`WatchRegistry`]; empty `roots` makes attribution fall through to
-/// the ancestor `.git` walk.
+/// the ancestor `.git` walk. Force-added sets come from git; the user's global
+/// excludes file is never read.
 fn test_registry(worktree_enabled: bool, roots: HashSet<PathBuf>) -> Arc<WatchRegistry> {
-    configure_registry(WatchRegistry::new(), worktree_enabled, roots)
+    let ignore = IgnoreCaches::new(Arc::new(
+        crate::git::native::NativeGitBackend::tracked_ignored_files,
+    ));
+    configure_registry(WatchRegistry::with_ignore(ignore), worktree_enabled, roots)
 }
 
 /// [`test_registry`] whose force-added sets come from `ls_files` instead of git.
@@ -68,7 +73,9 @@ fn test_registry_with_ls_files(
     roots: HashSet<PathBuf>,
     ls_files: impl Fn(&Path) -> Vec<PathBuf> + Send + Sync + 'static,
 ) -> Arc<WatchRegistry> {
-    let registry = WatchRegistry::with_ignore(IgnoreCaches::new(Arc::new(ls_files)));
+    let registry = WatchRegistry::with_ignore(IgnoreCaches::new(Arc::new(move |root: &Path| {
+        Some(ls_files(root))
+    })));
     configure_registry(registry, worktree_enabled, roots)
 }
 

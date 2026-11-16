@@ -71,3 +71,27 @@ fn untracked_cache_setup_respects_explicit_false() {
     assert_eq!(untracked_cache_values(&path), "false");
     assert!(!index_has_untracked_cache(&path));
 }
+
+/// The setup's index write waits while a git operation is in progress (it
+/// would race git for `index.lock`) and runs on a later scan once it ends.
+#[test]
+fn untracked_cache_setup_waits_for_an_operation_in_progress() {
+    let (_dir, path) = init_test_repo();
+    if NativeGitBackend::is_untracked_cache_configured(&path, NativeGitBackend::default_deadline())
+        || !filesystem_supports_untracked_cache(&path)
+    {
+        return;
+    }
+    // A multi-commit cherry-pick or revert keeps this directory while it runs.
+    let sequencer = path.join(".git").join("sequencer");
+    fs::create_dir_all(&sequencer).expect("create sequencer dir");
+
+    NativeGitBackend::get_complete_status(&path, 100, false, Duration::from_secs(5))
+        .expect("status");
+    assert!(!index_has_untracked_cache(&path));
+
+    fs::remove_dir(&sequencer).expect("remove sequencer dir");
+    NativeGitBackend::get_complete_status(&path, 100, false, Duration::from_secs(5))
+        .expect("status");
+    assert!(index_has_untracked_cache(&path));
+}

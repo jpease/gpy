@@ -2,6 +2,8 @@
 //! when fresh, else computes natively with a progressive timeout.
 
 use super::{HandlerError, RenderDeps, notify_if_changed, spawn_detached};
+use crate::cache::bounded::GIT_STATUS_CACHE_CAPACITY;
+use crate::cache::ttl_map::TtlMap;
 use crate::config::Config;
 use crate::git::{self, cache::GitStatusCache};
 use crate::ipc::Response;
@@ -14,12 +16,23 @@ use std::time::{Duration, Instant};
 /// window misses. Must exceed the 30s git-status TTL.
 const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_mins(1);
 
+/// How long a failed status for a repository with no cached status is
+/// answered from memory before git is run again, so a repository git always
+/// refuses (dubious ownership, corruption) or a hung mount does not cost a
+/// full capture on every prompt.
+const FAILURE_TTL: Duration = Duration::from_secs(5);
+
+/// Recent failures by canonical repository root.
+type FailureCache = TtlMap<PathBuf, String>;
+
 /// Handler for Git repository status queries.
 pub struct GitHandler {
     git_cache: Arc<GitStatusCache>,
     /// Handles for publishing to the instant-prompt cache; see [`publish_and_repaint`].
     render: RenderDeps,
     in_flight: SingleFlight<PathBuf, SharedGitStatusResult>,
+    /// Failures with no status to fall back on; see [`FAILURE_TTL`].
+    failures: Arc<FailureCache>,
 }
 
 type SharedGitStatusResult = Result<Option<git::RepositoryStatus>, String>;
@@ -29,8 +42,9 @@ struct GitStatusJob {
     max_ahead_behind: usize,
     git_root: PathBuf,
     cache: Arc<GitStatusCache>,
+    failures: Arc<FailureCache>,
     render: RenderDeps,
-    /// Frees the single-flight slot even if `load_repository_state` panics.
+    /// Frees the single-flight slot even if the status capture panics.
     guard: JobGuard<PathBuf, SharedGitStatusResult>,
 }
 
@@ -60,7 +74,35 @@ impl GitHandler {
             git_cache,
             render,
             in_flight: SingleFlight::new(),
+            failures: Arc::new(TtlMap::with_ttl(GIT_STATUS_CACHE_CAPACITY, FAILURE_TTL)),
         }
+    }
+
+    /// Number of repositories with a cached status.
+    #[must_use]
+    pub(crate) fn cached_repo_count(&self) -> usize {
+        self.git_cache.len()
+    }
+
+    /// Fill the caches for the repository holding `path` ahead of its first
+    /// prompt (client registration), in the background.
+    ///
+    /// Shares the request path's single-flight and `git.timeout_seconds`, so
+    /// shells registering together in one repository start one scan. Does
+    /// nothing outside a repository, when git is off or skipped for the root,
+    /// while the cached status is within its cooldown, or after a recent failure.
+    pub(crate) fn prewarm(&self, path: &Path) {
+        let Some(git_root) = git::find_repo_root(path) else {
+            return;
+        };
+        let config = self.render.config_manager.get();
+        if !config.git_enabled_for(&git_root)
+            || self.git_cache.is_fresh_canonical(&git_root)
+            || self.failures.get(&git_root).is_some()
+        {
+            return;
+        }
+        drop(self.git_status_job(&git_root, git_root.clone(), config.git.max_ahead_behind));
     }
 
     /// Get git status for a path, checking cache first.
@@ -109,6 +151,11 @@ impl GitHandler {
                 cached_status,
                 config.git.show_upstream,
             ));
+        }
+
+        // A failure with nothing cached is answered again until it expires.
+        if let Some(error) = self.failures.get(&git_root) {
+            return Err(HandlerError::Git(error));
         }
 
         let path_owned = path_buf.to_path_buf();
@@ -195,6 +242,7 @@ impl GitHandler {
         max_ahead_behind: usize,
     ) -> Arc<SharedJob<SharedGitStatusResult>> {
         let cache = Arc::clone(&self.git_cache);
+        let failures = Arc::clone(&self.failures);
         let render = self.render.clone();
         let git_root_owned = git_root.to_path_buf();
         // Fallback if the job panics before finishing.
@@ -206,6 +254,7 @@ impl GitHandler {
                     max_ahead_behind,
                     git_root: git_root_owned,
                     cache,
+                    failures,
                     render,
                     guard,
                 });
@@ -230,6 +279,9 @@ impl GitHandler {
                         .get(),
                 ),
             );
+            if result.is_ok() {
+                job_spec.failures.remove(&job_spec.git_root);
+            }
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
                     // `git_root` is already canonical. A newer full scan was
@@ -254,15 +306,20 @@ impl GitHandler {
                     }
                 }
                 Ok(None) => Ok(None),
-                Err(e) => match job_spec.cache.mark_stale_error(&job_spec.git_root, None) {
+                Err(e) => {
                     // Serve and publish the last good status with unknown
                     // upstream counts (`↑?`); no last good status keeps the error.
-                    Some(stale) => {
+                    if let Some(stale) = job_spec.cache.mark_stale_error(&job_spec.git_root, None) {
                         publish_and_repaint(&job_spec.render, &job_spec.git_root, &stale, None);
                         Ok(Some(stale))
+                    } else {
+                        let message = e.to_string();
+                        job_spec
+                            .failures
+                            .insert(job_spec.git_root.clone(), message.clone());
+                        Err(message)
                     }
-                    None => Err(e.to_string()),
-                },
+                }
             };
 
             job_spec.guard.finish(shared_result);
@@ -295,6 +352,9 @@ mod tests {
     use std::assert_matches;
     use std::collections::HashMap;
     use std::time::Duration;
+
+    /// Bound on each status load.
+    const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn make_handler() -> (GitHandler, Arc<ClientDirectory>) {
         make_handler_with_cache(Arc::new(GitStatusCache::new()))
@@ -454,7 +514,7 @@ mod tests {
             .expect("safe path");
 
         let handler_result = handler.status(&safe_path, None);
-        let oneshot_result = load_repository_state(&bare_path, 0, false);
+        let oneshot_result = load_repository_state(&bare_path, 0, false, STATUS_TIMEOUT);
 
         let Err(handler_error) = handler_result else {
             panic!("expected an error (git refuses status without a worktree), got Ok");
@@ -774,5 +834,45 @@ mod tests {
 
         assert!(result.is_err(), "got {result:?}");
         assert_eq!(cache.get_any_canonical(&root), None);
+    }
+
+    /// A failure with no status to fall back on is remembered, and answered
+    /// from memory without starting git again while it lasts.
+    #[test]
+    fn failure_without_last_good_status_is_answered_from_memory() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = init_failing_repo(&temp_dir);
+        let (handler, _registry) = make_handler();
+        let safe_path =
+            crate::security::SafePath::new(root.to_str().expect("utf8 path")).expect("safe path");
+
+        let Err(HandlerError::Git(first)) = handler.status(&safe_path, None) else {
+            panic!("a bare repository fails git status");
+        };
+        assert_eq!(handler.failures.get(&root), Some(first));
+
+        // A healthy repository with a remembered failure: a capture would succeed,
+        // so the remembered error and an idle single-flight prove none started.
+        let worktree = temp_dir.path().join("worktree");
+        let output = std::process::Command::new("git")
+            .args(["init", "--initial-branch=main"])
+            .arg(&worktree)
+            .output()
+            .expect("run git init");
+        assert!(output.status.success(), "git init failed");
+        let worktree_root = std::fs::canonicalize(&worktree).expect("canonical worktree");
+        handler
+            .failures
+            .insert(worktree_root.clone(), "remembered".to_owned());
+        let worktree_path =
+            crate::security::SafePath::new(worktree_root.to_str().expect("utf8 path"))
+                .expect("safe path");
+
+        assert_matches!(
+            handler.status(&worktree_path, None),
+            Err(HandlerError::Git(message)) if message == "remembered"
+        );
+        handler.prewarm(&worktree_root);
+        assert!(handler.in_flight.is_idle());
     }
 }

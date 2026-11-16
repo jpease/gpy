@@ -11,6 +11,11 @@ use std::time::{Duration, Instant};
 /// Minimum age before a cached language entry is re-detected.
 pub(crate) const LANGUAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Age past which a cached entry is re-detected even when its git-status
+/// signature is unchanged: a checkout or pull can bring in files of a new
+/// language without moving any status count.
+pub(crate) const LANGUAGE_SIGNATURE_MAX_AGE: Duration = Duration::from_mins(5);
+
 struct DetectionEntry {
     languages: Vec<DetectedLanguage>,
     last_refresh: Instant,
@@ -82,11 +87,14 @@ impl DetectionCache {
     }
 
     /// Whether a refresh should run: no entry, or the entry is older than
-    /// `min_interval` and its signature differs.
+    /// `min_interval` and either its signature differs or it has outlived
+    /// [`LANGUAGE_SIGNATURE_MAX_AGE`].
     #[must_use]
     pub fn should_refresh(&self, path: &Path, signature: u64, min_interval: Duration) -> bool {
         self.cache.read_or_recover().get(path).is_none_or(|entry| {
-            entry.last_refresh.elapsed() >= min_interval && entry.signature != Some(signature)
+            let age = entry.last_refresh.elapsed();
+            age >= min_interval
+                && (entry.signature != Some(signature) || age >= LANGUAGE_SIGNATURE_MAX_AGE)
         })
     }
 }
@@ -147,5 +155,18 @@ mod tests {
         cache.set_with_signature(path, sample_lang(), 1);
 
         assert!(cache.should_refresh(path, 2, Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn should_refresh_when_unchanged_signature_outlives_max_age() {
+        let cache = DetectionCache::new();
+        let path = Path::new("/tmp/repo");
+        cache.set_with_signature(path, sample_lang(), 7);
+
+        cache.age_entry_for_test(path, LANGUAGE_REFRESH_INTERVAL + Duration::from_secs(1));
+        assert!(!cache.should_refresh(path, 7, LANGUAGE_REFRESH_INTERVAL));
+
+        cache.age_entry_for_test(path, LANGUAGE_SIGNATURE_MAX_AGE + Duration::from_secs(1));
+        assert!(cache.should_refresh(path, 7, LANGUAGE_REFRESH_INTERVAL));
     }
 }

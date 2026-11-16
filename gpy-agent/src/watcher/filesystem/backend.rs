@@ -1,7 +1,9 @@
 //! The notify backend behind a [`FileSystemWatcher`].
 
-use super::super::WatchRegistry;
 use super::super::watch_set::{OsOp, WatchMode, WatchSet};
+use super::super::{WatchRegistry, is_git_noise_path, is_git_noise_relative};
+use super::ignore::force_added::prime_force_added;
+use super::meta_poll::MetadataPoller;
 use super::{
     FileSystemWatcher, is_directory_create, is_in_git_dir, is_poll_directory_mtime_noise,
     path_is_gitignored,
@@ -12,6 +14,7 @@ use notify::event::{EventKind, RemoveKind};
 use notify::{Event, PollWatcher, RecommendedWatcher, Watcher};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -69,6 +72,9 @@ pub(super) struct WatcherBackend {
     /// Ref-counted OS watches shared across overlapping registrations.
     pub(super) os: WatchSet,
     pub(super) kind: BackendKind,
+    /// Mirrors `kind == Poll` for readers that must not take this mutex (the
+    /// event thread's poll-expansion bookkeeping); set by [`Self::set_kind`].
+    pub(super) poll_active: Arc<AtomicBool>,
 }
 
 impl WatcherBackend {
@@ -79,7 +85,15 @@ impl WatcherBackend {
             registrations: BTreeMap::new(),
             os: WatchSet::new(kind.removal_cascades()),
             kind,
+            poll_active: Arc::new(AtomicBool::new(kind == BackendKind::Poll)),
         }
+    }
+
+    /// Switch the backend kind, keeping [`Self::poll_active`] in step.
+    pub(super) fn set_kind(&mut self, kind: BackendKind) {
+        self.kind = kind;
+        self.poll_active
+            .store(kind == BackendKind::Poll, Ordering::Release);
     }
 
     /// OS-level targets a `(path, mode)` registration arms on a `kind` backend.
@@ -322,32 +336,38 @@ impl WatcherBackend {
 
 /// Build the OS-native backend (`notify::RecommendedWatcher`).
 ///
+/// Directory symlinks are not followed: inotify would otherwise walk the same
+/// inode under two paths and report a real file under the symlink's spelling
+/// (`node_modules/@scope/pkg/...`), where the ignore filter drops it. The poll
+/// backend never follows them either.
+///
 /// # Errors
 /// Returns an error if the platform backend cannot be initialized.
 pub(super) fn build_native_watcher(event_tx: &Sender<Event>) -> Result<Box<dyn Watcher + Send>> {
     let tx_clone = event_tx.clone();
     let watcher = RecommendedWatcher::new(
         move |res: notify::Result<Event>| FileSystemWatcher::forward_event(&tx_clone, res),
-        notify::Config::default(),
+        notify::Config::default().with_follow_symlinks(false),
     )
     .map_err(|e| Error::watcher(format!("Failed to create file watcher: {e}")))?;
     Ok(Box::new(watcher))
 }
 
-/// Poll backend that compares file contents only where it matters.
+/// Poll backend that compares git metadata more closely than the worktree.
 ///
-/// Two `PollWatcher`s share one event channel: `gitdir` compares contents and
-/// `worktree` does not. notify compares only whole-second mtimes, so a same-second
-/// same-size rewrite of a ref, `HEAD`, `index` or `packed-refs` would be missed
-/// without hashing. Hashing every worktree file or git object pack each tick would
-/// re-read the whole repository, so those paths are compared by mtime and size.
+/// Two pollers share one event channel. notify's `PollWatcher` compares only
+/// whole-second mtimes, so a same-second same-size rewrite of a ref, `HEAD`,
+/// `index` or `packed-refs` would be missed; `gitdir` is therefore a
+/// [`MetadataPoller`] comparing size, mtime, inode and ctime, which sees those
+/// rewrites without reading file contents. `worktree` is a `PollWatcher` on
+/// mtime alone.
 pub(super) struct SplitPollWatcher {
-    gitdir: PollWatcher,
+    gitdir: MetadataPoller,
     worktree: PollWatcher,
     registry: Arc<WatchRegistry>,
 }
 
-/// Whether the poll backend watches `path` with content comparison: git
+/// Whether the poll backend watches `path` with the [`MetadataPoller`]: git
 /// metadata outside the `objects` store. Object files are written once under
 /// content-addressed names, so name and mtime already show a change.
 pub(super) fn routes_to_gitdir(path: &Path, registry: &WatchRegistry) -> bool {
@@ -367,25 +387,23 @@ impl SplitPollWatcher {
     /// Both inner pollers, forwarding to clones of `event_tx`.
     ///
     /// # Errors
-    /// Returns an error if either poll watcher cannot be initialized.
+    /// Returns an error if either poller cannot be initialized.
     pub(super) fn new_split(
         event_tx: &Sender<Event>,
         poll_interval: Duration,
         registry: Arc<WatchRegistry>,
     ) -> Result<Self> {
+        let gitdir = MetadataPoller::new(event_tx, poll_interval)
+            .map_err(|e| Error::watcher(format!("Failed to create poll-fallback watcher: {e}")))?;
         Ok(Self {
-            gitdir: Self::poll_half(event_tx, poll_interval, true)?,
-            worktree: Self::poll_half(event_tx, poll_interval, false)?,
+            gitdir,
+            worktree: Self::worktree_half(event_tx, poll_interval)?,
             registry,
         })
     }
 
-    /// One inner poller; directory-mtime echoes of child changes are dropped.
-    fn poll_half(
-        event_tx: &Sender<Event>,
-        poll_interval: Duration,
-        compare_contents: bool,
-    ) -> Result<PollWatcher> {
+    /// The worktree poller; directory-mtime echoes of child changes are dropped.
+    fn worktree_half(event_tx: &Sender<Event>, poll_interval: Duration) -> Result<PollWatcher> {
         let tx_clone = event_tx.clone();
         PollWatcher::new(
             move |res: notify::Result<Event>| match res {
@@ -394,7 +412,7 @@ impl SplitPollWatcher {
             },
             notify::Config::default()
                 .with_poll_interval(poll_interval)
-                .with_compare_contents(compare_contents),
+                .with_follow_symlinks(false),
         )
         .map_err(|e| Error::watcher(format!("Failed to create poll-fallback watcher: {e}")))
     }
@@ -410,9 +428,12 @@ impl Watcher for SplitPollWatcher {
         ))
     }
 
+    /// Git metadata goes to the [`MetadataPoller`], which arms every target
+    /// shallow (the poll expansion already lists each directory).
     fn watch(&mut self, path: &Path, recursive_mode: notify::RecursiveMode) -> notify::Result<()> {
         if routes_to_gitdir(path, &self.registry) {
-            self.gitdir.watch(path, recursive_mode)
+            self.gitdir.watch(path);
+            Ok(())
         } else {
             self.worktree.watch(path, recursive_mode)
         }
@@ -447,9 +468,16 @@ pub(super) fn build_poll_watcher(
 /// Directories under `root` the poll backend arms individually, shallow.
 ///
 /// `PollWatcher` has no `.gitignore` awareness and would re-walk ignored
-/// subtrees every tick, pinning a core; this prunes them (never inside `.git`).
-/// `root` is always first.
+/// subtrees every tick, pinning a core; this prunes them, and the git
+/// directory's `objects`, `logs`, `hooks` and `refs/tags`, whose events are
+/// discarded anyway. `root` is always first.
+///
+/// Arming runs off the event thread, so a worktree `root` also gets its
+/// force-added set primed here (it may run `git ls-files`).
 pub(super) fn poll_watch_targets(root: &Path, registry: &Arc<WatchRegistry>) -> Vec<PathBuf> {
+    if !is_in_git_dir(root) && !routes_to_gitdir(root, registry) {
+        prime_force_added(root, registry);
+    }
     poll_targets_from(root, root, registry)
 }
 
@@ -499,8 +527,17 @@ pub(super) fn poll_targets_from(
     targets
 }
 
-/// Whether `root`'s poll expansion skips `path`: gitignored and not in `.git`.
+/// Whether `root`'s poll expansion skips `path`: git noise ([`is_git_noise_path`],
+/// or the same subtrees below a `root` that is itself a git directory), or a
+/// gitignored path outside `.git` (ignore rules never apply inside it).
 pub(super) fn poll_prunes(root: &Path, path: &Path, registry: &Arc<WatchRegistry>) -> bool {
+    if is_git_noise_path(path) {
+        return true;
+    }
+    if routes_to_gitdir(root, registry) && path.strip_prefix(root).is_ok_and(is_git_noise_relative)
+    {
+        return true;
+    }
     !is_in_git_dir(path) && path_is_gitignored(root, path, registry)
 }
 

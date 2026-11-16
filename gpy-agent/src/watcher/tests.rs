@@ -343,6 +343,7 @@ fn common_gitdir_significance_covers_shared_state_only() {
         "refs/heads/main",
         "refs/heads/feature/nested",
         "refs/remotes/origin/main",
+        "refs/stash",
         "packed-refs",
         "config",
     ];
@@ -360,7 +361,6 @@ fn common_gitdir_significance_covers_shared_state_only() {
         "MERGE_HEAD",
         "FETCH_HEAD",
         "info/exclude",
-        "refs/stash",
         // Another worktree's admin dir must never fan out to siblings.
         "worktrees/other/HEAD",
         "worktrees/other/index",
@@ -579,9 +579,10 @@ fn real_sock_file_is_still_filtered() {
     );
 }
 
+/// The agent's own warning log (`debug.rs`) must not feed back as a change.
 #[test]
-fn gpy_agent_log_filename_is_still_filtered() {
-    assert!(filter_ignored(Path::new("/var/log/gpy-agent.log")).is_none());
+fn agent_log_filename_is_filtered() {
+    assert!(filter_ignored(Path::new("/home/user/.cache/gpy/agent.log")).is_none());
 }
 
 /// Built with the platform separator; a literal `C:\...` is one component on Unix.

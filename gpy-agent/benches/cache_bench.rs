@@ -57,7 +57,7 @@ fn bench_cache_write(c: &mut Criterion) {
 
     c.bench_function("cache_write_new_entry", |b| {
         b.iter(|| {
-            cache.set(
+            cache.set_canonical(
                 black_box(&repo_path),
                 black_box(repo_status.clone()),
                 HashMap::new(),
@@ -86,7 +86,7 @@ fn bench_cache_read(c: &mut Criterion) {
         rebase_progress: None,
     };
 
-    cache.set(&repo_path, repo_status, HashMap::new());
+    cache.set_canonical(&repo_path, repo_status, HashMap::new());
 
     c.bench_function("cache_read_hit", |b| {
         b.iter(|| {
@@ -126,8 +126,8 @@ fn bench_cache_invalidate(c: &mut Criterion) {
 
     c.bench_function("cache_invalidate_single", |b| {
         b.iter(|| {
-            cache.set(&repo_path, repo_status.clone(), HashMap::new());
-            cache.invalidate(black_box(&repo_path));
+            cache.set_canonical(&repo_path, repo_status.clone(), HashMap::new());
+            cache.invalidate_canonical(black_box(&repo_path));
         });
     });
 }

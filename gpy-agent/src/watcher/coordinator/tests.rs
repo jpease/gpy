@@ -3,7 +3,8 @@
     reason = "test helpers panic on broken fixtures"
 )]
 
-use super::{PendingEvent, WatchCoordinator, filesystem, ingest};
+use super::{PendingEvent, WatchCoordinator, deadline_moved_earlier, filesystem, ingest};
+use crate::watcher::debouncer::DebounceEngine;
 use crate::watcher::watch_set::WatchMode;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -255,32 +256,34 @@ fn events_drained_after_stop_are_not_delivered() {
     );
 }
 
-/// Panicking callbacks must not shrink the pool.
+/// Only a first or earlier deadline wakes the flush thread.
 #[test]
-fn panicking_callback_does_not_stop_dispatch() {
-    let (event_tx, rx) = mpsc::channel();
-    let tx = Mutex::new(event_tx);
-    let mut coordinator = WatchCoordinator::new(
-        Duration::from_millis(20),
-        Box::new(move |event| {
-            assert!(
-                !event.repo.starts_with("/panic"),
-                "callback panics on purpose"
-            );
-            let _ = tx.lock().expect("sender lock").send(event.repo);
-        }),
-        None,
-    )
-    .expect("coordinator");
+fn kick_is_sent_only_when_the_earliest_deadline_moves_earlier() {
+    let t0 = Instant::now();
+    let later = t0 + Duration::from_millis(50);
+    assert!(deadline_moved_earlier(None, Some(t0)));
+    assert!(deadline_moved_earlier(Some(later), Some(t0)));
+    assert!(!deadline_moved_earlier(Some(t0), Some(t0)));
+    assert!(!deadline_moved_earlier(Some(t0), Some(later)));
+    assert!(!deadline_moved_earlier(None, None));
+}
 
-    // One panic per worker: a pool that loses a thread per panic would be empty.
-    for index in 0_i32..4_i32 {
-        coordinator.ingest(event_for(&format!("/panic/{index}")));
+/// A burst for one pending key kicks the flush thread once, not per event.
+#[test]
+fn burst_into_one_pending_key_sends_one_kick() {
+    let debouncer = Mutex::new(DebounceEngine::new(Duration::from_secs(30)));
+    let (kick, kicks) = mpsc::channel();
+
+    for index in 0_i32..10_i32 {
+        ingest(
+            &debouncer,
+            &kick,
+            PendingEvent::git(
+                PathBuf::from("/repo"),
+                PathBuf::from(format!("/repo/file{index}")),
+            ),
+        );
     }
-    std::thread::sleep(Duration::from_millis(300));
-    coordinator.ingest(event_for("/after"));
-    let delivered = rx.recv_timeout(Duration::from_secs(5));
-    coordinator.stop();
 
-    assert_eq!(delivered.ok(), Some(PathBuf::from("/after")));
+    assert_eq!(kicks.try_iter().count(), 1);
 }

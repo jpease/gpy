@@ -78,7 +78,11 @@ fn force_added_refresh_never_holds_the_cache_mutex() {
     let repo_for_worker = repo.clone();
     let registry_for_worker = Arc::clone(&registry);
     let worker = std::thread::spawn(move || {
-        drop(force_added_set(&repo_for_worker, &registry_for_worker));
+        drop(force_added_set(
+            &repo_for_worker,
+            &registry_for_worker,
+            Lookup::Wait,
+        ));
     });
 
     assert!(
@@ -118,7 +122,11 @@ fn a_slow_repo_does_not_delay_another_repos_lookup() {
     let slow_for_worker = slow_repo.clone();
     let registry_for_worker = Arc::clone(&registry);
     let worker = std::thread::spawn(move || {
-        drop(force_added_set(&slow_for_worker, &registry_for_worker));
+        drop(force_added_set(
+            &slow_for_worker,
+            &registry_for_worker,
+            Lookup::Wait,
+        ));
     });
 
     assert!(
@@ -126,7 +134,7 @@ fn a_slow_repo_does_not_delay_another_repos_lookup() {
         "the slow stand-in backend should have been entered"
     );
     let started = Instant::now();
-    drop(force_added_set(&fast_repo, &registry));
+    drop(force_added_set(&fast_repo, &registry, Lookup::Wait));
     let elapsed = started.elapsed();
 
     worker.join().expect("worker thread");
@@ -135,6 +143,42 @@ fn a_slow_repo_does_not_delay_another_repos_lookup() {
         elapsed < FAST_LOOKUP_BUDGET,
         "a lookup for an unrelated repo took {elapsed:?}, so it queued behind \
          the slow repo's `git ls-files`"
+    );
+}
+
+/// The event thread never runs `git ls-files`: its first lookup starts one in
+/// the background and is served the empty set at once.
+#[test]
+fn event_thread_lookup_never_runs_ls_files_inline() {
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let repo = fake_repo_with_index(&tmp);
+
+    let entered = new_gate();
+    let release = new_gate();
+    let entered_for_ls_files = Arc::clone(&entered);
+    let release_for_ls_files = Arc::clone(&release);
+    let registry = test_registry_with_ls_files(true, HashSet::new(), move |_| {
+        open_gate(&entered_for_ls_files);
+        wait_for_gate(&release_for_ls_files, GATE_BUDGET);
+        Vec::new()
+    });
+
+    let started = Instant::now();
+    let served = force_added_set(&repo, &registry, Lookup::NoWait);
+    let elapsed = started.elapsed();
+
+    assert!(
+        wait_for_gate(&entered, GATE_BUDGET),
+        "the lookup should run on a background thread"
+    );
+    open_gate(&release);
+    assert!(
+        served.is_empty(),
+        "nothing is listed until the lookup lands"
+    );
+    assert!(
+        elapsed < FAST_LOOKUP_BUDGET,
+        "the event-thread lookup took {elapsed:?}, so it waited on `git ls-files`"
     );
 }
 
@@ -329,7 +373,7 @@ fn force_added_set_picks_up_an_index_change_after_the_refresh() {
         .unwrap_or_else(Instant::now);
     let mut picked_up = false;
     while Instant::now() < deadline {
-        if is_force_added(&repo, &second, &registry) {
+        if is_force_added(&repo, &second, &registry, Lookup::Wait) {
             picked_up = true;
             break;
         }

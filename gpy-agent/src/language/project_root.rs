@@ -55,9 +55,7 @@ pub fn project_root(path: &Path) -> ProjectRoot {
 
 /// Memoized non-git half of [`project_root`].
 fn non_git_root(path: &Path) -> PathBuf {
-    memoized_non_git_root(path, || {
-        home_dir().map(|home| home.canonicalize().unwrap_or(home))
-    })
+    memoized_non_git_root(path, home_dir)
 }
 
 /// [`resolve_non_git_root`] for canonical `path` through [`NON_GIT_ROOT_CACHE`];
@@ -92,7 +90,7 @@ fn nearest_marker_ancestor(path: &Path, home: Option<&Path>) -> Option<PathBuf> 
 /// match. A temp or downloads directory can hold a million entries, and an
 /// ancestor walk on the request path must not list them all; such a
 /// directory is not a project root anyway.
-const MARKER_SCAN_LIMIT: usize = 1024;
+pub(crate) const MARKER_SCAN_LIMIT: usize = 1024;
 
 /// Whether `dir` directly contains a marker file (case-insensitive). The
 /// exact names are checked first (each one lookup, and every spelling on a

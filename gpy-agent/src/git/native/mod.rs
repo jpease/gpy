@@ -1,6 +1,8 @@
 //! Native git subprocess backend built on `git status --porcelain=v2 --branch -z`.
 //!
-//! Shelling out lets git use its own optimizations (fsmonitor, untracked cache).
+//! Shelling out lets git use its own optimizations (untracked cache). Every
+//! command runs with `core.fsmonitor` off, so a repository's own config cannot
+//! make a prompt run a hook command.
 
 use super::{
     CompleteStatus, PathspecScan, RebaseProgress, RepositoryState, RepositoryStatus,
@@ -23,6 +25,9 @@ use std::time::{Duration, Instant};
 pub mod parser;
 
 use parser::{BranchHead, V2ParseState};
+
+mod sequencer;
+use sequencer::{count_todo_steps, parse_msgnum, parse_sequencer_command};
 
 /// One `git status` capture: the resolved head plus the parsed counts and files.
 /// `parsed.branch` is consumed by head resolution and is `None`.
@@ -54,67 +59,22 @@ const IGNORE_CASE_TTL: Duration = Duration::from_mins(1);
 static IGNORE_CASE: TtlMap<PathBuf, bool> =
     TtlMap::with_ttl(NATIVE_GIT_CONFIG_CACHE_CAPACITY, IGNORE_CASE_TTL);
 
+/// How long a detached HEAD's short hash is reused for the same commit.
+const SHORT_HEAD_TTL: Duration = Duration::from_hours(1);
+
+/// `git rev-parse --short` answers per `(repository, full commit id)`, so a
+/// detached HEAD costs one extra spawn per commit, not one per scan.
+static SHORT_HEADS: TtlMap<(PathBuf, String), String> =
+    TtlMap::with_ttl(NATIVE_GIT_CONFIG_CACHE_CAPACITY, SHORT_HEAD_TTL);
+
 const MSGNUM_READ_CAP: usize = 4_096;
 
 /// Bytes of `rebase-merge/git-rebase-todo` read before the count is given up as
 /// unknown; a 1 `MiB` plan is not a rebase.
 const REBASE_TODO_READ_CAP: usize = 1 << 20;
 
-/// Parse a `msgnum` file (current step of an interactive rebase).
-#[must_use]
-fn parse_msgnum(contents: &str) -> Option<u32> {
-    contents.trim().parse().ok()
-}
-
-/// Count non-blank, non-comment lines (remaining steps) in `git-rebase-todo`,
-/// reading at most `REBASE_TODO_READ_CAP` bytes; `None` past the cap or on I/O error.
-///
-/// Lines are counted as bytes so a non-UTF-8 commit subject still counts, and the
-/// reader is bounded so one newline-free line cannot grow the buffer past the cap.
-#[must_use]
-fn count_todo_steps<R: std::io::BufRead>(source: R) -> Option<u32> {
-    use std::io::BufRead as _;
-
-    let limit = u64::try_from(REBASE_TODO_READ_CAP).ok()?.saturating_add(1);
-    let mut reader = source.take(limit);
-    let mut line = Vec::new();
-    let mut consumed = 0_usize;
-    let mut count = 0_usize;
-    loop {
-        line.clear();
-        let read = reader.read_until(b'\n', &mut line).ok()?;
-        if read == 0 {
-            break;
-        }
-        consumed = consumed.saturating_add(read);
-        if consumed > REBASE_TODO_READ_CAP {
-            return None;
-        }
-        let trimmed = line.trim_ascii();
-        if !trimmed.is_empty() && !trimmed.starts_with(b"#") {
-            count = count.saturating_add(1);
-        }
-    }
-    u32::try_from(count).ok()
-}
-
 /// Cap on `sequencer/todo` reads.
 const SEQUENCER_TODO_READ_CAP: usize = 65_536;
-
-/// Classify a `sequencer/todo` file by its first non-blank, non-comment
-/// line, mirroring git's `sequencer_get_last_command`.
-#[must_use]
-fn parse_sequencer_command(contents: &str) -> Option<RepositoryState> {
-    let line = contents
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
-    match line.split_whitespace().next()? {
-        "pick" | "p" => Some(RepositoryState::CherryPicking),
-        "revert" => Some(RepositoryState::Reverting),
-        _ => None,
-    }
-}
 
 /// Native git backend using subprocess calls
 pub struct NativeGitBackend;
@@ -203,14 +163,20 @@ impl NativeGitBackend {
     /// Does nothing in a process that called
     /// [`Self::disable_untracked_cache_setup`]. Otherwise runs at most once per
     /// repository per cache window, and exactly once across concurrent callers.
+    /// Deferred to a later scan while a git operation is in progress, since
+    /// the index write would race it for `index.lock`.
     fn ensure_untracked_cache(repo_path: &Path, deadline: Instant) {
-        if !UNTRACKED_CACHE_SETUP.load(Ordering::Relaxed) {
+        if !UNTRACKED_CACHE_SETUP.load(Ordering::Relaxed)
+            || UNTRACKED_CACHE_CHECKED.get(repo_path).is_some()
+        {
             return;
         }
 
         let _t = Timer::new("native_ensure_untracked_cache");
 
-        if !UNTRACKED_CACHE_CHECKED.insert_if_absent(repo_path.to_path_buf(), ()) {
+        if untracked_guard::operation_in_progress(&Self::resolve_git_dir(repo_path))
+            || !UNTRACKED_CACHE_CHECKED.insert_if_absent(repo_path.to_path_buf(), ())
+        {
             return;
         }
 
@@ -221,25 +187,48 @@ impl NativeGitBackend {
     }
 
     /// Tracked files that match ignore rules (force-added with `git add -f`),
-    /// as absolute best-effort-canonical paths. Git failure yields an empty vec.
+    /// as absolute best-effort-canonical paths; `Some(empty)` when there are
+    /// none. `None` when git fails or times out, so callers do not mistake an
+    /// unknown answer for "none".
     #[must_use]
-    pub fn tracked_ignored_files(repo_root: &Path) -> Vec<PathBuf> {
-        let Some(output) = Self::run_git_optional(
+    pub fn tracked_ignored_files(repo_root: &Path) -> Option<Vec<PathBuf>> {
+        let output = Self::run_git_optional(
             repo_root,
             &["ls-files", "--cached", "-i", "--exclude-standard", "-z"],
             Self::default_deadline(),
-        ) else {
-            return Vec::new();
-        };
+        )?;
 
-        output
-            .split('\0')
-            .filter(|entry| !entry.is_empty())
-            .map(|rel| {
-                let joined = repo_root.join(rel);
-                fs::canonicalize(&joined).unwrap_or(joined)
-            })
-            .collect()
+        Some(
+            output
+                .split('\0')
+                .filter(|entry| !entry.is_empty())
+                .map(|rel| {
+                    let joined = repo_root.join(rel);
+                    fs::canonicalize(&joined).unwrap_or(joined)
+                })
+                .collect(),
+        )
+    }
+
+    /// Git's global ignore file for `repo_root`: `core.excludesFile` (a
+    /// relative value is taken against `repo_root`), else git's default
+    /// `$XDG_CONFIG_HOME/git/ignore` or `$HOME/.config/git/ignore`. Not
+    /// checked for existence; `None` when no candidate can be named.
+    #[must_use]
+    pub fn global_excludes_file(repo_root: &Path) -> Option<PathBuf> {
+        if let Some(value) = Self::run_git_optional(
+            repo_root,
+            &["config", "--path", "--get", "core.excludesFile"],
+            Self::default_deadline(),
+        ) && !value.trim().is_empty()
+        {
+            return Some(repo_root.join(value.trim()));
+        }
+        let non_empty_var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
+        non_empty_var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| non_empty_var("HOME").map(|home| Path::new(&home).join(".config")))
+            .map(|config_home| config_home.join("git").join("ignore"))
     }
 
     /// The git directory of `repo_root`, falling back to `<repo>/.git`.
@@ -248,8 +237,9 @@ impl NativeGitBackend {
     }
 
     /// Resolve a [`BranchHead`] to `(branch, detached)`; detached yields the
-    /// short hash git itself prints, or the first 7 characters of the status
-    /// output's commit id when that command cannot run.
+    /// short hash git itself prints for the status output's commit id (reused
+    /// per commit, see [`SHORT_HEADS`]), or its first 7 characters when that
+    /// command cannot run.
     ///
     /// # Errors
     ///
@@ -263,12 +253,21 @@ impl NativeGitBackend {
         match branch_head {
             BranchHead::Named(name) => Ok((name, false)),
             BranchHead::Detached => {
+                let memo_key = oid.map(|full| (repo_path.to_path_buf(), full.to_owned()));
+                if let Some(hash) = memo_key.as_ref().and_then(|key| SHORT_HEADS.get(key)) {
+                    return Ok((hash, true));
+                }
+                // The status's own commit id, not `HEAD`, so a HEAD moved since
+                // the status cannot pair one commit with another's hash.
                 if let Ok(hash) = run_git_quiet_env_until(
                     repo_path,
-                    &["rev-parse", "--short", "HEAD"],
+                    &["rev-parse", "--short", oid.unwrap_or("HEAD")],
                     &[],
                     deadline,
                 ) {
+                    if let Some(key) = memo_key {
+                        SHORT_HEADS.insert(key, hash.clone());
+                    }
                     return Ok((hash, true));
                 }
                 oid.and_then(|full| full.get(..7))
@@ -450,6 +449,10 @@ impl NativeGitBackend {
 
     /// Get complete git status: branch, ahead/behind, files, state, stash, rebase progress.
     ///
+    /// `path` is canonicalized (best effort) before the repository is looked
+    /// up, so a logical path through a symlink resolves the repository git
+    /// and the agent's canonical request path resolve, not a lexical ancestor.
+    ///
     /// `timeout` bounds the whole operation: every git subprocess it runs
     /// shares one deadline, so a repository file that blocks git (a FIFO
     /// `.git/HEAD`) costs one timeout, not one per command.
@@ -464,7 +467,8 @@ impl NativeGitBackend {
         timeout: Duration,
     ) -> Result<Option<CompleteStatus>> {
         let _t = Timer::new("native_get_complete_status");
-        let Some(repo_root) = crate::git::find_repo_root(path) else {
+        let canonical_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let Some(repo_root) = crate::git::find_repo_root(&canonical_path) else {
             return Ok(None);
         };
 
@@ -649,9 +653,12 @@ fn run_git_quiet_env_until<S: AsRef<OsStr>>(
     for var in REPO_LOCAL_GIT_ENV {
         command.env_remove(var);
     }
+    // A repository-local `core.fsmonitor` names a command that `status`,
+    // `ls-files` and `update-index` would run; `-c` outranks every config scope.
     command
         .env("GIT_OPTIONAL_LOCKS", "0")
         .envs(envs.iter().copied())
+        .args(["-c", "core.fsmonitor=false"])
         .arg("-C")
         .arg(repo_path)
         .args(args)
@@ -731,6 +738,9 @@ mod tests;
 mod branch_head_tests;
 #[cfg(test)]
 mod pathspec_tests;
+#[cfg(test)]
+#[cfg(unix)]
+mod repo_config_tests;
 #[cfg(test)]
 mod repo_state_tests;
 #[cfg(test)]
