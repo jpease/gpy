@@ -226,25 +226,32 @@ impl Os {
     }
 }
 
-/// The runtime root: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`, then
-/// `$HOME/.cache/gpy`; `None` when none is usable (no `/tmp` fallback: a
-/// shared directory would let another user squat the socket). The shells'
-/// `__gpy_runtime_root` copies are pinned by `xdg_absoluteness_shared_vectors`
-/// and `path_parity`, and disable GPY for the session on `None`.
+/// The runtime root: `$XDG_RUNTIME_DIR/gpy`, then the cache root
+/// ([`cache_root_for`]: `$XDG_CACHE_HOME/gpy`, then `$HOME/.cache/gpy` on Unix
+/// or `%LOCALAPPDATA%\gpy` on Windows), each `XDG_*` value absolute per `os`.
+/// `None` when none is usable (no `/tmp` fallback: a shared directory would
+/// let another user squat the socket). The shells' `__gpy_runtime_root`
+/// copies (Unix rules) are pinned by `xdg_absoluteness_shared_vectors` and
+/// `path_parity`, and disable GPY for the session on `None`.
 #[must_use]
 pub fn runtime_root_for(
     xdg_runtime_dir: Option<&Path>,
     xdg_cache_home: Option<&Path>,
     home: Option<&Path>,
+    local_app_data: Option<&Path>,
+    os: Os,
 ) -> Option<PathBuf> {
-    xdg_path(xdg_runtime_dir, Os::Unix)
-        .or_else(|| xdg_path(xdg_cache_home, Os::Unix))
+    xdg_path(xdg_runtime_dir, os)
         .map(|root| root.join("gpy"))
-        .or_else(|| xdg_path(home, Os::Unix).map(|home_dir| home_dir.join(".cache").join("gpy")))
+        .or_else(|| cache_root_for(xdg_cache_home, home, local_app_data, os))
 }
 
 /// The one-line reason [`runtime_dir`] fails, naming the variables to set.
-pub const NO_RUNTIME_DIR: &str = "cannot locate a runtime directory: set XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME to an absolute path";
+pub const NO_RUNTIME_DIR: &str = if cfg!(windows) {
+    "cannot locate a runtime directory: set XDG_RUNTIME_DIR, XDG_CACHE_HOME or LOCALAPPDATA to an absolute path"
+} else {
+    "cannot locate a runtime directory: set XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME to an absolute path"
+};
 
 /// The one-line reason [`config_root`] fails, naming the variables to set.
 pub const NO_CONFIG_DIR: &str =
@@ -261,12 +268,15 @@ pub const NO_DATA_DIR: &str =
 ///
 /// # Errors
 /// Returns [`NO_RUNTIME_DIR`] when no absolute `XDG_RUNTIME_DIR`,
-/// `XDG_CACHE_HOME` or home directory is available.
+/// `XDG_CACHE_HOME` or home directory (`%LOCALAPPDATA%` on Windows) is
+/// available.
 pub fn runtime_dir() -> crate::Result<PathBuf> {
     runtime_root_for(
         xdg_root("XDG_RUNTIME_DIR").as_deref(),
         xdg_root("XDG_CACHE_HOME").as_deref(),
         home_path().as_deref(),
+        local_app_data().as_deref(),
+        Os::host(),
     )
     .ok_or_else(|| crate::Error::config(NO_RUNTIME_DIR))
 }
@@ -565,15 +575,75 @@ mod tests {
             (Some("run"), Some("cache"), Some(""), None),
         ];
 
+        // A `%LOCALAPPDATA%` inherited through WSL never counts under Unix rules.
+        let local_app_data = Some(Path::new(r"C:\Users\u\AppData\Local"));
         for (xdg_runtime, xdg_cache, home, expected) in cases {
             assert_eq!(
                 runtime_root_for(
                     xdg_runtime.map(Path::new),
                     xdg_cache.map(Path::new),
                     home.map(Path::new),
+                    local_app_data,
+                    Os::Unix,
                 ),
                 expected.map(PathBuf::from),
                 "runtime root for (XDG_RUNTIME_DIR={xdg_runtime:?}, XDG_CACHE_HOME={xdg_cache:?}, HOME={home:?})"
+            );
+        }
+    }
+
+    /// Native Windows (CLI only): Windows-absolute `XDG_*` values count, then
+    /// `%LOCALAPPDATA%\gpy` as for the cache root; HOME is never consulted.
+    #[test]
+    fn runtime_root_precedence_windows() {
+        type WindowsRuntimeCase = (
+            Option<&'static str>,
+            Option<&'static str>,
+            Option<&'static str>,
+            Option<&'static str>,
+        );
+        let local = r"C:\Users\u\AppData\Local";
+        // `join` uses the host separator, hence `/gpy` on a Unix runner.
+        let cases: [WindowsRuntimeCase; 7] = [
+            (
+                Some(r"C:\run"),
+                Some(r"C:\cache"),
+                Some(local),
+                Some(r"C:\run/gpy"),
+            ),
+            (None, Some(r"C:\cache"), Some(local), Some(r"C:\cache/gpy")),
+            (
+                None,
+                None,
+                Some(local),
+                Some(r"C:\Users\u\AppData\Local/gpy"),
+            ),
+            (
+                Some("run"),
+                Some("cache"),
+                Some(local),
+                Some(r"C:\Users\u\AppData\Local/gpy"),
+            ),
+            (
+                Some(""),
+                Some(""),
+                Some(local),
+                Some(r"C:\Users\u\AppData\Local/gpy"),
+            ),
+            (None, Some("/cache"), None, Some("/cache/gpy")),
+            (Some("run"), Some("cache"), None, None),
+        ];
+        for (xdg_runtime, xdg_cache, lad, expected) in cases {
+            assert_eq!(
+                runtime_root_for(
+                    xdg_runtime.map(Path::new),
+                    xdg_cache.map(Path::new),
+                    Some(Path::new(r"C:\Users\u")),
+                    lad.map(Path::new),
+                    Os::Windows,
+                ),
+                expected.map(PathBuf::from),
+                "runtime root for (XDG_RUNTIME_DIR={xdg_runtime:?}, XDG_CACHE_HOME={xdg_cache:?}, LOCALAPPDATA={lad:?}, Os::Windows)"
             );
         }
     }
@@ -776,7 +846,7 @@ mod tests {
 
         let odd = Path::new(OsStr::from_bytes(b"/root-\xff"));
         assert_eq!(
-            runtime_root_for(Some(odd), None, None),
+            runtime_root_for(Some(odd), None, None, None, Os::Unix),
             Some(odd.join("gpy"))
         );
         assert_eq!(
@@ -1033,7 +1103,7 @@ mod tests {
             let rooted = honoured.then(|| Path::new(&value).join("gpy"));
             let home_or = |fallback: PathBuf| rooted.clone().or(Some(fallback));
             assert_eq!(
-                runtime_root_for(given, None, Some(home)),
+                runtime_root_for(given, None, Some(home), None, Os::Unix),
                 home_or(home.join(".cache").join("gpy")),
                 "runtime root for {row:?}"
             );
@@ -1048,7 +1118,11 @@ mod tests {
                 "config root for {row:?}"
             );
             // Nothing usable: an unhonoured value leaves no root to fall back on.
-            assert_eq!(runtime_root_for(given, None, None), rooted, "{row:?}");
+            assert_eq!(
+                runtime_root_for(given, None, None, None, Os::Unix),
+                rooted,
+                "{row:?}"
+            );
             assert_eq!(
                 cache_root_for(given, None, None, Os::Unix),
                 rooted,

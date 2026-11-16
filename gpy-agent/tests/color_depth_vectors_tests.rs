@@ -51,7 +51,12 @@ fn rgb_downgrade_matches_shared_vectors() {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let cols: Vec<&str> = line.split('\t').collect();
+        let mut cols: Vec<&str> = line.split('\t').collect();
+        // Whitespace hooks trim the empty trailing columns of `none` rows.
+        assert!((4..=6).contains(&cols.len()), "bad row: {line}");
+        while cols.len() < 6 {
+            cols.push("");
+        }
         let [red, green, blue, depth_name, fg_param, bg_param] = cols.as_slice() else {
             panic!("bad row: {line}");
         };

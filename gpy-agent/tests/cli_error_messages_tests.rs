@@ -350,7 +350,9 @@ fn agent_theme_export_with_missing_configured_theme_falls_back_to_default() {
 
 /// Without a usable `HOME` or `XDG_*` root both binaries fail closed: a
 /// non-zero exit and one `Error:` line naming the variables to set, never a
-/// `/tmp/gpy` runtime root or a `./.config/gpy` config root.
+/// `/tmp/gpy` runtime root or a `./.config/gpy` config root. Unix only: native
+/// Windows derives its home from the user profile, not `HOME`, and has no agent.
+#[cfg(unix)]
 #[test]
 fn no_usable_home_or_xdg_root_fails_closed() {
     let cwd = tempfile::tempdir().expect("temp cwd");
@@ -410,11 +412,15 @@ fn no_usable_home_or_xdg_root_fails_closed() {
         )),
         "{stdout}"
     );
+    // Coverage builds write `*.profraw` into the working directory.
+    let created: Vec<_> = std::fs::read_dir(cwd.path())
+        .expect("read cwd")
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.file_name())
+        .filter(|name| !name.to_string_lossy().ends_with(".profraw"))
+        .collect();
     assert!(
-        std::fs::read_dir(cwd.path())
-            .expect("read cwd")
-            .next()
-            .is_none(),
-        "nothing may be created under the working directory"
+        created.is_empty(),
+        "nothing may be created under the working directory: {created:?}"
     );
 }
