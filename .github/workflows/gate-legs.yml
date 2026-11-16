@@ -88,11 +88,32 @@ jobs:
           save-if: "false"
 
       # One shellcheck version on every runner; cargo-audit backs the
-      # dependency-advisory claims test; actionlint (pinned) lints the workflows.
-      - name: Install just, shellcheck, actionlint and cargo-audit
+      # dependency-advisory claims test.
+      - name: Install just, shellcheck and cargo-audit
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
-          tool: just,shellcheck,actionlint@1.7.12,cargo-audit
+          tool: just,shellcheck,cargo-audit
+
+      # install-action ships no actionlint manifest, so fetch the pinned
+      # release and verify its checksum (from actionlint_1.7.12_checksums.txt).
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) target=linux_amd64 sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;;
+            Linux-ARM64) target=linux_arm64 sha=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6 ;;
+            macOS-ARM64) target=darwin_arm64 sha=aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f ;;
+            macOS-X64) target=darwin_amd64 sha=5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644 ;;
+            *) echo "::error::no actionlint build for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          esac
+          archive="actionlint_${ACTIONLINT_VERSION}_${target}.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "$sha  $RUNNER_TEMP/$archive" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/actionlint-bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/actionlint-bin" actionlint
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
 
       - name: Install shells and shell-suite prerequisites
         uses: ./.github/actions/install-shells
