@@ -13,6 +13,14 @@ function __gpy_start_agent() {
     return 0
 }
 
+# Healthy when the agent answers a `ping` within GPY_IPC_TIMEOUT_MS (150 ms
+# by default), in this shell, as in Bash and Fish: no `gpy-agent` fork.
+function __gpy_supervisor_is_running() {
+    local response
+    __gpy_send_json '{"op":"ping"}' "" response 2>/dev/null || return 1
+    [[ "$response" == *'"status":"ok"'* ]]
+}
+
 # Mid-session health check from precmd, rate limited by check interval and
 # capped at max restart attempts. The startup start counts as the first check
 # (zsh/gpy.zsh stamps the time), so the first probe is one interval later.
@@ -30,7 +38,7 @@ function __gpy_supervisor_check() {
     (( now - __gpy_supervisor_last_check_time >= rate_limit )) || return 0
     __gpy_supervisor_last_check_time=$now
 
-    if [[ -S "$(__gpy_ipc_endpoint)" ]] && gpy-agent status &>/dev/null; then
+    if __gpy_supervisor_is_running; then
         __gpy_supervisor_check_attempts=0
         return 0
     fi

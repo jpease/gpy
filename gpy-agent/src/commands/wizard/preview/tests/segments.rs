@@ -32,10 +32,8 @@ fn render_segment_git_uses_state_precedence() {
     status.staged = 1;
     status.untracked = 1;
 
-    let facts = PreviewFacts {
-        repository_status: Some(status.clone()),
-        ..make_facts()
-    };
+    let mut facts = make_facts();
+    facts.repository_status = Some(status.clone());
 
     assert_eq!(GitState::from_status(&status), GitState::Conflicts);
 
@@ -63,10 +61,8 @@ fn render_segment_language_uses_selected_display_symbol() {
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
 
-    let facts = PreviewFacts {
-        languages: vec![make_lang("Rust", Some("1.75.0"), "red")],
-        ..make_facts()
-    };
+    let mut facts = make_facts();
+    facts.languages = vec![make_lang("Rust", Some("1.75.0"), "red")];
 
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx)
@@ -85,13 +81,11 @@ fn render_segment_language_draws_every_selected_language() {
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
 
-    let facts = PreviewFacts {
-        languages: vec![
-            make_lang("Rust", Some("1.75.0"), "red"),
-            make_lang("Node", Some("20.0.0"), "green"),
-        ],
-        ..make_facts()
-    };
+    let mut facts = make_facts();
+    facts.languages = vec![
+        make_lang("Rust", Some("1.75.0"), "red"),
+        make_lang("Node", Some("20.0.0"), "green"),
+    ];
 
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx)
@@ -114,10 +108,8 @@ fn render_segment_language_drops_versionless_language_when_show_versions_on() {
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
 
-    let facts = PreviewFacts {
-        languages: vec![make_lang("Nix", None, "blue")],
-        ..make_facts()
-    };
+    let mut facts = make_facts();
+    facts.languages = vec![make_lang("Nix", None, "blue")];
 
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let result = render_segment("language", &config, &theme, &facts, &ctx);
@@ -135,10 +127,8 @@ fn render_segment_language_keeps_versionless_language_when_show_versions_off() {
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol]($style)".to_owned());
 
-    let facts = PreviewFacts {
-        languages: vec![make_lang("Nix", None, "blue")],
-        ..make_facts()
-    };
+    let mut facts = make_facts();
+    facts.languages = vec![make_lang("Nix", None, "blue")];
 
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx);
@@ -157,10 +147,8 @@ fn render_segment_language_hides_version_text_when_show_versions_off() {
     let mut theme = ThemeConfig::default();
     theme.segments.language.format = Some("[$symbol $version]($style)".to_owned());
 
-    let facts = PreviewFacts {
-        languages: vec![make_lang("Rust", Some("1.75.0"), "red")],
-        ..make_facts()
-    };
+    let mut facts = make_facts();
+    facts.languages = vec![make_lang("Rust", Some("1.75.0"), "red")];
 
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::LAST);
     let spans = render_segment("language", &config, &theme, &facts, &ctx)

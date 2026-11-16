@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A request the agent refuses (a working directory under `/etc`, `/dev`, `/proc`, `/sys`, a raw control byte in the request) now gets a `{"error":...}` line in every format; the shells treat any `{"error"` reply as a permanent refusal, never draw or memoize it, and fall back to `oneshot`. An empty reply still means the agent is alive but late. The shells' JSON escapers now write control bytes as `\u00XX`.
+- Git no longer runs a repository's `core.fsmonitor` command (every agent git call passes `-c core.fsmonitor=false`); version probes no longer let `rustup`, Go or `mise` auto-install a repo-pinned toolchain; the untracked-cache setup skips repositories mid-merge/rebase.
+- Bash TAB completion no longer executes `$(...)` in a theme, palette or plugin name, and only valid file stems are offered.
+- Git: failing repositories are negatively cached for 5 s, registration scans honour `git.timeout_seconds` and share the request single-flight, oneshot and the wizard resolve the repo through the canonical path, and the index is no longer read into memory whole.
+- File watcher: nested `.gitignore`, `info/exclude` and global excludes match as git does, directory symlinks are not followed, `refs/stash` reaches linked worktrees, the event thread never runs `git ls-files`, poll mode no longer hashes `.git/index`, the health probe tests each repository's filesystem, and a path outside the canonical root no longer aborts the agent.
+- Theme: a theme that fails at agent start is retried on every reload, and a reload whose templates fail keeps the current theme. Config hot-reload rejections are logged at warn level.
+- Language detection: a mise timeout falls back to the direct command, `agent.live_updates = false` no longer freezes detection, concurrent probes of one key share a single run, and the markers listing is bounded.
+- Prompt rendering: each language pill chains its own `prev_bg`, repeated warnings are deduplicated and `agent.log` rotates at 256 KiB, `ui.show_icons = false` covers git icons, a palette key named `default` no longer shadows the terminal default, truncation respects grapheme clusters, and template parse errors report the opener's position.
+- `gpy setup` reports and retires the pre-0.9 Fish `conf.d` loader and lists old directories to remove; an incomplete rc block is reported instead of "already configured"; `gpy doctor` checks the path the rc block sources and the first `gpy-agent` in `PATH`; `gpy theme migrate` no longer renames a valid `[segments.hostname] icon`.
+- Wizard: Ctrl-C quits, SIGTERM restores the terminal, save validates before writing and writes only changed settings, and a git failure no longer aborts it.
+- Plugins: `plugin install` needs `--force` to take over another plugin's segment, reloads a running agent, rejects built-in segment names and escape sequences in `version`; script plugin manifests get the same ownership check as scripts; `username` works without `$USER`.
+- Shells: blank Enter no longer re-shows the Fish duration, Fish retries registration every prompt, Zsh and Bash negatively cache a late agent, Zsh repaints a doorbell that arrives during `precmd`, the `nc` fallback half-closes on netcat-openbsd, clock and status renders are memoized, and `bash/gpy.bash` and the runner survive `CDPATH` and `cd` wrappers.
+- Release pipeline: the fallback full gate reuses the PR gate legs (macOS, Windows, fresh install), `just bench-ci` runs on every release, a manual publish tags the built commit, and release runs are serialized per version. `install.sh` handles native Windows (binaries only) and Rosetta; `cleanup-test-agents.sh` only stops this checkout's agents.
+
+### Added
+- `GPY_COLOR_DEPTH` (`truecolor`, `256`, `16`, `none`) and an automatic 256-colour downgrade on `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`.
+
+### Changed
+- `gpy theme import` output is sorted, no longer recommends the `character` segment, and imports `truncate_to_repo`, `show_milliseconds` and `disabled = true`.
+- Pre-commit runs only the fast hooks; clippy runs at pre-push.
+- The perf budget key `config_validation` is now `config_load`.
+
 ## [0.10.5] - 2026-11-10
 
 ### Fixed

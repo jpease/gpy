@@ -474,11 +474,12 @@ echo "PASS: is_first and exit_status request payloads"
 # With a format set but no usable agent reply — agent unreachable (the send
 # fails) or an older agent answering the unknown op with {"error":...} —
 # status draws the local pill (one leading space) rather than vanishing or
-# printing the JSON. Each case stubs __gpy_send_json in the subshell.
+# printing the JSON. Each case stubs __gpy_send_json in the subshell; the
+# requesters take the reply through its third argument (an out-var).
 for gpy_test_reply in unreachable error; do
     output=$(
         if [[ "$gpy_test_reply" == error ]]; then
-            function __gpy_send_json() { print -r -- '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'; }
+            function __gpy_send_json() { printf -v "$3" '%s' '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'; }
         else
             function __gpy_send_json() { return 1; }
         fi

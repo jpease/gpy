@@ -20,6 +20,7 @@ pub mod debug_paths;
 pub mod doctor;
 mod doctor_agent;
 mod doctor_bundled;
+mod doctor_integration;
 mod doctor_ipc;
 mod doctor_themes;
 mod doctor_tuning;
@@ -49,6 +50,8 @@ mod script_run;
 pub mod segments;
 /// `gpy setup` — install and wire the per-shell scripts.
 pub mod setup;
+/// `gpy setup` Fish steps: prompt link, old loader, old directories.
+mod setup_fish;
 /// `gpy setup` step that stages and swaps in the installed shell trees.
 mod setup_install;
 /// `gpy setup` step that retires unedited copies of builtin themes.

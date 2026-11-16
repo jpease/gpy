@@ -35,11 +35,20 @@ typeset -g __gpy_char_cache_key=""
 typeset -g __gpy_char_cache_val=""
 typeset -g __gpy_dir_cache_key=""
 typeset -g __gpy_dir_cache_val=""
+typeset -g __gpy_clock_cache_key=""
+typeset -g __gpy_clock_cache_val=""
+typeset -g __gpy_status_cache_key=""
+typeset -g __gpy_status_cache_val=""
+# Set while __gpy_precmd runs: a doorbell then only marks a repaint pending.
+typeset -g __gpy_in_precmd=""
+typeset -g __gpy_repaint_pending=""
 
 # Prefer the agent's cached theme-export file over forking `theme export`.
 # `fresh` (gpy-prompt-reload) never reads the cache file, which may be stale:
 # it asks the agent, and only a successful export replaces the running state.
 # Its stderr is kept, so an invalid config.toml shows the agent's warning.
+# `__gpy_script_segments` is unset before each export is sourced, as in Bash
+# and Fish: a failed load leaves no script segments rather than the old set.
 function __gpy_load_theme() {
     local cache_path out first=""
     if [[ "${1:-}" == fresh ]]; then
@@ -48,10 +57,12 @@ function __gpy_load_theme() {
         out="$(gpy-agent theme export --shell zsh)" || return 1
         [[ -n "$out" ]] || return 1
         __gpy_g_clear_styles
+        unset __gpy_script_segments
         eval "$out"
         return 0
     fi
     __gpy_g_clear_styles
+    unset __gpy_script_segments
     cache_path=$(__gpy_theme_export_cache_path)
     # Only a file whose first line is the version sentinel is sourced: an older
     # agent's file exports GPY_* values this shell would read as user input.
@@ -70,6 +81,7 @@ function __gpy_load_theme() {
 }
 
 function __gpy_preexec() {
+    emulate -L zsh
     __gpy_cmd_start_time=$((EPOCHREALTIME * 1000))
     # preexec fires for a command, never for an empty Enter or Ctrl-C:
     # script segments are due at the next prompt.
@@ -88,7 +100,7 @@ function __gpy_register_with_agent() {
     local request response
     request=$(__gpy_build_register_payload)
     # An {"error":...} reply must leave us unregistered so the next prompt retries.
-    response=$(__gpy_send_json "$request") || return 1
+    __gpy_send_json "$request" "" response || return 1
     [[ $response == *'"status":"ok"'* ]] || return 1
 
     __gpy_registered=1
@@ -128,9 +140,9 @@ function __gpy_sync_workspace() {
 
     local request
     request=$(__gpy_build_workspace_payload)
-    local response
-    response=$(__gpy_send_json "$request" 2>/dev/null)
-    local send_status=$?
+    local response send_status
+    __gpy_send_json "$request" "" response 2>/dev/null
+    send_status=$?
     # Other error replies (e.g. rejected /etc) keep the registration.
     if [[ $send_status -ne 0 || "$response" == *"not registered"* ]]; then
         __gpy_registered=""
@@ -173,17 +185,31 @@ function __gpy_segment_would_render() {
     return 0
 }
 
+# Every local here is `__gpy_`-prefixed: script segments read declared
+# env/require_env names with ${(P)...}, which sees this function's locals.
 function __gpy_precmd() {
-    local ret=$?
+    local __gpy_pc_ret=$?
+    # Keep the user's prompt_bang (read by __gpy_update_prompts); every other
+    # option is zsh's own here, so KSH_ARRAYS, SH_GLOB, ERR_RETURN and the
+    # like cannot break the render.
+    local __gpy_pc_bang=0
+    [[ -o prompt_bang ]] && __gpy_pc_bang=1
+    emulate -L zsh
+    (( __gpy_pc_bang )) && setopt prompt_bang
+    # A doorbell ring during this function is repainted by zle-line-init.
+    typeset -g __gpy_in_precmd=1
     # Drop the dynamic-completion caches (zsh/completions/_gpy-dynamic).
     unset __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
     # Kept for the signal handlers, which re-render outside precmd.
-    __gpy_last_exit_code=$ret
+    __gpy_last_exit_code=$__gpy_pc_ret
 
     if [[ $__gpy_cmd_start_time -gt 0 ]]; then
-        local end_time=$((EPOCHREALTIME * 1000))
-        __gpy_cmd_duration=$(( end_time - __gpy_cmd_start_time ))
+        local __gpy_pc_end=$((EPOCHREALTIME * 1000))
+        __gpy_cmd_duration=$(( __gpy_pc_end - __gpy_cmd_start_time ))
         __gpy_cmd_start_time=0
+        # Script segments' cmd_duration input keeps the last command's value
+        # on a prompt due only because $PWD changed, as in Bash and Fish.
+        __gpy_g_duration=$__gpy_cmd_duration
     else
         __gpy_cmd_duration=0
     fi
@@ -191,14 +217,10 @@ function __gpy_precmd() {
     # A doorbell ring zsh dropped leaves its flag behind; act on it now.
     __gpy_consume_shell_flags
 
-    if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
-        __gpy_register_with_agent
-    fi
-
     # Script segments: once per command, here in this shell.
     __gpy_g_maybe_run
 
-    __gpy_update_prompts $ret
+    __gpy_update_prompts $__gpy_pc_ret
 
     # Retry until registered (agent started late or restarted), after the
     # render so a cold start never delays this prompt.
@@ -209,6 +231,7 @@ function __gpy_precmd() {
     __gpy_sync_workspace
 
     __gpy_supervisor_check
+    __gpy_in_precmd=""
 }
 
 function __gpy_render_prompt() {
@@ -254,8 +277,10 @@ function __gpy_render_prompt() {
             # Capture `$?` right after each `$(...)`, before any command overwrites it.
             local seg_status=0
             if [[ -n "$g_tok" ]]; then
-                seg_out="$(__gpy_g_render "$g_tok" "$is_last" "$prev_bg" "$is_first")"
-                seg_status=$?
+                # Out-var render: no fork per script segment.
+                local __gpy_rp_gout=""
+                __gpy_g_render_into __gpy_rp_gout "$g_tok" "$is_last" "$prev_bg" "$is_first"
+                seg_out=$__gpy_rp_gout
             elif [[ "$seg" == "directory" ]]; then
                 # Memoized in the shell; a miss fills the memo.
                 local is_last_bool="${is_last:-false}"
@@ -276,6 +301,27 @@ function __gpy_render_prompt() {
                         typeset -g __gpy_dir_cache_val=$seg_out
                     fi
                 fi
+            elif [[ "$seg" == clock || "$seg" == status ]]; then
+                # The agent's clock and exit-status pills are pure functions of
+                # the theme, position and prev_bg (plus success for status), so
+                # they are memoized in the shell like the character. Only an
+                # agent render (status 0) is kept: the local fallback must let
+                # the agent's pill back in once it answers again.
+                local memo_key="${__gpy_theme_name:-}:${is_last:-false}:${is_first:-false}:${prev_bg}"
+                if [[ "$seg" == status ]]; then
+                    memo_key+=":$(( ${__gpy_last_status:-0} == 0 ))"
+                fi
+                local memo_var_key="__gpy_${seg}_cache_key" memo_var_val="__gpy_${seg}_cache_val"
+                if [[ -n "${(P)memo_var_key}" && "$memo_key" == "${(P)memo_var_key}" ]]; then
+                    seg_out="${(P)memo_var_val}"
+                else
+                    seg_out="$(__gpy_segment_$seg "$is_last" "$prev_bg" "$is_first")"
+                    seg_status=$?
+                    if (( seg_status == 0 )) && [[ -n "$seg_out" ]]; then
+                        typeset -g "$memo_var_key=$memo_key"
+                        typeset -g "$memo_var_val=$seg_out"
+                    fi
+                fi
             else
                 # Quote all args: an empty unquoted $is_last collapses to zero words.
                 seg_out="$(__gpy_segment_$seg "$is_last" "$prev_bg" "$is_first")"
@@ -284,6 +330,12 @@ function __gpy_render_prompt() {
 
             if [[ "$seg_status" -eq "$__gpy_seg_status_oneshot" ]]; then
                 __gpy_oneshot_used=1
+            fi
+            # A segment whose agent request waited out its budget: skip IPC
+            # for the rest of this render and the next few prompts. An active
+            # mark is never extended, so the agent is probed again on expiry.
+            if [[ "$seg_status" -eq "$__gpy_seg_status_late" ]] && (( EPOCHSECONDS >= __gpy_agent_late_until )); then
+                __gpy_mark_agent_late
             fi
 
             p+="$seg_out"
@@ -319,6 +371,9 @@ function __gpy_render_prompt() {
             char_rendered="$__gpy_char_cache_val"
         else
             char_rendered=$(__gpy_request_character "$char_success" "true" "$prev_bg")
+            if (( $? == __gpy_seg_status_late )) && (( EPOCHSECONDS >= __gpy_agent_late_until )); then
+                __gpy_mark_agent_late
+            fi
             # Never cache an empty render: the agent-down fallback must retry.
             if [[ -n "$char_rendered" ]]; then
                 typeset -g __gpy_char_cache_key=$char_key
@@ -352,8 +407,10 @@ function __gpy_render_prompt() {
 function __gpy_update_prompts() {
     local last_ret=${1:-0}
     # Read here, not under `setopt local_options`: zsh expands PROMPT after
-    # precmd returns, so a local option would already be reverted. Under
-    # prompt_bang a data `!` must be written `!!`; memo values stay raw.
+    # precmd returns, so a local option would already be reverted. The entry
+    # points that emulate zsh (precmd, the doorbell, zle-line-init) restore the
+    # user's prompt_bang first. Under prompt_bang a data `!` must be written
+    # `!!`; memo values stay raw.
     local bang=0
     [[ -o prompt_bang ]] && bang=1
     local __gpy_emit_tail=1
@@ -409,6 +466,8 @@ function __gpy_line_finish() {
 
 autoload -Uz add-zle-hook-widget
 zle -N __gpy_line_finish
+zle -N __gpy_line_init
+add-zle-hook-widget zle-line-init __gpy_line_init
 add-zle-hook-widget zle-line-finish __gpy_line_finish
 
 add-zsh-hook precmd __gpy_precmd

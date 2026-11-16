@@ -40,10 +40,12 @@ __gpy_segment_clock() {
         fi
     fi
 
-# Local fallback: no clock template, or agent unreachable.
+# Local fallback: no clock template, or agent unreachable. Its status keeps
+# the render loop from memoizing it in place of the agent's pill.
     local spec pad
     __gpy_clock_time_spec spec
     __gpy_prompt_escape "${__prompt_time_pad- }" pad
     __gpy_section_standalone "${__color_clock_bg:-}" "${__color_clock_fg:-}" \
         "${pad}\\D{${spec}}" "$is_last" "$is_first"
+    return "${__gpy_seg_status_local:-4}"
 }

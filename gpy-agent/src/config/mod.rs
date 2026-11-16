@@ -185,7 +185,7 @@ impl Default for GitSettings {
 /// It does not touch the branch glyph or the powerline caps: those follow
 /// `ui.show_icons` and need a patched font in either set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", try_from = "String")]
 pub enum GitIconSet {
     /// Plain Unicode glyphs for the three icons (default).
     #[default]
@@ -215,6 +215,15 @@ impl std::str::FromStr for GitIconSet {
                 "'unicode' or 'nerd_font'",
             )),
         }
+    }
+}
+
+impl TryFrom<String> for GitIconSet {
+    type Error = types::ParseEnumError;
+
+    /// Case-insensitive, like `gpy config set`.
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        value.parse()
     }
 }
 

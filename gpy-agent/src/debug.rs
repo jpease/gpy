@@ -6,10 +6,12 @@
 //! `agent.log` in the cache root (`~/.cache/gpy/agent.log`), so warnings
 //! survive without any opt-in. Nothing else writes `agent.log`.
 
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
+use std::time::Instant;
 
 /// File name of the default warning log inside the cache root.
 const AGENT_LOG_NAME: &str = "agent.log";
@@ -118,6 +120,11 @@ pub(crate) fn capture_warnings<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
 }
 
 /// Write a warning to stderr and append it to the warning log.
+///
+/// An identical warning is dropped when this process emitted it within the
+/// last `WARN_REPEAT_WINDOW` or when it already is the newest entry of the
+/// warning log (a oneshot process per prompt would otherwise repeat it on
+/// every prompt). The log is rotated to `<name>.1` past `WARN_LOG_MAX_BYTES`.
 pub fn warn(category: &str, message: &str) {
     #[cfg(test)]
     {
@@ -131,12 +138,93 @@ pub fn warn(category: &str, message: &str) {
             return;
         }
     }
+    let log_path = WARN_PATH.as_deref();
+    if seen_recently(category, message)
+        || log_path.is_some_and(|log| is_logged_repeat(log, category, message))
+    {
+        return;
+    }
     // Not `eprintln!`: `clippy::print_stderr` is denied.
     let _ = writeln!(std::io::stderr(), "Warning: [{category}] {message}");
 
-    if let Some(path) = WARN_PATH.as_deref() {
-        append_to(path, &format_line(now_millis(), category, message));
+    if let Some(log) = log_path {
+        rotate_if_oversized(log);
+        append_to(log, &format_line(now_millis(), category, message));
     }
+}
+
+/// Largest the warning log grows before it is rotated to `<name>.1`.
+const WARN_LOG_MAX_BYTES: u64 = 256_u64 * 1024_u64;
+
+/// How long an identical warning is suppressed within one process.
+const WARN_REPEAT_WINDOW: std::time::Duration = std::time::Duration::from_secs(600_u64);
+
+/// Most distinct warnings remembered per process before the memo resets.
+const WARN_MEMO_CAP: usize = 64;
+
+/// Warnings this process emitted recently, keyed by `category` + message.
+static RECENT_WARNINGS: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Record `category`/`message` and report whether it was already emitted
+/// within `WARN_REPEAT_WINDOW` by this process.
+fn seen_recently(category: &str, message: &str) -> bool {
+    let Ok(mut recent) = RECENT_WARNINGS.lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    let key = format!("{category}\0{message}");
+    if recent
+        .get(&key)
+        .is_some_and(|at| now.saturating_duration_since(*at) < WARN_REPEAT_WINDOW)
+    {
+        return true;
+    }
+    if recent.len() >= WARN_MEMO_CAP {
+        recent.clear();
+    }
+    recent.insert(key, now);
+    false
+}
+
+/// Whether the last bytes of `path` are exactly `suffix`, i.e. the newest log
+/// entry is the same warning (a short-lived process cannot remember its
+/// predecessors, so the log itself is the cross-process memo).
+fn log_ends_with(path: &Path, suffix: &str) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let Ok(len) = file.metadata().map(|meta| meta.len()) else {
+        return false;
+    };
+    let Ok(want) = u64::try_from(suffix.len()) else {
+        return false;
+    };
+    if len < want
+        || file
+            .seek(SeekFrom::Start(len.saturating_sub(want)))
+            .is_err()
+    {
+        return false;
+    }
+    let mut tail = Vec::with_capacity(suffix.len());
+    file.read_to_end(&mut tail).is_ok() && tail == suffix.as_bytes()
+}
+
+/// Move an oversized warning log aside to `<name>.1`, replacing any older one.
+fn rotate_if_oversized(path: &Path) {
+    let oversized = std::fs::metadata(path).is_ok_and(|meta| meta.len() >= WARN_LOG_MAX_BYTES);
+    if oversized {
+        let mut rotated = path.as_os_str().to_owned();
+        rotated.push(".1");
+        let _ = std::fs::rename(path, PathBuf::from(rotated));
+    }
+}
+
+/// Whether the newest entry of the warning log already is this warning.
+fn is_logged_repeat(path: &Path, category: &str, message: &str) -> bool {
+    log_ends_with(path, &format!("] [{category}] {message}\n"))
 }
 
 /// Warn that `component` failed with `error` and is doing `fallback_action`.
@@ -211,5 +299,37 @@ mod tests {
         let counter = AtomicUsize::new(0);
         crate::debug_log!("test", "side effect: {}", CountingDisplay(&counter));
         assert_eq!(counter.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn log_ends_with_matches_only_the_newest_entry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("agent.log");
+        append_to(&path, "[1] [cat] first\nsecond line");
+        assert!(super::is_logged_repeat(&path, "cat", "first\nsecond line"));
+        assert!(!super::is_logged_repeat(&path, "cat", "first"));
+        assert!(!super::is_logged_repeat(
+            &dir.path().join("missing"),
+            "cat",
+            "x"
+        ));
+    }
+
+    #[test]
+    fn oversized_log_rotates_aside() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("agent.log");
+        let big = "x".repeat(usize::try_from(super::WARN_LOG_MAX_BYTES).expect("fits"));
+        fs::write(&path, big).expect("write");
+        super::rotate_if_oversized(&path);
+        assert!(!path.exists());
+        assert!(dir.path().join("agent.log.1").exists());
+    }
+
+    #[test]
+    fn identical_warning_is_suppressed_within_the_window() {
+        assert!(!super::seen_recently("test-dedupe", "same message"));
+        assert!(super::seen_recently("test-dedupe", "same message"));
+        assert!(!super::seen_recently("test-dedupe", "other message"));
     }
 }

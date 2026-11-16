@@ -47,6 +47,26 @@ if [[ "$CASE_COUNT" -eq 0 ]]; then
     exit 1
 fi
 
+# Every other C0 byte and DEL leaves as \u00XX, so a cwd holding one (ESC,
+# BEL, ...) still makes valid JSON; UTF-8 text passes through untouched.
+# Arguments, not an array literal: bash 3.2 doubles \x01 and \x7f there.
+check_ctl() {
+    local actual=""
+    __gpy_escape_json_into actual "$1"
+    if [[ "$actual" == "$2" ]]; then
+        echo "PASS: control vector escapes to [$2]"
+    else
+        echo "FAIL: control vector: expected [$2], got [$actual]"
+        FAILED=1
+    fi
+}
+check_ctl $'a\x1bb' 'a\u001bb'
+check_ctl $'\x01' '\u0001'
+check_ctl $'x\x07\x08\x0b\x0c\x1fy' 'x\u0007\u0008\u000b\u000c\u001fy'
+check_ctl $'del\x7f' 'del\u007f'
+check_ctl $'\xc3\xa9\x1b' $'\xc3\xa9''\u001b'
+check_ctl $'q"\x1b\n' 'q\"\u001b\n'
+
 # __gpy_escape_json_into must not fork: the DEBUG trap (inherited via
 # functrace) logs any command run in a subshell during the call.
 forks_file="$(mktemp "${TMPDIR:-/tmp}/gpy-ej-forks.XXXXXX")"

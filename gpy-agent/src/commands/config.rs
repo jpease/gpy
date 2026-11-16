@@ -284,19 +284,27 @@ fn launch_editor(config_path: &std::path::Path) -> Result<Option<String>> {
 
 /// Launch an editor command through the system shell.
 fn launch_shell_editor(editor: &str, config_path: &std::path::Path) -> Result<()> {
-    let quoted_path = super::utils::shell_quote(config_path);
-
     #[cfg(windows)]
-    let status = Command::new("cmd")
-        .args(["/C", &format!("{editor} {quoted_path}")])
-        .status()
-        .map_err(|e| Error::process(editor, e.to_string()))?;
+    let status = {
+        use std::os::windows::process::CommandExt as _;
+        // `cmd` does not know single quotes. The path is double-quoted, and the
+        // whole command line is wrapped once more so `cmd /C` keeps the quotes
+        // of an editor path that has spaces.
+        Command::new("cmd")
+            .arg("/C")
+            .raw_arg(format!("\"{editor} \"{}\"\"", config_path.display()))
+            .status()
+            .map_err(|e| Error::process(editor, e.to_string()))?
+    };
 
     #[cfg(not(windows))]
-    let status = Command::new("sh")
-        .args(["-c", &format!("{editor} {quoted_path}")])
-        .status()
-        .map_err(|e| Error::process(editor, e.to_string()))?;
+    let status = {
+        let quoted_path = super::utils::shell_quote(config_path);
+        Command::new("sh")
+            .args(["-c", &format!("{editor} {quoted_path}")])
+            .status()
+            .map_err(|e| Error::process(editor, e.to_string()))?
+    };
 
     if status.success() {
         Ok(())

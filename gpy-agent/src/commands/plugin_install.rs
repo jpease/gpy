@@ -18,8 +18,8 @@ use super::utils::{active_config_path, load_active_config, reload_agent_and_noti
 use crate::config::loader::save_config;
 use crate::paths::config_root;
 use crate::plugin::{
-    EntryType, PluginId, PluginManifest, PluginSource, ScriptSegmentManifest, discover_plugins,
-    script_segment_manifest_path, user_plugins_dir,
+    DiscoveredPlugin, EntryType, PluginDiscovery, PluginId, PluginManifest, PluginSource,
+    ScriptSegmentManifest, discover_plugins, script_segment_manifest_path, user_plugins_dir,
 };
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
@@ -46,14 +46,19 @@ struct Plan {
     to_move: Vec<PathBuf>,
     /// The bundled or first-party plugin a user copy shadows, if any.
     shadowed: Option<PluginSource>,
+    /// Every other bundled or user plugin that loads now, by root: one that no
+    /// longer loads after the copy lost a segment name or token to it.
+    others: Vec<(PluginId, PathBuf)>,
 }
 
-/// Install the plugin in `source` as a user plugin.
+/// Install the plugin in `source` as a user plugin, then ask a running agent
+/// to reload so shells pick up the new export.
 ///
 /// # Errors
 /// Returns an error when the source is not a valid plugin tree, the plugin is
-/// already installed (or shadows a bundled one) without `force`, or the copy
-/// does not load; a failed install leaves the plugins directory as it was.
+/// already installed (or shadows a bundled one) without `force`, the copy
+/// takes a segment over from another plugin without `force`, or the copy does
+/// not load; a failed install leaves the plugins directory as it was.
 pub fn install(source: &Path, force: bool) -> Result<()> {
     let entries = collect_tree(source)?;
     let manifest = check_source(source)?;
@@ -61,7 +66,7 @@ pub fn install(source: &Path, force: bool) -> Result<()> {
     let backups = backup_targets(&manifest.id, &plan.to_move)?;
 
     let stage = stage_copy(source, &entries, &manifest.id)?;
-    swap_in(&stage, &plan.target, &backups, &manifest.id)?;
+    let displaced = swap_in(&stage, &plan, &backups, &manifest.id, force)?;
 
     output::plain(format_args!(
         "Installed plugin {} {} into {}",
@@ -82,9 +87,13 @@ pub fn install(source: &Path, force: bool) -> Result<()> {
             manifest.id
         ));
     }
+    for message in &displaced {
+        output::warn(message);
+    }
     for segment in &manifest.provided_segments {
         output::plain(format_args!("Enable its segments: gpy enable {segment}"));
     }
+    reload_agent_and_notify();
     Ok(())
 }
 
@@ -138,18 +147,25 @@ pub fn remove(id: &str) -> Result<()> {
     // config untouched and the plugin recoverable from its backup.
     move_aside(&moves)?;
 
+    // A plugin this one shadowed or displaced (a bundled copy with the same
+    // id, or a plugin that lost a segment name to it) may provide a segment
+    // again; such a segment stays enabled.
+    let after = discover_plugins();
+    let enabled_before = &original.ui.enabled_segments;
+    let disabled: Vec<&String> = segments
+        .iter()
+        .filter(|segment| {
+            enabled_before.contains(*segment) && provider_of(&after, segment).is_none()
+        })
+        .collect();
     let mut updated = original.clone();
     updated
         .ui
         .enabled_segments
-        .retain(|enabled| !segments.contains(enabled));
-    let disabled: Vec<&String> = segments
-        .iter()
-        .filter(|segment| original.ui.enabled_segments.contains(segment))
-        .collect();
+        .retain(|enabled| !disabled.contains(&enabled));
     if !disabled.is_empty() {
         if let Err(err) = save_config(&config_path, &original, &updated, &["ui.enabled_segments"]) {
-            let finish: Vec<String> = segments
+            let finish: Vec<String> = disabled
                 .iter()
                 .map(|segment| format!("gpy disable {segment}"))
                 .collect();
@@ -159,8 +175,19 @@ pub fn remove(id: &str) -> Result<()> {
                 finish.join(", ")
             )));
         }
-        for segment in disabled {
+        for segment in &disabled {
             output::plain(format_args!("Disabled {segment}"));
+        }
+    }
+    for segment in segments
+        .iter()
+        .filter(|name| enabled_before.contains(*name))
+    {
+        if let Some(provider) = provider_of(&after, segment) {
+            output::plain(format_args!(
+                "Kept {segment} enabled: the {} plugin {} provides it now",
+                provider.source, provider.manifest.id
+            ));
         }
     }
     output::plain(format_args!(
@@ -169,6 +196,17 @@ pub fn remove(id: &str) -> Result<()> {
     ));
     reload_agent_and_notify();
     Ok(())
+}
+
+/// The loaded plugin in `discovery` that provides `segment`, if any.
+fn provider_of<'a>(discovery: &'a PluginDiscovery, segment: &str) -> Option<&'a DiscoveredPlugin> {
+    discovery.plugins.iter().find(|plugin| {
+        plugin
+            .manifest
+            .provided_segments
+            .iter()
+            .any(|provided| provided.as_str() == segment)
+    })
 }
 
 /// The error for an id with no user plugin: either nothing by that name, or a
@@ -254,6 +292,7 @@ fn check_source(source: &Path) -> Result<PluginManifest> {
         )
     })?;
     let manifest = PluginManifest::parse(&text)?;
+    manifest.check_no_builtin_segments()?;
 
     match manifest.entry_type {
         EntryType::Script => {
@@ -347,10 +386,22 @@ fn plan_install(id: &PluginId, force: bool) -> Result<Plan> {
             )));
         }
     }
+    let others = discovery
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.manifest.id != *id)
+        .filter_map(|plugin| {
+            plugin
+                .root
+                .clone()
+                .map(|root| (plugin.manifest.id.clone(), root))
+        })
+        .collect();
     Ok(Plan {
         target,
         to_move,
         shadowed,
+        others,
     })
 }
 
@@ -388,6 +439,7 @@ fn stage_copy(source: &Path, entries: &[TreeEntry], id: &PluginId) -> Result<Pat
     let staging_root = config_root().join("plugins.staging");
     ensure_dir_chain(&staging_root)?;
     ensure_dir_chain(&user_plugins_dir())?;
+    prune_dead_stages(&staging_root);
 
     let stage = staging_root.join(format!("{id}-{}", std::process::id()));
     match std::fs::remove_dir_all(&stage) {
@@ -404,6 +456,28 @@ fn stage_copy(source: &Path, entries: &[TreeEntry], id: &PluginId) -> Result<Pat
         drop(std::fs::remove_dir_all(&stage));
     })?;
     Ok(stage)
+}
+
+/// Remove each `<id>-<pid>` staging directory whose install process is gone (a
+/// killed install leaves its copy behind). Best effort; the directory of a
+/// live install, or of this one, is never touched.
+fn prune_dead_stages(staging_root: &Path) {
+    let Ok(listing) = std::fs::read_dir(staging_root) else {
+        return;
+    };
+    for item in listing.flatten() {
+        let name = item.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|text| text.rsplit_once('-'))
+            .and_then(|(_, digits)| digits.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid != std::process::id() && !crate::ipc::ClientDirectory::is_client_alive(pid) {
+            drop(std::fs::remove_dir_all(item.path()));
+        }
+    }
 }
 
 /// Create `stage` and copy `entries` of `source` into it: directories 0755,
@@ -445,7 +519,7 @@ fn copy_tree(source: &Path, entries: &[TreeEntry], stage: &Path) -> Result<()> {
 /// first, each directory 0755 narrowed by the umask. `create_dir_all` honors
 /// the umask for the mode, so under `umask 002` it would leave group-writable
 /// directories that the script trust check can reject.
-fn ensure_dir_chain(path: &Path) -> Result<()> {
+pub(super) fn ensure_dir_chain(path: &Path) -> Result<()> {
     let missing: Vec<&Path> = path
         .ancestors()
         .take_while(|dir| !dir.is_empty() && !dir.exists())
@@ -481,14 +555,17 @@ fn move_aside(moves: &[(PathBuf, PathBuf)]) -> Result<()> {
     Ok(())
 }
 
-/// Back up what `backups` names, rename `stage` to `target`, and check that
-/// the copy loads. Any failure puts everything back.
+/// Back up what `backups` names, rename `stage` to `plan.target`, and check
+/// that the copy loads (see [`verify_installed`]). Any failure puts everything
+/// back. Returns the diagnostics of the plugins the copy displaced.
 fn swap_in(
     stage: &Path,
-    target: &Path,
+    plan: &Plan,
     backups: &[(PathBuf, PathBuf)],
     id: &PluginId,
-) -> Result<()> {
+    force: bool,
+) -> Result<Vec<String>> {
+    let target = plan.target.as_path();
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     for backup in backups {
         if let Err(err) = move_aside(std::slice::from_ref(backup)) {
@@ -507,12 +584,15 @@ fn swap_in(
         );
         return Err(unwind(err, &[stage], &moved));
     }
-    verify_installed(target, id).map_err(|err| unwind(err, &[target], &moved))
+    verify_installed(plan, id, force).map_err(|err| unwind(err, &[target], &moved))
 }
 
-/// The copy at `target` must be discovered as a user plugin, with no
-/// diagnostic of its own; other plugins' diagnostics are not this install's.
-fn verify_installed(target: &Path, id: &PluginId) -> Result<()> {
+/// The copy at `plan.target` must be discovered as a user plugin, with no
+/// diagnostic of its own. Each of `plan.others` that no longer loads lost a
+/// segment name or token to the copy: without `force` that refuses the
+/// install; with it, their diagnostics are returned for the caller to print.
+fn verify_installed(plan: &Plan, id: &PluginId, force: bool) -> Result<Vec<String>> {
+    let target = plan.target.as_path();
     let discovery = discover_plugins();
     if let Some(diagnostic) = discovery
         .diagnostics
@@ -524,12 +604,38 @@ fn verify_installed(target: &Path, id: &PluginId) -> Result<()> {
     let loaded = discovery.plugins.iter().any(|plugin| {
         matches!(plugin.source, PluginSource::User) && plugin.root.as_deref() == Some(target)
     });
-    if loaded {
-        Ok(())
-    } else {
-        Err(Error::invalid(format!(
+    if !loaded {
+        return Err(Error::invalid(format!(
             "plugin '{id}' did not load from {} after the copy",
             target.display()
+        )));
+    }
+    let displaced: Vec<String> = plan
+        .others
+        .iter()
+        .filter(|(_, root)| {
+            !discovery
+                .plugins
+                .iter()
+                .any(|plugin| plugin.root.as_ref() == Some(root))
+        })
+        .map(|(other, root)| {
+            discovery
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.plugin_dir == *root)
+                .map_or_else(
+                    || format!("Plugin '{other}' no longer loads"),
+                    |diagnostic| diagnostic.message.clone(),
+                )
+        })
+        .collect();
+    if displaced.is_empty() || force {
+        Ok(displaced)
+    } else {
+        Err(Error::invalid(format!(
+            "installing plugin '{id}' would take segments over from other plugins ({}); pass --force to install it anyway",
+            displaced.join("; ")
         )))
     }
 }

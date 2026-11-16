@@ -3,7 +3,7 @@
 use super::bindings::{self, Command};
 use super::state::WizardState;
 use crate::theme::ThemeConfig;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// What the render loop should do after a key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,12 +29,28 @@ pub enum InputMode {
 /// Reduce `(mode, key)` to the next mode and the loop action.
 ///
 /// `theme` is the on-disk theme, the base for theme-scoped segment edits.
+/// Raw mode swallows the terminal's own Ctrl-C, so it is handled here as the
+/// quit key (the discard prompt's "yes" when already asked); every other
+/// Ctrl/Alt chord is ignored rather than read as its plain key.
 pub fn handle_key(
     state: &mut WizardState,
     mode: InputMode,
     theme: &ThemeConfig,
     key: KeyEvent,
 ) -> (InputMode, WizardAction) {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        let interrupt =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        let command = match (interrupt, mode) {
+            (false, _) => return (mode, WizardAction::Continue),
+            (true, InputMode::ConfirmQuit) => Command::Discard,
+            (true, _) => Command::Quit,
+        };
+        return run(state, mode, theme, command);
+    }
     match bindings::lookup(mode, state.focused_builtin(), key.code) {
         Some(command) => run(state, mode, theme, command),
         None => handle_unbound_key(state, mode, key),
@@ -77,7 +93,18 @@ fn run(
             state.pop_filter_char();
             mode
         }
-        Command::OpenHelp => InputMode::Help,
+        Command::OpenHelp => {
+            state.reset_help_scroll();
+            InputMode::Help
+        }
+        Command::ScrollHelpUp => {
+            state.scroll_help_up();
+            mode
+        }
+        Command::ScrollHelpDown => {
+            state.scroll_help_down();
+            mode
+        }
         Command::CloseHelp => InputMode::Normal,
         Command::Edit(edit) => {
             state.apply_edit(edit, theme);

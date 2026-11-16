@@ -710,3 +710,35 @@ fn a_bare_setup_after_an_installer_style_run_finds_the_data_root() {
     assert!(fx.bash_dir().join(".gpy-version").is_file());
     assert_no_leftovers(&fx.data());
 }
+
+#[test]
+fn a_symlinked_source_file_is_installed_as_its_contents() {
+    let fx = Fixture::new();
+    let linked = fx.source().join("zsh/gpy.zsh");
+    let real = fx.source().join("gpy.zsh.real");
+    fs::rename(&linked, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+
+    assert_ok(&fx.setup("zsh"));
+
+    let installed = fx.zsh_dir().join("gpy.zsh");
+    assert!(installed.is_file() && !installed.is_symlink());
+    assert_eq!(fs::read(&installed).unwrap(), fs::read(&real).unwrap());
+}
+
+#[test]
+fn staging_directories_of_dead_runs_are_swept_by_the_next_setup() {
+    let fx = Fixture::new();
+    assert_ok(&fx.setup("zsh"));
+    // A pid no live process has: far above every platform's pid limit that
+    // still fits an i32.
+    let stale = fx.data().join(".zsh.gpy-staging-2000000000");
+    fs::create_dir_all(stale.join("inner")).unwrap();
+    let old = fx.data().join(".zsh.gpy-old-2000000000");
+    fs::create_dir_all(&old).unwrap();
+
+    assert_ok(&fx.setup("zsh"));
+
+    assert!(!stale.exists() && !old.exists());
+    assert_no_leftovers(&fx.data());
+}

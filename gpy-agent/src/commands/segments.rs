@@ -1,9 +1,9 @@
 //! `gpy segments`, `gpy enable`, and `gpy disable` command handlers.
 
 use super::output;
-use super::utils::{active_config_path, load_active_config, read_config, reload_agent_and_notify};
+use super::utils::{active_config_path, read_config, reload_agent_and_notify};
 use crate::config::Config;
-use crate::config::loader::save_config;
+use crate::config::loader::update_config;
 use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
 use crate::shell::Shell;
 use crate::{Error, Result};
@@ -18,10 +18,7 @@ pub fn enable(segment: &str) -> Result<()> {
     ensure_segment_known(&canonical, true)?;
 
     let path = active_config_path()?;
-    let original = load_active_config(&path)?;
-    let mut config = original.clone();
-    apply_enable(&mut config, &canonical);
-    save_config(&path, &original, &config, &[])?;
+    update_config(&path, &[], |config| apply_enable(config, &canonical))?;
 
     output::plain(format_args!("Enabled {canonical} segment"));
     if is_file_plugin_segment(&canonical)
@@ -213,11 +210,7 @@ pub(crate) fn insert_enabled_segment(list: &mut Vec<String>, segment: &str) {
 /// Remove a segment from the enabled segments list.
 fn remove_from_enabled_segments(segment: &str) -> Result<()> {
     let path = active_config_path()?;
-    let original = load_active_config(&path)?;
-    let mut config = original.clone();
-    apply_disable(&mut config, segment);
-    save_config(&path, &original, &config, &[])?;
-    Ok(())
+    update_config(&path, &[], |config| apply_disable(config, segment))
 }
 
 pub(crate) fn available_segments() -> Vec<String> {

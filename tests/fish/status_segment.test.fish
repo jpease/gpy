@@ -121,7 +121,9 @@ end
 # records the positional args so the success/is_last/is_first/prev_bg slots are
 # verified: an empty is_last must not shift the rest.
 
+set -g __test_status_requests 0
 function __gpy_request_exit_status --argument-names success is_last is_first prev_bg
+    set -g __test_status_requests (math $__test_status_requests + 1)
     set -g __test_status_arg_success "$success"
     set -g __test_status_arg_is_last "$is_last"
     set -g __test_status_arg_is_first "$is_first"
@@ -172,7 +174,11 @@ else
     check "agent path (fail, not first/last): success=0, empty flags stay in place, fail bg tracked (got: '$__test_status_arg_success' '$__test_status_arg_is_last' '$__test_status_arg_is_first' '$__test_status_arg_prev_bg' / '$__gpy_last_segment_bg')" pass fail
 end
 
+# The agent reply is memoized on theme, success, position and prev_bg.
+check "agent path: the repeat render with the same key sent no second request" 2 $__test_status_requests
+
 # An empty agent reply (no agent) falls back to the local pill.
+set -e __gpy_status_cache_key
 function __gpy_request_exit_status --argument-names success is_last is_first prev_bg
 end
 
@@ -245,9 +251,10 @@ else
     check "__gpy_request_exit_status: returns nonzero when IPC is unavailable" pass fail
 end
 
-# An older agent answers the unknown op with JSON: no reply, so the local pill.
+# An older agent answers the unknown op with JSON: __gpy_ipc_send reports
+# the refusal (status 3, nothing printed), so no reply and the local pill.
 function __gpy_ipc_send --argument-names payload timeout_ms
-    echo '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'
+    return 3
 end
 
 set -l error_reply (__gpy_request_exit_status 1 true "" "" | string collect)

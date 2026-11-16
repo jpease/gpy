@@ -39,10 +39,7 @@ fn default_config_emits_valid_validatable_theme() {
         artifacts.theme.segments.character.success_color.as_str(),
         "green"
     );
-    assert_eq!(
-        artifacts.segments,
-        vec!["directory", "git", "duration", "character"]
-    );
+    assert_eq!(artifacts.segments, vec!["directory", "git", "duration"]);
 }
 
 #[test]
@@ -86,7 +83,7 @@ fn preset_config_emits_valid_palette_and_language_colors() {
 
     assert_eq!(
         artifacts.segments,
-        vec!["directory", "git", "language", "duration", "character"]
+        vec!["directory", "git", "language", "duration"]
     );
     // Per-language symbol is lossy (lives in [language.icons]).
     assert!(
@@ -115,14 +112,7 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
 
     assert_eq!(
         artifacts.segments,
-        vec![
-            "username",
-            "directory",
-            "git",
-            "language",
-            "clock",
-            "character"
-        ]
+        vec!["username", "directory", "git", "language", "clock"]
     );
     assert_eq!(
         artifacts

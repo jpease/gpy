@@ -21,9 +21,12 @@ pub(super) const CREATED_NOTE: &str = " (gpy-created-file)";
 pub(super) enum BlockChange {
     /// A new block was appended (the file may have been created).
     Added,
-    /// The file already held the current block, or a start marker with no
-    /// complete block after it; nothing was written.
+    /// The file already held the current block; nothing was written.
     Unchanged,
+    /// The file has a start marker but no complete block after it (the end
+    /// marker or the `# ` header line is missing); nothing was written and
+    /// the shell is not wired.
+    Incomplete,
     /// An older block's body was replaced in place.
     Upgraded,
     /// The block's body is neither the current nor an older text; left alone.
@@ -56,6 +59,11 @@ struct BlockSpan {
 
 /// Append a `gpy-init` block to `rc`, creating it when missing; `false` when
 /// a block is already there. A file this call creates gets [`CREATED_NOTE`].
+/// The block goes out in one write, so a failure cannot leave half of it.
+///
+/// # Errors
+/// Fails, naming `rc`, when the file cannot be created or written; a refused
+/// permission also prints the block for the user to add by hand.
 pub(super) fn append_block(
     rc: &Path,
     existing: Option<&[u8]>,
@@ -67,16 +75,55 @@ pub(super) fn append_block(
     if existing.is_some_and(has_start) {
         return Ok(false);
     }
-    if let Some(parent) = rc.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let note = if existing.is_none() { CREATED_NOTE } else { "" };
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(rc)?;
-    write!(
-        file,
-        "\n{BLOCK_START}\n# {header}{note}\n{body}\n{BLOCK_END}\n"
-    )?;
+    let block = format!("\n{BLOCK_START}\n# {header}{note}\n{body}\n{BLOCK_END}\n");
+    let write = || -> std::io::Result<()> {
+        if let Some(parent) = rc.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new().create(true).append(true).open(rc)?;
+        file.write_all(block.as_bytes())
+    };
+    write().map_err(|err| {
+        if matches!(
+            err.kind(),
+            ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
+        ) {
+            super::output::warn_stderr(format_args!(
+                "cannot write {}; add these lines to it yourself:\n{}",
+                rc.display(),
+                block.trim_start_matches('\n')
+            ));
+        }
+        Error::io_context(format!("updating {}", rc.display()), &err)
+    })?;
     Ok(true)
+}
+
+/// What an rc file holds of the GPY block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum BlockState {
+    /// No start marker (or the file cannot be read).
+    Missing,
+    /// A start marker without a complete block after it.
+    Incomplete,
+    /// A complete block, with its body text.
+    Present(String),
+}
+
+/// Classify the GPY block in `rc`.
+pub(super) fn block_state(rc: &Path) -> BlockState {
+    let Ok(bytes) = fs::read(rc) else {
+        return BlockState::Missing;
+    };
+    if !has_start(&bytes) {
+        return BlockState::Missing;
+    }
+    find_block(&bytes)
+        .and_then(|span| bytes.get(span.body_start..span.body_end))
+        .map_or(BlockState::Incomplete, |body| {
+            BlockState::Present(String::from_utf8_lossy(body).into_owned())
+        })
 }
 
 /// Whether `rc` holds a [`BLOCK_START`] line. An unreadable file reports `false`.
@@ -96,7 +143,9 @@ pub(super) fn ensure_block(
     let raw = match fs::read(rc) {
         Ok(read) => Some(read),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => return Err(err.into()),
+        Err(err) => {
+            return Err(Error::io_context(format!("reading {}", rc.display()), &err));
+        }
     };
     let Some(bytes) = raw.as_deref().filter(|candidate| has_start(candidate)) else {
         return Ok(if append_block(rc, raw.as_deref(), header, body)? {
@@ -106,7 +155,7 @@ pub(super) fn ensure_block(
         });
     };
     let Some(span) = find_block(bytes) else {
-        return Ok(BlockChange::Unchanged);
+        return Ok(BlockChange::Incomplete);
     };
     let (Some(head), Some(current), Some(tail)) = (
         bytes.get(..span.body_start),
@@ -140,7 +189,8 @@ pub(super) fn ensure_block(
         updated.extend_from_slice(eol);
     }
     updated.extend_from_slice(tail);
-    crate::fs_util::write_atomically(rc, &updated)?;
+    crate::fs_util::write_atomically(rc, &updated)
+        .map_err(|err| Error::io_context(format!("rewriting {}", rc.display()), &err))?;
     Ok(BlockChange::Upgraded)
 }
 
@@ -503,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_block_leaves_an_orphaned_start_alone() {
+    fn ensure_block_reports_an_orphaned_start_as_incomplete() {
         let dir = tempfile::tempdir().unwrap();
         let rc = dir.path().join("rc");
         let text = "export A=1\n# >>> gpy-init >>>\n# hdr\nsource \"/x/gpy.bash\"\n";
@@ -511,8 +561,33 @@ mod tests {
 
         let change = ensure_block(&rc, "hdr", CURRENT, &legacy()).unwrap();
 
-        assert_eq!(change, BlockChange::Unchanged);
+        assert_eq!(change, BlockChange::Incomplete);
         assert_eq!(fs::read_to_string(&rc).unwrap(), text);
+        assert_eq!(block_state(&rc), BlockState::Incomplete);
+    }
+
+    #[test]
+    fn block_state_returns_the_body_of_a_complete_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        assert_eq!(block_state(&rc), BlockState::Missing);
+        append_block(&rc, None, "hdr", "source \"/x/gpy.zsh\"").unwrap();
+        assert_eq!(
+            block_state(&rc),
+            BlockState::Present("source \"/x/gpy.zsh\"\n".to_owned())
+        );
+    }
+
+    #[test]
+    fn append_block_error_names_the_rc_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc = dir.path().join("rc");
+        fs::create_dir_all(&rc).unwrap();
+
+        let err = append_block(&rc, Some(b"x\n"), "hdr", "body").unwrap_err();
+
+        let message = crate::error::user_message(&err);
+        assert!(message.contains(&rc.display().to_string()), "{message}");
     }
 
     #[test]

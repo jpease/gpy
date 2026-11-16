@@ -3,7 +3,7 @@ name = "Contract scripts"
 version = "0.1.0"
 api_version = "v1"
 entry_type = "script"
-provided_segments = ["slow", "big", "strip", "c1", "variant", "envdump"]
+provided_segments = ["slow", "big", "strip", "c1", "variant", "envdump", "crlf", "c1split"]
 description = "Script segments that the cross-shell contract rows and the runner conformance test drive"
 
 [compatibility_constraints]

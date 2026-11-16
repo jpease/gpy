@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # A prompt on which the per-prompt check is rate limited forks no `date` and
-# makes no registration attempt. The retry on the prompt after the initial
-# start is the only attempt between checks.
+# starts nothing; only the registration retry (a fork-free `test -S` with no
+# socket) runs on every prompt while the shell is unregistered.
 
 set -l script_dir (path dirname (status --current-filename))
 set -g repo_root (cd "$script_dir/../.." && pwd)
@@ -55,17 +55,13 @@ function __agent_starts
     count (string match -r '^start$' <$tmp/agent.calls)
 end
 
-# First prompt: the agent is down, so it is started and a retry is pending.
+# First prompt: the agent is down, so it is started and registration fails.
 __gpy_supervisor_on_prompt
 check "the first prompt starts the agent once" 1 (begin
     poll_until 5 test -f $tmp/agent.calls
     __agent_starts
 end)
-check "the first prompt makes no registration attempt while the agent is down" 0 $attempts
-
-# Second prompt: the one registration retry.
-__gpy_supervisor_on_prompt
-check "the next prompt makes one registration attempt" 1 $attempts
+check "the first prompt makes one registration attempt" 1 $attempts
 
 # The first prompt counted as the check, so every later prompt is rate limited.
 set -l dates_before (__date_calls)
@@ -73,7 +69,7 @@ for i in (seq 5)
     __gpy_supervisor_on_prompt
 end
 check "five rate-limited prompts fork no date" $dates_before (__date_calls)
-check "five rate-limited prompts make no registration attempt" 1 $attempts
+check "five rate-limited prompts each retry registration" 6 $attempts
 check "five rate-limited prompts start nothing more" 1 (__agent_starts)
 
 test_finish "Rate-limited supervisor prompts fork no date"

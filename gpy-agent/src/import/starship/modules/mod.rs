@@ -121,7 +121,12 @@ pub fn translate_directory_layout(
 ) -> RecommendedDirectory {
     let mut recommended = RecommendedDirectory {
         display: Some(crate::config::types::DirectoryDisplay::Truncated),
-        truncate_to_repo: Some(true),
+        truncate_to_repo: Some(
+            table
+                .get("truncate_to_repo")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true),
+        ),
         ..Default::default()
     };
     if let Some(raw) = table.get("truncation_length") {
@@ -353,15 +358,28 @@ pub fn translate_duration(table: &toml::value::Table, warnings: &mut Warnings) -
         .unwrap_or("took [$duration]($style) ");
     let inlined = inline_style_vars(raw, &with_default_style(table, "style", "bold yellow"));
     let mapped = retain_known_vars(&inlined, &["duration", "style"], "duration", warnings);
-    let show_if_exceeds_ms = table
-        .get("min_time")
-        .and_then(toml::Value::as_integer)
-        .and_then(|value| u64::try_from(value).ok())
-        .unwrap_or(2000_u64);
+    let show_if_exceeds_ms = table.get("min_time").map_or(2000_u64, |min_time| {
+        min_time
+            .as_integer()
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or_else(|| {
+                warnings.push(
+                    WarningKind::UnrepresentableOption,
+                    format!(
+                        "cmd_duration: min_time {min_time} is not a non-negative integer; using 2000"
+                    ),
+                );
+                2000_u64
+            })
+    });
+    let show_milliseconds = table
+        .get("show_milliseconds")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
     DurationTheme {
         format: Some(mapped),
         show_if_exceeds_ms,
-        show_milliseconds: false,
+        show_milliseconds,
         ..Default::default()
     }
 }

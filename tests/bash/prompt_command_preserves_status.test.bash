@@ -92,6 +92,16 @@ exit'
         printf '%s\n' "$CHILD_OUT"
     fi
 
+    # An rc line after gpy that prepends a status-clobbering command (the
+    # `history -a; $PROMPT_COMMAND` idiom): gpy moves its hook back to the
+    # front after the first prompt, so it records each command's status.
+    run_child "$bin" '' 'PROMPT_COMMAND="true; $PROMPT_COMMAND"' 'false
+echo "LS=$__gpy_last_status"
+(exit 42)
+echo "LS=$__gpy_last_status"
+exit'
+    expect "$label, command prepended after gpy" LS "1 42"
+
     # The first prompt cycle also carries the status of the last rc command.
     run_child "$bin" 'PROMPT_COMMAND='"'"'echo "DS=$?"'"'" '(exit 7)' 'exit'
     expect "$label, first prompt" DS "7" 1

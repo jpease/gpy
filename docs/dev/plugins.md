@@ -19,7 +19,8 @@ Plugins are discovered from:
 Required fields:
 - `id`
 - `name`
-- `version`
+- `version`: `MAJOR.MINOR.PATCH`, optionally followed by `-` or `+` and only
+  ASCII letters, digits, `.`, `+` and `-` (`min_gpy_version` takes the same form)
 - `api_version`
 - `entry_type`:
   - `file`: one Fish file per segment, loaded by Fish only (see
@@ -82,7 +83,8 @@ Target the documented contract, not GPY internals.
 Discovery is deterministic and isolated:
 - First-party metadata entries are always included (`gpy-core`)
 - User plugins override bundled plugins by plugin id
-- A segment name is provided by one plugin: a user plugin wins over a bundled one; within a source the lexically smaller plugin id wins and the other plugin is dropped with a diagnostic (`gpy doctor`, `gpy plugin list`); `gpy plugin install` rejects a plugin that would be dropped this way
+- A segment name is provided by one plugin: a user plugin wins over a bundled one; within a source the lexically smaller plugin id wins and the other plugin is dropped with a diagnostic (`gpy doctor`, `gpy plugin list`); `gpy plugin install` needs `--force` when the new plugin would take a segment name or token from another plugin (it names the plugins it would displace), and reloads a running agent
+- A plugin providing a built-in segment name (`clock`, `duration`, `language`, `directory`, `git`, `status`) is rejected by discovery, `gpy plugin validate` and `gpy plugin install`; `gpy plugin new` also refuses built-in names, taken ids and taken segment names or tokens
 - Invalid plugins become diagnostics and do not block healthy plugins
 - Output ordering is stable (sorted by plugin id)
 
@@ -185,7 +187,7 @@ description = "Text weight"
 | `timeout_ms` | integer | `500` | `1`–`500`: an author may only lower it. |
 | `require_files` | array | `[]` | Every name must exist as a file in the working directory or an ancestor. On Linux the search stops at the mount that holds the working directory; on macOS it goes up to `/`. |
 | `require_folders` | array | `[]` | Every name must exist as a folder in the working directory or an ancestor, with the same stop as `require_files`. |
-| `require_extensions` | array | `[]` | Every extension (no leading dot) must match a file in the working directory itself. |
+| `require_extensions` | array | `[]` | Every extension (no leading dot) must match a file in the working directory itself. A dotfile never matches. |
 | `require_env` | array | `[]` | Every variable must be set and non-empty. |
 | `require_command` | string | none | A script, like `command`, that must exit 0. It runs last, only after the other conditions hold, under the same runner and deadline. |
 | `settings` | table | `{}` | Typed settings, below. |
@@ -329,8 +331,9 @@ an already written token are skipped. Export resolves `command` and
 applies `[plugin.<segment>]`; a segment that fails either is left out (one
 debug log line) and never runs.
 
-**Ownership rule.** The script, and every directory from it up to and
-including the plugin root, must be owned by you or root and must not be group-
+**Ownership rule.** `plugin.toml`, `segments/`, every `segments/<name>.toml`,
+the script, and every directory from it up to and
+including the plugin root, must be owned by you or root, must not be group-
 or world-writable (fix with `chmod go-w`). Every canonical ancestor above the
 root, up to `/`, must be owned by you or root and not group- or
 world-writable, unless it is sticky (like `/tmp`), where the kernel stops
@@ -407,7 +410,7 @@ model.
 ### Runner
 
 There is one runner, `bash/core/g_runner.bash`. Bash runs it inside `$( )` in
-the interactive shell. Zsh and Fish run it in one Bash child per prompt: the
+the interactive shell. Zsh runs it in one Bash child per prompt; Fish may run two on a due prompt (the trigger scan, then the batch run): the
 first Bash 4 or later on `PATH`, else `/bin/bash`, resolved once per shell.
 `gpy setup` installs it into the Fish and Zsh trees as `core/g_runner.bash`;
 from a checkout, a release staging directory or Homebrew `share/gpy` they use
@@ -430,7 +433,7 @@ Bash at all, script segments are disabled (one warning, shown only with
   The scan child has 30 ms, then SIGKILL.
 - **Cache in shell variables.** Keyed by `__gpy_script_<tok>_key` plus the
   current values of the declared inputs and `env` names, expiring after
-  `ttl_secs` (`0` = no cache). Ages come from a clock in the same shell:
+  `ttl_secs` (`0` = no cache). A cached result also expires when the clock steps back. Ages come from a clock in the same shell:
   `EPOCHSECONDS` or `printf %(%s)T` in Bash, `$SECONDS` in Bash 3.2 to 4.1;
   `EPOCHSECONDS` in Zsh; the mtime of `/` plus its age in Fish. No file is
   ever written.

@@ -54,6 +54,10 @@ This is the most common complaint, and the mechanism is not documented elsewhere
 
 The agent watches your repo, `config.toml`, the active theme's files (an overlay and every theme it extends), and your user themes directory (where a new same-name theme overrides a plugin or built-in one) for changes using OS-level filesystem notifications (`FSEvents` on macOS, `inotify` on Linux, via the `notify` crate). When something relevant changes, the agent sends `SIGURG` to registered shell processes. A plain `SIGURG` means "repaint the prompt" (git/language state changed); to ask for a theme/config reload or a re-registration the agent first writes an empty `<pid>.reload` or `<pid>.reregister` flag file in the runtime `shells/` directory. `SIGURG` is ignored by default, so a shell that has not installed its handler yet (for example right after `exec fish`) is never killed by a notification. See [ADR-0007](../dev/adr/adr-0007-sigurg-doorbell-notifications.md) for the current protocol and [ADR-0004](../dev/adr/adr-0004-sigusr1-live-updates.md) / [ADR-0005](../dev/adr/adr-0005-theme-hot-reload.md) for the original rationale.
 
+The watcher honours your git ignore rules: global excludes (`core.excludesFile`, or git's default file) suppress refreshes too, and a nested `.gitignore` anchors its patterns relative to its own directory. A repository stays armed for 30 s after the last shell in it leaves.
+
+Watcher lines in `agent.log`: `the OS file watch limit is reached` (new directories are not watched until the periodic reconcile), `could not watch the working tree of <repo> (<reason>); watching its .git only`, `watching the working tree of <repo> again`, and `file watching delivered no events on the filesystem of <dir>; switching to polling` (a silent health probe moved the whole agent to polling).
+
 ### Why it can silently stop working
 
 OS-level filesystem notifications are not 100% reliable in every environment. Confirmed failure modes:
@@ -112,9 +116,13 @@ Bash differs in two ways: duration-segment precision varies by Bash version (dis
 
 ---
 
+## Colors Look Wrong or Garbled
+
+GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so the agent already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`, then run `gpy-agent stop` and open a new prompt (the agent reads it once per process). See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
+
 ## Theme Fails to Load After an Upgrade
 
-A file at `<config>/themes/<name>.toml` fully shadows the built-in theme of the same name, so an old copy keeps its old keys after GPY changes the theme format (for example `format` or `show_always` on `[segments.username]` / `[segments.hostname]`, removed in 0.7). When such a file fails to load, the error says it overrides the builtin theme `<name>` and lists the recovery commands. Fix it with:
+A file at `<config>/themes/<name>.toml` fully shadows the built-in theme of the same name, so an old copy keeps its old keys after GPY changes the theme format (for example `format` or `show_always` on `[segments.username]` / `[segments.hostname]`, removed in 0.7). If `ui.theme` fails to load at agent start, `default` stands in until it loads, with no restart needed; a theme or palette reload that fails validation keeps the current theme. When such a file fails to load, the error says it overrides the builtin theme `<name>` and lists the recovery commands. Fix it with:
 
 ```bash
 gpy theme diff starship     # what differs from the current builtin

@@ -1,12 +1,4 @@
 __gpy_bash_major="${BASH_VERSINFO[0]}"
-__gpy_bash_minor="${BASH_VERSINFO[1]}"
-
-# Probed once per shell so hot paths stay fork-free. `printf -v var '%(%s)T' -1`
-# needs bash 4.2+; earlier bash errors, so callers MUST gate on this flag.
-__gpy_have_printf_epoch=0
-if [[ $__gpy_bash_major -gt 4 || ($__gpy_bash_major -eq 4 && $__gpy_bash_minor -ge 2) ]]; then
-    __gpy_have_printf_epoch=1
-fi
 
 # Duration method into $2: EPOCHREALTIME on 5+; on 4, `date +%s%N` only if
 # date is GNU (BSD date prints a literal `N`), else whole seconds; 3: none.
@@ -28,14 +20,6 @@ __gpy_select_duration_method() {
 __gpy_duration_method=""
 __gpy_select_duration_method "$__gpy_bash_major" __gpy_duration_method
 
-__gpy_now_seconds() {
-    if [[ $__gpy_have_printf_epoch -eq 1 ]]; then
-        printf -v "$1" '%(%s)T' -1
-    else
-        printf -v "$1" '%s' "$(date +%s)"
-    fi
-}
-
 __gpy_cmd_start_time=""
 __gpy_cmd_duration=""
 __gpy_registered=""
@@ -43,12 +27,17 @@ __gpy_last_workspace=""
 # Directory whose workspace sync the agent rejected; not re-sent until $PWD changes
 __gpy_rejected_workspace=""
 
-# Character/directory render memo, cleared on reload and re-registration. Only
-# non-empty renders are cached, so a down agent is retried next prompt.
+# Character/directory/clock/status render memo, cleared on reload and
+# re-registration. Only non-empty agent renders are cached, so a down agent is
+# retried next prompt.
 __gpy_char_cache_key=""
 __gpy_char_cache_val=""
 __gpy_dir_cache_key=""
 __gpy_dir_cache_val=""
+__gpy_clock_cache_key=""
+__gpy_clock_cache_val=""
+__gpy_status_cache_key=""
+__gpy_status_cache_val=""
 
 __gpy_is_ssh=0
 if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_CLIENT:-}" || -n "${SSH_TTY:-}" ]]; then
@@ -180,25 +169,26 @@ __gpy_epoch_diff_ms() {
     printf -v "$out_var" '%d' "$(( (end_us - start_us) / 1000 ))"
 }
 
+# Locals are __gpy_pc_*: a script segment's declared env names are read
+# while this function is on the stack (__gpy_g_snap_env).
 __gpy_precmd() {
-    local exit_code=$?
+    local __gpy_pc_status=$?
     # Drop the dynamic-completion caches (bash/completions/gpy-dynamic.bash).
     unset __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
 
     if [[ -n "$__gpy_cmd_start_time" ]]; then
+        local __gpy_pc_end
         if [[ $__gpy_duration_method == "epochrealtime" ]]; then
-            local end_time="$EPOCHREALTIME"
-            if ! __gpy_epoch_diff_ms "$__gpy_cmd_start_time" "$end_time" __gpy_cmd_duration; then
-                __gpy_cmd_duration=$(awk "BEGIN {printf \"%.0f\", ($end_time - $__gpy_cmd_start_time) * 1000}")
+            __gpy_pc_end="$EPOCHREALTIME"
+            if ! __gpy_epoch_diff_ms "$__gpy_cmd_start_time" "$__gpy_pc_end" __gpy_cmd_duration; then
+                __gpy_cmd_duration=$(awk "BEGIN {printf \"%.0f\", ($__gpy_pc_end - $__gpy_cmd_start_time) * 1000}")
             fi
         elif [[ $__gpy_duration_method == "date" ]]; then
-            local end_time
-            end_time=$(date +%s%N)
-            __gpy_cmd_duration=$(( (end_time - __gpy_cmd_start_time) / 1000000 ))
+            __gpy_pc_end=$(date +%s%N)
+            __gpy_cmd_duration=$(( (__gpy_pc_end - __gpy_cmd_start_time) / 1000000 ))
         elif [[ $__gpy_duration_method == "date-seconds" ]]; then
-            local end_time
-            __gpy_now_seconds end_time
-            __gpy_cmd_duration=$(( (end_time - __gpy_cmd_start_time) * 1000 ))
+            __gpy_now_seconds __gpy_pc_end
+            __gpy_cmd_duration=$(( (__gpy_pc_end - __gpy_cmd_start_time) * 1000 ))
         fi
     fi
 
@@ -212,7 +202,7 @@ __gpy_precmd() {
     # before __gpy_render_prompt fixes positions.
     __gpy_g_maybe_run
 
-    __gpy_render_prompt "$exit_code"
+    __gpy_render_prompt "$__gpy_pc_status"
 
     # Retry until registered (agent started late or restarted); one `test -S`
     # when nothing listens.
@@ -226,10 +216,11 @@ __gpy_precmd() {
     __gpy_supervisor_check
 
     __gpy_cmd_start_time=""
+    __gpy_keep_precmd_first
     if __gpy_needs_debug_trap; then
         __gpy_setup_debug_hooks
     fi
-    return "$exit_code"
+    return "$__gpy_pc_status"
 }
 
 # Bash < 4.4 learns "a command ran" for script segments from the DEBUG trap
@@ -298,6 +289,34 @@ __gpy_directory_segment_output() {
     return "$seg_status"
 }
 
+# Clock and status memo, kept here for the same reason as the directory one.
+# The agent's pill depends only on the theme, the position, prev_bg and (for
+# status) success: bash expands the clock's `\D{...}` token at each prompt.
+# Only an agent reply (status 0) is kept; the local draw returns
+# __gpy_seg_status_local, so an agent that comes up is asked again.
+__gpy_pill_segment_output() {
+    local pill="$1" is_last="$2" prev_bg="$3" is_first="$4" out_var="$5"
+    local key_var="__gpy_${pill}_cache_key" val_var="__gpy_${pill}_cache_val"
+    local success=1
+    [[ "$pill" == status && "${__gpy_last_status:-0}" != 0 ]] && success=0
+    local key="${__gpy_theme_name:-}:${success}:${is_last:-false}:${is_first:-false}:${prev_bg}"
+
+    if [[ -n "${!key_var-}" && "$key" == "${!key_var}" ]]; then
+        printf -v "$out_var" '%s' "${!val_var-}"
+        return 0
+    fi
+
+    local result seg_status
+    result=$("__gpy_segment_${pill}" "$is_last" "$prev_bg" "$is_first")
+    seg_status=$?
+    if [[ $seg_status -eq 0 && -n "$result" ]]; then
+        printf -v "$key_var" '%s' "$key"
+        printf -v "$val_var" '%s' "$result"
+    fi
+    printf -v "$out_var" '%s' "$result"
+    return "$seg_status"
+}
+
 __gpy_render_prompt() {
     local exit_code="${1:-0}"
 
@@ -355,6 +374,8 @@ __gpy_render_prompt() {
             fi
             if [[ "$segment" == "directory" ]]; then
                 __gpy_directory_segment_output "$is_last" "$prev_bg" "$is_first" segment_output
+            elif [[ "$segment" == "clock" || "$segment" == "status" ]]; then
+                __gpy_pill_segment_output "$segment" "$is_last" "$prev_bg" "$is_first" segment_output
             else
                 segment_output=$($segment_fn "$is_last" "$prev_bg" "$is_first")
             fi
@@ -440,11 +461,12 @@ __gpy_register_with_agent() {
 
 # Safe at any time: a missing socket returns 1 and the next prompt retries.
 # The agent restarted, possibly with another config, so its renders are
-# dropped too.
+# dropped too, and a late window the old agent opened no longer applies.
 __gpy_reregister_with_agent() {
     __gpy_registered=""
     __gpy_last_workspace=""
     __gpy_clear_render_memos
+    __gpy_agent_late_clear
     __gpy_register_with_agent
 }
 
@@ -473,17 +495,18 @@ __gpy_sync_workspace() {
 
     __gpy_send_json "$workspace_json" "" response 2>/dev/null
     local send_status=$?
-    # Only a failed send or lost registration re-registers; other errors
-    # (a rejected path like /etc) keep it.
+    # A refusal (status 3) other than a lost registration, e.g. a rejected
+    # path like /etc, keeps the registration and is not re-sent from here.
+    if [[ $send_status -eq 3 && "$response" != *"not registered"* ]]; then
+        __gpy_rejected_workspace="$PWD"
+        return 0
+    fi
+    # A failed send or a lost registration re-registers.
     if [[ $send_status -ne 0 || "$response" == *"not registered"* ]]; then
         __gpy_registered=""
         __gpy_last_workspace=""
         __gpy_register_with_agent
         return
-    fi
-    if [[ "$response" == *'"error"'* ]]; then
-        __gpy_rejected_workspace="$PWD"
-        return 0
     fi
 
     __gpy_last_workspace="$PWD"
@@ -532,6 +555,9 @@ __gpy_install_debug_trap() {
 __gpy_debug_trap() {
     # COMP_LINE default: unset outside completion, and `set -u` would error.
     [[ -n "${COMP_LINE:-}" ]] && return  # Skip during completion
+    # A `bind -x` key binding (bash >= 4 sets READLINE_POINT only while one
+    # runs) is not the user's command: it must not consume the preexec arm.
+    [[ -n "${READLINE_POINT+x}" ]] && return
 
     if [[ -n "$__gpy_preexec_armed" ]]; then
         __gpy_preexec_armed=""
@@ -566,6 +592,61 @@ __gpy_setup_hooks() {
     if __gpy_needs_debug_trap; then
         __gpy_setup_debug_hooks
     fi
+}
+
+# Command string $1 with gpy's `__gpy_precmd` moved to its front (after a
+# leading DEBUG-trap oneshot, which passes `$?` through), into variable $2.
+# The rest keeps its order and its separators. Status 1 when $1 holds no
+# `__gpy_precmd` command. Locals are __gpy_pf_*.
+__gpy_precmd_first_into() {
+    local __gpy_pf_s="$1" __gpy_pf_h="__gpy_precmd" __gpy_pf_lead="" __gpy_pf_t __gpy_pf_l __gpy_pf_r
+    if [[ "$__gpy_pf_s" == "$__gpy_debug_oneshot; "* ]]; then
+        __gpy_pf_lead="$__gpy_debug_oneshot; "
+        __gpy_pf_s="${__gpy_pf_s#"$__gpy_pf_lead"}"
+    fi
+    case "$__gpy_pf_s" in
+        "$__gpy_pf_h" | "$__gpy_pf_h;"* | "$__gpy_pf_h"$'\n'*)
+            printf -v "$2" '%s' "$1"
+            return 0
+            ;;
+    esac
+    # Padded with `;` so the hook always has a separator on both sides; the
+    # left one stays, so `cmd &` before it never becomes `cmd &;`.
+    __gpy_pf_t=";$__gpy_pf_s;"
+    for __gpy_pf_l in ';' '; ' $'\n'; do
+        for __gpy_pf_r in ';' $'\n'; do
+            # Unquoted RHS: bash 3.2 keeps the quotes of a quoted replacement.
+            __gpy_pf_t=${__gpy_pf_t/"$__gpy_pf_l$__gpy_pf_h$__gpy_pf_r"/"$__gpy_pf_l"}
+        done
+    done
+    [[ "$__gpy_pf_t" != ";$__gpy_pf_s;" ]] || return 1
+    __gpy_pf_t="${__gpy_pf_t#;}"
+    while [[ "$__gpy_pf_t" == *[\;[:space:]] ]]; do
+        __gpy_pf_t="${__gpy_pf_t%?}"
+    done
+    __gpy_pf_t="${__gpy_pf_t#"${__gpy_pf_t%%[![:space:]]*}"}"
+    printf -v "$2" '%s' "$__gpy_pf_lead$__gpy_pf_h${__gpy_pf_t:+; $__gpy_pf_t}"
+}
+
+# Keep __gpy_precmd the first command of its PROMPT_COMMAND entry: a command
+# before it, e.g. a later `PROMPT_COMMAND="history -a; $PROMPT_COMMAND"`,
+# would replace the `$?` it reads. bash restores `$?` between array elements,
+# so only the hook's own element matters. Runs after each render, so only the
+# first prompt after such a change sees the wrong status. Fork-free.
+__gpy_keep_precmd_first() {
+    local fixed i
+    if [[ -n "$__gpy_prompt_command_arrays" && "${PROMPT_COMMAND@a}" == *a* ]]; then
+        for i in "${!PROMPT_COMMAND[@]}"; do
+            __gpy_precmd_first_into "${PROMPT_COMMAND[i]}" fixed || continue
+            [[ "$fixed" == "${PROMPT_COMMAND[i]}" ]] || PROMPT_COMMAND[i]="$fixed"
+            return 0
+        done
+        return 0
+    fi
+    __gpy_precmd_first_into "${PROMPT_COMMAND:-}" fixed || return 0
+    # shellcheck disable=SC2128,SC2178
+    [[ "$fixed" == "${PROMPT_COMMAND:-}" ]] || PROMPT_COMMAND="$fixed"
+    return 0
 }
 
 # Keeps the arm hook last and queues the oneshot until the trap is in place.

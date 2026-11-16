@@ -30,7 +30,7 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 
 ### The Agent-Fish Split
 
-**Fish Shell** (`segments/`, `core/`, `functions/`):
+**Fish Shell** (`fish/segments/`, `fish/core/`, `fish/functions/`):
 - Renders the prompt UI (ANSI codes, delimiters)
 - Makes IPC requests to agent for git/language data
 - Handles the agent's SIGURG doorbell to repaint, reload or re-register
@@ -50,17 +50,42 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 
 ### Request/Response Flow
 
+Git and language segments are read from the **instant prompt cache** first. IPC is only the cold-miss, variant-mismatch and background-refresh path (see [Instant prompt cache](#instant-prompt-cache)).
+
 ```
-1. segment_git_render → __gpy_request git $PWD
-     Fish:     __gpy_build_data_payload … ansi → __gpy_ipc_send
-     Zsh/Bash: __gpy_build_data_request_into … zsh-prompt|bash-prompt → __gpy_send_json
-2. {"op":"git","cwd":…,"format":"ansi"}\n over the Unix socket → gpy-agent
-3. agent reuses a fresh cache entry, or runs git status --porcelain=v2
-4. agent renders with the theme in the requested format
-5. ← one line of rendered text, which the shell prints
+1. segment_git_render (Fish) / __gpy_segment_git (Zsh, Bash)
+2. __gpy_read_instant_cache reads <cache dir>/instant-prompts/<key>.<variant>.<token>.<ext>
+     hit, fresh: print the file; no IPC
+     hit, stale: print the file and send a throttled background refresh (__gpy_maybe_refresh);
+                 the agent repaints via SIGURG when the rendered output changed
+     miss:       steps 3-6 with the cold reply budget (GPY_IPC_COLD_TIMEOUT_MS, Fish default 500 ms)
+3. Fish:     __gpy_build_data_payload … ansi → __gpy_ipc_send
+   Zsh/Bash: __gpy_build_data_request_into … zsh-prompt|bash-prompt → __gpy_send_json
+4. {"op":"git","cwd":…,"format":"ansi"}\n over the Unix socket → gpy-agent
+5. agent reuses a fresh GitStatusCache entry, or runs git status --porcelain=v2;
+   it renders with the theme in the requested format and writes the instant cache file
+6. ← one line of rendered text, which the shell prints
 ```
 
-**Timing**: a cached response costs one IPC round trip (0.037 ms measured for an IPC ping); a fresh git query on a 100-file repository measured 17.2 ms. Both figures are 2026-05-15 diagnostics from one dev machine, not budgets; the budgets are in `benchmarks/perf-budgets.json`.
+With the agent disabled, or after a refusal (`{"error"…}` reply), the shell runs `gpy-agent oneshot` instead, at most once per prompt render (`__gpy_oneshot_claim`). Other agent-rendered segments (`directory`, `duration`, `character`, `clock`, `exit_status`) have no cache file: each is one IPC request per render unless the shell's memo of the previous render still applies.
+
+**Timing**: a cache hit costs one file read and no IPC. An IPC round trip measured 0.037 ms for a ping (2026-05-15, one dev machine; `ipc_roundtrip`). These are diagnostics, not budgets; the budgets are in `benchmarks/perf-budgets.json`.
+
+### Instant prompt cache
+
+`InstantPromptCache` (`gpy-agent/src/cache/instant_prompt/`) holds the rendered git and language segments the daemon keeps fresh. Files live in `<cache dir>/instant-prompts/` (`paths::gpy_cache_dir`, default `~/.cache/gpy`), named `{key}.{variant}.{token}.{ext}`:
+
+- `key`: the project root path, chunked into directories when long
+- `variant`: the segment and its position (`git`, `git_first`, `git_last`, `git_first_last`, and the same for `lang`)
+- `token`: the previous segment's background colour, which the rendered chevron bakes in (`none` when there is none)
+- `ext`: the dialect (`ansi`, `zsh`, `bash`)
+
+Who writes and who reads:
+- The agent writes a file while handling a request, again on a background refresh, on a watcher event, and for a theme or config change before it rings the reload doorbell.
+- A shell serves any file it finds. A file older than the shell-side TTL is stale (git 5 s, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`; language 30 s, `GPY_LANGUAGE_CACHE_TTL_SECONDS`) and also triggers a refresh. A `.none` file served for a request that has a real `prev_bg` re-queries the agent, because its chevron colour is wrong.
+- Files unused for 14 days are removed by an age sweep (at agent start and hourly); files the agent cannot refresh are cleared at start. The in-memory bookkeeping is bounded (`INSTANT_PROMPT_KEY_CAPACITY`, `INSTANT_PROMPT_LAST_WRITTEN_CAPACITY`).
+
+The benchmark side of this path (`prompt_render`, `prompt_render_cold`, `prompt_render_stale`, `prompt_render_degraded`) is in [benchmarking.md](performance/benchmarking.md#mechanisms-behind-the-cached-prompt-budget).
 
 ---
 
@@ -115,20 +140,20 @@ Response: {"branch":"main","staged":0,"unstaged":1,...}
 ```
 
 **Shell-specific implementation**:
-- Fish: `__gpy_request()` using `socat`, falling back to `nc -U`
-- Zsh: `__gpy_request()` using the `zsh/net/socket` builtin module (`zsocket`), falling back to `socat`, then `nc -U`
-- Bash: `__gpy_request()` using `socat`, falling back to `nc -U`
+- Fish: `__gpy_request` orchestrates (`fish/core/ipc.fish`): instant cache, then `__gpy_build_data_payload` and `__gpy_ipc_send`, which uses `socat` and falls back to `nc -U`; then the oneshot fallback
+- Zsh: `__gpy_request` (`zsh/core/ipc.zsh`) builds the request with `__gpy_build_data_request_into` and sends it with `__gpy_send_json`, using the `zsh/net/socket` builtin module (`zsocket`), falling back to `socat`, then `nc -U`
+- Bash: `__gpy_request` (`bash/core/ipc.bash`), `__gpy_build_data_request_into` and `__gpy_send_json`, using `socat`, falling back to `nc -U`
 
-**Common pattern**: Request format + IPC transport
+**Common pattern**: build the request, send it, classify the reply. Fish:
 ```fish
-# Fish example
-function __gpy_request -a operation cwd format is_last
-    set -l request (string escape --json -- "$operation" "$cwd" "$format" "$is_last")
-    echo "{\"op\":\"$operation\",\"cwd\":$request[2],\"format\":$request[3]}" | socat - UNIX-CONNECT:$socket
-end
+set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
+set -l reply (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
+set -l send_status $status
+# 0: complete reply; 1: unreachable; 2: sent, but no complete reply in time
+#    (an empty line included); 3: refused for good, a reply starting {"error"
 ```
 
-#### Layer 2: Signal Handling (`core/signals.{fish,zsh,bash}`)
+#### Layer 2: Signal Handling (Fish: `core/ipc.fish`; Zsh/Bash: `core/signals.{zsh,bash}`)
 
 **Responsibility**: Receive the agent's SIGURG doorbell, act on any flag file, repaint the prompt
 
@@ -138,23 +163,20 @@ end
 3. Always repaint (no flag = plain repaint: git/clock update)
 
 **Shell-specific implementation**:
-- Fish: one `--on-signal SIGURG` function → increment `$__gpy_repaint_trigger`
-- Zsh: `TRAPURG()` → re-render `PROMPT`, `zle reset-prompt` when zle is active
+- Fish: `__gpy_doorbell_handler` (`--on-signal SIGURG`, `fish/core/ipc.fish`) → increment `$__gpy_repaint_trigger`; `__gpy_repaint_on_variable` then runs `commandline -f force-repaint`
+- Zsh: `TRAPURG()` → `__gpy_on_doorbell` → re-render `PROMPT`, `zle reset-prompt` when zle is active
 - Bash: no trap; SIGURG stays ignored. `__gpy_precmd` handles flags 1 and 2 before rendering `PS1`, so changes show at the next prompt
 
 #### Layer 3: Segment Rendering (`segments/*.{fish,zsh,bash}`)
 
 **Responsibility**: Format segment output for shell's prompt syntax
 
-**Shell-agnostic data**: Same JSON from agent
-```json
-{"branch":"main","staged":2,"unstaged":1,"state":"dirty"}
-```
+**Shell-agnostic data**: the agent's rendered segment text in the shell's format (see Format Negotiation below). Only `json` replies are data objects, and those are for tooling.
 
 **Shell-specific rendering**:
-- Fish: `set -g fish_prompt_segments (segment_git)`
-- Zsh: `PROMPT='$(segment_git)$(segment_dir)'`
-- Bash: `PS1="$(segment_git)$(segment_dir)"`
+- Fish: `fish_prompt` (`fish/functions/fish_prompt.fish`) loops over `$__enabled_segments`, calling `segment_<name>_detect`, `segment_<name>_omit` and `segment_<name>_render`, which print the segment
+- Zsh: `__gpy_segment_<name>` per segment (`zsh/segments/`); `__gpy_render_prompt` joins them and `__gpy_update_prompts` assigns `PROMPT` (`zsh/core/init.zsh`)
+- Bash: `__gpy_segment_<name>` per segment (`bash/segments/`); `__gpy_precmd` joins them into `PS1` (`bash/core/init.bash`)
 
 ### Format Negotiation
 
@@ -177,7 +199,7 @@ concatenates them into the prompt.
 
 #### Fish
 - Reference implementation
-- Fast string processing, native JSON parsing
+- Fast string processing; no JSON parser: requests are built by hand (`__gpy_json_escape`) and replies are rendered text, printed as is apart from the `{"error"` prefix check
 - Signal handling through a variable-change repaint ([ADR-0006](adr/adr-0006-async-terminal-updates.md))
 
 #### Zsh
@@ -221,8 +243,10 @@ Theme and config files are shared across shells:
 ```
 ~/.config/gpy/
   ├── config.toml    # Shared by all shells
-  └── theme.toml     # Shared by all shells
+  └── themes/        # Optional user themes (<name>.toml), selected by ui.theme
 ```
+
+The config path is `$GPY_CONFIG_PATH` when set; see [Loading Hierarchy](#loading-hierarchy).
 
 The shell code `gpy setup` installs lives apart from the config, in the data
 root (`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`):
@@ -232,26 +256,25 @@ root (`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`):
   └── plugins/           # bundled script plugins (username, hostname)
 ```
 
-Agent exports theme to shell-specific variables:
-- Fish: `set -gx GPY_COLOR_GIT_CLEAN "#00ff00"`
-- Zsh: `export GPY_COLOR_GIT_CLEAN='#00ff00'`
-- Bash: `export GPY_COLOR_GIT_CLEAN='#00ff00'`
+The agent renders the theme and config for each shell into `<cache dir>/theme-export.{fish,zsh,bash}` (`cache/theme_export.rs`). Shells source that file, and fall back to running `gpy-agent theme export --shell <shell>` when it is missing or lacks the version sentinel. Each line sets a shell variable such as `__color_clock_bg`, `__icon_prompt` or `__gpy_cfg_transient_prompt`:
+- Fish: `set -g __color_clock_bg "black"`
+- Zsh: `typeset -g __color_clock_bg="black"`
+- Bash: `__color_clock_bg="black"`
+
+The first line is the sentinel (`set -g __gpy_export_version "1"`, `typeset -g __gpy_export_version="1"`, `__gpy_export_version="1"`). A shell sources a file only when its first line matches. An older agent's export used `set -gx GPY_*`, which the shell would read back as user input, so that format is refused.
 
 #### Pattern 3: Graceful Degradation
 
 All shells support **oneshot mode** when agent is unavailable:
 ```fish
-# Fish example
-if not __gpy_agent_available
-    # Fall back to direct git commands
-    set -l branch (git branch --show-current 2>/dev/null)
-    # Slower, but works without agent
-end
+# Fish example (fish/segments/git.fish): instant-cache miss with the agent disabled
+set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
+# runs: gpy-agent oneshot git --cwd "$root" --format ansi [--not-last] [--first]
 ```
 
 **Performance impact**:
-- With agent: one IPC round trip per segment on a cache hit
-- Without agent (oneshot): a `gpy-agent` process spawn plus the git and language work, on every prompt
+- With agent: a git or language segment with a cache file costs a file read and no IPC; IPC happens on a cold miss, a variant mismatch or a background refresh
+- Without agent (oneshot): a `gpy-agent` process spawn plus the git and language work, on every prompt, at most one spawn per render
 
 ### Live Updates Across Shells
 
@@ -365,9 +388,13 @@ Prompt redraws with fresh git status
 ```
 error.rs (foundation)
   ↑
-  ├── config/ (TOML loading)
+  ├── config/ (TOML loading, validation)
   │
-  ├── security/ (path validation)
+  ├── theme/ (theme loading, shell export)
+  │
+  ├── security.rs (path validation)
+  │
+  ├── cache/ (bounded.rs, policy.rs, ttl_map.rs, instant_prompt/, theme_export.rs)
   │
   ├── git/
   │   ├── cache.rs (Git status caching)
@@ -377,10 +404,11 @@ error.rs (foundation)
   │       └── parser.rs (porcelain v2 parsing)
   │
   ├── language/
-  │   ├── cache.rs (language detection caching)
+  │   ├── detection_cache.rs (language detection caching)
   │   ├── detector.rs (gengo-language matchers + owned ignore walk)
   │   ├── filters.rs (linguist vendor/doc exclusion globs)
-  │   └── version.rs (version detection trait)
+  │   ├── probe_memo.rs (version probe results and recent failures)
+  │   └── version.rs (version detection trait, lookup_version_at)
   │
   ├── ipc/
   │   ├── protocol/ (request parsing, PROTOCOL_VERSION)
@@ -390,16 +418,22 @@ error.rs (foundation)
   │   └── registry/ (client directory; shell_tracking.rs: tracking files, flag files, SIGURG doorbell)
   │
   └── watcher/
-      ├── filesystem.rs (notify integration)
+      ├── filesystem/mod.rs (notify integration)
       ├── debouncer.rs (event coalescing)
-      └── multi_repo.rs (multi-repo coordination)
+      ├── multi_repo/mod.rs (multi-repo coordination)
+      └── hot_reload.rs (config/theme file reload polling)
 
 agent/mod.rs (orchestrator - coordinates above)
 
 main.rs (CLI entry point)
 ```
 
-The graph is acyclic: each layer depends only on lower layers.
+The graph is layered, not acyclic. Known cycles between modules:
+- `config` and `theme`: `config/validation/{templates,theme}.rs` import `crate::theme`, while `theme/manager.rs` and `theme/model` import `crate::config`
+- `git` and `cache`: `git/cache.rs` and `git/native/` use `cache::bounded` and `cache::ttl_map`, while `cache/instant_prompt/` uses `crate::git::RepositoryStatus`
+- `config` and `theme` depend on `watcher::hot_reload` (`config/manager.rs`, `theme/manager.rs`), while `watcher` uses `config`
+
+The wire type `ipc::LanguageInfo` is also the domain type: `language/display.rs` builds it, and `cache/instant_prompt` and `formatter` consume it, so those modules depend on `ipc`.
 
 ---
 
@@ -412,7 +446,7 @@ The graph is acyclic: each layer depends only on lower layers.
   `server_task` (the spawned IPC server stopped), `shutdown_signal`
   (SIGINT/SIGTERM), `clock_timer` (1 s; a tick is a no-op while `agent.live_updates` is off),
   `pruning_timer` (60 s: prune dead clients, re-nudge shells) and
-  `reconcile_timer` (45 s `RECONCILE_INTERVAL_SECS`,
+  `reconcile_timer` (45 s `DEFAULT_RECONCILE_INTERVAL_SECS`,
   `GPY_RECONCILE_INTERVAL_SECS` override; a tick is a no-op while `live_updates` is off).
 - Git and language work runs in `spawn_blocking`.
 
@@ -440,12 +474,12 @@ This table documents which modules own which pieces of state and how state is sh
 
 | State | Owner Module | Type | Sharing Pattern | Access Rules | Examples |
 |-------|-------------|------|-----------------|--------------|----------|
-| **Git Status Cache** | `git::cache::GitStatusCache` | `HashMap<PathBuf, CacheEntry>` | `Arc<GitStatusCache>` | • Owner: Provides `get()`, `set()`, `invalidate()` methods<br>• Consumers: Read via `get()`, never direct mutation<br>• Thread-safe: Internal `Mutex` (all access serialized) | Allowed: `cache.get(&repo)` in IPC handler<br>Allowed: `cache.set(&repo, status)` in agent<br>Not allowed: Accessing internal HashMap directly |
+| **Git Status Cache** | `git::cache::GitStatusCache` | `HashMap<PathBuf, CacheEntry>` (capped at 512 repositories) | `Arc<GitStatusCache>` | • Owner: Provides `get_canonical()`, `get_any_canonical()`, `apply_full_scan()`, `update_paths_canonical()`, `invalidate_canonical()` methods<br>• Consumers: Read via `get_canonical()`, never direct mutation<br>• Thread-safe: Internal `Mutex` (all access serialized) | Allowed: `cache.get_canonical(&root)` in IPC handler<br>Allowed: `cache.apply_full_scan(&root, started, status, files)` after a scan<br>Not allowed: Accessing internal HashMap directly |
 | **Client Registry** | `ipc::registry::ClientDirectory` | `HashMap<u32, ClientInfo>` | `Arc<ClientDirectory>` | • Owner: Provides `register()`, `unregister()`, `notify_*()` methods<br>• Consumers: Register clients, send signals<br>• Thread-safe: Internal `Mutex` (all access serialized) | Allowed: `registry.register(pid, cwd)` in IPC<br>Allowed: `registry.notify_repaint()` in agent<br>Not allowed: Direct PID manipulation |
-| **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | Allowed: `watcher.register(repo)` via agent<br>Allowed: Agent creates watcher in `Agent::new()`<br>Not allowed: Creating watcher outside agent module |
-| **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get_current()`, `reload()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | Allowed: `config_mgr.get_current()` in handlers<br>Allowed: `config_mgr.reload()` on file events<br>Not allowed: Storing `Config` directly (stale data risk) |
-| **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates Fish exports<br>• Consumers: Call `export_fish()` for Fish vars, `get()` to clone config<br>• Hot-reload: Theme can change, always call methods | Allowed: `theme_mgr.export_fish(&config)` in agent<br>Allowed: `let theme = theme_mgr.get()` to clone<br>Not allowed: Caching theme colors locally |
-| **Language Version Cache** | `language::version` module | Global `VERSION_CACHE` in `gpy-agent/src/language/version.rs` | `TtlMap<String, String>` (capped at `VERSION_CACHE_CAPACITY`): successful probes only; failures go to `VERSION_FAILURE_CACHE` | • Owner: `language::version` module manages global cache<br>• Consumers: Version detectors use implicitly via `detect_version()`; the IPC request path reads it only (`ProbePolicy::CachedOnly`) and leaves a cold version to a background probe job ([ADR-0009](adr/adr-0009-deferred-language-version-probes.md))<br>• TTL: 24 hour expiration (configurable)<br>• Thread-safe: `TtlMap` is internally synchronized | Allowed: Call `detect_version()`, cache automatic<br>Allowed: Cache shared globally, TTL handles staleness<br>Not allowed: Creating separate per-request version caches<br>Not allowed: Probing a version on the IPC request path |
+| **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | Allowed: `watcher.register(repo)` via agent<br>Allowed: Agent creates the watcher (`create_watcher` in `agent/events/reload.rs`)<br>Not allowed: Creating watcher outside agent module |
+| **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get()` (an `Arc<Config>` snapshot) and `reload_now()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | Allowed: `config_mgr.get()` in handlers<br>Allowed: `config_mgr.reload_now()` to force a reload<br>Not allowed: Storing `Config` directly (stale data risk) |
+| **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates shell exports<br>• Consumers: Call `export(shell, &config, &palette)` for a shell's export, `get()` for the theme<br>• Hot-reload: Theme can change, always call methods | Allowed: `theme_mgr.export(shell, &config, &palette)` in agent<br>Allowed: `let theme = theme_mgr.get()` for a shared snapshot<br>Not allowed: Caching theme colors locally |
+| **Language Version Cache** | `language::version` module | Global `VERSION_MEMO` in `gpy-agent/src/language/version.rs` | `ProbeMemo<String>` (`language/probe_memo.rs`): successful probes and recent failures, each capped at `VERSION_CACHE_CAPACITY` | • Owner: `language::version` module manages global cache<br>• Consumers: Callers use `lookup_version_at(detector, cwd, policy)`; the IPC request path passes `ProbePolicy::CachedOnly` and leaves a cold version to a background probe job ([ADR-0009](adr/adr-0009-deferred-language-version-probes.md))<br>• TTL: successes expire after `language.cache_ttl_hours` (default 24); a failed probe is remembered for 1 minute (`FAILURE_TTL`)<br>• Thread-safe: `ProbeMemo` is internally synchronized | Allowed: Call `lookup_version_at()`, cache automatic<br>Allowed: Cache shared globally, TTL handles staleness<br>Not allowed: Creating separate per-request version caches<br>Not allowed: Probing a version on the IPC request path |
 | **IPC Server State** | `ipc::server::EndpointHandle` | Socket listener | Owned by `Agent` | • Owner: Agent creates and holds server<br>• Lifecycle: Lives until agent shutdown<br>• Thread-safe: Tokio runtime handles connections | Allowed: Agent creates in `Agent::new()`<br>Allowed: Server runs in `Agent::start_background()`<br>Not allowed: Multiple server instances |
 
 #### State Access Patterns
@@ -453,16 +487,14 @@ This table documents which modules own which pieces of state and how state is sh
 **Correct Pattern**: Access state via owner's public API
 ```rust
 // CORRECT: Use owner's API
-let status = git_cache.get(&repo_path);  // GitStatusCache::get()
-clients.notify_repaint(None);            // ClientDirectory::notify_repaint()
+let status = git_cache.get_canonical(&repo_root);  // GitStatusCache::get_canonical()
+clients.notify_repaint(None);                      // ClientDirectory::notify_repaint()
 
-// CORRECT: Agent coordinates state updates
-impl Agent {
-    fn handle_file_event(cache: &GitStatusCache, event: &Event) {
-        cache.invalidate(&event.repo);    // Coordinate invalidation
-        let status = refresh_incremental(cache, &event.repo, &event.paths);
-        cache.set(&event.repo, status);   // Coordinate refresh
-    }
+// CORRECT: Agent coordinates state updates (agent/events/mod.rs)
+fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Config) {
+    // Merge a pathspec scan with GitStatusCache::update_paths_canonical, or
+    // publish a full scan with GitStatusCache::apply_full_scan, then notify
+    // clients.
 }
 ```
 
@@ -504,7 +536,7 @@ When adding new shared state:
 
 | Mistake | Problem | Solution |
 |---------|---------|----------|
-| Storing `Config` directly | Misses hot-reload updates | Use `Arc<ConfigManager>`, call `get_current()` |
+| Storing `Config` directly | Misses hot-reload updates | Use `Arc<ConfigManager>`, call `get()` |
 | Caching theme colors | Stale colors after theme reload | Query `ThemeManager` each time |
 | Creating multiple watchers | Resource leak, duplicate events | Single watcher in agent, shared via slot |
 | Direct HashMap access | Breaks thread safety, violates ownership | Use owner's public methods |
@@ -526,7 +558,7 @@ When adding new shared state:
 └──────────────────────────────────────────────────────┘
                         ↓
 ┌──────────────────────────────────────────────────────┐
-│  Agent::run() - Runtime Phase                        │
+│  Agent::start_background() - Runtime Phase           │
 ├──────────────────────────────────────────────────────┤
 │  • IPC requests read/write state via Arc references  │
 │  • File events trigger coordinated state updates     │
@@ -556,7 +588,12 @@ When adding new shared state:
 ```
 Fish segment_git_render()
   ↓
-__gpy_request git $PWD
+__gpy_read_instant_cache → <cache dir>/instant-prompts/<key>.git….ansi
+  ↓
+hit (fresh or stale): print the file; a stale hit also fires a throttled
+__gpy_maybe_refresh (steps below, reply discarded). Only a miss continues.
+  ↓
+__gpy_build_data_payload git "$root" ansi … → __gpy_ipc_send
   ↓
 JSON: {"op":"git","cwd":"/path","format":"ansi"}
   ↓
@@ -566,25 +603,26 @@ Message::RepositoryStatus parsed
   ↓
 security::validate_path(path) → reject if suspicious
   ↓
-git_cache.get(repo_path) → check freshness
+git_cache.get_canonical(git_root) → check freshness
   ↓
 if stale:
-    git::status::load_repository_state(path, max_ahead_behind, stash_enabled)
+    git::status::load_repository_state(path, max_ahead_behind, stash_enabled, timeout)
       ↓
     native backend: git status --porcelain=v2 --branch
       ↓
     Parse output, build RepositoryStatus
       ↓
-    git_cache.insert(repo_path, status, timestamp)
+    git_cache.apply_full_scan(git_root, started, status, files)
   ↓
 Render response in ansi format:
   - Apply theme colors
   - Generate ANSI escape codes
   - Add delimiters (if not is_last)
+  - Write the instant cache file
   ↓
 ← ansi: "\x1b[32m main \x1b[0m  2 \x1b[33m⚡1\x1b[0m"
   ↓
-Fish: printf '%s' $response
+Fish: printf '%s' $synced
 ```
 
 A file-event refresh instead runs one pathspec `git status --porcelain=v2 -z -- <paths>` (`get_pathspec_status`) and merges the result into the cached status.
@@ -617,7 +655,7 @@ Flush thread wakes, finds expired event
   ↓
 DebouncedEvent → callback
   ↓
-agent::handle_file_event():
+agent::events::handle_file_event():
   - Check if cache is fresh (cooldown window)
   - If stale: run git status, update cache
   - Notify all registered clients with SIGURG
@@ -666,10 +704,12 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 
 **Connection Type**: SOCK_STREAM (stream socket, not datagram)
 
-**Protocol**: Line-delimited JSON
+**Protocol**: Line-delimited
 - Each request is a single JSON object terminated by newline (`\n`)
-- Each response is a single JSON object terminated by newline
+- Each reply is one newline-terminated line. For the prompt formats (`ansi`, `zsh-prompt`, `bash-prompt`) it is the rendered segment text; for `json` requests and control ops it is a JSON object
 - Multiple requests can be sent over the same connection (connection pooling)
+
+**Refusals**: a request the agent refuses (bad JSON, unknown op, missing field, a denylisted or invalid path) gets a single `{"error":"Parse error: ..."}` line in every format, never an empty line. A shell treats any reply that starts `{"error"` as a permanent refusal: it never prints or memoizes it and falls back to oneshot (Fish: `__gpy_ipc_send` status 3). An empty line still means the agent is alive but late: the shell omits the segment and does not fork oneshot (`__gpy_ipc_send` status 2).
 
 **Security**:
 - The socket is chmod'ed to `0600` right after bind
@@ -706,7 +746,7 @@ replaces a running agent that reports another protocol. There is no negotiation.
 
 ### Performance Characteristics
 
-A cached git status costs one IPC round trip (`benchmarks/perf-budgets.json`: `ipc_latency` budget 1 ms target, 1.5 ms max; measured 0.037 ms on a dev machine, 2026-05-15). A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh cache entry returns without spawning git at all.
+A git or language segment with a fresh or stale instant-cache file costs a file read and no IPC. IPC runs on a cold miss, a variant mismatch or a background refresh: `benchmarks/perf-budgets.json` sets the `ipc_latency` budget at 1 ms target, 1.5 ms max (the gates add the 15% `measurement_variance_percent` to each max); a ping measured 0.037 ms on a dev machine, 2026-05-15. A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh `GitStatusCache` entry returns without spawning git at all.
 
 ### Security Considerations
 
@@ -740,8 +780,8 @@ subprocess. ADR-0003 records the original decision and its reversal;
 - But no feature parity for sparse checkouts or submodules, which real repos hit
 
 **git CLI** (chosen):
-- Inherits git's own optimizations: `core.fsmonitor` and `core.untrackedCache`
-  reduce a full scan to a check of what git already knows changed
+- Inherits git's own optimizations: `core.untrackedCache` reduces a full scan to
+  a check of what git already knows changed. Every command runs with `core.fsmonitor` off, so a repository's config cannot make a prompt run a hook command
 - One subprocess returns branch, ahead/behind and file status together
 - `--porcelain=v2` is machine-readable and has been stable since Git 2.11.0 (2016)
 - Spawn overhead is real but small against what the untracked cache saves:
@@ -779,28 +819,33 @@ See [security-model.md](security-model.md) for the trust boundaries, threat mode
 
 | Operation | Target | Baseline | Notes |
 |-----------|--------|---------|-------|
-| IPC round-trip | 1 ms (max 1.5 ms) | 0.037 ms (`ipc_ping`) | Cached response |
-| Git status (warm) | 50 ms (max 100 ms) | 17.2 ms (`git_status_100_files`) | Depends on repo size |
-| Git status (cold) | 500 ms (max 750 ms) | — | First query in a repository |
-| Prompt render (cached) | 20 ms (max 50 ms) | — | All segments |
+| IPC round-trip (`ipc_latency`) | 1 ms (max 1.5 ms) | 0.037 ms (`ipc_roundtrip`) | A ping; the cold-miss and refresh path |
+| Git status, cold (`git_status_cold`) | 500 ms (max 750 ms) | — | First query in a repository |
+| Prompt render, warm (`prompt_render`) | 20 ms (max 50 ms) | — | Agent up, instant cache fresh |
+| Prompt render, cold cache (`prompt_render_cold`) | 150 ms (max 300 ms) | — | Instant cache cleared before every render |
+| Prompt render, stale (`prompt_render_stale`) | 40 ms (max 100 ms) | — | Serve-stale path |
+| Prompt render, agent down (`prompt_render_degraded`) | 80 ms (max 200 ms) | — | Oneshot fallback |
+
+The gates enforce `max` plus the 15% `measurement_variance_percent`, so a 1.5 ms max fails above 1.725 ms; `target` is never enforced. The per-shell render and script-segment budgets are in `benchmarks/perf-budgets.json`.
 
 ### Memory Footprint
 
-- Agent process: 2-5 MB resident
-- Cache per repo: ~200 bytes (metadata only)
-- Client registry: ~50 bytes per Fish process
+- Agent resident memory budget (`scripts/ci-bench.sh`): `memory_usage` 15 MB target, 50 MB max at startup; `memory_long_running` 20 MB target, 50 MB max peak under sustained load
+- Every path-keyed cache is bounded by entry count, and git file detail by a byte budget (below)
 
 ### Caching Strategy
 
-**Git status cache**:
-- TTL: Determined by cooldown window (150ms default)
-- Eviction: Explicit invalidation on file events
-- Size: Unbounded (assumes reasonable number of repos)
+**Git status cache** (`git/cache.rs`, `cache/policy.rs`, `cache/bounded.rs`):
+- TTL: 30 s from the last full scan (`CachePolicy::git_status`), which catches changes the watcher cannot see. A hit within the 150 ms cooldown (`GIT_STATUS_COOLDOWN`) after any update skips background revalidation
+- Updates: file events merge a pathspec scan into the entry, or replace it with a full scan
+- Eviction: least recently updated entries beyond `GIT_STATUS_CACHE_CAPACITY` (512 repositories); per-file detail beyond `GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES` (10 MiB, about 80 B per dirty file) is dropped oldest first, and such an entry needs a full scan before it takes another pathspec merge
 
-**Language detection cache**:
-- TTL: Configurable via config (default: 5 minutes)
-- Eviction: LRU (not yet implemented, currently no eviction)
-- Size: Unbounded
+**Language detection cache** (`language/detection_cache.rs`):
+- Refresh interval: 30 s (`LANGUAGE_REFRESH_INTERVAL`); an entry whose git-status signature is unchanged is still re-detected after 5 minutes (`LANGUAGE_SIGNATURE_MAX_AGE`)
+- Eviction: least recently refreshed entries beyond `DETECTION_CACHE_CAPACITY` (512 directories), through `evict_to_capacity`
+- `language.cache_ttl_hours` (default 24, 1–720) governs only the version, mise and virtualenv caches, not detection. The version cache holds at most `VERSION_CACHE_CAPACITY` (1024) successes and as many failures; a failed probe is remembered for 1 minute
+
+**Instant prompt cache**: see [Instant prompt cache](#instant-prompt-cache) for freshness, the 14-day age sweep and the in-memory bounds.
 
 ---
 
@@ -809,10 +854,13 @@ See [security-model.md](security-model.md) for the trust boundaries, threat mode
 ### Loading Hierarchy
 
 ```
-1. $XDG_CONFIG_HOME/gpy/config.toml (user config)
-2. $XDG_CONFIG_HOME/gpy/theme.toml (user theme)
-3. Built-in defaults (config::Config::default())
+1. $GPY_CONFIG_PATH (explicit override; empty counts as unset)
+2. $XDG_CONFIG_HOME/gpy/config.toml
+3. ~/.config/gpy/config.toml
+4. Built-in defaults (config::Config::default())
 ```
+
+The first existing file wins (`config/location.rs`). A theme is not a separate file in this chain: `ui.theme` names a theme, resolved user (`~/.config/gpy/themes/<name>.toml`), then plugin, then built-in (`default`, `text`, `starship`).
 
 ### Config Structure
 
@@ -836,13 +884,13 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
 
 ### Hot-Reload Status
 
-**Currently supported** (no restart required):
-- Theme changes (colors, glyphs, segment styling)
-- Config changes (`ui.enabled_segments`)
+**Applied by a running agent** (no restart required):
+- Theme changes (colors, glyphs, segment styling) and palette changes
+- Config changes: `ui.enabled_segments`, `git.timeout_seconds` (read on each scan), `language.cache_ttl_hours` (applied by `handle_config_reload`), watch settings
 - Git status updates (cross-terminal via file watcher)
-- Clock updates (every minute)
+- Clock updates (every minute, or every second with `show_seconds`)
 
-**Not supported**: Git timeout, language cache TTL (require agent restart)
+A config file that exists but does not load keeps the last good configuration.
 
 ### Hot-Reload Implementation
 
@@ -856,9 +904,9 @@ Every key is in the [Configuration Reference](../user/configuration-reference.md
 
 2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like removing `git` from `ui.enabled_segments`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`__enabled_segments`) so segments can correctly determine which is last.
 
-3. **Theme Loading Must Use Pipe-to-Source**:
+3. **Theme Loading Must Use Source, Not Eval**: the agent writes the export cache file before the reload doorbell, and Fish sources it. The fallback joins the output of `gpy-agent theme export --shell fish` with newlines and pipes it to `source`:
    ```fish
-   gpy-agent theme export --shell fish | source
+   string join \n -- $export_text | source
    ```
    NOT `eval (...)` - command substitution flattens newlines, breaking multi-line scripts.
 
@@ -906,7 +954,7 @@ These tests cover the bug where unlisting `git` from `ui.enabled_segments` sent 
       ╱────╲
      ╱ Integ╲      Integration: language_tests.rs, git_status_tests.rs
     ╱────────╲
-   ╱   Unit   ╲    Unit: watcher/tests, config/tests, security/tests
+   ╱   Unit   ╲    Unit: `#[cfg(test)]` modules and `*_tests.rs` files beside the code
   ╱────────────╲
 ```
 
@@ -960,10 +1008,12 @@ fish tests/fish/e2e_interactive_session.test.fish
 
 See [add-new-segment.md](add-new-segment.md) for the checklist.
 
-Quick version:
-1. Create `segments/my_segment.fish`
-2. Implement `segment_my_segment_detect()` and `segment_my_segment_render()`
-3. Add to `__enabled_segments` in `functions/fish_prompt.fish`
+Route A, a bundled script plugin under `plugins/<id>/`, is the default and needs no Rust change. Route B, an agent-rendered segment, needs an issue and maintainer approval first.
+
+An agent-rendered segment touches all three shells, each with its own `segments/` directory:
+1. `fish/segments/<id>.fish`: `segment_<id>_detect`, `segment_<id>_omit`, `segment_<id>_render`
+2. `zsh/segments/<id>.zsh` and `bash/segments/<id>.bash`: `__gpy_segment_<id>_detect`, `__gpy_segment_<id>_omit`, `__gpy_segment_<id>`
+3. The segment must be in `ui.enabled_segments`; the shells read the resulting `__enabled_segments` from the theme export, with fallbacks in `fish/core/defaults.fish`
 4. Test with both agent and oneshot modes
 
 ### Modifying IPC Protocol
@@ -971,11 +1021,12 @@ Quick version:
 **CRITICAL**: Protocol changes break compatibility
 
 Steps:
-1. Update `Message` enum in `ipc/mod.rs`
-2. Update Fish IPC code in `core/ipc.fish`
-3. Bump `PROTOCOL_VERSION` if the change is incompatible (shells compare it for equality; there is no negotiation)
-4. Document the change for shell integrations
-5. Coordinate Fish + Rust deployment
+1. Add the op to `Op::ALL` in `gpy-agent/src/ipc/wire.rs` (the only list of op names) and the `Message` enum in `gpy-agent/src/ipc/mod.rs`
+2. Handle it in the `into_message` dispatch (`ipc/protocol/mod.rs`) and route it in `HandlerRegistry::route` (`ipc/handlers/mod.rs`)
+3. Update the schemas in `gpy-agent/schemas/` (`message.json`, `response.json`); `gpy-agent/tests/schema_validation_tests.rs` checks them against the code
+4. Update the IPC code of all three shells: `fish/core/ipc.fish`, `zsh/core/ipc.zsh`, `bash/core/ipc.bash`
+5. Bump `PROTOCOL_VERSION` if the change is incompatible (shells compare it for equality; there is no negotiation)
+6. Coordinate shell and Rust deployment
 
 ### Debugging Cache Issues
 

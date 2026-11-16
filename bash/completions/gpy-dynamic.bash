@@ -24,14 +24,20 @@ __gpy_complete_cached() {
     __gpy_complete_result="$cache_val"
 }
 
-# Fill COMPREPLY with the words in $__gpy_complete_result that match $1, one
-# per line, without word-splitting or globbing them (bash 3.2 has no mapfile).
+# Fill COMPREPLY with the words in $__gpy_complete_result (one per line) that
+# start with $1. The names come from file stems a theme or plugin directory
+# controls, so nothing here expands them: no `compgen -W`, which would run a
+# `$(...)` inside a name, and no word-splitting or globbing (bash 3.2 has no
+# mapfile). Each candidate is inserted `%q`-quoted, so accepting the
+# completed line cannot expand it either.
 __gpy_complete_reply() {
-    local word
+    local word quoted
     COMPREPLY=()
     while IFS= read -r word; do
-        COMPREPLY+=("$word")
-    done < <(compgen -W "$__gpy_complete_result" -- "$1")
+        [[ -n "$word" && "$word" == "$1"* ]] || continue
+        printf -v quoted '%q' "$word"
+        COMPREPLY+=("$quoted")
+    done <<<"$__gpy_complete_result"
 }
 
 _gpy_dynamic() {

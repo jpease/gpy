@@ -9,13 +9,15 @@ Zsh; a long-running local agent (`gpy-agent`); and a Unix domain socket between
 them.
 
 **Your shell trusts the agent completely.** Every new shell runs the agent's
-theme export as shell code. Bash and Zsh do it with `eval "$(gpy-agent theme
-export ...)"` (`bash/core/init.bash`, `zsh/core/init.zsh`). Fish pipes the same
-output into `source`, or sources the theme-export cache file the agent wrote
-under `~/.cache/gpy/` (`fish/core/init.fish`). Prompt content returned over the
-socket reaches the prompt the same way. This is what a prompt generator is —
-something has to emit shell code — but it puts the agent binary on the same
-footing as your shell startup files.
+theme export as shell code. All three shells source the theme-export cache
+file the agent wrote under `~/.cache/gpy/` when its first line is the version
+sentinel (`bash/core/init.bash`, `zsh/core/init.zsh`, `fish/core/init.fish`).
+When the file is missing or lacks the sentinel, Bash and Zsh fall back to
+`eval "$(gpy-agent theme export ...)"` and Fish to piping the same output into
+`source`. `gpy-prompt-reload` always asks the agent instead of the file.
+Prompt content returned over the socket reaches the prompt the same way. This
+is what a prompt generator is — something has to emit shell code — but it puts
+the agent binary on the same footing as your shell startup files.
 
 Anyone who can replace `gpy-agent` on your
 `PATH`, or write to the theme-export cache, gets arbitrary code execution in
@@ -57,13 +59,13 @@ path is refused, never chmod'ed (`chmod 700` it, or choose a private
 directory). `gpy-agent start` applies the check before it creates the start
 lock, removes a stale socket or pings a running agent there, and the daemon
 applies it again immediately before bind (`secure_socket_dir` in
-`gpy-agent/src/ipc/server/handle.rs`). Only the directory itself is checked,
+`gpy-agent/src/ipc/server/socket_dir.rs`). Only the directory itself is checked,
 not its parents. The owner-only socket in that directory is the access
 control. There is no handshake and no peer-credential check: any process
 running as you can talk to the agent, which is the same authority it already
 has to read your files and rewrite your shell config.
 
-Requests carry a PID. `validate_pid` (`gpy-agent/src/security.rs`) checks that
+Requests carry a PID. `validate_pid_liveness` (`gpy-agent/src/security.rs`) checks that
 the PID is well-formed and that the process is alive via `kill(pid, 0)`; it does
 not authenticate the caller, and a local process may claim any live PID. Treat
 it as a liveness and hygiene check, not as an authentication mechanism.
@@ -154,9 +156,13 @@ expires, and the group is still killed.
 
 ### File system access
 
-The file watcher's liveness probe does write a sentinel file, but into a private
-directory under the system temp dir, outside every watched repository
-(`gpy-agent/src/watcher/filesystem/mod.rs`). The other file-system promises are
+The agent does write to repositories: `git update-index --untracked-cache` on
+setup and repair (skipped while a merge, rebase, cherry-pick, revert, sequencer
+or `index.lock` is present). The file watcher's liveness probe writes a sentinel file into a private
+directory: under the system temp dir at startup, and, once per further
+filesystem a repository lives on, a short-lived `gpy-watch-probe-<pid>-<nanos>/`
+inside that repository's git directory
+(`gpy-agent/src/watcher/filesystem/probe.rs`). The other file-system promises are
 in [SECURITY.md](../../SECURITY.md#file-system-access).
 
 ### Subprocesses
@@ -164,6 +170,18 @@ in [SECURITY.md](../../SECURITY.md#file-system-access).
 - Commands are built as argument vectors through `std::process::Command`, so
   repository, branch and path names are passed as arguments and never spliced
   into a shell string.
+- Every agent `git` command runs with `-c core.fsmonitor=false`, so a
+  repository's `core.fsmonitor` command is never run (the agent gets no
+  fsmonitor speed-up; an `update-index` may drop the fsmonitor extension from
+  the index, which your next `git` command rebuilds). Hooks are not run by
+  the read commands the agent uses.
+- Language version probes run the repository-selected toolchain shim
+  (`rustup`, `mise`, `go`, and so on), which can execute repo-chosen code.
+  The probe child gets `RUSTUP_AUTO_INSTALL=0`, `GOTOOLCHAIN=local`,
+  `MISE_AUTO_INSTALL=0`, `MISE_EXEC_AUTO_INSTALL=0` and
+  `MISE_NOT_FOUND_AUTO_INSTALL=0`, so a repository cannot trigger a toolchain
+  download; an uninstalled toolchain shows no version
+  (`gpy-agent/src/language/version.rs`).
 - Python version detection reads a project-local `.venv`/`venv` only through
   its `pyvenv.cfg`. A venv's interpreter is run to read its version only for
   the environment your shell activated and forwarded (`VIRTUAL_ENV`, or a

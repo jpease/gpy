@@ -15,6 +15,30 @@ use std::time::Duration;
 /// Runs before a reload commits; an error aborts it and keeps the old config.
 pub type ConfigReloadCallback = Arc<dyn Fn(&Config, &Config) -> Result<()> + Send + Sync>;
 
+/// Where the active candidate's symlink resolves: the target file (registered
+/// as a config path) and, when it lives in another directory, that directory
+/// (shallow-watched).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CanonicalTarget {
+    file: PathBuf,
+    watch_dir: Option<PathBuf>,
+}
+
+impl CanonicalTarget {
+    /// The resolved target of `config_path`, `None` when it does not resolve
+    /// or is not a symlink to elsewhere.
+    fn resolve(config_path: &Path) -> Option<Self> {
+        let file = std::fs::canonicalize(config_path).ok()?;
+        let target_dir = file.parent()?.to_path_buf();
+        let link_dir = std::fs::canonicalize(config_path.parent()?).ok()?;
+        if file == link_dir.join(config_path.file_name()?) {
+            return None;
+        }
+        let watch_dir = (target_dir != link_dir).then_some(target_dir);
+        Some(Self { file, watch_dir })
+    }
+}
+
 /// Thread-safe configuration with optional hot-reload.
 pub struct ConfigManager {
     /// Candidates, highest priority first; re-resolved on every reload.
@@ -25,8 +49,8 @@ pub struct ConfigManager {
     on_reload: Arc<Mutex<Option<ConfigReloadCallback>>>,
     /// Registry the watcher registered on, so `stop_watching` unregisters from it.
     watch_registry: Mutex<Option<Arc<WatchRegistry>>>,
-    /// Symlink-target directory watched when the active candidate is a symlink.
-    canonical_watch: Arc<Mutex<Option<PathBuf>>>,
+    /// Symlink target tracked when the active candidate is a symlink.
+    canonical_watch: Arc<Mutex<Option<CanonicalTarget>>>,
     /// Serializes reloads across read-old/callback/store-new. The CLI write
     /// and its IPC reload both fire; without this both run the callback against
     /// the same stale old config. `()` so a callback panic is recoverable.
@@ -142,9 +166,10 @@ impl ConfigManager {
             let rearm: Box<dyn Fn() + Send + Sync + 'static> = {
                 let candidates = Arc::clone(&self.candidates);
                 let watcher = self.hot_reload.watcher_handle();
-                let canonical_dir = Arc::clone(&self.canonical_watch);
+                let canonical = Arc::clone(&self.canonical_watch);
+                let rearm_registry = Arc::clone(registry);
                 Box::new(move || {
-                    Self::rearm_canonical_watch(&candidates, &watcher, &canonical_dir);
+                    Self::rearm_canonical_watch(&candidates, &watcher, &canonical, &rearm_registry);
                 })
             };
 
@@ -165,7 +190,7 @@ impl ConfigManager {
             )?;
 
             self.watch_candidate_dirs(&mut coordinator)?;
-            self.arm_canonical_watch(&mut coordinator);
+            self.arm_canonical_watch(&mut coordinator, registry);
             for candidate in self.candidates.iter() {
                 Self::register_candidate(registry, candidate);
             }
@@ -245,11 +270,7 @@ impl ConfigManager {
                 debug_log!("config", "Config reloaded successfully");
             }
             Err(e) => {
-                debug_log!(
-                    "config",
-                    "Failed to reload config, keeping old config: {}",
-                    e
-                );
+                crate::warn_log!("config", "Config edit rejected, keeping old config: {e}");
             }
         }
     }
@@ -262,8 +283,8 @@ impl ConfigManager {
         rearm: Box<dyn Fn() + Send + Sync + 'static>,
     ) -> Box<dyn Fn(crate::watcher::DebouncedEvent) + Send + Sync + 'static> {
         Box::new(move |event| {
-            // The config dir is watched recursively, but `gpy/themes` belongs to
-            // the theme watcher; reloading here too races it into a second doorbell.
+            // `gpy/themes` belongs to the theme watcher; reloading here too
+            // races it into a second doorbell.
             if event.is_theme_only() {
                 return;
             }
@@ -275,32 +296,26 @@ impl ConfigManager {
     }
 
     /// Also watch the symlink target's directory (shallow): writes through the
-    /// link land there, which the lexical parent never reports. Best-effort.
-    fn arm_canonical_watch(&self, coordinator: &mut WatchCoordinator) {
-        let Some(dir) = Self::active_path(&self.candidates)
+    /// link land there, which the lexical parent never reports. The target
+    /// file itself is registered as a config path, so a target with any name
+    /// reloads. Best-effort.
+    fn arm_canonical_watch(&self, coordinator: &mut WatchCoordinator, registry: &WatchRegistry) {
+        let Some(mut target) = Self::active_path(&self.candidates)
             .as_deref()
-            .and_then(Self::canonical_watch_dir)
+            .and_then(CanonicalTarget::resolve)
         else {
             return;
         };
-        match coordinator.watch_directory_shallow(&dir) {
-            Ok(()) => {
-                *self.canonical_watch.lock_or_recover() = Some(dir);
-            }
-            Err(e) => {
-                debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
+        registry.register_config_path(&target.file);
+        if let Some(dir) = target.watch_dir.take() {
+            match coordinator.watch_directory_shallow(&dir) {
+                Ok(()) => target.watch_dir = Some(dir),
+                Err(e) => {
+                    debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
+                }
             }
         }
-    }
-
-    /// Symlink target's directory when it differs from the link's; else `None`.
-    fn canonical_watch_dir(config_path: &Path) -> Option<PathBuf> {
-        let target_dir = std::fs::canonicalize(config_path)
-            .ok()?
-            .parent()?
-            .to_path_buf();
-        let link_dir = std::fs::canonicalize(config_path.parent()?).ok()?;
-        (target_dir != link_dir).then_some(target_dir)
+        *self.canonical_watch.lock_or_recover() = Some(target);
     }
 
     /// Retarget the shallow symlink watch only when the target moved: each
@@ -308,12 +323,13 @@ impl ConfigManager {
     fn rearm_canonical_watch(
         candidates: &[PathBuf],
         watcher: &Mutex<Option<WatchCoordinator>>,
-        canonical_dir: &Mutex<Option<PathBuf>>,
+        canonical: &Mutex<Option<CanonicalTarget>>,
+        registry: &WatchRegistry,
     ) {
         let next = Self::active_path(candidates)
             .as_deref()
-            .and_then(Self::canonical_watch_dir);
-        let mut current = canonical_dir.lock_or_recover();
+            .and_then(CanonicalTarget::resolve);
+        let mut current = canonical.lock_or_recover();
         if *current == next {
             return;
         }
@@ -324,18 +340,25 @@ impl ConfigManager {
         let Some(coordinator) = slot.as_mut() else {
             return;
         };
-        if let Some(old) = current.take()
-            && let Err(e) = coordinator.unwatch_directory_shallow(&old)
-        {
-            debug_log!("config", "Failed to unwatch {}: {}", old.display(), e);
+        if let Some(old) = current.take() {
+            registry.unregister_config_path(&old.file);
+            if let Some(dir) = old.watch_dir
+                && let Err(e) = coordinator.unwatch_directory_shallow(&dir)
+            {
+                debug_log!("config", "Failed to unwatch {}: {}", dir.display(), e);
+            }
         }
-        if let Some(dir) = next {
-            match coordinator.watch_directory_shallow(&dir) {
-                Ok(()) => *current = Some(dir),
-                Err(e) => {
-                    debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
+        if let Some(mut target) = next {
+            registry.register_config_path(&target.file);
+            if let Some(dir) = target.watch_dir.take() {
+                match coordinator.watch_directory_shallow(&dir) {
+                    Ok(()) => target.watch_dir = Some(dir),
+                    Err(e) => {
+                        debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
+                    }
                 }
             }
+            *current = Some(target);
         }
     }
 
@@ -374,13 +397,28 @@ impl ConfigManager {
         );
     }
 
-    /// Watch every candidate's parent; the first is created if missing
-    /// (`config set` writes there), others only if absolute and existing.
+    /// Watch `dir`: recursively when it is a dedicated `gpy` config root, so
+    /// edits under `palettes/` and `themes/` reload too; shallowly otherwise,
+    /// so a `GPY_CONFIG_PATH` in `$HOME` or `/tmp` never arms a recursive
+    /// watch there.
+    fn watch_config_dir(coordinator: &mut WatchCoordinator, dir: &Path) -> Result<()> {
+        if dir.file_name().is_some_and(|name| name == "gpy") {
+            coordinator.watch_directory(dir)
+        } else {
+            coordinator.watch_directory_shallow(dir)
+        }
+    }
+
+    /// Watch every candidate's parent (see [`watch_config_dir`](Self::watch_config_dir)).
+    /// The first is created if missing (`config set` writes there), others
+    /// only if absolute and existing. One directory failing does not disable
+    /// the rest.
     ///
     /// # Errors
-    /// Returns an error if the first candidate's directory cannot be created or watched.
+    /// Returns the first failure only when no candidate directory could be watched.
     fn watch_candidate_dirs(&self, coordinator: &mut WatchCoordinator) -> Result<()> {
         let mut watched: Vec<&Path> = Vec::new();
+        let mut first_error: Option<Error> = None;
         for (index, candidate) in self.candidates.iter().enumerate() {
             let Some(parent) = candidate.parent() else {
                 continue;
@@ -388,20 +426,32 @@ impl ConfigManager {
             if watched.contains(&parent) {
                 continue;
             }
-            if index == 0 {
-                Self::ensure_config_directory_exists(parent)?;
-                coordinator.watch_directory(parent)?;
+            let armed = if index == 0 {
+                Self::ensure_config_directory_exists(parent)
+                    .and_then(|()| Self::watch_config_dir(coordinator, parent))
             } else if candidate.is_absolute() && parent.is_dir() {
-                if let Err(e) = coordinator.watch_directory(parent) {
-                    debug_log!("config", "Failed to watch {}: {}", parent.display(), e);
-                    continue;
-                }
+                Self::watch_config_dir(coordinator, parent)
             } else {
                 continue;
+            };
+            match armed {
+                Ok(()) => watched.push(parent),
+                Err(e) => {
+                    crate::warn_log!(
+                        "config",
+                        "Cannot watch {} for config changes: {e}",
+                        parent.display()
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
             }
-            watched.push(parent);
         }
-        Ok(())
+        match first_error {
+            Some(e) if watched.is_empty() => Err(e),
+            _ => Ok(()),
+        }
     }
 
     /// Register under the literal and canonical-parent spellings: a not-yet-created
@@ -447,12 +497,15 @@ impl ConfigManager {
         }
         // May be the agent's shared registry, not a private one.
         let started_with = self.watch_registry.lock_or_recover().take();
+        let canonical = self.canonical_watch.lock_or_recover().take();
         if let Some(registry) = started_with {
             for candidate in self.candidates.iter() {
                 Self::unregister_candidate(&registry, candidate);
             }
+            if let Some(target) = canonical {
+                registry.unregister_config_path(&target.file);
+            }
         }
-        *self.canonical_watch.lock_or_recover() = None;
     }
 
     /// Re-resolve and reload now, serialized with watcher/poll reloads.

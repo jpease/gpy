@@ -131,8 +131,10 @@ not get a quiet window. Do not touch the machine while it runs.
 Useful variations:
 
 ```sh
-# Your installed GPY and Starship, or the newest releases of both
+# The Starship on your PATH, or the newest releases of both
 ./benchmarks/compare-starship/run.sh --starship system
+# Your installed GPY (an existing gpy-agent binary) against the pinned Starship
+./benchmarks/compare-starship/run.sh --gpy "$(command -v gpy-agent)"
 ./benchmarks/compare-starship/run.sh --gpy latest --starship latest
 
 # One repository, a quick check of the setup

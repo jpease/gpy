@@ -55,8 +55,27 @@ run_case "windows-style path" 'C:\Users\foo\bar'
 run_case "double quote" 'a"b'
 run_case "backslash and quote" 'a\"b'
 run_case "slash and backslash" 'x/\y'
+# Every other C0 control and DEL goes out as \u00XX, so a cwd holding one
+# (ESC, BEL, a Latin-1 name's control byte) still makes a valid request.
+run_case "escape (ESC)" $'/tmp/a\x1bb'
+run_case "bell, backspace, form feed, vertical tab" $'\a\b\f\v'
+run_case "SOH and US" $'\x01x\x1f'
+run_case "DEL" $'a\x7fb'
+run_case "controls beside newline, tab and quote" $'a\x1b\n\t"\x02'
 
 fi
+
+# The exact form, independent of jq.
+for pair in $'\x1b=\\u001b' $'\x01=\\u0001' $'\x1f=\\u001f' $'\x7f=\\u007f'; do
+    __gpy_escape_json_into escaped_c0 "${pair%%=*}"
+    if [[ "$escaped_c0" == "${pair#*=}" ]]; then
+        print -r -- "PASS: control byte escapes to ${pair#*=}"
+    else
+        print -r -- "FAIL: control byte escaped to [$escaped_c0], want [${pair#*=}]"
+        test_result=1
+    fi
+done
+unset pair escaped_c0
 
 # __gpy_escape_json_into must also escape control characters (\n, \r, \t)
 # the same way Fish's __gpy_json_escape does. Read the shared vector file

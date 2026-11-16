@@ -5,7 +5,8 @@
 //! file. The `gpy-init` marker lines (see `rc_block`) are the contract
 //! `gpy uninstall` removes by. Every step is idempotent.
 
-use super::rc_block::{BlockChange, ensure_block, has_block};
+use super::rc_block::{BlockChange, BlockState, block_state, ensure_block, has_block};
+use super::setup_fish::{leftover_trees, link_fish_prompt, report_leftovers, retire_fish_loader};
 use super::setup_install::{InstallMode, install_bundled_plugins, install_files, preflight};
 use crate::commands::init::{self, InitOptions};
 use crate::paths::{self, Os};
@@ -124,9 +125,11 @@ pub(super) struct DataRoot(pub(super) PathBuf);
 struct Outcome {
     shell_dir: PathBuf,
     rc_file: PathBuf,
-    rc_block_added: bool,
+    rc_change: BlockChange,
     /// Where the bundled plugins went; `None` for a source without them.
     plugins_dir: Option<PathBuf>,
+    /// Directories of the pre-0.9 layout still on disk.
+    leftovers: Vec<PathBuf>,
 }
 
 /// Run `gpy setup`. `completions` renders the structural completion script,
@@ -178,16 +181,19 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
             dir.display()
         ));
     }
-    if outcome.rc_block_added {
-        crate::commands::output::plain(format_args!(
+    match outcome.rc_change {
+        BlockChange::Added => crate::commands::output::plain(format_args!(
             "Added GPY initialization to {}",
             outcome.rc_file.display()
-        ));
-    } else {
-        crate::commands::output::plain(format_args!(
-            "GPY already configured in {}",
-            outcome.rc_file.display()
-        ));
+        )),
+        // The warning for an incomplete block was already printed.
+        BlockChange::Incomplete => {}
+        BlockChange::Unchanged | BlockChange::Upgraded | BlockChange::KeptEdited => {
+            crate::commands::output::plain(format_args!(
+                "GPY already configured in {}",
+                outcome.rc_file.display()
+            ));
+        }
     }
     super::setup_themes::retire_unmodified_themes();
     if let Err(err) = init::run(InitOptions {
@@ -199,6 +205,7 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
         ));
     }
     print_next_steps(shell, &outcome.rc_file, env.login_shell.as_deref());
+    report_leftovers(&outcome.leftovers);
     Ok(())
 }
 
@@ -207,11 +214,20 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
 pub struct InstalledIntegration {
     /// The shell.
     pub shell: Shell,
-    /// Where its scripts are installed.
+    /// Where its scripts are installed: the tree the rc block sources, or the
+    /// current data root's when the block names none.
     pub dir: PathBuf,
     /// The `gpy` version that installed them; `None` for a tree written
     /// before setup stamped versions.
     pub version: Option<String>,
+    /// The rc file holding the GPY block.
+    pub rc: PathBuf,
+    /// The file the rc block sources; `None` when the block is incomplete or
+    /// names no file.
+    pub entry: Option<PathBuf>,
+    /// The rc file has a start marker but no complete block, so the shell is
+    /// not wired.
+    pub incomplete: bool,
 }
 
 /// The shell integrations `gpy setup` has wired for the current user: the
@@ -230,20 +246,51 @@ fn installed_integrations_in(env: &Environment) -> Vec<InstalledIntegration> {
         .into_iter()
         .filter_map(|shell| {
             let rc = rc_file_for(env, shell).ok()?;
-            has_block(&rc).then(|| {
-                let dir = shell_dir_for(&root, shell);
-                let version = fs::read_to_string(dir.join(VERSION_STAMP))
-                    .ok()
-                    .map(|text| text.trim().to_owned())
-                    .filter(|text| !text.is_empty());
-                InstalledIntegration {
-                    shell,
-                    dir,
-                    version,
+            let mut incomplete = false;
+            let entry = match block_state(&rc) {
+                BlockState::Missing => return None,
+                BlockState::Incomplete => {
+                    incomplete = true;
+                    None
                 }
+                BlockState::Present(body) => sourced_entry(&body),
+            };
+            let dir = entry.as_deref().map_or_else(
+                || shell_dir_for(&root, shell),
+                |sourced| tree_dir_of(shell, sourced),
+            );
+            let version = fs::read_to_string(dir.join(VERSION_STAMP))
+                .ok()
+                .map(|text| text.trim().to_owned())
+                .filter(|text| !text.is_empty());
+            Some(InstalledIntegration {
+                shell,
+                dir,
+                version,
+                rc,
+                entry,
+                incomplete,
             })
         })
         .collect()
+}
+
+/// The file an rc block body sources: the first `source "<path>"`.
+fn sourced_entry(body: &str) -> Option<PathBuf> {
+    let (_, after) = body.split_once("source \"")?;
+    let (path, _) = after.split_once('"')?;
+    Some(PathBuf::from(path))
+}
+
+/// The shell tree a sourced `entry` file belongs to: Fish's entry sits in
+/// `conf.d/`, Zsh's and Bash's at the top.
+fn tree_dir_of(shell: Shell, entry: &Path) -> PathBuf {
+    let parent = entry.parent().unwrap_or(entry);
+    if shell == Shell::Fish {
+        parent.parent().unwrap_or(parent).to_path_buf()
+    } else {
+        parent.to_path_buf()
+    }
 }
 
 /// Choose the shell: the flag wins, then `GPY_SHELL`, then `$SHELL`.
@@ -392,7 +439,7 @@ pub(super) fn check_sourceable(path: &Path) -> Result<()> {
 }
 
 /// Install the trees and plugins into the data root, then wire the rc file
-/// of `shell` and report what an older layout left behind.
+/// of `shell` and collect what an older layout left behind.
 ///
 /// Every tree the source ships is installed; completions are generated for
 /// `shell` and for each other shell whose rc file already has the GPY block.
@@ -454,7 +501,7 @@ fn install(
     }
     let plugins_dir = install_bundled_plugins(source_root, &root, mode)?;
 
-    let (rc_file, rc_block_added) = match shell {
+    let (rc_file, rc_change) = match shell {
         Shell::Fish => wire_fish(env, &config_home, &shell_dir)?,
         Shell::Zsh => wire_zsh(env, &shell_dir)?,
         Shell::Bash => wire_bash(env, &shell_dir)?,
@@ -462,8 +509,9 @@ fn install(
     Ok(Outcome {
         shell_dir,
         rc_file,
-        rc_block_added,
+        rc_change,
         plugins_dir,
+        leftovers: leftover_trees(&config_home, &root.0),
     })
 }
 
@@ -515,10 +563,15 @@ pub(super) fn zsh_rc_body(shell_dir: &Path) -> String {
     format!("source \"{}\"", shell_dir.join("gpy.zsh").display())
 }
 
-/// Wire Fish: rc block in `config.fish` plus the `fish_prompt` symlink.
-fn wire_fish(env: &Environment, config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
+/// Wire Fish: rc block in `config.fish`, the `fish_prompt` symlink, and
+/// retire the autoloaded loader of the pre-0.9 layout.
+fn wire_fish(
+    env: &Environment,
+    config_home: &Path,
+    shell_dir: &Path,
+) -> Result<(PathBuf, BlockChange)> {
     let config = rc_file_for(env, Shell::Fish)?;
-    let added = ensure_and_report(
+    let change = ensure_and_report(
         &config,
         RC_BLOCK_HEADER,
         &fish_rc_body(shell_dir),
@@ -530,71 +583,23 @@ fn wire_fish(env: &Environment, config_home: &Path, shell_dir: &Path) -> Result<
         &fish_dir.join("functions/fish_prompt.fish"),
         &shell_dir.join("functions/fish_prompt.fish"),
     )?;
-    Ok((config, added))
-}
-
-/// Make `target` a symlink to `source`. An old regular-file copy of GPY's
-/// prompt is replaced; anything else is moved aside first.
-#[cfg(unix)]
-pub(super) fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
-    if fs::read_link(target).is_ok_and(|current| current == source) {
-        return Ok(());
+    if change != BlockChange::Incomplete {
+        retire_fish_loader(config_home)?;
     }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    if let Ok(meta) = target.symlink_metadata() {
-        if meta.is_file() && is_gpy_prompt_copy(target) {
-            fs::remove_file(target)?;
-        } else {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or_default(|elapsed| elapsed.as_secs());
-            let mut backup = target.as_os_str().to_owned();
-            backup.push(format!(
-                ".backup.{}",
-                super::backup_stamp::backup_stamp(now)
-            ));
-            fs::rename(target, &backup)?;
-            crate::commands::output::plain(format_args!(
-                "Moved your existing fish_prompt to {}",
-                PathBuf::from(backup).display()
-            ));
-        }
-    }
-    std::os::unix::fs::symlink(source, target)?;
-    Ok(())
-}
-
-/// A regular-file copy of GPY's own prompt: both segment-dispatch lines every
-/// GPY prompt shipped with (the rule `gpy uninstall` removes a copy by).
-#[cfg(unix)]
-pub(super) fn is_gpy_prompt_copy(path: &Path) -> bool {
-    fs::read_to_string(path).is_ok_and(|text| {
-        text.lines()
-            .any(|l| l.trim_ascii() == "for segment in $__enabled_segments")
-            && text
-                .lines()
-                .any(|l| l.trim_ascii() == "if functions -q segment_{$segment}_render")
-    })
-}
-
-#[cfg(not(unix))]
-pub(super) fn link_fish_prompt(_target: &Path, _source: &Path) -> Result<()> {
-    Err(Error::invalid("shell integration needs a Unix shell"))
+    Ok((config, change))
 }
 
 /// Wire Zsh: rc block in `$ZDOTDIR/.zshrc` or `~/.zshrc`.
-fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
+fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
     let rc = rc_file_for(env, Shell::Zsh)?;
-    let added = ensure_and_report(
+    let change = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,
         &zsh_rc_body(shell_dir),
         &[],
         "so it loads the files in the data directory",
     )?;
-    Ok((rc, added))
+    Ok((rc, change))
 }
 
 /// The `.bashrc` block body: GPY loads only in interactive shells.
@@ -618,52 +623,61 @@ const LEGACY_BASH_LOGIN_LOADER: &str = "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.b
 /// Header line of the login-file loader block.
 const BASH_LOGIN_HEADER: &str = "GPY: load ~/.bashrc in login shells";
 
-/// Run [`ensure_block`] on an rc file and report the outcome; `true` only when
-/// a block was added. Failing to rewrite an existing block is a warning, since
-/// the old block keeps working.
+/// Run [`ensure_block`] on an rc file and report the outcome. Failing to
+/// rewrite an existing block is a warning, since the old block keeps working;
+/// an incomplete block is a warning too, since the shell is not wired.
 pub(super) fn ensure_and_report(
     rc: &Path,
     header: &str,
     body: &str,
     legacy_bodies: &[String],
     upgraded_note: &str,
-) -> Result<bool> {
+) -> Result<BlockChange> {
     let had_block = has_block(rc);
-    match ensure_block(rc, header, body, legacy_bodies) {
-        Ok(BlockChange::Added) => Ok(true),
-        Ok(BlockChange::Unchanged) => Ok(false),
-        Ok(BlockChange::Upgraded) => {
-            crate::commands::output::plain(format_args!(
-                "Updated the GPY block in {} {upgraded_note}",
-                rc.display()
-            ));
-            Ok(false)
-        }
-        Ok(BlockChange::KeptEdited) => {
-            crate::commands::output::plain(format_args!(
-                "GPY block in {} differs from the current text; left unchanged. See docs/INSTALL.md#gpy-setup",
-                rc.display()
-            ));
-            Ok(false)
-        }
+    let change = match ensure_block(rc, header, body, legacy_bodies) {
+        Ok(change) => change,
         Err(err) if had_block => {
             eprintln!(
                 "warn: could not update the GPY block in {}: {err}; it still works with the old behaviour",
                 rc.display()
             );
-            Ok(false)
+            return Ok(BlockChange::Unchanged);
         }
-        Err(err) => Err(err),
+        Err(err) => return Err(err),
+    };
+    match change {
+        BlockChange::Added | BlockChange::Unchanged => {}
+        BlockChange::Upgraded => {
+            crate::commands::output::plain(format_args!(
+                "Updated the GPY block in {} {upgraded_note}",
+                rc.display()
+            ));
+        }
+        BlockChange::KeptEdited => {
+            crate::commands::output::plain(format_args!(
+                "GPY block in {} differs from the current text; left unchanged. See docs/INSTALL.md#gpy-setup",
+                rc.display()
+            ));
+        }
+        BlockChange::Incomplete => {
+            crate::commands::output::warn_stderr(format_args!(
+                "the GPY block in {} is incomplete (its '# <<< gpy-init <<<' end line or '# ' \
+                 header line is missing), so GPY is not wired. Delete the lines from \
+                 '# >>> gpy-init >>>' on that GPY added, then run `gpy setup` again",
+                rc.display()
+            ));
+        }
     }
+    Ok(change)
 }
 
 /// Wire Bash: rc block in `~/.bashrc`, plus a login-shell loader.
-fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
+fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
     let home = env.home()?;
     let rc = rc_file_for(env, Shell::Bash)?;
     let gpy_bash = shell_dir.join("gpy.bash");
     let legacy_bodies = legacy_bash_rc_bodies(&gpy_bash);
-    let added = ensure_and_report(
+    let change = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,
         &bash_rc_body(&gpy_bash),
@@ -703,7 +717,7 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
             login.display()
         ));
     }
-    Ok((rc, added))
+    Ok((rc, change))
 }
 
 /// Whether a startup file runs `~/.bashrc`: a `.`/`source` command, outside a
@@ -878,109 +892,39 @@ mod tests {
         assert!(check_sourceable(Path::new("/opt/a\"b")).is_err());
     }
 
-    #[cfg(unix)]
-    fn prompt_fixture(dir: &Path) -> (PathBuf, PathBuf) {
-        let target = dir.join("fish/functions/fish_prompt.fish");
-        let source = dir.join("gpy/functions/fish_prompt.fish");
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::create_dir_all(source.parent().unwrap()).unwrap();
-        fs::write(&source, "function fish_prompt; end\n").unwrap();
-        (target, source)
-    }
-
-    #[cfg(unix)]
-    fn prompt_backups(target: &Path) -> Vec<PathBuf> {
-        fs::read_dir(target.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("fish_prompt.fish.backup")
-            })
-            .collect()
-    }
-
-    #[cfg(unix)]
     #[test]
-    fn link_fish_prompt_backup_uses_timestamped_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let (target, source) = prompt_fixture(dir.path());
-        let original = "function fish_prompt; echo mine; end\n";
-        fs::write(&target, original).unwrap();
-        link_fish_prompt(&target, &source).unwrap();
-        assert_eq!(fs::read_link(&target).unwrap(), source);
-        let backups = prompt_backups(&target);
-        assert_eq!(backups.len(), 1);
-        let name = backups
-            .first()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let suffix = name.split(".backup.").nth(1).unwrap();
-        assert_eq!(suffix.len(), 15);
-        for (i, c) in suffix.chars().enumerate() {
-            if i == 8 {
-                assert_eq!(c, '_');
-            } else {
-                assert!(c.is_ascii_digit(), "{suffix}");
-            }
-        }
-        assert_eq!(
-            fs::read_to_string(backups.first().unwrap()).unwrap(),
-            original
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn link_fish_prompt_moves_foreign_symlink_aside() {
-        let dir = tempfile::tempdir().unwrap();
-        let (target, source) = prompt_fixture(dir.path());
-        let dotfiles = dir.path().join("dotfiles/fish_prompt.fish");
-        fs::create_dir_all(dotfiles.parent().unwrap()).unwrap();
-        fs::write(&dotfiles, "function fish_prompt; end\n").unwrap();
-        std::os::unix::fs::symlink(&dotfiles, &target).unwrap();
-        link_fish_prompt(&target, &source).unwrap();
-        assert_eq!(fs::read_link(&target).unwrap(), source);
-        let backups = prompt_backups(&target);
-        assert_eq!(backups.len(), 1);
-        assert_eq!(fs::read_link(backups.first().unwrap()).unwrap(), dotfiles);
-        assert!(dotfiles.exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn link_fish_prompt_backs_up_prompt_that_only_mentions_gpy() {
-        let dir = tempfile::tempdir().unwrap();
-        let (target, source) = prompt_fixture(dir.path());
-        let original = "# Tried GPY once; kept my own. See __enabled_segments.\nfunction fish_prompt\n    printf \"mine> \"\nend\n";
-        fs::write(&target, original).unwrap();
-        link_fish_prompt(&target, &source).unwrap();
-        assert_eq!(fs::read_link(&target).unwrap(), source);
-        let backups = prompt_backups(&target);
-        assert_eq!(backups.len(), 1);
-        assert_eq!(
-            fs::read(backups.first().unwrap()).unwrap(),
-            original.as_bytes()
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn link_fish_prompt_replaces_old_gpy_copy_without_backup() {
-        let dir = tempfile::tempdir().unwrap();
-        let (target, source) = prompt_fixture(dir.path());
+    fn installed_integrations_follow_the_path_the_rc_block_sources() {
+        let home = tempfile::tempdir().unwrap();
+        let elsewhere = home.path().join("elsewhere/zsh");
         fs::write(
-            &target,
-            "function fish_prompt\n    for segment in $__enabled_segments\n        if functions -q segment_{$segment}_render\n            segment_{$segment}_render\n        end\n    end\nend\n",
+            home.path().join(".zshrc"),
+            format!(
+                "# >>> gpy-init >>>\n# {RC_BLOCK_HEADER}\n{}\n# <<< gpy-init <<<\n",
+                zsh_rc_body(&elsewhere)
+            ),
         )
         .unwrap();
-        link_fish_prompt(&target, &source).unwrap();
-        assert_eq!(fs::read_link(&target).unwrap(), source);
-        assert_eq!(prompt_backups(&target), Vec::<PathBuf>::new());
+        fs::write(
+            home.path().join(".bashrc"),
+            "# >>> gpy-init >>>\n# GPY shell integration\n",
+        )
+        .unwrap();
+        let env = Environment {
+            home: Some(home.path().to_path_buf()),
+            ..Environment::default()
+        };
+
+        let found = installed_integrations_in(&env);
+
+        let zsh = found.iter().find(|item| item.shell == Shell::Zsh).unwrap();
+        assert_eq!(
+            zsh.entry.as_deref(),
+            Some(elsewhere.join("gpy.zsh").as_path())
+        );
+        assert_eq!(zsh.dir, elsewhere);
+        assert!(!zsh.incomplete);
+        let bash = found.iter().find(|item| item.shell == Shell::Bash).unwrap();
+        assert!(bash.incomplete && bash.entry.is_none());
+        assert!(found.iter().all(|item| item.shell != Shell::Fish));
     }
 }

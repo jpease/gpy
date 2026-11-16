@@ -43,8 +43,7 @@ set -gx GPY_AGENT_SOCKET_PATH $sock
 set -gx XDG_CACHE_HOME $__ws_tmp/cache
 set -e XDG_RUNTIME_DIR
 
-# Drive __gpy_sync_workspace explicitly so each cd is exactly one sync.
-functions -e __gpy_workspace_on_pwd
+# Each __gpy_sync_workspace call stands for one prompt (the prompt event runs it).
 
 function __ws_count --argument-names op
     count (string match -- "*\"op\":\"$op\"*" <$__ws_requests)
@@ -62,14 +61,18 @@ __gpy_sync_workspace
 check "error reply keeps __gpy_registered" 1 (set -q __gpy_registered; and echo 1; or echo 0)
 check "error reply does not re-register" 1 (__ws_count register)
 check "error reply leaves __gpy_last_workspace untouched" "$before_ws" "$__gpy_last_workspace"
+__gpy_sync_workspace
+check "a later prompt in the rejected dir sends nothing" 1 (__ws_count workspace)
 
 # 2. Next valid cd syncs normally and records the workspace.
 cd $__ws_tmp/other
 __gpy_sync_workspace
 check "next cd sends a workspace op" 2 (__ws_count workspace)
 check "next cd records __gpy_last_workspace" "$__ws_tmp/other" "$__gpy_last_workspace"
+__gpy_sync_workspace
+check "a later prompt in the same dir sends nothing" 2 (__ws_count workspace)
 
-# 2b. Fish syncs once per cd (never per prompt); cd away and back re-sends.
+# 2b. cd away and back into the rejected dir re-sends.
 cd $__ws_tmp/denied
 __gpy_sync_workspace
 check "cd back into rejected dir re-sends" 3 (__ws_count workspace)

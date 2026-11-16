@@ -3,6 +3,66 @@
 //! zero-width markers. Unresolved palette/prev colors are no-ops, never panics.
 
 use crate::template::{Attr, Color, Span, SpanKind, Style, canonical_ansi_name};
+use std::sync::OnceLock;
+
+/// How many colors the terminal can show. Colors beyond it are approximated;
+/// the default is 24-bit, so output only changes on an override or on positive
+/// evidence of a limited terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorDepth {
+    /// 24-bit color: hex colors are emitted as `38;2;r;g;b`.
+    #[default]
+    TrueColor,
+    /// The xterm 256-color palette (`38;5;n`).
+    Ansi256,
+    /// The 16 ANSI colors (`30-37`, `90-97`).
+    Ansi16,
+    /// No color codes at all; text attributes (bold, ...) are kept.
+    Mono,
+}
+
+impl ColorDepth {
+    /// Environment override: `truecolor`, `256`, `16` or `none`.
+    pub const ENV_OVERRIDE: &'static str = "GPY_COLOR_DEPTH";
+
+    /// The depth for this process, read from the environment once.
+    #[must_use]
+    pub fn detect() -> Self {
+        static DEPTH: OnceLock<ColorDepth> = OnceLock::new();
+        // Unit tests render against the default, whatever terminal runs them.
+        if cfg!(test) {
+            return Self::TrueColor;
+        }
+        *DEPTH.get_or_init(|| Self::from_env(|key| std::env::var(key).ok()))
+    }
+
+    /// [`Self::ENV_OVERRIDE`] when it names a depth, else 256 colors on a
+    /// terminal known to lack 24-bit color (`TERM_PROGRAM=Apple_Terminal`,
+    /// `TERM=linux`), else 24-bit. Absence of `COLORTERM` proves nothing.
+    fn from_env(get: impl Fn(&str) -> Option<String>) -> Self {
+        if let Some(depth) = get(Self::ENV_OVERRIDE).and_then(|value| Self::parse(&value)) {
+            return depth;
+        }
+        let limited = get("TERM_PROGRAM").as_deref() == Some("Apple_Terminal")
+            || get("TERM").as_deref() == Some("linux");
+        if limited {
+            Self::Ansi256
+        } else {
+            Self::TrueColor
+        }
+    }
+
+    /// A depth name (`truecolor`/`24bit`, `256`, `16`, `none`), case-insensitive.
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "truecolor" | "24bit" => Some(Self::TrueColor),
+            "256" => Some(Self::Ansi256),
+            "16" => Some(Self::Ansi16),
+            "none" => Some(Self::Mono),
+            _ => None,
+        }
+    }
+}
 
 /// Output dialect. Bash/zsh expand `PS1`/`PROMPT` as code on every draw, so
 /// their dialects escape text; [`Self::Ansi`] (fish) emits it verbatim.
@@ -21,13 +81,19 @@ impl PromptDialect {
     /// Every dialect, in a fixed order (the instant cache renders all three).
     pub const ALL: [Self; 3] = [Self::Ansi, Self::BashPrompt, Self::ZshPrompt];
 
-    /// Encode `spans` in this dialect.
+    /// Encode `spans` in this dialect with 24-bit colors.
     #[must_use]
     pub fn encode(self, spans: &[Span]) -> String {
+        self.encode_depth(spans, ColorDepth::TrueColor)
+    }
+
+    /// Encode `spans` in this dialect, approximating colors to `depth`.
+    #[must_use]
+    pub fn encode_depth(self, spans: &[Span], depth: ColorDepth) -> String {
         match self {
-            Self::Ansi => encode_ansi(spans),
-            Self::BashPrompt => encode_bash_prompt(spans),
-            Self::ZshPrompt => encode_zsh_prompt(spans),
+            Self::Ansi => encode_sgr(spans, ("\x1b[", "m"), |_| None, depth),
+            Self::BashPrompt => encode_sgr(spans, ("\\[\x1b[", "m\\]"), bash_escape, depth),
+            Self::ZshPrompt => encode_sgr(spans, ("%{\x1b[", "m%}"), zsh_escape, depth),
         }
     }
 
@@ -46,21 +112,21 @@ impl PromptDialect {
 /// (Starship's convention) so trailing literal text renders uncolored.
 #[must_use]
 pub fn encode_ansi(spans: &[Span]) -> String {
-    encode_sgr(spans, ("\x1b[", "m"), |_| None)
+    PromptDialect::Ansi.encode(spans)
 }
 
 /// Encode `spans` as bash `PS1` source: SGR inside `\[ \]`, text escaped;
 /// `PromptToken` spans (`\D{…}`) emitted raw.
 #[must_use]
 pub fn encode_bash_prompt(spans: &[Span]) -> String {
-    encode_sgr(spans, ("\\[\x1b[", "m\\]"), bash_escape)
+    PromptDialect::BashPrompt.encode(spans)
 }
 
 /// Encode `spans` as zsh `PROMPT` source: SGR inside `%{ %}`, text escaped;
 /// `PromptToken` spans (`%D{…}`) emitted raw.
 #[must_use]
 pub fn encode_zsh_prompt(spans: &[Span]) -> String {
-    encode_sgr(spans, ("%{\x1b[", "m%}"), zsh_escape)
+    PromptDialect::ZshPrompt.encode(spans)
 }
 
 /// Span walk shared by every SGR encoder. `wrap` is the (open, close) text around
@@ -71,17 +137,18 @@ fn encode_sgr(
     spans: &[Span],
     wrap: (&str, &str),
     escape: fn(char) -> Option<&'static str>,
+    depth: ColorDepth,
 ) -> String {
     let (open_seq, close_seq) = wrap;
     let mut out = String::with_capacity(64_usize);
     let mut open: Option<&Style> = None;
     for span in spans {
-        if emits_codes(&span.style) {
+        if emits_codes(&span.style, depth) {
             out.push_str(open_seq);
-            if open.is_some_and(|before| leaks_into(before, &span.style)) {
+            if open.is_some_and(|before| leaks_into(before, &span.style, depth)) {
                 out.push_str("0;");
             }
-            push_codes(&mut out, &span.style);
+            push_codes(&mut out, &span.style, depth);
             out.push_str(close_seq);
             open = Some(&span.style);
         } else if open.take().is_some() {
@@ -100,14 +167,18 @@ fn encode_sgr(
 }
 
 /// Whether `next`, written after `prev` without reset, inherits from it (SGR is additive).
-fn leaks_into(prev: &Style, next: &Style) -> bool {
+fn leaks_into(prev: &Style, next: &Style, depth: ColorDepth) -> bool {
     prev.attrs.iter().any(|attr| !next.attrs.contains(attr))
-        || (sets_color(prev.fg.as_ref()) && !sets_color(next.fg.as_ref()))
-        || (sets_color(prev.bg.as_ref()) && !sets_color(next.bg.as_ref()))
+        || (sets_color(prev.fg.as_ref(), depth) && !sets_color(next.fg.as_ref(), depth))
+        || (sets_color(prev.bg.as_ref(), depth) && !sets_color(next.bg.as_ref(), depth))
 }
 
-/// Whether `color` emits any SGR code (unresolved variants emit none).
-fn sets_color(color: Option<&Color>) -> bool {
+/// Whether `color` emits any SGR code (unresolved variants emit none, and
+/// [`ColorDepth::Mono`] emits no color at all).
+fn sets_color(color: Option<&Color>, depth: ColorDepth) -> bool {
+    if depth == ColorDepth::Mono {
+        return false;
+    }
     match color {
         Some(Color::Named(name)) => named_base(name).is_some(),
         Some(Color::Rgb { .. } | Color::Ansi256(_)) => true,
@@ -116,8 +187,10 @@ fn sets_color(color: Option<&Color>) -> bool {
 }
 
 /// Whether `style` emits at least one SGR code.
-fn emits_codes(style: &Style) -> bool {
-    !style.attrs.is_empty() || sets_color(style.fg.as_ref()) || sets_color(style.bg.as_ref())
+fn emits_codes(style: &Style, depth: ColorDepth) -> bool {
+    !style.attrs.is_empty()
+        || sets_color(style.fg.as_ref(), depth)
+        || sets_color(style.bg.as_ref(), depth)
 }
 
 /// Write `span`'s text, escaping each character through `escape` unless the
@@ -160,17 +233,17 @@ const fn zsh_escape(ch: char) -> Option<&'static str> {
 }
 
 /// Write the `;`-joined SGR codes for one style in attr→fg→bg order.
-fn push_codes(out: &mut String, style: &Style) {
+fn push_codes(out: &mut String, style: &Style, depth: ColorDepth) {
     let mut first = true;
     for attr in &style.attrs {
         push_separator(out, &mut first);
         out.push_str(attr_code(*attr));
     }
     if let Some(fg) = &style.fg {
-        push_color(out, &mut first, fg, false);
+        push_color(out, &mut first, fg, false, depth);
     }
     if let Some(bg) = &style.bg {
-        push_color(out, &mut first, bg, true);
+        push_color(out, &mut first, bg, true, depth);
     }
 }
 
@@ -196,9 +269,12 @@ fn push_separator(out: &mut String, first: &mut bool) {
 }
 
 /// Write SGR codes for `color` after a separator each. `bg` selects
-/// background variants. Unresolved palette/prev variants write nothing
-/// (defensive: eval resolves them).
-fn push_color(out: &mut String, first: &mut bool, color: &Color, bg: bool) {
+/// background variants; `depth` approximates colors the terminal cannot show.
+/// Unresolved palette/prev variants write nothing (defensive: eval resolves them).
+fn push_color(out: &mut String, first: &mut bool, color: &Color, bg: bool, depth: ColorDepth) {
+    if depth == ColorDepth::Mono {
+        return;
+    }
     let lead = if bg { "48" } else { "38" };
     match color {
         Color::Named(name) => {
@@ -207,23 +283,140 @@ fn push_color(out: &mut String, first: &mut bool, color: &Color, bg: bool) {
                 push_u8(out, if bg { base.saturating_add(10) } else { base });
             }
         }
-        Color::Rgb { r, g, b } => {
-            push_separator(out, first);
-            out.push_str(lead);
-            out.push_str(";2;");
-            push_u8(out, *r);
-            out.push(';');
-            push_u8(out, *g);
-            out.push(';');
-            push_u8(out, *b);
-        }
-        Color::Ansi256(index) => {
-            push_separator(out, first);
-            out.push_str(lead);
-            out.push_str(";5;");
-            push_u8(out, *index);
-        }
+        Color::Rgb { r, g, b } => match depth {
+            ColorDepth::TrueColor | ColorDepth::Mono => {
+                push_separator(out, first);
+                out.push_str(lead);
+                out.push_str(";2;");
+                push_u8(out, *r);
+                out.push(';');
+                push_u8(out, *g);
+                out.push(';');
+                push_u8(out, *b);
+            }
+            ColorDepth::Ansi256 => push_indexed(out, first, lead, rgb_to_ansi256(*r, *g, *b)),
+            ColorDepth::Ansi16 => push_basic(out, first, bg, rgb_to_ansi16(*r, *g, *b)),
+        },
+        Color::Ansi256(index) => match depth {
+            ColorDepth::Ansi16 => push_basic(out, first, bg, index_to_ansi16(*index)),
+            ColorDepth::TrueColor | ColorDepth::Ansi256 | ColorDepth::Mono => {
+                push_indexed(out, first, lead, *index);
+            }
+        },
         Color::Palette(_) | Color::PrevFg | Color::PrevBg => {}
+    }
+}
+
+/// Write a `38;5;n` / `48;5;n` color.
+fn push_indexed(out: &mut String, first: &mut bool, lead: &str, index: u8) {
+    push_separator(out, first);
+    out.push_str(lead);
+    out.push_str(";5;");
+    push_u8(out, index);
+}
+
+/// Write a 16-color code given as its foreground form (`30-37`, `90-97`).
+fn push_basic(out: &mut String, first: &mut bool, bg: bool, foreground_code: u8) {
+    push_separator(out, first);
+    push_u8(
+        out,
+        if bg {
+            foreground_code.saturating_add(10)
+        } else {
+            foreground_code
+        },
+    );
+}
+
+/// The xterm 6x6x6 color-cube level (0-5) nearest to `channel`.
+const fn cube_level(channel: u8) -> u8 {
+    match channel {
+        0..=47 => 0,
+        48..=114 => 1,
+        115..=154 => 2,
+        155..=194 => 3,
+        195..=234 => 4,
+        235..=255 => 5,
+    }
+}
+
+/// The nearest xterm 256-color index to `r;g;b`: the grey ramp for greys, else the color cube.
+fn rgb_to_ansi256(red: u8, green: u8, blue: u8) -> u8 {
+    if red == green && green == blue {
+        return match red {
+            0..=7 => 16,
+            248..=255 => 231,
+            _ => 232_u8.saturating_add((red.saturating_sub(3) / 10).min(23)),
+        };
+    }
+    16_u8
+        .saturating_add(36_u8.saturating_mul(cube_level(red)))
+        .saturating_add(6_u8.saturating_mul(cube_level(green)))
+        .saturating_add(cube_level(blue))
+}
+
+/// The 16 ANSI colors as xterm draws them, in SGR order (`30-37`, then `90-97`).
+const ANSI16_RGB: [(u8, u8, u8); 16] = [
+    (0, 0, 0),
+    (205, 0, 0),
+    (0, 205, 0),
+    (205, 205, 0),
+    (0, 0, 238),
+    (205, 0, 205),
+    (0, 205, 205),
+    (229, 229, 229),
+    (127, 127, 127),
+    (255, 0, 0),
+    (0, 255, 0),
+    (255, 255, 0),
+    (92, 92, 255),
+    (255, 0, 255),
+    (0, 255, 255),
+    (255, 255, 255),
+];
+
+/// The foreground code (`30-37`, `90-97`) of the ANSI color nearest to `r;g;b`.
+fn rgb_to_ansi16(red: u8, green: u8, blue: u8) -> u8 {
+    let distance = |&(pr, pg, pb): &(u8, u8, u8)| {
+        let gap = |x: u8, y: u8| u32::from(x.abs_diff(y));
+        [gap(red, pr), gap(green, pg), gap(blue, pb)]
+            .iter()
+            .map(|delta| delta.saturating_mul(*delta))
+            .fold(0_u32, u32::saturating_add)
+    };
+    let nearest = ANSI16_RGB
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, color)| distance(color))
+        .map_or(0_usize, |(index, _)| index);
+    let index = u8::try_from(nearest).unwrap_or(0_u8);
+    if index < 8 {
+        30_u8.saturating_add(index)
+    } else {
+        90_u8.saturating_add(index.saturating_sub(8))
+    }
+}
+
+/// The foreground code (`30-37`, `90-97`) of the ANSI color nearest to a 256-color `index`.
+fn index_to_ansi16(index: u8) -> u8 {
+    match index {
+        0..=7 => 30_u8.saturating_add(index),
+        8..=15 => 90_u8.saturating_add(index.saturating_sub(8)),
+        16..=231 => {
+            let cube = index.saturating_sub(16);
+            let level = |step: u8| {
+                if step == 0 {
+                    0_u8
+                } else {
+                    55_u8.saturating_add(40_u8.saturating_mul(step))
+                }
+            };
+            rgb_to_ansi16(level(cube / 36), level(cube / 6 % 6), level(cube % 6))
+        }
+        232..=255 => {
+            let grey = 8_u8.saturating_add(10_u8.saturating_mul(index.saturating_sub(232)));
+            rgb_to_ansi16(grey, grey, grey)
+        }
     }
 }
 
@@ -277,7 +470,7 @@ mod tests {
         clippy::missing_panics_doc
     )]
 
-    use super::{encode_ansi, encode_bash_prompt, encode_zsh_prompt};
+    use super::{ColorDepth, PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
     use crate::template::{Attr, Color, Span, SpanKind, Style};
 
     fn span(text: &str, style: Style) -> Span {
@@ -609,5 +802,113 @@ mod tests {
             styled("bright_magenta", "bright_red"),
             "\x1b[95;101mx\x1b[0m"
         );
+    }
+
+    fn rgb_span(red: u8, green: u8, blue: u8, bg: bool) -> Span {
+        let color = Some(Color::Rgb {
+            r: red,
+            g: green,
+            b: blue,
+        });
+        let style = if bg {
+            Style {
+                fg: None,
+                bg: color,
+                attrs: vec![],
+            }
+        } else {
+            Style {
+                fg: color,
+                bg: None,
+                attrs: vec![],
+            }
+        };
+        span("x", style)
+    }
+
+    #[test]
+    fn color_depth_downgrades_rgb() {
+        let fg = [rgb_span(0xde, 0xa5, 0x84, false)];
+        let bg = [rgb_span(0xde, 0xa5, 0x84, true)];
+        let at = |spans: &[Span], depth| PromptDialect::Ansi.encode_depth(spans, depth);
+        assert_eq!(
+            at(&fg, ColorDepth::TrueColor),
+            "\x1b[38;2;222;165;132mx\x1b[0m"
+        );
+        assert_eq!(at(&fg, ColorDepth::Ansi256), "\x1b[38;5;180mx\x1b[0m");
+        assert_eq!(at(&bg, ColorDepth::Ansi256), "\x1b[48;5;180mx\x1b[0m");
+        assert_eq!(at(&fg, ColorDepth::Ansi16), "\x1b[90mx\x1b[0m");
+        assert_eq!(at(&bg, ColorDepth::Ansi16), "\x1b[100mx\x1b[0m");
+        assert_eq!(at(&fg, ColorDepth::Mono), "x");
+    }
+
+    #[test]
+    fn color_depth_maps_greys_and_indexed_colors() {
+        let grey = [rgb_span(128, 128, 128, false)];
+        assert_eq!(
+            PromptDialect::Ansi.encode_depth(&grey, ColorDepth::Ansi256),
+            "\x1b[38;5;244mx\x1b[0m"
+        );
+        let indexed = [span(
+            "x",
+            Style {
+                fg: Some(Color::Ansi256(196)),
+                bg: None,
+                attrs: vec![],
+            },
+        )];
+        assert_eq!(
+            PromptDialect::Ansi.encode_depth(&indexed, ColorDepth::Ansi256),
+            "\x1b[38;5;196mx\x1b[0m"
+        );
+        assert_eq!(
+            PromptDialect::Ansi.encode_depth(&indexed, ColorDepth::Ansi16),
+            "\x1b[91mx\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn mono_depth_keeps_attributes_only() {
+        let styled = [span(
+            "x",
+            Style {
+                fg: Some(Color::Named("green".to_owned())),
+                bg: Some(Color::Rgb { r: 1, g: 2, b: 3 }),
+                attrs: vec![Attr::Bold],
+            },
+        )];
+        assert_eq!(
+            PromptDialect::Ansi.encode_depth(&styled, ColorDepth::Mono),
+            "\x1b[1mx\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn color_depth_env_resolution() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            ColorDepth::from_env(|key| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| (*value).to_owned())
+            })
+        };
+        assert_eq!(env(&[]), ColorDepth::TrueColor);
+        assert_eq!(env(&[("TERM", "xterm-256color")]), ColorDepth::TrueColor);
+        assert_eq!(
+            env(&[("TERM_PROGRAM", "Apple_Terminal")]),
+            ColorDepth::Ansi256
+        );
+        assert_eq!(env(&[("TERM", "linux")]), ColorDepth::Ansi256);
+        assert_eq!(
+            env(&[
+                ("TERM_PROGRAM", "Apple_Terminal"),
+                ("GPY_COLOR_DEPTH", "truecolor")
+            ]),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(env(&[("GPY_COLOR_DEPTH", "16")]), ColorDepth::Ansi16);
+        assert_eq!(env(&[("GPY_COLOR_DEPTH", "NONE")]), ColorDepth::Mono);
+        assert_eq!(env(&[("GPY_COLOR_DEPTH", "bogus")]), ColorDepth::TrueColor);
     }
 }

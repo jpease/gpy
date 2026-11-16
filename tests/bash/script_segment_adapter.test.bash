@@ -419,6 +419,62 @@ __gpy_script_seg_reqenv=()
 unset TEST_KEY
 __gpy_g_cmdno=$saved_cmdno
 
+echo "=== declared names never resolve to adapter locals ==="
+# require_env/env names may be anything a variable can be called, including
+# the names the adapter uses for its own locals.
+unset -v ok tok n due exit_code
+mkscript shown 'echo shown'
+reset_seg shown
+__gpy_script_seg_reqenv=(ok tok due exit_code)
+activate
+due
+check "require_env of unset names that match adapter locals fails" "" "$(out)"
+ok=1 tok=1 due=1 exit_code=1
+due
+check "the same names set in the shell (unexported) pass" "shown" "$(out)"
+unset -v ok tok due exit_code
+__gpy_script_seg_reqenv=(__gpy_g_toks)
+activate
+due
+check "a __gpy_* name is gpy state and counts as unset" "" "$(out)"
+mkscript envnames 'printf "%s|%s|%s\n" "${n-unset}" "${tok-unset}" "${v-unset}"'
+reset_seg envnames
+__gpy_script_seg_env=(n tok v)
+activate
+due
+check "env names that match adapter locals forward nothing when unset" "unset|unset|unset" "$(out)"
+n=N tok=T v=V
+due
+check "env names that match adapter locals forward the shell values" "N|T|V" "$(out)"
+unset -v n tok v
+
+echo "=== a cd wrapper of the user never runs in the runner ==="
+# shellcheck disable=SC2329 # called by the runner, never by name here
+cd() { builtin cd "$@" && echo CDNOISE; }
+CDPATH="$SANDBOX:/"
+reset_seg shown
+activate
+due
+check "a printing cd wrapper and CDPATH leave the segment text alone" "shown" "$(out)"
+unset -f cd
+unset -v CDPATH
+
+echo "=== the ancestor scan climbs the physical path ==="
+# The symlink sits higher than its target: the walk must count the levels
+# the ../ lookups climb from the physical directory, not the logical one.
+deep="$SANDBOX/phys/1/2/3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20"
+mkdir -p "$deep"
+: >"$SANDBOX/phys/Chart.yaml"
+ln -s "$deep" "$SANDBOX/ln"
+reset_seg shown
+__gpy_script_seg_reqfiles=(Chart.yaml)
+activate
+builtin cd "$SANDBOX/ln" || exit 1
+due
+builtin cd "$ROOT" || exit 1
+check "a marker file above a symlinked directory is found" "shown" "$(out)"
+__gpy_script_seg_reqfiles=()
+
 echo "=== (g) timeout with a grandchild holding stdout ==="
 mkscript hang "(sleep $MARK; echo late) & sleep $MARK"
 reset_seg hang

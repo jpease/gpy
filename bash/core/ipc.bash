@@ -52,8 +52,9 @@ __gpy_warn_flag_values() {
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes
-# first so later escapes are not re-escaped; a raw newline/CR/tab would make
-# malformed JSON. Locals are __gpy_ej_* so a caller's OUTVAR is not shadowed.
+# first so later escapes are not re-escaped; a raw newline/CR/tab or any other
+# C0 control byte (or DEL) would make malformed JSON, so the rest leave as
+# `\u00XX`. Locals are __gpy_ej_* so a caller's OUTVAR is not shadowed.
 __gpy_escape_json_into() {
     local __gpy_ej_s="$2"
     __gpy_ej_s="${__gpy_ej_s//\\/\\\\}"
@@ -61,7 +62,27 @@ __gpy_escape_json_into() {
     __gpy_ej_s="${__gpy_ej_s//$'\n'/\\n}"
     __gpy_ej_s="${__gpy_ej_s//$'\r'/\\r}"
     __gpy_ej_s="${__gpy_ej_s//$'\t'/\\t}"
+    # Fast path: the per-character loop runs only when a control byte is left.
+    [[ "$__gpy_ej_s" == *[[:cntrl:]]* ]] && __gpy_escape_json_controls_into __gpy_ej_s "$__gpy_ej_s"
     printf -v "$1" '%s' "$__gpy_ej_s"
+}
+
+# $2 with every byte 0x01-0x1f and 0x7f as `\u00XX`, into variable $1. Byte
+# semantics (LC_ALL=C), so a multibyte character is copied byte by byte and
+# never matches [[:cntrl:]]. Locals are __gpy_ejc_*.
+__gpy_escape_json_controls_into() {
+    local LC_ALL=C __gpy_ejc_s="$2" __gpy_ejc_out="" __gpy_ejc_i __gpy_ejc_c __gpy_ejc_n
+    for (( __gpy_ejc_i = 0; __gpy_ejc_i < ${#__gpy_ejc_s}; __gpy_ejc_i++ )); do
+        __gpy_ejc_c="${__gpy_ejc_s:__gpy_ejc_i:1}"
+        case "$__gpy_ejc_c" in
+            [[:cntrl:]])
+                printf -v __gpy_ejc_n '%d' "'$__gpy_ejc_c"
+                printf -v __gpy_ejc_c '\\u%04x' "$(( __gpy_ejc_n & 255 ))"
+                ;;
+        esac
+        __gpy_ejc_out+="$__gpy_ejc_c"
+    done
+    printf -v "$1" '%s' "$__gpy_ejc_out"
 }
 
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`, into
@@ -134,14 +155,6 @@ __gpy_ipc_endpoint_into() {
     fi
 }
 
-# Printing form for callers that already run in a `$(...)`; every other
-# caller uses __gpy_ipc_endpoint_into and forks nothing.
-__gpy_ipc_endpoint() {
-    local __gpy_ep_path
-    __gpy_ipc_endpoint_into __gpy_ep_path
-    printf '%s\n' "$__gpy_ep_path"
-}
-
 # Where the socket lives by default and where the agent finds shell PIDs.
 # Writes into variable $1 so hot paths need no `$(...)` fork.
 # Rust counterpart: `paths::runtime_root_for`.
@@ -180,11 +193,20 @@ __gpy_track_shell_for_agent_recovery() {
 }
 
 __gpy_untrack_shell_for_agent_recovery() {
-    local file root
+    local file root stamp had_failglob=0
+    local -a stamps=()
     file="$(__gpy_shell_registry_file)"
     rm -f "$file" "$file.reload" "$file.reregister" 2>/dev/null || true
     __gpy_runtime_root root
-    rm -f "$root/refresh-throttle/$$".* 2>/dev/null || true
+    # Runs from the EXIT trap: under failglob an unmatched glob would abort it
+    # before the chained EXIT trap, so lift it and skip a literal non-match.
+    shopt -q failglob && had_failglob=1 && shopt -u failglob
+    for stamp in "$root/refresh-throttle/$$".*; do
+        [[ -e "$stamp" ]] && stamps+=("$stamp")
+    done
+    ((had_failglob)) && shopt -s failglob
+    ((${#stamps[@]})) && rm -f "${stamps[@]}" 2>/dev/null
+    return 0
 }
 
 # Instant-prompt cache dir into variable $1; non-zero status when there is
@@ -260,16 +282,23 @@ __gpy_cold_timeout_ms_into() {
 }
 
 # netcat-traditional has no -U, and using it would fail every request after a
-# fork. Prompt segments run in `$(...)` and cannot write the cache back, so
-# the probe also runs once at source time.
+# fork. OpenBSD-derived nc (Debian, Ubuntu, WSL) shuts down its write side on
+# stdin EOF only with -N; without it the agent waits for more request bytes
+# and nc lingers until its timeout. Apple's nc half-closes on its own and its
+# -N means something else (a probe count, which would swallow -U), so -N is
+# passed only when the help describes it as the OpenBSD shutdown option.
+# Prompt segments run in `$(...)` and cannot write the cache back, so the
+# probe also runs once at source time.
 __gpy_nc_supports_unix=""
+__gpy_nc_half_close=""
 __gpy_nc_probe_capabilities() {
     [[ -n "$__gpy_nc_supports_unix" ]] && return 0
-    local help
-    __gpy_nc_supports_unix=0
+    local help half_close_re=$'(^|\n)[[:space:]]*-N[[:space:]]+[Ss]hutdown'
+    __gpy_nc_supports_unix=0 __gpy_nc_half_close=""
     if command -v nc &>/dev/null; then
         help="$(nc -h 2>&1)"
         [[ "$help" == *-U* ]] && __gpy_nc_supports_unix=1
+        [[ "$help" =~ $half_close_re ]] && __gpy_nc_half_close=1
     fi
     return 0
 }
@@ -286,11 +315,14 @@ __gpy_ipc_client_available() {
 
 # Returns 0 on a complete reply within the budget ($2 in ms, else
 # GPY_IPC_TIMEOUT_MS), 1 when the agent is unreachable, 2 when it accepted the
-# request but replied late (the caller must omit the segment, not fork
-# oneshot). With OUTVAR ($3) the reply is assigned to it (trailing newlines
-# stripped, as `$(...)` would) and nothing is printed; OUTVAR is "" on every
-# non-0 return. Without OUTVAR the reply is printed. Locals are __gpy_sj_* so
-# a caller's OUTVAR is not shadowed.
+# request but replied late or with an empty line (the caller must omit the
+# segment, not fork oneshot), 3 when it refused the request: a reply line
+# starting with `{"error"` is permanent, so callers take their oneshot or
+# local fallback and memoize nothing. With OUTVAR ($3) the reply is assigned
+# to it (trailing newlines stripped, as `$(...)` would) and nothing is
+# printed; OUTVAR is "" on statuses 1 and 2 and holds the error line on 3,
+# for callers that tell refusals apart. Without OUTVAR only a status-0 reply
+# is printed. Locals are __gpy_sj_* so a caller's OUTVAR is not shadowed.
 #
 # `IFS= read -r` returns nonzero on EOF before the newline, which separates a
 # truncated reply from a complete one; `$(...)` strips the newline and cannot.
@@ -301,6 +333,11 @@ __gpy_ipc_client_available() {
 # The request reaches the client through a here-string, so no `printf |`
 # subshell; Bash < 5.1 backs it with a temp file, and a failed here-string
 # reads as unreachable.
+#
+# An agent that connected but answered nothing in time opens a late window
+# (__gpy_agent_late_mark): until it closes, every request to that socket is
+# status 2 at once, so a wedged agent costs one budget per window instead of
+# one per segment and prompt.
 __gpy_send_json() {
     local __gpy_sj_out="${3:-}"
     [[ -z "$__gpy_sj_out" ]] || printf -v "$__gpy_sj_out" '%s' ''
@@ -316,6 +353,7 @@ __gpy_send_json() {
     __gpy_ms_to_secs "${2:-${GPY_IPC_TIMEOUT_MS:-}}" __gpy_sj_timeout_secs
 
     [[ -S "$__gpy_sj_socket_path" ]] || return 1
+    __gpy_agent_late_active "$__gpy_sj_socket_path" && return 2
 
     if command -v socat &>/dev/null; then
         local __gpy_sj_socat_addr
@@ -325,11 +363,11 @@ __gpy_send_json() {
     # nc -w takes whole seconds only; `timeout` tightens the bound when present.
     elif __gpy_ipc_client_available; then
         if command -v timeout &>/dev/null; then
-            IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; timeout "$__gpy_sj_timeout_secs" nc -U "$__gpy_sj_socket_path" -w 1 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
+            IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; timeout "$__gpy_sj_timeout_secs" nc ${__gpy_nc_half_close:+-N} -U "$__gpy_sj_socket_path" -w 1 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
             # 124: `timeout` killed an nc that had connected and was waiting.
             __gpy_sj_connected_codes=" 0 124 "
         else
-            IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; nc -U "$__gpy_sj_socket_path" -w 1 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
+            IFS= read -r __gpy_sj_response < <(exec 2>/dev/null; nc ${__gpy_nc_half_close:+-N} -U "$__gpy_sj_socket_path" -w 1 2>/dev/null <<<"$__gpy_sj_json"; printf '\037%s\n' "$?")
         fi
         __gpy_sj_read_status=$?
     else
@@ -349,19 +387,79 @@ __gpy_send_json() {
                 __gpy_sj_response="${__gpy_sj_response%$'\n'}"
             done
             printf -v "$__gpy_sj_out" '%s' "$__gpy_sj_response"
-        else
-            printf '%s\n' "$__gpy_sj_response"
         fi
+        # A refusal never reaches the prompt.
+        [[ "$__gpy_sj_response" == '{"error"'* ]] && return 3
+        [[ -n "$__gpy_sj_out" ]] || printf '%s\n' "$__gpy_sj_response"
         return 0
     fi
 
-    # A client that connected, or an empty complete reply, means late, not unreachable.
+    # A client that connected, or an empty complete reply, means late, not
+    # unreachable. Only the silent connection opens the late window: an empty
+    # line is an agent that answered in time.
     if [[ -n "$__gpy_sj_client_status" ]]; then
-        [[ "$__gpy_sj_connected_codes" == *" $__gpy_sj_client_status "* ]] && return 2
+        if [[ "$__gpy_sj_connected_codes" == *" $__gpy_sj_client_status "* ]]; then
+            __gpy_agent_late_mark "$__gpy_sj_json" "$__gpy_sj_socket_path"
+            return 2
+        fi
     elif [[ $__gpy_sj_read_status -eq 0 ]]; then
         return 2
     fi
     return 1
+}
+
+# Seconds a connected-but-silent agent is left alone (see __gpy_send_json).
+__gpy_agent_late_secs=5
+
+# The late-window stamp, `<until epoch seconds> <socket>`, into variable $1.
+# Per shell, under refresh-throttle/ so the exit handler's `<pid>.*` sweep
+# removes it. Locals are __gpy_alf_*.
+__gpy_agent_late_file_into() {
+    local __gpy_alf_root
+    __gpy_runtime_root __gpy_alf_root
+    printf -v "$1" '%s' "$__gpy_alf_root/refresh-throttle/$$.agent-late"
+}
+
+# Status 0 while a late window for socket $1 is open. Fork-free.
+__gpy_agent_late_active() {
+    local __gpy_ala_file __gpy_ala_stamp="" __gpy_ala_until __gpy_ala_now
+    __gpy_agent_late_file_into __gpy_ala_file
+    [[ -f "$__gpy_ala_file" ]] || return 1
+    IFS= read -r -d '' __gpy_ala_stamp <"$__gpy_ala_file"
+    [[ "${__gpy_ala_stamp#* }" == "$1" ]] || return 1
+    __gpy_ala_until="${__gpy_ala_stamp%% *}"
+    __gpy_now_seconds __gpy_ala_now
+    [[ "$__gpy_ala_until" =~ ^[0-9]+$ && "$__gpy_ala_now" =~ ^[0-9]+$ ]] || return 1
+    (( __gpy_ala_now < __gpy_ala_until ))
+}
+
+# Opens the late window for socket $2 after request $1 went unanswered. A
+# path-bearing op (git, lang, directory) can be slow for its path alone, so
+# only the others, which the agent answers from memory, count as a wedge.
+__gpy_agent_late_mark() {
+    case "$1" in
+        '{"op":"git"'* | '{"op":"lang"'* | '{"op":"directory"'*) return 0 ;;
+    esac
+    local __gpy_alm_file __gpy_alm_now __gpy_alm_stamp
+    __gpy_now_seconds __gpy_alm_now
+    [[ "$__gpy_alm_now" =~ ^[0-9]+$ ]] || return 0
+    __gpy_agent_late_file_into __gpy_alm_file
+    __gpy_alm_stamp="$((__gpy_alm_now + __gpy_agent_late_secs)) $2"
+    # `>|` overrides noclobber; the directory is created only on a miss.
+    if ! { printf '%s' "$__gpy_alm_stamp" >|"$__gpy_alm_file"; } 2>/dev/null; then
+        mkdir -p "${__gpy_alm_file%/*}" 2>/dev/null &&
+            { printf '%s' "$__gpy_alm_stamp" >|"$__gpy_alm_file"; } 2>/dev/null
+    fi
+    return 0
+}
+
+# Closes the late window, e.g. when a restarted agent asks this shell to
+# re-register.
+__gpy_agent_late_clear() {
+    local __gpy_alc_file
+    __gpy_agent_late_file_into __gpy_alc_file
+    [[ -f "$__gpy_alc_file" ]] && { : >|"$__gpy_alc_file"; } 2>/dev/null
+    return 0
 }
 
 # Canonical path of directory $2 into variable $1 (symlinks resolved, like the
@@ -516,15 +614,14 @@ __gpy_read_instant_cache() {
     fi
     [[ -f "$__gpy_ric_file" ]] || return 1
 
-    if [[ "${__gpy_have_printf_epoch:-0}" == "1" ]]; then
-        printf -v __gpy_ric_now '%(%s)T' -1
+    __gpy_now_seconds __gpy_ric_now
+    # No builtin reads an mtime. The flavor probed at load runs first, so a
+    # read is one exec; the other one runs only if PATH changed since.
+    if [[ "$__gpy_stat_flavor" == gnu ]]; then
+        __gpy_ric_mtime=$(stat -c %Y "$__gpy_ric_file" 2>/dev/null || stat -f %m "$__gpy_ric_file" 2>/dev/null)
     else
-        __gpy_ric_now=$(date +%s 2>/dev/null)
+        __gpy_ric_mtime=$(stat -f %m "$__gpy_ric_file" 2>/dev/null || stat -c %Y "$__gpy_ric_file" 2>/dev/null)
     fi
-    # No builtin reads an mtime. GNU stat -c first: on Linux `stat -f` means
-    # --file-system and succeeds with non-numeric text, so the BSD fallback
-    # would never run.
-    __gpy_ric_mtime=$(stat -c %Y "$__gpy_ric_file" 2>/dev/null || stat -f %m "$__gpy_ric_file" 2>/dev/null)
     if [[ "$__gpy_ric_now" =~ ^[0-9]+$ && "$__gpy_ric_mtime" =~ ^[0-9]+$ ]]; then
         if [[ "$__gpy_ric_suffix" == git* ]]; then
             __gpy_ric_ttl="${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}"
@@ -625,6 +722,44 @@ __gpy_sync_data_request() {
 # Predicates over __gpy_read_instant_cache's exit-code bits.
 __gpy_cache_status_stale() { (( ($1 & 2) != 0 )); }
 __gpy_cache_status_variant() { (( ($1 & 4) != 0 )); }
+
+# `gnu` when `stat -c %Y` reads an mtime, else `bsd` (`stat -f %m`). Probed once
+# at load: GNU must win on Linux, where `stat -f` means --file-system and
+# succeeds with non-numeric text, and BSD stat rejects `-c`.
+__gpy_stat_flavor=bsd
+[[ "$(stat -c %Y / 2>/dev/null)" =~ ^[0-9]+$ ]] && __gpy_stat_flavor=gnu
+
+# `printf -v var '%(%s)T' -1` needs bash 4.2+; earlier bash errors, so
+# __gpy_now_seconds gates on this flag.
+__gpy_have_printf_epoch=0
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2) )); then
+    __gpy_have_printf_epoch=1
+fi
+
+# Epoch seconds into variable $1 without a fork. Bash < 4.2 has no builtin
+# epoch: one `date` read plus the $SECONDS elapsed since it, so subshells
+# inherit the base. A $SECONDS reset below the base re-reads `date`. Status 1
+# and "" when no clock is readable.
+__gpy_epoch_base=""
+__gpy_epoch_seconds_base=0
+__gpy_now_seconds() {
+    if [[ "${__gpy_have_printf_epoch:-0}" == 1 ]]; then
+        printf -v "$1" '%(%s)T' -1
+        return 0
+    fi
+    if [[ ! "$__gpy_epoch_base" =~ ^[0-9]+$ ]] || (( SECONDS < __gpy_epoch_seconds_base )); then
+        __gpy_epoch_base=$(date +%s 2>/dev/null)
+        __gpy_epoch_seconds_base=$SECONDS
+    fi
+    if [[ ! "$__gpy_epoch_base" =~ ^[0-9]+$ ]]; then
+        printf -v "$1" '%s' ""
+        return 1
+    fi
+    printf -v "$1" '%s' "$(( __gpy_epoch_base + SECONDS - __gpy_epoch_seconds_base ))"
+}
+# Read the base here, in the interactive shell, so prompt subshells inherit it.
+[[ "$__gpy_have_printf_epoch" == 1 ]] || __gpy_now_seconds __gpy_epoch_base_probe
+unset __gpy_epoch_base_probe
 
 # Epoch ms into variable $1. EPOCHREALTIME's radix follows the locale; older
 # bash has whole seconds only, coarsening the throttle without loosening it.
@@ -736,7 +871,8 @@ __gpy_request() {
 
     __gpy_send_json "$request" "$timeout_ms"
     local send_status=$?
-    # 2: late reply; the agent is computing it, so omit rather than fork oneshot.
+    # 2: late reply; the agent is computing it, so omit rather than fork
+    # oneshot. 1 (unreachable) and 3 (refused) take the oneshot fallback.
     (( send_status == 2 )) && return 1
     if (( send_status != 0 )); then
         # oneshot has no --prev-bg, so the chevron color is skipped until the
@@ -875,7 +1011,7 @@ __gpy_request_character() {
 # Exit-status pill request ("exit_status": the bare "status" op is the agent
 # health check). success is a 0/1 flag (1 == exit status 0). No oneshot
 # fallback: the status segment draws the pill locally instead. An error reply
-# (an older agent without the op) counts as no reply.
+# (an older agent without the op) is status 3 from __gpy_send_json, no reply.
 __gpy_request_exit_status() {
     local success="$1"
     local is_last="${2:-}"
@@ -890,7 +1026,7 @@ __gpy_request_exit_status() {
     local request="{\"op\":\"exit_status\",\"success\":${success_val},\"format\":\"bash-prompt\"${flags_tail}}"
 
     local result
-    if __gpy_send_json "$request" "" result && [[ -n "$result" && "$result" != '{"error"'* ]]; then
+    if __gpy_send_json "$request" "" result && [[ -n "$result" ]]; then
         echo "$result"
         return 0
     fi

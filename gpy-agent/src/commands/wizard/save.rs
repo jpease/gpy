@@ -5,30 +5,54 @@ use super::state::WizardState;
 use super::theme_file::{ThemeWrite, save_theme};
 use crate::Result;
 use crate::commands::palette;
-use crate::commands::theme;
 use crate::commands::utils::{active_config_path, load_active_config};
+use crate::config::Config;
 use crate::config::loader::save_config;
 use std::path::{Path, PathBuf};
 
-/// Apply, validate, and persist `state`'s selection onto the config at `path`.
+/// Reload the config at `path`, apply the changes `state` made since startup,
+/// and validate the result without writing anything.
 ///
-/// Reloads `path` first so concurrent edits to unrelated fields survive.
-/// `validate_by_name` is needed because config validation never checks that
-/// the named theme/palette exists.
+/// Only changed settings are applied, so edits made elsewhere to untouched
+/// ones survive. The theme (with its pending edits) is checked against the
+/// palette the saved config will use, not the one currently on disk, and
+/// `validate_by_name`-style checks are needed because config validation never
+/// checks that the named theme/palette exists.
+fn prepare(state: &WizardState, path: &Path) -> Result<(Config, Config)> {
+    let original = load_active_config(path)?;
+    let mut config = original.clone();
+    state.apply_changes_to(&mut config);
+
+    palette::validate_by_name(config.ui.palette.as_str())?;
+    let loaded = crate::theme::load::load_named_theme(state.selected_theme())?;
+    let template_palette = crate::palette::PaletteManager::new(config.ui.palette.as_str())?
+        .get()
+        .to_template_palette();
+    crate::config::validation::templates::validate_segment_templates(
+        state.pending_theme().unwrap_or(&loaded.theme),
+        &template_palette,
+    )
+    .map_err(|error| loaded.template_error(error))?;
+
+    Ok((original, config))
+}
+
+/// Validate, then persist `state`'s theme edits and selection: the config at
+/// `path` is checked before anything is written, so a failing selection never
+/// leaves a modified theme file behind.
 ///
 /// # Errors
 ///
-/// Returns an error if loading, validation, or the write fails.
-pub fn save_to(state: &WizardState, path: &Path) -> Result<()> {
-    let original = load_active_config(path)?;
-    let mut config = original.clone();
-
-    state.apply_to(&mut config);
-
-    theme::validate_by_name(state.selected_theme())?;
-    palette::validate_by_name(state.selected_palette())?;
-
-    save_config(path, &original, &config, &[])
+/// Returns an error if loading, validation, or a write fails.
+pub fn save_to(state: &WizardState, path: &Path) -> Result<Option<ThemeWrite>> {
+    let (original, config) = prepare(state, path)?;
+    // Theme field edits go to a user file of the theme, never the builtin.
+    let theme = match state.theme_edits() {
+        Some(edits) => save_theme(state.selected_theme(), edits)?,
+        None => None,
+    };
+    save_config(path, &original, &config, &[])?;
+    Ok(theme)
 }
 
 /// What [`save`] wrote.
@@ -40,21 +64,14 @@ pub struct Saved {
     pub theme: Option<ThemeWrite>,
 }
 
-/// Persist the theme edits, then the selection to the active config path.
-/// The theme file is written first, so the config is validated against it.
+/// Persist the theme edits and the selection to the active config path.
 ///
 /// # Errors
 ///
-/// Returns an error if the theme edits can't be written, the path cannot be
-/// resolved, or [`save_to`] fails.
+/// Returns an error if the path cannot be resolved or [`save_to`] fails.
 pub fn save(state: &WizardState) -> Result<Saved> {
-    // Theme field edits go to a user file of the theme, never the builtin.
-    let theme = match state.theme_edits() {
-        Some(edits) => save_theme(state.selected_theme(), edits)?,
-        None => None,
-    };
     let config = active_config_path()?;
-    save_to(state, &config)?;
+    let theme = save_to(state, &config)?;
     Ok(Saved { config, theme })
 }
 
@@ -177,6 +194,30 @@ mod tests {
         let reloaded: Config = toml::from_str(&saved).expect("parse saved config");
 
         assert_eq!(reloaded.ui.directory.display, DirectoryDisplay::Abbreviated);
+    }
+
+    #[test]
+    fn save_to_keeps_external_edits_to_untouched_fields() {
+        use crate::config::types::DirectoryDisplay;
+
+        let (_dir, path) =
+            write_starting_config("[ui]\ntheme = \"default\"\npalette = \"default\"\n");
+        let config = load_active_config(&path).expect("load starting config");
+        let mut state = test_state(config);
+
+        // Another terminal changes directory.display after the wizard started.
+        fs::write(
+            &path,
+            "[ui]\ntheme = \"default\"\npalette = \"default\"\n\n[ui.directory]\ndisplay = \"full\"\n",
+        )
+        .expect("rewrite config");
+        state.toggle_segment("git");
+
+        save_to(&state, &path).expect("save_to should succeed");
+
+        let saved = fs::read_to_string(&path).expect("read saved config");
+        let reloaded: Config = toml::from_str(&saved).expect("parse saved config");
+        assert_eq!(reloaded.ui.directory.display, DirectoryDisplay::Full);
     }
 
     #[test]

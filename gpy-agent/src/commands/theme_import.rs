@@ -133,18 +133,35 @@ fn write_files(artifacts: &ImportArtifacts, name: &str, force: bool) -> Result<(
     }
     let palette_toml = artifacts.palette_toml()?;
     let theme_toml = artifacts.theme_toml()?;
-    std::fs::write(&palette_path, &palette_toml).map_err(|error| {
-        Error::io_context(
-            format_args!("failed to write {}", palette_path.display()),
-            &error,
-        )
-    })?;
-    std::fs::write(&theme_path, &theme_toml).map_err(|error| {
-        Error::io_context(
-            format_args!("failed to write {}", theme_path.display()),
-            &error,
-        )
-    })?;
+    // Without `--force` each file is created exclusively, so a racing import
+    // cannot be overwritten; with it the replacement is a rename, so a
+    // watcher never reads a half-written file.
+    let write_one = |path: &Path, text: &str| -> Result<()> {
+        let written = if force {
+            crate::fs_util::write_atomically(path, text.as_bytes())
+        } else {
+            crate::fs_util::create_new(path, text.as_bytes())
+        };
+        written.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::config(format!(
+                    "refusing to overwrite existing artifacts (use --force): {}",
+                    path.display()
+                ))
+            } else {
+                Error::io_context(format_args!("failed to write {}", path.display()), &error)
+            }
+        })
+    };
+    // Theme first: a failed theme write leaves no orphan palette, and a failed
+    // palette write rolls back the theme this run created.
+    write_one(&theme_path, &theme_toml)?;
+    if let Err(error) = write_one(&palette_path, &palette_toml) {
+        if !force {
+            drop(std::fs::remove_file(&theme_path));
+        }
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -186,10 +203,9 @@ fn print_activation_hints(artifacts: &ImportArtifacts, name: &str) {
 
 fn apply_layout(segments: &[String]) -> Result<()> {
     let path = crate::commands::utils::active_config_path()?;
-    let original = crate::commands::utils::load_active_config(&path)?;
-    let mut config = original.clone();
-    config.ui.enabled_segments = segments.to_vec();
-    crate::config::loader::save_config(&path, &original, &config, &[])?;
+    crate::config::loader::update_config(&path, &[], |config| {
+        config.ui.enabled_segments = segments.to_vec();
+    })?;
     crate::commands::utils::reload_agent_and_notify();
     output::plain(format_args!(
         "Applied enabled_segments to {}",

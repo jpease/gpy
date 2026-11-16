@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # __gpy_supervisor_check runs after every prompt. Its clock read precedes the
-# rate limiter, so on bash 4.2+ it must use the builtin epoch: a PATH-wrapped
-# `date` that logs each launch sees none for throttled checks. Bash 3.2 keeps
-# the `date` fallback, and the limiter admits a check on the same schedule
-# either way.
+# rate limiter, so it must not fork per check: on bash 4.2+ it uses the
+# builtin epoch (a PATH-wrapped `date` that logs each launch sees none for
+# throttled checks); before 4.2 one `date` read plus $SECONDS serves every
+# later check. The limiter admits a check on the same schedule either way.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -45,16 +45,19 @@ __gpy_supervisor_is_running() {
 count() { [[ -f "$1" ]] && wc -l <"$1" | tr -d ' ' || echo 0; }
 
 # run_checks EPOCH_FLAG: ten checks just after one ran, then one whose window
-# has elapsed. Prints "<date launches during throttled checks> <probes>".
+# has elapsed. Prints "<date launches during throttled checks> <probes>". The
+# pre-4.2 epoch base starts unread, so its one `date` lands in the log. The
+# elapsed window is one second wider than the interval: that clock counts
+# whole $SECONDS from its base and may trail `date` by up to a second.
 run_checks() {
-    local __gpy_have_printf_epoch="$1" i throttled_dates
+    local __gpy_have_printf_epoch="$1" __gpy_epoch_base="" __gpy_epoch_seconds_base=0 i throttled_dates
     rm -f "$DATE_LOG" "$PROBE_LOG"
     __gpy_supervisor_last_check_time="$("$real_date" +%s)"
     for ((i = 0; i < 10; i++)); do
         PATH="$SANDBOX/bin:$PATH" __gpy_supervisor_check
     done
     throttled_dates="$(count "$DATE_LOG")"
-    __gpy_supervisor_last_check_time=$(($("$real_date" +%s) - GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS))
+    __gpy_supervisor_last_check_time=$(($("$real_date" +%s) - GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS - 1))
     PATH="$SANDBOX/bin:$PATH" __gpy_supervisor_check
     printf '%s %s' "$throttled_dates" "$(count "$PROBE_LOG")"
 }
@@ -68,12 +71,12 @@ if [[ "$__gpy_have_printf_epoch" == "1" ]]; then
     fi
 fi
 
-# The pre-4.2 path, forced on any bash: one date per check, same schedule.
+# The pre-4.2 path, forced on any bash: one date for all ten checks, same schedule.
 got="$(run_checks 0)"
-if [[ "$got" == "10 1" ]]; then
-    pass "date fallback: one date per throttled check; an elapsed window probes once"
+if [[ "$got" == "1 1" ]]; then
+    pass "date fallback: one date serves every throttled check; an elapsed window probes once"
 else
-    fail "date fallback: want '10 1' (date launches, probes), got '$got'"
+    fail "date fallback: want '1 1' (date launches, probes), got '$got'"
 fi
 
-test_finish "supervisor check reads the clock without forking date on bash 4.2+"
+test_finish "supervisor check reads the clock without forking date per check"

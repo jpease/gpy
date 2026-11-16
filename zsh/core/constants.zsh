@@ -45,6 +45,13 @@ function __gpy_segment_bg() {
 # Returned by request wrappers when they forked the oneshot fallback; the
 # render loop folds it in so a dead daemon costs one fork per render.
 typeset -g __gpy_seg_status_oneshot=3
+# Returned by a request wrapper (and its segment) when the agent accepted the
+# request but waited out the budget; the render loop then marks the agent late
+# in the shell itself (__gpy_mark_agent_late), since segments run in subshells.
+typeset -g __gpy_seg_status_late=4
+# Returned by __gpy_sync_data_request when the agent refused the request for
+# good (an `{"error"...}` reply): the caller renders nothing and does not retry.
+typeset -g __gpy_seg_status_refused=5
 
 # Zsh expands PROMPT after precmd returns, so both options must stay global.
 # prompt_bang is left as the user set it: __gpy_update_prompts doubles each

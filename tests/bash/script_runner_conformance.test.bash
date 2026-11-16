@@ -22,7 +22,7 @@ GPY_CLI="$ROOT/gpy-agent/target/debug/gpy"
 [[ -x "$GPY_CLI" ]] || test_skip "no debug gpy binary at $GPY_CLI (cargo build first)"
 RUNNER="$ROOT/bash/core/g_runner.bash"
 FIXTURE="$ROOT/tests/fixtures/shell_scenarios/plugins/contract-scripts"
-SEGMENTS=(slow big strip c1 variant envdump)
+SEGMENTS=(slow big strip c1 variant envdump crlf c1split)
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-conf.XXXXXX")"
 trap 'rm -rf "$T"' EXIT

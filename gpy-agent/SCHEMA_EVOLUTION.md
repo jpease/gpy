@@ -49,17 +49,22 @@ classes. Before 1.0, a BREAKING change bumps the minor component.
 - **Plugin manifests.** `plugin.toml` and `segments/<id>.toml` reject unknown
   keys. A theme's `[segments.<plugin-segment>]` table accepts only style keys.
 - **IPC requests.** Every request is one newline-terminated JSON object with an
-  `op` field. Unknown fields are ignored. An unknown `op` gets
-  `{"error":"... Unknown shell operation: <op>"}`. An unrecognised `format`
+  `op` field. Unknown fields are ignored. A request the agent refuses (bad or
+  control-character JSON, an unknown `op`, a missing field, an invalid or
+  denylisted `cwd` or `virtual_env`) gets one `{"error":"Parse error: ..."}`
+  line in every format, prompt formats included. An unrecognised `format`
   falls back to `json`.
 - **IPC replies.** A `format: "json"` reply is a flat object (`{"status":"ok"}`,
   `{"error":"..."}`, `{"branch":...}`); only the agent status reply is wrapped,
   as `{"AgentStatus":{...}}`, in every format. Other formats reply with one line
-  of rendered text, with newlines encoded as `\x1e` (`REPLY_NEWLINE`).
+  of rendered text, with newlines encoded as `\x1e` (`REPLY_NEWLINE`). A
+  prompt-format request whose handler fails (not a repository, timeout,
+  feature off) gets an empty line, not an error.
 - **Version skew.** A new optional request field must keep its old meaning when
   absent, and an old agent must degrade sensibly when it ignores the field.
-  Shells treat a reply starting with `{"error"` as no reply and draw their
-  local fallback, so a new op sent to an old agent is MINOR.
+  Shells treat a reply starting with `{"error"` as a permanent refusal (never
+  printed or memoized) and draw their local fallback, so a new op sent to an
+  old agent is MINOR.
 
 ## Protocol version
 

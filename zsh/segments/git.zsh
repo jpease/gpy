@@ -7,7 +7,9 @@ function __gpy_segment_git_detect() {
 function __gpy_segment_git_omit() {
     __gpy_agent_enabled || return 1
     __gpy_instant_cache_present git "$PWD" && return 1
-    [[ ! -S "$(__gpy_ipc_endpoint)" ]]
+    local socket
+    __gpy_ipc_endpoint_into socket
+    [[ ! -S "$socket" ]]
 }
 
 function __gpy_segment_git() {
@@ -33,14 +35,19 @@ function __gpy_segment_git() {
         # Cold miss: bounded IPC-only query (oneshot is unbounded); instant omit if the socket is absent.
         # Nothing to show yet, so it may wait the longer cold budget.
         __gpy_register_with_agent >/dev/null 2>&1
-        local synced cold_ms
+        local synced cold_ms sync_status
         __gpy_cold_timeout_ms_into cold_ms
-        if synced="$(__gpy_sync_data_request "git" "$root" "$is_last" "$prev_bg" "$is_first" "$cold_ms")"; then
+        synced="$(__gpy_sync_data_request "git" "$root" "$is_last" "$prev_bg" "$is_first" "$cold_ms")"
+        sync_status=$?
+        if (( sync_status == 0 )); then
             printf '%s' "$synced"
             return 0
         fi
+        # Refused for good (e.g. a denied cwd): a refresh would be refused too.
+        (( sync_status == __gpy_seg_status_refused )) && return 0
         # Omit and refresh in the background; the agent repaints via SIGURG.
         __gpy_maybe_refresh "git" "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
+        (( sync_status == __gpy_seg_status_late )) && return "$sync_status"
         return 0
     fi
 
@@ -61,7 +68,9 @@ function __gpy_segment_git() {
     fi
 
     # Stale with agent down: a background refresh has no listener, so run a bounded oneshot.
-    if __gpy_agent_enabled && [[ -S "$(__gpy_ipc_endpoint)" ]]; then
+    local socket
+    __gpy_ipc_endpoint_into socket
+    if __gpy_agent_enabled && [[ -S "$socket" ]]; then
         printf '%s' "$rendered_output"
         __gpy_maybe_refresh "git" "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         return 0

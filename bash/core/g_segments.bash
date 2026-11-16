@@ -162,29 +162,55 @@ __gpy_g_sync() {
 # the prompt, not start the scripts again.
 __gpy_g_maybe_run() {
     ((${#__gpy_g_toks[@]})) || return 0
-    local due=$__gpy_g_first c
+    # Locals are __gpy_gm_*: __gpy_g_snap_env reads declared names through
+    # this scope.
+    local __gpy_gm_due=$__gpy_g_first __gpy_gm_c
     if [[ -n $__gpy_g_cmdno ]]; then
-        c='\#'
-        c=${c@P}
-        [[ $c != "$__gpy_g_cmd" ]] && due=1
-        __gpy_g_cmd=$c
+        __gpy_gm_c='\#'
+        __gpy_gm_c=${__gpy_gm_c@P}
+        [[ $__gpy_gm_c != "$__gpy_g_cmd" ]] && __gpy_gm_due=1
+        __gpy_g_cmd=$__gpy_gm_c
     elif [[ -n $__gpy_g_ran ]]; then
-        due=1
+        __gpy_gm_due=1
     fi
-    [[ $PWD != "$__gpy_g_lastpwd" ]] && due=1
+    [[ $PWD != "$__gpy_g_lastpwd" ]] && __gpy_gm_due=1
     __gpy_g_first=""
     __gpy_g_ran=""
     __gpy_g_lastpwd=$PWD
-    [[ -n $due ]] || return 0
+    [[ -n $__gpy_gm_due ]] || return 0
     # The cache compares keys exactly and lists may be empty.
-    local opts=$- ncm=""
-    shopt -q nocasematch && ncm=1
+    local __gpy_gm_opts=$- __gpy_gm_ncm=""
+    shopt -q nocasematch && __gpy_gm_ncm=1
     shopt -u nocasematch
     set +u
+    __gpy_g_snap_env
     __gpy_g_run_due
-    [[ -n $ncm ]] && shopt -s nocasematch
-    [[ $opts == *u* ]] && set -u
+    [[ -n $__gpy_gm_ncm ]] && shopt -s nocasematch
+    [[ $__gpy_gm_opts == *u* ]] && set -u
     return 0
+}
+
+# Every name a segment declares in `env` or `require_env`, read here, where
+# every variable in scope is gpy-prefixed: deeper in the run, a name such as
+# `ok` or `tok` would resolve to a local of the adapter. Sets
+# __gpy_g_es_<NAME>=1 and __gpy_g_ev_<NAME> (the value) for each one that is
+# set. A `__gpy_*` name is gpy state, never the user, and counts as unset.
+__gpy_g_snap_env() {
+    local __gpy_gse_n __gpy_gse_t __gpy_gse_f
+    for __gpy_gse_n in "${!__gpy_g_es_@}" "${!__gpy_g_ev_@}"; do
+        unset "$__gpy_gse_n"
+    done
+    for __gpy_gse_t in "${__gpy_g_toks[@]}"; do
+        for __gpy_gse_f in env reqenv; do
+            __gpy_g_list "$__gpy_gse_t" "$__gpy_gse_f"
+            for __gpy_gse_n in "${__gpy_g_l[@]}"; do
+                __gpy_g_isname "$__gpy_gse_n" && [[ $__gpy_gse_n != __gpy_* ]] || continue
+                [[ -n ${!__gpy_gse_n+x} ]] || continue
+                printf -v "__gpy_g_es_$__gpy_gse_n" '%s' 1
+                printf -v "__gpy_g_ev_$__gpy_gse_n" '%s' "${!__gpy_gse_n}"
+            done
+        done
+    done
 }
 
 # One strike for a timeout or an over-cap output; the second in a row
@@ -205,9 +231,9 @@ __gpy_g_strike() {
 }
 
 # Full cache key and the environment of one segment: the static key, then
-# every declared input and env name with its value, length-framed. Sets
-# __gpy_g_k, __gpy_g_names and __gpy_g_vals; returns 1 on an unknown input
-# or a bad name.
+# every declared input and env name with its value (from __gpy_g_snap_env),
+# length-framed. Sets __gpy_g_k, __gpy_g_names and __gpy_g_vals; returns 1
+# on an unknown input or a bad name.
 __gpy_g_key() {
     local tok=$1 w n v e
     __gpy_g_names=()
@@ -217,8 +243,10 @@ __gpy_g_key() {
     __gpy_g_list "$tok" env
     for n in "${__gpy_g_l[@]}"; do
         __gpy_g_isname "$n" && [[ $n != GPY_* ]] || return 1
-        if [[ -n ${!n+x} ]]; then
-            v=${!n}
+        e="__gpy_g_es_$n"
+        if [[ -n ${!e-} ]]; then
+            e="__gpy_g_ev_$n"
+            v=${!e-}
             __gpy_g_k+="|e${#n}:$n${#v}:$v"
             __gpy_g_names+=("$n")
             __gpy_g_vals+=("$v")
@@ -281,7 +309,8 @@ __gpy_g_run_due() {
         __gpy_g_list "$tok" reqenv
         ok=1
         for n in "${__gpy_g_l[@]}"; do
-            if ! __gpy_g_isname "$n" || [[ -z ${!n-} ]]; then
+            v="__gpy_g_ev_$n"
+            if ! __gpy_g_isname "$n" || [[ -z ${!v-} ]]; then
                 ok=""
                 break
             fi

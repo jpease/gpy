@@ -26,7 +26,10 @@ check "username: shown under sudo, no variant" bob (run_cmd $user_cmd USER=bob G
 check "username: shown with show_always" bob (run_cmd $user_cmd USER=bob GPY_OPT_show_always=true)
 check "username: root prints the root variant" "root
 root" (run_cmd $user_cmd USER=root GPY_IS_ROOT=1)
-check "username: empty USER hides" "" (run_cmd $user_cmd USER= GPY_IS_SSH=1)
+check "username: empty USER falls back to LOGNAME" carol (run_cmd $user_cmd USER= LOGNAME=carol GPY_IS_SSH=1)
+set -l login (id -un)
+check "username: no USER or LOGNAME falls back to id -un" "$login
+root" (run_cmd $user_cmd -u USER -u LOGNAME GPY_IS_ROOT=1)
 
 # --- hostname ---
 

@@ -2,7 +2,15 @@
 # gpy.bash - Entry point for Bash integration
 # Requires Bash 3.2+
 
-__gpy_bash_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `builtin` and an empty CDPATH keep a user's `cd`/`pwd` wrapper and CDPATH
+# lookups (both may print) out of the captured path; no `dirname` fork.
+__gpy_bash_root="${BASH_SOURCE[0]}"
+if [[ "$__gpy_bash_root" == */* ]]; then
+    __gpy_bash_root="${__gpy_bash_root%/*}"
+else
+    __gpy_bash_root=.
+fi
+__gpy_bash_root="$(CDPATH='' builtin cd -- "${__gpy_bash_root:-/}" >/dev/null 2>&1 && builtin pwd)"
 
 # Check every core file before sourcing any: a partial install should disable
 # with one diagnostic, not half-load and error on every shell.

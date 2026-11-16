@@ -127,5 +127,29 @@ if grep -qi "unbound variable" "$OUT_LOG"; then
 fi
 echo "PASS: DEBUG trap produces zero errors under set -u"
 
+echo "=== Testing a bind -x key press keeps the preexec arm ==="
+# Bash sets READLINE_LINE/READLINE_POINT only while a `bind -x` function
+# runs; its DEBUG firing is a key press, not the user's command, so the arm
+# (and the start time it takes) must wait for the real command. The live
+# DEBUG trap is removed first, so only the explicit calls below fire it.
+trap - DEBUG
+__gpy_preexec_armed=1
+__gpy_cmd_start_time=""
+READLINE_LINE="" READLINE_POINT=0
+BASH_COMMAND="__my_widget"
+__gpy_debug_trap
+if [[ "$__gpy_preexec_armed" != 1 || -n "$__gpy_cmd_start_time" ]]; then
+    echo "FAIL: a bind -x DEBUG firing consumed the preexec arm"
+    exit 1
+fi
+unset READLINE_LINE READLINE_POINT
+BASH_COMMAND="sleep 1"
+__gpy_debug_trap
+if [[ -n "$__gpy_preexec_armed" ]]; then
+    echo "FAIL: the user's command did not consume the preexec arm"
+    exit 1
+fi
+echo "PASS: a bind -x key press keeps the preexec arm for the real command"
+
 rm -rf "$__gpy_debug_trap_xdg_root"
 echo "=== All Tests Passed ==="

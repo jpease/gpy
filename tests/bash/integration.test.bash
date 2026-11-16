@@ -616,7 +616,8 @@ fi
 echo "PASS: is_first and exit_status request payloads"
 
 # With a format set but no usable agent reply — agent unreachable (the send
-# fails) or an older agent answering the unknown op with {"error":...} —
+# fails) or an older agent answering the unknown op with {"error":...}, which
+# __gpy_send_json reports as a refusal (status 3, the line only in OUTVAR) —
 # status draws the local pill (one leading space) rather than vanishing or
 # printing the JSON. Earlier sections left an always-Ack __gpy_send_json, so
 # each case stubs it in the subshell; locals keep the segment inputs out of
@@ -627,7 +628,10 @@ __gpy_test_render_fallback_pill() {
 }
 for gpy_test_reply in unreachable error; do
     if [[ "$gpy_test_reply" == error ]]; then
-        output=$(__gpy_send_json() { __gpy_test_stub_reply '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}' "${3:-}"; }; __gpy_test_render_fallback_pill)
+        output=$(__gpy_send_json() {
+            [[ -z "${3:-}" ]] || printf -v "$3" '%s' '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'
+            return 3
+        }; __gpy_test_render_fallback_pill)
     else
         output=$(__gpy_send_json() { return 1; }; __gpy_test_render_fallback_pill)
     fi
@@ -774,6 +778,60 @@ else
     echo "FAIL: empty directory render count wrong ($(__gpy_memo_call_count "$memo_dir_calls_file"))"
     exit 1
 fi
+
+# 6. Clock and status: the agent pill is memoized on theme, position, prev_bg
+# and (status) success; the local draw is never memoized, so a down agent is
+# asked again; a reload drops the memo.
+memo_clock_calls_file="$memo_tmp_dir/clock_calls"
+memo_status_calls_file="$memo_tmp_dir/status_calls"
+: > "$memo_clock_calls_file"
+: > "$memo_status_calls_file"
+__gpy_request_clock() {
+    printf 'x' >> "$memo_clock_calls_file"
+    printf 'CLOCK'
+}
+__gpy_request_exit_status() {
+    printf 'x' >> "$memo_status_calls_file"
+    printf 'STATUS%s' "$1"
+}
+__enabled_segments="clock status"
+__clock_format=1
+__status_format=1
+__gpy_memo_reset
+__gpy_render_prompt 0
+__gpy_render_prompt 0
+__gpy_render_prompt 1
+__gpy_render_prompt 1
+if [[ "$(__gpy_memo_call_count "$memo_clock_calls_file")" == "1" && "$(__gpy_memo_call_count "$memo_status_calls_file")" == "2" && "$PS1" == *CLOCK*STATUS0* ]]; then
+    echo "PASS: clock and status agent pills are memoized, status per success"
+else
+    echo "FAIL: clock/status memo counts wrong (clock=$(__gpy_memo_call_count "$memo_clock_calls_file"), status=$(__gpy_memo_call_count "$memo_status_calls_file"), PS1=$PS1)"
+    exit 1
+fi
+__gpy_clear_render_memos
+__gpy_render_prompt 1
+if [[ "$(__gpy_memo_call_count "$memo_clock_calls_file")" == "2" ]]; then
+    echo "PASS: clearing the render memos re-requests the clock"
+else
+    echo "FAIL: clock not re-requested after the memos were cleared ($(__gpy_memo_call_count "$memo_clock_calls_file"))"
+    exit 1
+fi
+__gpy_request_clock() {
+    printf 'x' >> "$memo_clock_calls_file"
+    return 1
+}
+: > "$memo_clock_calls_file"
+__gpy_clear_render_memos
+__gpy_render_prompt 0
+__gpy_render_prompt 0
+if [[ "$(__gpy_memo_call_count "$memo_clock_calls_file")" == "2" && "$PS1" == *'\D{'* ]]; then
+    echo "PASS: the local clock draw is never memoized"
+else
+    echo "FAIL: local clock draw memoized (clock=$(__gpy_memo_call_count "$memo_clock_calls_file"), PS1=$PS1)"
+    exit 1
+fi
+unset -f __gpy_request_clock __gpy_request_exit_status
+unset __clock_format __status_format
 
 cd "$ROOT" || exit 1
 rm -rf "$memo_tmp_dir" "$memo_dir_a" "$memo_dir_b"

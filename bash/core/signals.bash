@@ -1,11 +1,15 @@
-# Drop the agent-rendered character and directory memos. Their keys hold no
-# config, so a theme or config change (a reload, or an agent restarted with
-# another config) must not leave them serving the old render.
+# Drop the agent-rendered character, directory, clock and status memos. Their
+# keys hold no config, so a theme or config change (a reload, or an agent
+# restarted with another config) must not leave them serving the old render.
 __gpy_clear_render_memos() {
     __gpy_char_cache_key=""
     __gpy_char_cache_val=""
     __gpy_dir_cache_key=""
     __gpy_dir_cache_val=""
+    __gpy_clock_cache_key=""
+    __gpy_clock_cache_val=""
+    __gpy_status_cache_key=""
+    __gpy_status_cache_val=""
 }
 
 # Runs when the agent left a `<pid>.reload` flag (no argument: cache file

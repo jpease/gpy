@@ -4,6 +4,7 @@ use super::bindings;
 use super::keys::InputMode;
 use super::preview::to_ratatui_color;
 use super::state::{Section, WizardState};
+use crate::plugin::BuiltinSegment;
 use crate::template::Palette;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -361,8 +362,24 @@ fn render_section(frame: &mut Frame, area: Rect, spec: &SectionSpec) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-/// `?` help overlay listing the keys bound right now. `Clear` first: ratatui
-/// doesn't blend widgets, so old glyphs would show through.
+/// Largest scroll offset that still shows help text on a terminal of `area`,
+/// so the render loop can keep the offset from running past the last row.
+/// Wrapped rows are estimated from the character count.
+pub fn help_max_scroll(area: Rect, focused: Option<BuiltinSegment>) -> u16 {
+    let popup = centered_rect(70, 80, area);
+    let inner_width = usize::from(popup.width.saturating_sub(2)).max(1);
+    let inner_height = usize::from(popup.height.saturating_sub(2));
+    let rows = bindings::help_lines(focused)
+        .iter()
+        .fold(0_usize, |total, line| {
+            total.saturating_add(line.chars().count().div_ceil(inner_width).max(1))
+        });
+    u16::try_from(rows.saturating_sub(inner_height)).unwrap_or(u16::MAX)
+}
+
+/// `?` help overlay listing the keys bound right now, scrolled by
+/// `state.help_scroll()`. `Clear` first: ratatui doesn't blend widgets, so old
+/// glyphs would show through.
 fn render_help_overlay(frame: &mut Frame, area: Rect, state: &WizardState, colors: WizardColors) {
     let popup = centered_rect(70, 80, area);
     frame.render_widget(Clear, popup);
@@ -380,7 +397,8 @@ fn render_help_overlay(frame: &mut Frame, area: Rect, state: &WizardState, color
                     .borders(Borders::ALL)
                     .border_style(border_style(true, colors.accent)),
             )
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: false })
+            .scroll((state.help_scroll(), 0)),
         popup,
     );
 }

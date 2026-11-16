@@ -110,6 +110,14 @@ an rc file. It prints `ok: <shell> files in <source> can be installed to <dir>`
 and exits 0, or prints the error setup itself would give and exits 1. The
 installers run it with the downloaded `gpy` before replacing any binary.
 
+With `--shell fish`, setup retires `~/.config/fish/conf.d/gpy_init.fish` (a link is
+removed; any other file moves to `gpy_init.fish.backup.<stamp>`) and, after the
+run, prints one `rm -rf '<dir>'` line for each old-layout tree that is still
+there (`~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh,bundled-plugins}`); run
+them after restarting your shells. `--from` follows symlinks (Nix, stow). An
+incomplete rc block (a start marker without its end) makes setup warn, and
+`gpy doctor` fail.
+
 The last step picks `ui.show_icons`: it detects whether a Nerd Font is
 installed and, on a terminal, shows a sample prompt line and asks whether the
 icons render (detection only sets the default answer). An existing config is
@@ -131,7 +139,7 @@ prompt link (restoring your previous prompt), the cache and runtime files, and
 the running agent. `~/.config/gpy` is kept unless you pass `--purge-config`.
 The binaries are deleted only when this `gpy` lives in `~/.local/bin`, where the
 installers put it; otherwise remove them with the tool that installed them
-(`brew uninstall gpy` for Homebrew). It asks `Uninstall GPY? [y/N]`; with no
+(`brew uninstall gpy` for Homebrew). It also removes the old-layout trees (`~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh,bundled-plugins}`). It asks `Uninstall GPY? [y/N]`; with no
 terminal to answer, it removes nothing and exits `1` unless you pass `--yes`.
 See [Uninstallation](../INSTALL.md#uninstallation).
 
@@ -317,7 +325,7 @@ be run it prints one `Error:` line and exits `4`.
 
 List all available themes with the active theme marked.
 
-Scans both built-in themes (in the installation directory) and user themes (in `~/.config/gpy/themes/`).
+Scans both built-in themes (embedded in the binary) and user themes (in `~/.config/gpy/themes/`).
 
 **Example:**
 ```bash
@@ -525,8 +533,8 @@ Activate with: gpy theme use mytheme
 Validate a theme and print actionable diagnostics.
 
 Validates theme schema fields, icon definitions, and segment format templates
-across all nine supported agent-rendered segments (`git`, `language`, `directory`,
-`duration`, `character`, `clock`, `hostname`, `username`, `status`) against the active palette,
+across the seven segments with a format template (`git`, `language`, `directory`,
+`duration`, `character`, `clock`, `status`) against the active palette,
 verifying that all color tokens resolve to valid ANSI colors or defined palette roles.
 
 If `target` is omitted, validates the currently active theme from config.
@@ -621,7 +629,7 @@ Rules are grouped by the release that removed the keys. The 0.7 rules (the `user
 
 - `format` (and `user_format`) are removed from `[segments.username]` and `[segments.hostname]`.
 - `show_always` and `trim_at` move to `config.toml` `[plugin.username]` / `[plugin.hostname]`. A value already set there is kept.
-- `icon` of `[segments.hostname]` is renamed `ssh_icon` unless `ssh_icon` is already set.
+`icon` of `[segments.hostname]` is the current key and is left alone.
 
 Before anything is written, the theme file and `config.toml` are copied to `.bak` (`.bak.1`, ... when a backup exists). Every rewrite is printed, and the result is checked like `gpy theme validate`; if the theme still does not load, the command says why, exits non-zero and leaves the backup in place. A theme with nothing to rewrite prints `Nothing to migrate` and exits 0, so running it twice is safe. `migrate` accepts any theme file in the themes directory: an overlay, a full copy made with `gpy theme new --full`, or a theme of your own.
 
@@ -1090,14 +1098,16 @@ Keys (inside the wizard, `?` lists the ones that apply to the current view):
 | `t` | browsing, `git` highlighted | show/hide stash |
 | `Esc` | filtering | clear and leave filter |
 | `Backspace` | filtering | delete last filter character |
+| `Up` | help open | scroll up |
+| `Down` | help open | scroll down |
 | `?` / `Esc` | help open | close help |
 | `y` / `Y` | discard prompt | discard changes and quit |
 
-`Space`/`Enter` selects the highlighted theme or palette, or toggles the highlighted segment. The filter narrows all three sections at once; while filtering, any other character is added to the filter. Quitting with unsaved changes asks `Discard changes and quit? [y/N]`; any key other than `y`/`Y` returns to the wizard. The `language` and `directory` options are saved to `config.toml`; the `clock`, `duration` and `git` options are saved to the selected theme's file in `~/.config/gpy/themes/`.
+`Ctrl+C` quits like `q` (asks to discard when there are unsaved changes; at the prompt it discards). Other `Ctrl`/`Alt` chords are ignored. SIGINT, SIGTERM and SIGHUP exit without saving and restore the terminal. `Space`/`Enter` selects the highlighted theme or palette, or toggles the highlighted segment. The filter narrows all three sections at once; while filtering, any other character is added to the filter. Quitting with unsaved changes asks `Discard changes and quit? [y/N]`; any key other than `y`/`Y` returns to the wizard. The `language` and `directory` options are saved to `config.toml`; the `clock`, `duration` and `git` options are saved to the selected theme's file in `~/.config/gpy/themes/`.
 
 Only theme options whose value you changed are written; an option toggled back to where it started writes nothing. For a builtin or plugin theme, the wizard writes a self-named overlay holding just those keys (for example `starship.toml` with `extends = "starship"` and `[segments.clock]` `show_seconds = true`), so the theme keeps receiving updates. In an existing overlay it sets each changed key, or removes it when it now equals the theme the overlay extends, and drops an `unset` entry for exactly that key; comments are kept. In a full theme file it sets the changed keys in place and suggests `gpy theme rebase`. The file is loaded before it is written; if it would not load, nothing is saved.
 
-Changes are only written on save; quitting without saving leaves the existing configuration and theme files untouched.
+Saving validates before anything is written and writes only the settings you changed in the wizard. A git error or timeout drops only the git part of the preview (`git.timeout_seconds` applies), and the language preview follows theme and `show_versions` changes. Changes are only written on save; quitting without saving leaves the existing configuration and theme files untouched.
 
 After the wizard leaves the full-screen view, `s` prints `Saved theme edits to <path>` (when a theme file was written) and `Saved configuration to <path>` on the normal screen, followed by an `Agent not reloaded` warning only when a running agent rejected the config or did not answer. Quitting without saving prints nothing.
 
@@ -1270,7 +1280,10 @@ Creates a script (`entry_type = "script"`) plugin that runs in every shell:
   `timeout_ms`)
 - `bin/<segment>.sh`, a POSIX `sh` script that prints the segment text
 
-If `--segment` is omitted, GPY uses the plugin id as the segment id.
+If `--segment` is omitted, GPY uses the plugin id as the segment id. It refuses
+a built-in segment name (`clock`, `duration`, `language`, `directory`, `git`,
+`status`), an id already taken by another plugin, and a segment name or token
+another plugin already provides.
 
 **Example:**
 ```bash
@@ -1305,6 +1318,16 @@ group or other writable), then is loaded to confirm it works; a copy that does
 not load is removed. That includes a plugin dropped because another user
 plugin with a smaller id already provides one of its segment names. Plugin code never runs.
 
+Without `--force`, an install is refused when the new plugin would take a
+segment name or token from another plugin; the error names the plugins that
+would lose it. A plugin providing a built-in segment name (`clock`, `duration`,
+`language`, `directory`, `git`, `status`) is rejected by discovery, `validate`
+and `install`. A running agent is reloaded after an install. The manifest
+`version` and `min_gpy_version` must be `MAJOR.MINOR.PATCH`, optionally
+followed by `-` or `+` and ASCII letters, digits, `.`, `+` and `-`. A script
+plugin's `plugin.toml`, `segments/` and every `segments/<name>.toml` must be
+owned by you or root, not group- or other-writable, and inside the plugin root.
+
 `--force` replaces an installed user plugin with the same id (the old
 directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
 needed to shadow a bundled plugin. Backups and staging live outside
@@ -1319,7 +1342,7 @@ Enable its segments: gpy enable demo_status
 #### `gpy plugin remove <id>`
 
 Move the user plugin `<id>` to `~/.config/gpy/plugins.bak/<id>.<timestamp>` and
-remove its segments from `ui.enabled_segments`. Plugins that ship with GPY are
+remove its segments from `ui.enabled_segments`, except a segment another plugin also provides, which stays enabled. Plugins that ship with GPY are
 refused (disable their segments with `gpy disable`).
 
 #### `gpy plugin validate <id-or-path>`
@@ -1367,9 +1390,6 @@ Generate shell completion scripts.
 
 **Example:**
 ```bash
-# For Fish shell
-gpy completions fish > ~/.config/fish/completions/gpy.fish
-
 # For Bash
 gpy completions bash > /etc/bash_completion.d/gpy
 
@@ -1377,11 +1397,18 @@ gpy completions bash > /etc/bash_completion.d/gpy
 gpy completions zsh > ~/.zsh/completions/_gpy
 ```
 
+**Fish:** do not redirect into `~/.config/fish/completions/gpy.fish`. `gpy setup`
+installs a merged file there (the generated script plus the dynamic-completion
+glue from `completions/gpy-dynamic.fish`); `gpy completions fish > …/gpy.fish`
+overwrites it and drops the dynamic completions (theme, palette and segment
+names). Run `gpy setup` to (re)install the merged file. Use the redirect only to
+inspect the structural script, for example to a scratch file.
+
 ---
 
 ### Shell Completion
 
-Tab-completion for the `gpy` CLI is installed automatically by the standard installers: the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up fish. Completions are regenerated with every install or upgrade, so they stay in sync with your binary.
+Tab-completion for the `gpy` CLI is installed automatically by the standard installers: the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up the shell `gpy setup` detects (or `GPY_SHELL`). Completions are regenerated with every install or upgrade, so they stay in sync with your binary.
 
 **Structural completion** (all shells):
 - `gpy <TAB>` completes subcommands and flags
@@ -1406,7 +1433,7 @@ commands.
 | `gpy-agent start [--socket <path>] [--quiet]` | Start the daemon in the background (idempotent; replaces an agent whose version or protocol differs, leaves a busy one alone) and print one outcome line with its PID. `--socket` overrides the socket path, mainly for tests; `--quiet` prints nothing on success. |
 | `gpy-agent stop [--socket <path>] [--quiet]` / `gpy-agent status [--socket <path>]` | Same behaviour and exit codes as the `gpy` equivalents above. |
 | `gpy-agent restart [--socket <path>] [--quiet]` | Stop the agent (a failed stop is a `warn:` line, not an abort), then start it; prints the stop line and the start line and exits with `start`'s code. |
-| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. |
+| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--format json\|ansi\|bash-prompt\|zsh-prompt] [--not-last] [--first]` plus one input flag per segment: `--cwd <dir>` (`git`, `lang`, `directory`), `--duration-ms <n>` (`duration`), `--exit-code <n>` (`character`, `exit-status`) | Render one segment once, with no daemon; `--cwd` is rejected by `duration`, `character` and `exit-status`. `--not-last` drops the closing cap and `--first` the opening one. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. |
 | `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
 | `gpy-agent config reload [--socket <path>]` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 

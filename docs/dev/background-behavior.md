@@ -20,7 +20,7 @@ The `gpy status` command displays the active socket path.
 
 ### Process Identification
 
-The agent process is named `gpy-agent`. There is typically one agent instance per user session. The agent uses a lock file (implicitly via the socket binding) to prevent multiple instances from running on the same socket.
+The agent process is named `gpy-agent`. There is typically one agent instance per user session. `gpy-agent start` takes an exclusive lock file beside the socket (`<socket>.lock`) across check, evict, fork and bind, and the forked daemon drops it once bound, so concurrent starts on the same socket run one at a time.
 
 ## Concurrency Model
 
@@ -38,9 +38,9 @@ The server listens on the Unix socket using `UnixListener::accept()`. This is a 
 *   **Idle**: When no requests are pending, the listener task is suspended by the runtime, consuming zero CPU.
 
 ### 2. Clock Timer (Idle Behavior)
-A 1-second `tokio::time::interval` always ticks, so enabling `agent.live_updates` at runtime takes effect at once; while the flag is off a tick returns immediately. With it on, the agent rings every tick when the clock shows seconds, otherwise once per minute.
-*   **Behavior**: On each tick, the agent checks the `ClientDirectory` to see if any clients are registered.
-*   **Optimization**: If **no clients are registered** (e.g., no active terminal windows), the timer tick performs a quick check and returns immediately, sending no signals. This minimizes wakeups when the agent is unused.
+A 1-second `tokio::time::interval` always ticks, so enabling `agent.live_updates` at runtime takes effect at once; while the flag is off a tick returns immediately. With it on, `handle_clock_tick` returns early unless the clock segment is enabled; otherwise the agent rings every tick when the clock shows seconds, and once per minute when it does not.
+*   **Behavior**: On each tick with the clock enabled, the agent computes the current minute and decides whether this tick rings (`clock_signal_decision`).
+*   **Optimization**: A ring reaches the `ClientDirectory` only if clients are registered. With **no clients registered** (e.g., no active terminal windows) the tick sends no signals.
 
 ### 3. Pruning Timer (Idle Behavior)
 A separate 60-second timer triggers the client pruning process.

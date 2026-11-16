@@ -741,16 +741,24 @@ fn probe_finds_the_repository_only_when_the_path_anchors_there() {
 
 #[cfg(unix)]
 #[test]
-fn anchor_root_compares_canonical_forms_through_symlink() {
+fn enclosing_anchor_root_canonicalizes_a_symlinked_home() {
+    use super::enclosing_anchor_root;
+
     let tmp = tempdir().expect("temp dir");
     let real = fs::canonicalize(tmp.path()).expect("canonicalize");
     let home = real.join("home");
     fs::create_dir_all(home.join(".git")).expect("mk home");
+    fs::create_dir_all(home.join("src")).expect("mk src");
     let link = real.join("link");
     std::os::unix::fs::symlink(&home, &link).expect("symlink");
 
-    // Repo root reported via a symlink, home canonical.
-    assert_eq!(anchor_root(Some(link), Some(&home)), None);
+    // `find_repo_root` reports the canonical root; `$HOME` is spelled via a symlink.
+    let cwd = home.join("src");
+    let link_str = link.to_str().expect("utf8 home");
+    assert_eq!(
+        enclosing_anchor_root(cwd.to_str().expect("utf8"), Some(link_str)),
+        None
+    );
 }
 
 // Contraction needs `/` after the home prefix, so a Windows `\\?\C:\` home never contracts.

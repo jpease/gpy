@@ -28,13 +28,6 @@ enum Rule {
         key: &'static str,
         kind: ValueKind,
     },
-    /// Rename a key, keeping its value, comments and the table around it.
-    Rename {
-        segment: &'static str,
-        from: &'static str,
-        to: &'static str,
-        why: &'static str,
-    },
 }
 
 /// The rewrites for the keys one release removed.
@@ -81,12 +74,6 @@ const RULE_SETS: &[RuleSet] = &[RuleSet {
             key: "trim_at",
             kind: ValueKind::Text,
         },
-        Rule::Rename {
-            segment: "hostname",
-            from: "icon",
-            to: "ssh_icon",
-            why: "the 0.6 icon was shown over SSH only, which is what the `ssh` variant icon does",
-        },
     ],
 }];
 
@@ -112,9 +99,8 @@ pub struct Migration {
 }
 
 /// Apply every rule set to `theme`, rewriting it in place with its comments and
-/// layout intact. An overlay's `unset` paths follow their keys: a renamed key's
-/// entry is renamed and the entry of a removed or moved key is dropped, because
-/// the old path would be ignored at load and the user's intent lost.
+/// layout intact. An overlay's `unset` entry for a removed or moved key is
+/// dropped with the key.
 pub fn apply(theme: &mut DocumentMut) -> Migration {
     let mut migration = Migration::default();
     for set in RULE_SETS {
@@ -126,50 +112,25 @@ pub fn apply(theme: &mut DocumentMut) -> Migration {
     migration
 }
 
-/// What a rule does to the `unset` entry for `segments.<segment>.<key>`.
+/// What a rule does to the `unset` entry for `segments.<segment>.<key>`: the
+/// entry of a removed or moved key is dropped, since the old path would be
+/// ignored at load and the user's intent lost.
 fn rewrite_unset(theme: &mut DocumentMut, since: &str, rule: &Rule, out: &mut Migration) {
-    let (segment, from, to) = match *rule {
-        Rule::Drop { segment, key, .. } | Rule::MoveToConfig { segment, key, .. } => {
-            (segment, key, None)
-        }
-        Rule::Rename {
-            segment, from, to, ..
-        } => (segment, from, Some(to)),
-    };
+    let (Rule::Drop { segment, key, .. } | Rule::MoveToConfig { segment, key, .. }) = *rule;
     let Some(entries) = theme.get_mut("unset").and_then(|item| item.as_array_mut()) else {
         return;
     };
-    let old_path = format!("segments.{segment}.{from}");
-    let new_path = to.map(|key| format!("segments.{segment}.{key}"));
+    let old_path = format!("segments.{segment}.{key}");
     let had_entries = !entries.is_empty();
     let mut index = 0;
     while index < entries.len() {
-        if entries.get(index).and_then(|entry| entry.as_str()) != Some(old_path.as_str()) {
+        if entries.get(index).and_then(|entry| entry.as_str()) == Some(old_path.as_str()) {
+            entries.remove(index);
+            out.notes.push(format!(
+                "{since}: dropped `{old_path}` from `unset` (the key no longer exists)"
+            ));
+        } else {
             index = index.saturating_add(1);
-            continue;
-        }
-        let target_present = new_path
-            .as_deref()
-            .is_some_and(|target| entries.iter().any(|entry| entry.as_str() == Some(target)));
-        match &new_path {
-            Some(target) if !target_present => {
-                let old_decor = entries.get(index).map(|entry| entry.decor().clone());
-                let mut value = toml_edit::Value::from(target.as_str());
-                if let Some(kept) = old_decor {
-                    *value.decor_mut() = kept;
-                }
-                entries.replace(index, value);
-                out.notes.push(format!(
-                    "{since}: renamed `{old_path}` to `{target}` in `unset`"
-                ));
-                index = index.saturating_add(1);
-            }
-            _ => {
-                entries.remove(index);
-                out.notes.push(format!(
-                    "{since}: dropped `{old_path}` from `unset` (the key no longer exists)"
-                ));
-            }
         }
     }
     if had_entries && entries.is_empty() {
@@ -221,25 +182,6 @@ fn apply_rule(theme: &mut DocumentMut, since: &'static str, rule: &Rule, out: &m
                 )),
             }
         }
-        Rule::Rename {
-            segment,
-            from,
-            to,
-            why,
-        } => {
-            let Some(table) = segment_table(theme, segment) else {
-                return;
-            };
-            if table.contains_key(from) && table.contains_key(to) {
-                out.notes.push(format!(
-                    "{since}: kept `{from}` in [segments.{segment}] because `{to}` is already set"
-                ));
-            } else if rename_key(table, from, to) {
-                out.notes.push(format!(
-                    "{since}: renamed `{from}` to `{to}` in [segments.{segment}] ({why})"
-                ));
-            }
-        }
     }
 }
 
@@ -250,22 +192,6 @@ fn segment_table<'a>(theme: &'a mut DocumentMut, segment: &str) -> Option<&'a mu
         .as_table_like_mut()?
         .get_mut(segment)?
         .as_table_like_mut()
-}
-
-/// Rename `from` to `to`, moving its value (with trailing comment) and the
-/// comments above the key. Returns whether `from` existed.
-fn rename_key(table: &mut dyn TableLike, from: &str, to: &str) -> bool {
-    let key_decor = table
-        .get_key_value(from)
-        .map(|(key, _)| key.leaf_decor().clone());
-    let Some(item) = table.remove(from) else {
-        return false;
-    };
-    table.insert(to, item);
-    if let (Some(saved), Some(mut key)) = (key_decor, table.key_mut(to)) {
-        *key.leaf_decor_mut() = saved;
-    }
-    true
 }
 
 #[cfg(test)]
@@ -314,24 +240,12 @@ mod tests {
     }
 
     #[test]
-    fn rename_keeps_value_and_comments() {
-        let (rewritten, migration) = migrate(
-            "[segments.hostname]\n# the globe\nicon = \"G \" # trailing\nbg_color = \"red\"\n",
-        );
-        assert!(
-            rewritten.contains("# the globe\nssh_icon = \"G \" # trailing\n"),
-            "{rewritten}"
-        );
-        assert!(!rewritten.contains("\nicon"), "{rewritten}");
-        assert_eq!(migration.notes.len(), 1);
-    }
-
-    #[test]
-    fn rename_never_overwrites_an_existing_ssh_icon() {
-        let text = "[segments.hostname]\nicon = \"a\"\nssh_icon = \"b\"\n";
+    fn the_current_hostname_icon_key_is_left_alone() {
+        let text =
+            "[segments.hostname]\n# the globe\nicon = \"G \" # trailing\nbg_color = \"red\"\n";
         let (rewritten, migration) = migrate(text);
         assert_eq!(rewritten, text);
-        assert_eq!(migration.notes.len(), 1);
+        assert!(migration.notes.is_empty() && migration.moves.is_empty());
     }
 
     #[test]
@@ -360,13 +274,13 @@ mod tests {
     }
 
     #[test]
-    fn unset_paths_follow_renamed_and_removed_keys() {
+    fn unset_paths_of_removed_keys_are_dropped_and_current_keys_stay() {
         let (rewritten, _) = migrate(
             "extends = \"starship\"\nunset = [\"segments.hostname.icon\", \"segments.hostname.show_always\", \"segments.clock.format\"]\n",
         );
         assert_eq!(
             rewritten,
-            "extends = \"starship\"\nunset = [\"segments.hostname.ssh_icon\", \"segments.clock.format\"]\n"
+            "extends = \"starship\"\nunset = [\"segments.hostname.icon\", \"segments.clock.format\"]\n"
         );
     }
 }

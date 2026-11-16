@@ -8,6 +8,9 @@ use crate::import::starship::warn::{WarningKind, Warnings};
 /// Starship's newline module; maps to `ui.two_line`, not a segment.
 const LINE_BREAK: &str = "line_break";
 
+/// Starship's prompt character; GPY always draws it and it is not listed.
+const CHARACTER: &str = "character";
+
 /// Starship's catch-all module; maps to GPY's default segment order.
 const ALL: &str = "all";
 
@@ -24,7 +27,7 @@ pub fn map_module(name: &str) -> Option<&'static str> {
         "directory" => Some("directory"),
         "git_branch" | "git_status" | "git_state" => Some("git"),
         "cmd_duration" => Some("duration"),
-        "character" => Some("character"),
+        // `character` is no segment: the prompt character is always drawn.
         "time" => Some("clock"),
         "hostname" => Some("hostname"),
         "username" => Some("username"),
@@ -38,7 +41,7 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
     let mut warned: Vec<&str> = Vec::new();
     for module in module_refs(format) {
-        if module == LINE_BREAK {
+        if module == LINE_BREAK || module == CHARACTER {
             continue;
         }
         if module == ALL {
@@ -67,6 +70,21 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
         }
     }
     result
+}
+
+/// Drop each segment in `segments` whose every module reference in `format`
+/// names a `disabled` Starship module; a segment with no reference there (it
+/// came from `$all`) stays.
+pub fn drop_disabled(format: &str, segments: &mut Vec<String>, disabled: &[String]) {
+    if disabled.is_empty() {
+        return;
+    }
+    segments.retain(|segment| {
+        let mut refs = module_refs(format)
+            .filter(|module| map_module(module) == Some(segment.as_str()))
+            .peekable();
+        refs.peek().is_none() || !refs.all(|module| disabled.iter().any(|name| name == module))
+    });
 }
 
 /// The variable names a format string references, in order.
@@ -107,10 +125,7 @@ mod tests {
             "$directory$git_branch$git_status$rust$python$cmd_duration$character",
             &mut warnings,
         );
-        assert_eq!(
-            segments,
-            vec!["directory", "git", "language", "duration", "character"]
-        );
+        assert_eq!(segments, vec!["directory", "git", "language", "duration"]);
         assert!(warnings.is_empty());
     }
 
@@ -118,7 +133,7 @@ mod tests {
     fn derives_hostname_ahead_of_directory() {
         let mut warnings = Warnings::new();
         let segments = derive_segments("$hostname$directory$character", &mut warnings);
-        assert_eq!(segments, vec!["hostname", "directory", "character"]);
+        assert_eq!(segments, vec!["hostname", "directory"]);
         assert!(warnings.is_empty());
     }
 
@@ -138,7 +153,7 @@ mod tests {
     fn line_break_is_skipped_silently() {
         let mut warnings = Warnings::new();
         let segments = derive_segments("$directory$line_break$character", &mut warnings);
-        assert_eq!(segments, vec!["directory", "character"]);
+        assert_eq!(segments, vec!["directory"]);
         assert!(warnings.is_empty());
     }
 
@@ -154,8 +169,7 @@ mod tests {
     fn all_keeps_position_and_dedupes() {
         let mut warnings = Warnings::new();
         let segments = derive_segments("$character$all", &mut warnings);
-        let mut expected = vec!["character".to_owned()];
-        expected.extend(DEFAULT_ENABLED_SEGMENTS.map(str::to_owned));
+        let expected: Vec<String> = DEFAULT_ENABLED_SEGMENTS.map(str::to_owned).to_vec();
         assert_eq!(segments, expected);
         assert!(warnings.is_empty());
     }

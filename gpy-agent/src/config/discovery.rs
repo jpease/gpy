@@ -64,8 +64,22 @@ pub struct Discovered {
     pub path: Option<PathBuf>,
 }
 
+/// Whether `name` may be offered to shells, which complete and eval names:
+/// it passes [`is_safe_config_name`](super::types::is_safe_config_name) and
+/// is plain `[A-Za-z0-9._+@-]` text that does not start with `.`, so no
+/// whitespace, quote, `$`, backtick or `:` reaches a completion list.
+fn is_shell_safe_stem(name: &str) -> bool {
+    super::types::is_safe_config_name(name)
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '@' | '-'))
+}
+
 /// `.toml` files directly in `dir` as `(stem, path)`; best-effort, a missing
-/// or unreadable dir yields nothing.
+/// or unreadable dir yields nothing. Stems that are not shell-safe names are
+/// skipped: plugin-supplied directories must not feed hostile file names to
+/// shell completion or the theme list.
 pub(crate) fn toml_stems(dir: &Path) -> impl Iterator<Item = (String, PathBuf)> {
     std::fs::read_dir(dir)
         .into_iter()
@@ -79,6 +93,7 @@ pub(crate) fn toml_stems(dir: &Path) -> impl Iterator<Item = (String, PathBuf)> 
             let name = path
                 .file_stem()
                 .and_then(std::ffi::OsStr::to_str)
+                .filter(|stem| is_shell_safe_stem(stem))
                 .map(ToOwned::to_owned)?;
             Some((name, path))
         })
@@ -173,6 +188,21 @@ mod tests {
 
         // A directory named `*.toml` matches; reading it fails later, per artifact.
         assert_eq!(found, ["alpha", "beta", "nested"]);
+    }
+
+    #[test]
+    fn toml_stems_skips_names_a_shell_must_not_see() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        write(temp.path(), "good-name_1.toml");
+        write(temp.path(), "a$(echo x)b.toml");
+        write(temp.path(), "with space.toml");
+        write(temp.path(), "back`tick.toml");
+        write(temp.path(), "colon:name.toml");
+        write(temp.path(), ".hidden.toml");
+
+        let found: Vec<String> = toml_stems(temp.path()).map(|(name, _)| name).collect();
+
+        assert_eq!(found, ["good-name_1"]);
     }
 
     #[test]

@@ -107,9 +107,9 @@ and [Testing Tiers](docs/dev/testing.md).
 ```
 
 Installs `prek` shims so `git commit` and `git push` run the relevant checks
-automatically: `pre-commit` runs fast, file-type-scoped checks (the `clippy`
-hook, rustfmt, reasons on new allows, Fish syntax/formatting, secret scan);
-`pre-push` repeats the Clippy pass. The heavy gates (the Rust toolchain gate, the
+automatically: `pre-commit` runs only fast, file-type-scoped checks (file
+hygiene, rustfmt, reasons on new allows, the file-size cap, Fish
+syntax/formatting, secret scan); `pre-push` runs only Clippy. The heavy gates (the Rust toolchain gate, the
 Fish/Bash/Zsh suites and the performance job) run in CI on every pull request;
 run `just check-rust`, `just check-shell` or `just perf-canary` yourself when
 you want them locally. `.pre-commit-config.yaml` defines the hooks.

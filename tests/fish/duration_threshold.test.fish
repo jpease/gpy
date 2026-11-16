@@ -94,6 +94,33 @@ function test_default_boundary
     pass "default threshold is 100 ms"
 end
 
+function test_idle_prompt_hides_previous_duration
+    echo "Test 7: a prompt with no command since the last one hides the pill"
+    set -g __duration_threshold_ms 100
+    set -g CMD_DURATION 500
+    # A command ran: fish_postexec, then the next prompt.
+    emit fish_postexec
+    emit fish_prompt
+    if not segment_duration_detect
+        fail "the prompt after a 500 ms command should show the pill"
+        return 1
+    end
+    # Empty Enter or Ctrl-C: a new prompt with no fish_postexec, while Fish
+    # keeps the old CMD_DURATION.
+    emit fish_prompt
+    if segment_duration_detect
+        fail "an empty Enter should not show the previous command's duration again"
+        return 1
+    end
+    emit fish_postexec
+    emit fish_prompt
+    if not segment_duration_detect
+        fail "the next command should show its duration again"
+        return 1
+    end
+    pass "only a prompt after a command shows its duration"
+end
+
 # Run all tests
 test_duration_hidden_below_threshold
 test_duration_visible_at_threshold
@@ -101,6 +128,7 @@ test_duration_visible_above_threshold
 test_legacy_variable_not_consulted
 test_default_when_var_unset
 test_default_boundary
+test_idle_prompt_hides_previous_duration
 
 echo ""
 test_finish "duration threshold"

@@ -73,8 +73,18 @@ function __gpy_sgr_pair() {
 # every position: `o` takes the opening cap from $7 (icon), $8 (fg), $9 (bg),
 # `c` the closing cap from $10, $11, $12 (script segments' `open`/`close`).
 # `d` (plugin pills) draws a last segment's theme close cap on the terminal
-# default background instead of the prompt_close bg.
+# default background instead of the prompt_close bg. Prints the section;
+# __gpy_section_standalone_into OUT_VAR ARGS... assigns it without a fork
+# (OUT_VAR must be a `__gpy_` name: the locals there are not prefixed).
 function __gpy_section_standalone() {
+    local __gpy_ss_out
+    __gpy_section_standalone_into __gpy_ss_out "$@"
+    print -r -- "$__gpy_ss_out"
+}
+
+function __gpy_section_standalone_into() {
+    local __gpy_ss_var=$1
+    shift
     local bg=${1:-} fg=${2:-} content=${3-} is_last=${4:-} is_first=${5:-} caps=${6-}
     # `${var-default}` without colon: the default theme exports an empty first delimiter.
     local start_delim start_fg start_bg end_delim end_fg end_bg
@@ -120,7 +130,7 @@ function __gpy_section_standalone() {
     local out="${sgr_start}${start_text}${sgr_body}${content}"
     ((last)) || out+="${sgr_gap} "
     out+="${sgr_end}${end_text}%{${__GPY_SGR_ESC}[0m%}"
-    print -r -- "$out"
+    printf -v "$__gpy_ss_var" '%s' "$out"
 }
 
 # `${var-default}` without colon: an icon exported as empty stays empty.

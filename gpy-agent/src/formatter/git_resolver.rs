@@ -2,13 +2,18 @@
 //! (`git_branch`/`git_status`) so imported Starship `format` strings work verbatim.
 
 use crate::config::defaults::BRANCH_GLYPH;
-use crate::config::{Config, GitIconKind};
+use crate::config::{Config, GitIconKind, GitIconSet, GitIcons};
 use crate::formatter::chrome::SegmentChrome;
 use crate::formatter::separator::Glyphs;
 use crate::formatter::{SegmentPosition, truncate_branch};
 use crate::git::RepositoryStatus;
 use crate::template::VariableResolver;
 use crate::theme::{GitState, GitTextElement, ThemeConfig};
+use std::sync::LazyLock;
+
+/// The built-in icon tables with no `[git.icons]` overrides, the fallback for
+/// an icon that `ui.show_icons = false` has to drop.
+static BUILTIN_ICONS: LazyLock<GitIcons> = LazyLock::new(GitIcons::default);
 
 /// Resolves Starship-exact git variable names from repository state.
 pub struct GitResolver<'a> {
@@ -63,6 +68,17 @@ impl<'a> GitResolver<'a> {
         self.config.git.icons.glyph(kind, self.config.git.icon_set)
     }
 
+    /// The icon drawn for `kind`: a theme override (`theme_icon`) over `[git.icons]`
+    /// over the `git.icon_set` default. With `ui.show_icons = false` private-use
+    /// (Nerd Font) text is dropped and the built-in Unicode glyph stands in.
+    fn icon<'s>(&'s self, kind: GitIconKind, theme_icon: Option<&'s str>) -> &'s str {
+        let glyphs = Glyphs::from(&self.config.ui);
+        theme_icon
+            .and_then(|icon| glyphs.icon(icon))
+            .or_else(|| glyphs.icon(self.glyph(kind)))
+            .unwrap_or_else(|| BUILTIN_ICONS.glyph(kind, GitIconSet::Unicode))
+    }
+
     /// In-progress-operation indicator (e.g. `↻ REBASING 3/5`); `None` unless [`GitState::InProgress`].
     fn state(&self) -> Option<String> {
         if self.state != GitState::InProgress {
@@ -93,13 +109,10 @@ impl<'a> GitResolver<'a> {
         if self.status.stash_count == 0 {
             return None;
         }
-        let icon = self
-            .theme
-            .segments
-            .git
-            .stash_icon
-            .as_deref()
-            .unwrap_or_else(|| self.glyph(GitIconKind::Stash));
+        let icon = self.icon(
+            GitIconKind::Stash,
+            self.theme.segments.git.stash_icon.as_deref(),
+        );
         let mut text = icon.to_owned();
         text.push_str(&self.status.stash_count.to_string());
         Some(text)
@@ -112,34 +125,34 @@ impl<'a> GitResolver<'a> {
         let git_theme = &self.theme.segments.git;
         let show_counts = git_theme.show_counts();
 
-        // (count, theme override, config fallback), in Starship's order.
+        // (count, theme override, icon kind), in Starship's order.
         let categories = [
             (
                 self.status.staged,
                 git_theme.staged_icon.as_deref(),
-                self.glyph(GitIconKind::Staged),
+                GitIconKind::Staged,
             ),
             (
                 self.status.unstaged,
                 git_theme.unstaged_icon.as_deref(),
-                self.glyph(GitIconKind::Unstaged),
+                GitIconKind::Unstaged,
             ),
             (
                 self.status.untracked,
                 git_theme.untracked_icon.as_deref(),
-                self.glyph(GitIconKind::Untracked),
+                GitIconKind::Untracked,
             ),
             (
                 self.status.conflicts,
                 git_theme.conflicts_icon.as_deref(),
-                self.glyph(GitIconKind::Conflicts),
+                GitIconKind::Conflicts,
             ),
         ];
 
         let mut text = String::new();
-        for (count, theme_icon, config_icon) in categories {
+        for (count, theme_icon, kind) in categories {
             if count > 0 {
-                text.push_str(theme_icon.unwrap_or(config_icon));
+                text.push_str(self.icon(kind, theme_icon));
                 if show_counts {
                     text.push_str(&count.to_string());
                 }
@@ -152,19 +165,19 @@ impl<'a> GitResolver<'a> {
     /// replaces the counts with `↑?` (the configured ahead glyph, a literal `?`).
     fn ahead_behind(&self) -> Option<String> {
         if self.status.stale_error {
-            return Some([self.glyph(GitIconKind::Ahead), "?"].concat());
+            return Some([self.icon(GitIconKind::Ahead, None), "?"].concat());
         }
         let mut text = String::new();
         for (count, capped, icon) in [
             (
                 self.status.ahead,
                 self.status.ahead_capped,
-                self.glyph(GitIconKind::Ahead),
+                self.icon(GitIconKind::Ahead, None),
             ),
             (
                 self.status.behind,
                 self.status.behind_capped,
-                self.glyph(GitIconKind::Behind),
+                self.icon(GitIconKind::Behind, None),
             ),
         ] {
             if count > 0 {
@@ -778,6 +791,36 @@ mod tests {
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("stash"), Some("\u{f187}2".to_owned()));
+    }
+
+    #[test]
+    fn private_use_git_icons_fall_back_to_unicode_when_icons_disabled() {
+        let mut config = Config::default();
+        config.git.icon_set = crate::config::GitIconSet::NerdFont;
+        config.ui.show_icons = false;
+        let mut theme = ThemeConfig::default();
+        theme.segments.git.staged_icon = Some("\u{f055}".to_owned());
+        let mut st = status();
+        st.stash_count = 2;
+        let resolver = GitResolver::new(
+            &st,
+            GitState::Clean,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        let drawn = format!(
+            "{}{}",
+            resolver.resolve("stash").unwrap_or_default(),
+            resolver.resolve("status").unwrap_or_default()
+        );
+        assert!(
+            !drawn
+                .chars()
+                .any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c)),
+            "private-use glyph leaked with icons disabled: {drawn:?}"
+        );
+        assert_eq!(resolver.resolve("stash"), Some("≡2".to_owned()));
     }
 
     #[test]

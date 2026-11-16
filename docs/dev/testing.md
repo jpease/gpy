@@ -3,8 +3,9 @@
 What each tier proves, how it proves it, and the one command that runs it.
 `./scripts/quality-check.sh` runs every tier marked **gate**; the others run
 on demand or in a workflow. Every skip goes through the shared skip contract
-(`SKIP: reason`, a pass locally, a failure under `CI` or `GPY_GATE_STRICT`), and the gate's
-summary ends with `Skipped: N (names)`.
+(`SKIP: reason`, a pass locally, a failure under `CI` or `GPY_GATE_STRICT`), and each run
+ends with `<name> summary: N passed, M failed`, then `Skipped: <names>` when
+anything skipped.
 
 ## The tiers
 
@@ -79,11 +80,12 @@ hides another's verdict:
 
 - the Rust gate (format, strict clippy, nextest, doc tests, `cargo audit`,
   `cargo deny`, a release build);
-- the strict `just lint` layer;
 - the Fish, Bash and Zsh integration suites on `ubuntu-latest` and
   `macos-latest`;
-- the absolute performance budgets (`just bench-ci`'s Rust micro-benchmarks);
+- the absolute performance budgets (`scripts/bench.sh --ci`) and an advisory
+  base-vs-head canary;
 - a clean-container fresh install on `ubuntu:24.04`;
+- the reasons-on-new-allows check (`scripts/check-new-allows.py`);
 - the Windows leg.
 
 The Rust and shell legs run through the reusable `gate-legs.yml`, so their
@@ -92,6 +94,11 @@ workflow after a merge. The one check to require in the branch ruleset is
 `gate-result`, which fails unless every one of those jobs succeeded. The PR
 gate runs on pull requests from forks with a read-only token and no secrets.
 
+`release.yml` reuses the same legs (`gate-legs.yml`, `windows-gate.yml`, and
+the fresh-install job) when `scripts/release-gate-proven.sh` cannot prove that
+the PR gate already passed on the tagged tree, and always runs
+`just bench-ci`. `tests/repo/release_gate_proven.test.bash` pins that shape.
+
 | Platform | What CI runs |
 |---|---|
 | Linux x86_64 | Every tier on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), including the shell end-to-end suites against a real agent on a pseudo-terminal; `scripts/test-fresh-install.sh` in a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash |
@@ -99,5 +106,5 @@ gate runs on pull requests from forks with a read-only token and no secrets.
 | Linux release binaries | The release job rejects a binary that references a newer glibc than the floor and runs the x86_64 binaries in `ubuntu:20.04` |
 | macOS Apple Silicon | Every tier, including the shell end-to-end suites, on every pull request on `macos-latest` |
 | macOS Intel | Built and checksummed in the release; not run |
-| Windows native | `windows-gate.yml` builds the agent with `cargo build --locked`, runs the library unit tests with `cargo test --locked --lib`, and runs six CLI integration targets through nextest: `gpy_cli_tests`, `cli_config_mutation_tests`, `config_concurrent_save_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`. It runs no Fish, Bash or Zsh suites, because the prompt talks to the agent over a Unix domain socket, which native Windows does not provide; end-to-end behaviour there is unmeasured |
+| Windows native | `windows-gate.yml` builds the agent with `cargo build --locked`, runs the library unit tests with `cargo nextest run --locked --profile ci-windows --lib`, and runs six CLI integration targets through nextest (same profile): `gpy_cli_tests`, `cli_config_mutation_tests`, `config_concurrent_save_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`. It runs no Fish, Bash or Zsh suites, because the prompt talks to the agent over a Unix domain socket, which native Windows does not provide; end-to-end behaviour there is unmeasured |
 | WSL | `wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite, when its own files change, weekly and on demand; it is not part of the PR gate |

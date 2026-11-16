@@ -170,6 +170,12 @@ run_driver() {
         "${scn_env[@]}" "SCN_RAW_OUT=${SCN_RAW_OUT:-}" "${cmd[@]}" >"$out" 2>"$err"
 }
 
+# `gpy-agent start`/`restart` lines in calls log $1, the way effects.py counts them.
+count_starts() {
+    [[ -f "$1" ]] || { echo 0; return; }
+    awk '$1 == "start" || $1 == "restart" { n++ } END { print n + 0 }' "$1"
+}
+
 # Run one scenario through one shell; leaves <sh>.norm, <sh>.raw, <sh>.fx in $1.
 # $2 shell, $3 sandbox label (short: unix socket paths are capped near 104 bytes).
 run_shell() {
@@ -301,6 +307,19 @@ BETWEEN
     # shell_e2e_cleanup reaps anything bound under the sandbox. A row that
     # counts starts waits too: its start is detached.
     [[ "$row_agent" == up && "$row_expect" != *starts=* ]] || sleep 0.4
+    # Then wait, bounded, until the starts the row pins (else the starts Fish,
+    # which runs first, made) have logged: a detached start can land after the
+    # shell exits. A shell that never starts still fails, after the bound.
+    local want_starts=0
+    if [[ " $row_expect " =~ \ starts=([0-9]+)\  ]]; then
+        want_starts="${BASH_REMATCH[1]}"
+    elif [[ "$sh" != fish && -f "$dir/fish.fx" ]]; then
+        want_starts="$(sed -n 's/^starts=//p' "$dir/fish.fx")"
+    fi
+    for _ in $(seq 1 20); do
+        (($(count_starts "$sandbox/calls.log") >= ${want_starts:-0})) && break
+        sleep 0.1
+    done
     stop_proxy
     shell_e2e_stop_agent
     SHELL_E2E_ROOT="$BASE_ROOT"

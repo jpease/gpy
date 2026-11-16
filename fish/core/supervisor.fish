@@ -23,25 +23,6 @@ function __gpy_start_agent_detached --description 'Run gpy-agent start in the ba
     return 0
 end
 
-# Starts the agent in the background on every call: `start` is idempotent and
-# itself keeps a healthy agent or replaces one on another protocol or version
-# (left running across an upgrade). Returns 0 when the agent was already
-# answering, so the caller registers now; 1 when it was not, so registration
-# waits for the next prompt (__gpy_register_retry_pending).
-function __gpy_ensure_agent_started --description 'Run gpy-agent start in the background; 0 when the agent already answers'
-    __gpy_agent_enabled; or return 1
-    __gpy_resolve_agent_binary >/dev/null; or return 1
-
-    set -l healthy 1
-    __gpy_agent_is_healthy; and set healthy 0
-
-    __gpy_start_agent_detached
-    test $healthy -eq 0; and return 0
-
-    set -g __gpy_register_retry_pending 1
-    return 1
-end
-
 set -g __gpy_supervisor_last_check_time 0
 set -g __gpy_supervisor_check_attempts 0
 
@@ -70,36 +51,38 @@ function __gpy_supervisor_check --description 'Prompt-time agent probe; starts t
     return 1
 end
 
+# The first prompt starts the agent in the background, without probing it:
+# `start` is idempotent and itself keeps a healthy agent or replaces one on
+# another protocol or version (left running across an upgrade). Later prompts
+# run the rate-limited restart check. Registration is retried on every prompt
+# until it succeeds, whatever the supervisor setting and whether or not the
+# binary resolves; with no socket file that costs no fork. The workspace sync
+# runs here too, once per prompt and only when $PWD changed.
 function __gpy_supervisor_on_prompt --on-event fish_prompt --description 'Start the agent on the first prompt, then check it on later prompts'
     __gpy_agent_enabled; or return 0
 
     if not set -q __gpy_supervisor_initialized
         set -g __gpy_supervisor_initialized 1
-        # The probe just made counts as the first check.
+        # The startup start counts as the first check.
         set -g __gpy_supervisor_last_check_time (__gpy_now_seconds)
-        if __gpy_ensure_agent_started
-            __gpy_register_with_agent
-        end
-        return 0
+        __gpy_start_agent_detached
+    else
+        __gpy_supervisor_check
     end
 
-    if set -q __gpy_register_retry_pending
-        set -e __gpy_register_retry_pending
-        __gpy_register_with_agent
-        return 0
-    end
-
-    if __gpy_supervisor_check; and not set -q __gpy_registered
+    if not set -q __gpy_registered
         __gpy_register_with_agent
     end
+    __gpy_sync_workspace
     return 0
 end
 
 function __gpy_unregister_on_exit --on-event fish_exit
-    __gpy_unregister_from_agent
-    __gpy_untrack_shell_for_agent_recovery
-end
-
-function __gpy_workspace_on_pwd --on-variable PWD
-    __gpy_sync_workspace
+    # Unregistering untracks; a shell that lost its registration is still
+    # tracked for the agent's re-nudge, so untrack it here.
+    if set -q __gpy_registered
+        __gpy_unregister_from_agent
+    else
+        __gpy_untrack_shell_for_agent_recovery
+    end
 end

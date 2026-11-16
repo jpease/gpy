@@ -82,6 +82,20 @@ if test "$__request_args" = "|true|blue"
 else
     check "templated clock: a first-but-not-last clock sends is_first (got: '$__request_args')" pass fail
 end
+
+# --- a repeat render on the same theme, spec, position and prev_bg is memoized ---
+set -g __requests 0
+set -g __gpy_last_segment_bg magenta
+set -g __gpy_clock_prerendered "15:08"
+set out (segment_clock_render "" true)
+set -g __gpy_last_segment_bg magenta
+set -g __gpy_clock_prerendered "15:09"
+set out (segment_clock_render "" true)
+check "templated clock: a repeat render sends one request" 1 $__requests
+check "templated clock: a memoized reply still gets the current time" "AGENT[ 15:09]" "$out"
+set -g __gpy_last_segment_bg green
+set out (segment_clock_render "" true)
+check "templated clock: another prev_bg asks the agent again" 2 $__requests
 set -g __time_format 12
 set -g __clock_show_leading_zero 0
 set -g __gpy_clock_prerendered "3:07 PM"
@@ -103,6 +117,8 @@ else
 end
 
 # --- templated theme, agent unreachable: falls back to the local clock ---
+# A memo from the renders above must not answer for the unreachable agent.
+set -e __gpy_clock_cache_key
 set -g __clock_format 1
 function __gpy_request_clock
     return 1

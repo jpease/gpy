@@ -2,6 +2,7 @@
 
 use super::doctor_agent::check_answering_agent;
 use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
+use super::doctor_integration::{check_path_agent, check_shell_integrations};
 use super::doctor_ipc::check_ipc_client;
 use super::doctor_themes::check_theme_overrides;
 use super::doctor_tuning::print_agent_tuning;
@@ -58,7 +59,7 @@ pub fn run() -> Result<()> {
     all_ok &= check_binaries();
     let installed = super::setup::installed_integrations();
     check_ipc_client(&installed, loaded_config.as_ref().ok());
-    check_shell_integrations(&installed);
+    all_ok &= check_shell_integrations(&installed);
 
     output::blank();
     output::plain("Summary:");
@@ -83,12 +84,10 @@ fn check_agent_status(cfg: Option<&config::Config>) -> bool {
             Ok(client) => {
                 let probe = client.probe_status();
                 let healthy = report_agent_probe(&probe, socket.path());
-                match &probe {
-                    StatusProbe::Answered(status) => {
-                        check_answering_agent(&client, status) && healthy
-                    }
-                    _ => healthy,
+                if let StatusProbe::Answered(status) = &probe {
+                    check_answering_agent(&client, status);
                 }
+                healthy
             }
             Err(err) => report_agent_probe(&StatusProbe::Failed(err), socket.path()),
         },
@@ -590,35 +589,6 @@ fn print_suspect_patterns(segment: &str, content: &str) {
     }
 }
 
-/// Warn about installed shell scripts whose version stamp differs from this
-/// `gpy`: `gpy setup` for one shell leaves the other shells' scripts as they
-/// were. Not a failure, since they still work against the same protocol.
-fn check_shell_integrations(installed: &[super::setup::InstalledIntegration]) {
-    for integration in installed {
-        let shell = integration.shell;
-        output::step(format_args!("Checking {shell} integration"));
-        match integration.version.as_deref() {
-            Some(version) if version == crate::VERSION => {
-                output::ok(format_args!("{version} ({})", integration.dir.display()));
-            }
-            found => {
-                let from = found.map_or_else(
-                    || "an older gpy".to_owned(),
-                    |version| format!("gpy {version}"),
-                );
-                output::warn(format_args!(
-                    "installed by {from}, but this is gpy {} ({})",
-                    crate::VERSION,
-                    integration.dir.display()
-                ));
-                output::detail(format_args!(
-                    "Remediation: run `gpy setup --shell {shell}` to install the current scripts."
-                ));
-            }
-        }
-    }
-}
-
 fn check_binaries() -> bool {
     output::section("System");
     output::step("Checking gpy-agent binary");
@@ -626,6 +596,7 @@ fn check_binaries() -> bool {
     match Command::new(&agent).arg("--version").output() {
         Ok(probe) if probe.status.success() => {
             output::ok(format_args!("Found ({})", agent.display()));
+            check_path_agent(&agent, &probe.stdout);
             true
         }
         Ok(probe) => {

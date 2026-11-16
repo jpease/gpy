@@ -319,7 +319,7 @@ Numbers and their sources:
   benchmark measures the whole adapter path, not the runner against a bare
   `$( )`, so those figures are not re-derived here.
 - **Linux and WSL:** not measured locally. The Linux figures come from CI:
-  `release.yml`'s `validate` job (ubuntu-latest; `/bin/sh` is dash) runs
+  `release.yml`'s `perf` job (ubuntu-latest; `/bin/sh` is dash) runs
   `just bench-ci`, and with it this scenario. Busybox rows appear only where
   `busybox` is installed, which `.github/actions/install-shells` does not do
   today. No workflow runs `ci-bench.sh` under WSL (`wsl-smoke.yml` runs the
@@ -401,7 +401,7 @@ The `prompt_render` budget is met by the following architectural mechanisms, not
    `ipc_latency` budget (1 ms target, 1.5 ms max; 0.037 ms measured on a dev machine, 2026-05-15).
 
 If any of these mechanisms are bypassed (e.g. cold agent start, cache miss with no stale entry,
-or `--no-cache` flag), the user-visible latency is bounded by fresh git/language computation time,
+or an instant-cache miss), the user-visible latency is bounded by fresh git/language computation time,
 which can be `>50ms` on large or noisy repositories.
 
 ## Budgets
@@ -425,7 +425,7 @@ The agent and shell integration run on every prompt render. Budgets live in
 | Git Status (cold) | `git_status_cold` | `git_status_cold` |
 | Cache Write | `cache_write` | `cache_write_new_entry` |
 | Cache Read | `cache_read` | `cache_read_hit` |
-| Config Load | `config_validation` | `config_load_from_file` |
+| Config Load | `config_load` | `config_load_from_file` |
 | Theme Manager Load | `theme_manager_load` | `theme_manager_load` |
 | Theme Export Write | `theme_export_write` | `theme_export_write` |
 | Version Command Spawn | `version_command_spawn` | `version_command_spawn`, stub command |
@@ -479,9 +479,10 @@ cargo bench --bench formatter_bench
 }
 ```
 
-`max_ms` (or `max_mb`) is the enforced limit; `target_ms` is the goal and is
-documentation only. `measurement_variance_percent` is the tolerance both
-scripts add on top of every `max_*`. `scripts/bench.sh --ci` and
+`max_ms` (or `max_mb`) is the budget the gates enforce; `target_ms` is the goal
+and is never enforced. `measurement_variance_percent` is shared-runner headroom
+both scripts add on top of every `max_*`, so the effective ceiling is
+`max_*` × (1 + 15 %). `scripts/bench.sh --ci` and
 `scripts/ci-bench.sh` read every key they use in one `jq` call
 (`scripts/lib/bench-common.sh`) and exit 2, naming the problem, when `jq`, the
 file or a key is missing; they never substitute a default. Set `PERF_BUDGETS_FILE`
@@ -518,8 +519,9 @@ the merge; `bench.sh --ci` also fails when two bench targets register the same
 benchmark ID. The base-vs-head canary (`scripts/perf-canary.sh`, benchmarks
 `canary_ipc_roundtrip` and `canary_git_status_cold`) and the strict
 script-segment deadline run in the same job as advisory steps. `release.yml`'s
-`validate` job runs `just bench-ci`, which adds the end-to-end budgets
-(`ci-bench.sh`), so an exceeded budget blocks a release.
+`perf` job runs `just bench-ci` on every release, including when the PR gate
+is accepted as proof of the tree: it adds the end-to-end budgets
+(`ci-bench.sh`), which no PR job runs, so an exceeded budget blocks a release.
 
 **Manual CI-mode benchmarks:**
 You can also run benchmarks with budget enforcement locally:

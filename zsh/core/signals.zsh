@@ -1,14 +1,18 @@
 # zsh/core/signals.zsh
 
-# Drop the agent-rendered character and directory memos (plain shell
-# variables). Their keys hold no config, so a theme or config change (a
-# reload, or an agent restarted with another config) must not leave them
-# serving the old render.
+# Drop the agent-rendered character, directory, clock and exit-status memos
+# (plain shell variables). Their keys hold no config, so a theme or config
+# change (a reload, or an agent restarted with another config) must not leave
+# them serving the old render.
 function __gpy_clear_render_memos() {
     __gpy_char_cache_key=""
     __gpy_char_cache_val=""
     __gpy_dir_cache_key=""
     __gpy_dir_cache_val=""
+    __gpy_clock_cache_key=""
+    __gpy_clock_cache_val=""
+    __gpy_status_cache_key=""
+    __gpy_status_cache_val=""
     return 0
 }
 
@@ -27,6 +31,7 @@ function __gpy_reload_config() {
 # Re-read config.toml into this shell; silent on success. Same name and
 # behaviour in Fish, Bash and Zsh.
 function gpy-prompt-reload() {
+    emulate -L zsh
     __gpy_reload_config fresh || {
         echo "gpy: theme reload failed; run gpy doctor" >&2
         return 1
@@ -64,10 +69,11 @@ function __gpy_consume_shell_flags() {
 # `trap … URG` string) is saved here and run by TRAPURG after its own loop;
 # zsh has one slot per signal. One defined after GPY replaces GPY's, and live
 # reload then falls back to `precmd`. GPY's own handler is recognised by its
-# body so a re-source never saves it. A string trap is read from a pipeline
-# because `$(trap)` runs in a subshell that has no traps.
+# body (this version's or an older one's) so a re-source never saves it. A
+# string trap is read from a pipeline because `$(trap)` runs in a subshell
+# that has no traps.
 if (( $+functions[TRAPURG] )); then
-    if [[ ${functions[TRAPURG]} != *__gpy_consume_shell_flags* ]]; then
+    if [[ ${functions[TRAPURG]} != *__gpy_on_doorbell* && ${functions[TRAPURG]} != *__gpy_consume_shell_flags* ]]; then
         functions[__gpy_prev_TRAPURG]=${functions[TRAPURG]}
     fi
 elif (( ! $+functions[__gpy_prev_TRAPURG] && ! $+__gpy_prev_urg_trap )); then
@@ -85,16 +91,12 @@ fi
 # and goes round while a flag arrived meanwhile (at most three passes).
 # `zle reset-prompt` alone only redraws the old PROMPT string, so re-render
 # first with the last exit code to keep status colouring.
+# A ring during precmd (zle inactive, the prompt half drawn) only marks a
+# repaint pending: zle-line-init consumes the flags and repaints, so neither
+# the late pill nor a reload lands in the middle of the render.
+# The user's own handler runs outside GPY's option emulation.
 function TRAPURG() {
-    local base=${__gpy_shell_flag_base:-} pass
-    for pass in 1 2 3; do
-        __gpy_consume_shell_flags
-        if zle; then
-            __gpy_update_prompts "${__gpy_last_exit_code:-0}"
-            zle reset-prompt
-        fi
-        [[ -n "$base" && ( -e "$base.reregister" || -e "$base.reload" ) ]] || break
-    done
+    __gpy_on_doorbell
     if (( $+functions[__gpy_prev_TRAPURG] )); then
         __gpy_prev_TRAPURG "$@"
         return $?
@@ -105,7 +107,47 @@ function TRAPURG() {
     return 0
 }
 
+function __gpy_on_doorbell() {
+    local __gpy_db_bang=0
+    [[ -o prompt_bang ]] && __gpy_db_bang=1
+    emulate -L zsh
+    (( __gpy_db_bang )) && setopt prompt_bang
+    # The agent that rang is answering again.
+    __gpy_agent_late_until=0
+    if [[ -n ${__gpy_in_precmd:-} ]] && ! zle; then
+        __gpy_repaint_pending=1
+        return 0
+    fi
+    local base=${__gpy_shell_flag_base:-} pass
+    for pass in 1 2 3; do
+        __gpy_consume_shell_flags
+        if zle; then
+            __gpy_update_prompts "${__gpy_last_exit_code:-0}"
+            zle reset-prompt
+        fi
+        [[ -n "$base" && ( -e "$base.reregister" || -e "$base.reload" ) ]] || break
+    done
+    return 0
+}
+
+# zle-line-init: the first moment after precmd that a repaint can reach the
+# screen. Acts on a ring that arrived during precmd.
+function __gpy_line_init() {
+    local __gpy_li_bang=0
+    [[ -o prompt_bang ]] && __gpy_li_bang=1
+    emulate -L zsh
+    (( __gpy_li_bang )) && setopt prompt_bang
+    # precmd has ended, even one Ctrl-C cut short.
+    __gpy_in_precmd=""
+    [[ -n ${__gpy_repaint_pending:-} ]] || return 0
+    __gpy_repaint_pending=""
+    __gpy_consume_shell_flags
+    __gpy_update_prompts "${__gpy_last_exit_code:-0}"
+    zle reset-prompt
+}
+
 function __gpy_zshexit() {
+    emulate -L zsh
     local request="{\"op\":\"unregister\",\"pid\":$$}"
     __gpy_send_json "$request" &>/dev/null
     __gpy_untrack_shell_for_agent_recovery

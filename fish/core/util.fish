@@ -2,14 +2,6 @@
 
 source (path dirname (status filename))/flags.fish
 
-function __gpy_config_root
-    if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"
-        echo "$XDG_CONFIG_HOME/fish"
-    else
-        echo "$HOME/.config/fish"
-    end
-end
-
 # PATH first, then ~/.local/bin; never cached (the lookup is about 50 us).
 function __gpy_resolve_agent_binary --description 'Resolve the gpy-agent binary path'
     set -l command_path (command -s gpy-agent)
@@ -37,12 +29,12 @@ function __gpy_read_file --argument-names file
     printf '%s' $content
 end
 
-# Epoch time in ms (second resolution); reuses $__gpy_prompt_now (set once per render) to avoid forking date.
+# Epoch time in ms (second resolution); reuses $__gpy_prompt_now (set once per render).
 function __gpy_get_time_ms
     if set -q __gpy_prompt_now; and string match -qr '^[0-9]+$' -- "$__gpy_prompt_now"
         math "$__gpy_prompt_now * 1000"
     else
-        math (date +%s) \* 1000
+        math (__gpy_now_seconds) \* 1000
     end
 end
 
@@ -87,12 +79,6 @@ function __gpy_log_debug --argument-names context message
     end
 end
 
-function __gpy_log_info --argument-names context message
-    if test "$GPY_DEBUG" = 1
-        echo "gpy[$context]: info: $message" >&2
-    end
-end
-
 # Pure policy helpers: no fork, clock, filesystem, or globals (unit-tested).
 
 # stale iff all operands are integers and now - mtime >= ttl.
@@ -132,18 +118,4 @@ function __gpy_now_seconds
         return 0
     end
     date +%s 2>/dev/null
-end
-
-function __gpy_agent_available
-    if not __gpy_agent_enabled
-        return 1
-    end
-
-    if not __gpy_resolve_agent_binary >/dev/null
-        return 1
-    end
-
-    # Check output, not exit code: an empty reply still exits 0.
-    set -l ping_result (__gpy_request ping 2>/dev/null)
-    test -n "$ping_result"
 end

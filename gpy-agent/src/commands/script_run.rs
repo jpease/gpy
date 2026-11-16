@@ -181,7 +181,10 @@ fn wait_until(child: &mut Child, deadline: Instant) -> Result<Option<ExitStatus>
     }
 }
 
-/// Apply the output protocol to the bytes a script wrote.
+/// Apply the output protocol to the bytes a script wrote, byte for byte as
+/// the runner does under `LC_ALL=C`: line 1 loses its C0 and DEL bytes, and is
+/// then hidden when it holds a C1 control (UTF-8 `c2 80`..`c2 9f`); line 2 is
+/// the variant only when it is a valid name as written, nothing stripped.
 pub(crate) fn classify(bytes: &[u8], exit_ok: bool) -> Outcome {
     if !exit_ok {
         return Outcome::Hidden("non-zero exit".to_owned());
@@ -191,27 +194,30 @@ pub(crate) fn classify(bytes: &[u8], exit_ok: bool) -> Outcome {
     }
     // Output after the first NUL is undefined: ignore it.
     let visible = bytes.split(|b| *b == 0).next().unwrap_or_default();
-    let text = String::from_utf8_lossy(visible);
-    if text.chars().any(|c| ('\u{80}'..='\u{9f}').contains(&c)) {
+    let mut lines = visible.split(|b| *b == b'\n');
+    let first: Vec<u8> = lines
+        .next()
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .filter(|b| !b.is_ascii_control())
+        .collect();
+    if first
+        .windows(2)
+        .any(|pair| matches!(pair, [0xc2, 0x80..=0x9f]))
+    {
         return Outcome::Hidden("output holds a C1 control character".to_owned());
     }
-    let strip = |line: &str| -> String {
-        line.chars()
-            .filter(|c| !c.is_ascii_control())
-            .collect::<String>()
-    };
-    let mut lines = text.split('\n');
-    let first = strip(lines.next().unwrap_or_default());
     if first.is_empty() {
         return Outcome::Hidden("empty output".to_owned());
     }
     let variant = lines
         .next()
-        .map(strip)
-        .and_then(|name| VariantName::new(&name).ok())
+        .and_then(|line| std::str::from_utf8(line).ok())
+        .and_then(|name| VariantName::new(name).ok())
         .map(|name| name.as_str().to_owned());
     Outcome::Shown {
-        text: first,
+        text: String::from_utf8_lossy(&first).into_owned(),
         variant,
     }
 }
@@ -295,8 +301,13 @@ pub(crate) fn run_trial(
             outcome: Outcome::TimedOut,
         });
     };
-    // Leftovers of a normal exit got TERM above; give the group the grace, then KILL.
-    let bytes = receiver.recv_timeout(GRACE).unwrap_or_default();
+    // Leftovers of a normal exit got TERM above; give the group the grace, then
+    // KILL. One that ignores TERM still holds stdout, so the reader sees EOF
+    // only after the KILL: take what the script wrote then, as the runner does.
+    let bytes = receiver.recv_timeout(GRACE).unwrap_or_else(|_| {
+        kill_group(&child);
+        receiver.recv_timeout(GRACE).unwrap_or_default()
+    });
     kill_group(&child);
     Ok(Trial {
         elapsed,
@@ -340,6 +351,68 @@ mod tests {
             classify(b"a\0junk", true),
             Outcome::Shown {
                 text: "a".into(),
+                variant: None
+            }
+        );
+    }
+
+    /// The runner's verdicts on input the lossy-text version got wrong: a
+    /// CRLF variant is not a variant, C0 is stripped before the C1 check, and
+    /// a C1 control only hides the text when it is on line 1.
+    #[test]
+    fn classify_matches_the_runner_byte_for_byte() {
+        assert_eq!(
+            classify(b"alice\r\nroot\r\n", true),
+            Outcome::Shown {
+                text: "alice".into(),
+                variant: None
+            }
+        );
+        assert_eq!(
+            classify(b"\xc2\x1b\x9b", true),
+            Outcome::Hidden("output holds a C1 control character".into())
+        );
+        assert_eq!(
+            classify(b"ok\n\xc2\x9b\n", true),
+            Outcome::Shown {
+                text: "ok".into(),
+                variant: None
+            }
+        );
+    }
+
+    /// A leftover child that ignores TERM keeps stdout open past the grace;
+    /// the trial still reports what the script printed, as the runner does.
+    #[cfg(unix)]
+    #[test]
+    fn run_trial_keeps_output_held_open_by_a_term_ignoring_leftover() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let script = temp.path().join("seg.sh");
+        std::fs::write(
+            &script,
+            "(trap '' TERM; exec sleep 2) &\nprintf 'shown\\n'\n",
+        )
+        .expect("script");
+        let manifest =
+            ScriptSegmentManifest::parse("command = \"seg.sh\"\n").expect("segment manifest");
+        let resolved = ResolvedScriptSegment {
+            ttl_secs: manifest.ttl_secs,
+            timeout_ms: manifest.timeout_ms,
+            settings: std::collections::BTreeMap::new(),
+        };
+        let trial = run_trial(
+            &script,
+            temp.path(),
+            &manifest,
+            &resolved,
+            temp.path(),
+            false,
+        )
+        .expect("trial runs");
+        assert_eq!(
+            trial.outcome,
+            Outcome::Shown {
+                text: "shown".into(),
                 variant: None
             }
         );

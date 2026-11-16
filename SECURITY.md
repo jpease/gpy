@@ -178,12 +178,23 @@ not controls and pass. A script run in `$PWD` may run repository-local tools
 
 ## File System Access
 
-- **Repositories are read, never written.** GPY reads git state and language
-  metadata from your working tree and puts nothing back into it. A script
-  segment that declares `pwd` is the exception: it runs in the repository, and
-  tools it calls (such as `git`) may write index and lock files there. The file
-  watcher's liveness probe writes a sentinel file only into a private directory
-  under the system temp dir, outside every watched repository.
+- **Repositories are read, with one write.** GPY reads git state and language
+  metadata from your working tree. The agent runs `git update-index
+  --untracked-cache` once per repository on setup and repair (skipped while a
+  merge, rebase, cherry-pick, revert, sequencer or `index.lock` is present),
+  which changes the repository's index. A script segment that declares `pwd`
+  runs in the repository, and tools it calls (such as `git`) may write index
+  and lock files there. The file watcher's liveness probe writes a sentinel
+  file into a private directory: under the system temp dir at startup, and
+  once per further filesystem a repository lives on, in a short-lived
+  `gpy-watch-probe-<pid>-<nanos>/` inside that repository's git directory.
+- **Repository-selected code.** Every agent `git` command runs with `-c
+  core.fsmonitor=false`, so a repository's `core.fsmonitor` command is never
+  run by the agent. Language version probes do execute the toolchain shim the
+  repository selects (`rustup`, `mise`, `go`), with `RUSTUP_AUTO_INSTALL=0`,
+  `GOTOOLCHAIN=local`, `MISE_AUTO_INSTALL=0`, `MISE_EXEC_AUTO_INSTALL=0` and
+  `MISE_NOT_FOUND_AUTO_INSTALL=0` set so a repository cannot trigger a
+  download.
 - **GPY writes to its own paths only**: the instant-prompt and theme-export
   caches under `~/.cache/gpy/`, its runtime directory, and `config.toml` plus
   theme and palette files under `~/.config/gpy/` (touched by `gpy theme`,

@@ -3,6 +3,7 @@
 pub(crate) mod character_resolver;
 pub(crate) mod chrome;
 pub(crate) mod clock_resolver;
+pub(crate) mod cluster;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
 pub(crate) mod git_resolver;
@@ -16,7 +17,9 @@ mod style_encoder;
 pub use directory_resolver::DirectoryEnv;
 pub use json::JsonFormatter;
 pub use prompt::PromptFormatter;
-pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
+pub use style_encoder::{
+    ColorDepth, PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt,
+};
 
 use crate::Result;
 use crate::config::Config;
@@ -233,21 +236,24 @@ pub fn create_formatter(format: Format) -> Box<dyn Formatter> {
 /// The one ellipsis, for truncated branch names and directory paths.
 pub(crate) const ELLIPSIS: char = '…';
 
-/// Truncate to `max_length` chars (0 = unlimited), ending with `…`.
+/// Truncate to `max_length` character clusters (0 = unlimited), ending with `…`.
+///
+/// Cuts fall between clusters, so a flag, a ZWJ sequence or a base character
+/// never loses its combining marks. A cap of 1 leaves no room for the ellipsis
+/// beside content: it keeps the first cluster alone (the directory truncator
+/// likewise keeps the last).
 #[must_use]
 pub(crate) fn truncate_branch(branch: &str, max_length: usize) -> String {
-    if max_length == 0 {
+    if max_length == 0 || cluster::count(branch) <= max_length {
         return branch.to_owned();
     }
 
-    let char_count = branch.chars().count();
-    if char_count <= max_length {
-        return branch.to_owned();
+    if max_length == 1 {
+        return cluster::head(branch, 1).to_owned();
     }
 
-    // The ellipsis takes one character of the budget.
-    let truncated_len = max_length.saturating_sub(1);
-    let mut result: String = branch.chars().take(truncated_len).collect();
+    // The ellipsis takes one cluster of the budget.
+    let mut result = cluster::head(branch, max_length.saturating_sub(1)).to_owned();
     result.push(ELLIPSIS);
     result
 }
@@ -306,6 +312,11 @@ mod tests {
 
         let res4 = truncate_branch("short", 10);
         assert_eq!(res4, "short");
+
+        // A cap of 1 keeps the first cluster, not a lone ellipsis.
+        assert_eq!(truncate_branch("main", 1), "m");
+        // A combining mark is never cut off its base.
+        assert_eq!(truncate_branch("ae\u{301}bcd", 3), "ae\u{301}\u{2026}");
 
         let res5 = truncate_branch("very-long-branch-name-here", 0);
         assert_eq!(res5, "very-long-branch-name-here");

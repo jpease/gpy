@@ -152,11 +152,10 @@ fn report_git(client: &AgentClient, maybe_cwd: Option<&Path>) {
 
 /// Run the checks that need an answering agent. They only warn, as every
 /// prompt still renders (from `gpy-agent oneshot`) while the agent is
-/// outdated or failing, so this always returns `true`.
-pub(super) fn check_answering_agent(client: &AgentClient, status: &AgentStatus) -> bool {
+/// outdated or failing.
+pub(super) fn check_answering_agent(client: &AgentClient, status: &AgentStatus) {
     report_version(status, crate::VERSION);
     report_git(client, std::env::current_dir().ok().as_deref());
-    true
 }
 
 #[cfg(test)]
