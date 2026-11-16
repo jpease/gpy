@@ -63,7 +63,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 
 | Script | Purpose |
 |---|---|
-| `gpy-dev.sh [--release] [--ref REV \| --pr N \| --bin DIR] [--reset] [--sync-config]` | Run an unreleased build in an isolated fish shell (own config, fish scripts, caches and agent socket under `~/.local/share/gpy-dev`) and leave your installed release untouched; `exit` returns to it. The prompt shows `[gpy-dev <version> <ref>]`. `just dev`. |
+| `gpy-dev.sh [--release] [--ref REV \| --pr N \| --bin DIR] [--reset] [--sync-config]` | Run an unreleased build in an isolated fish shell (own config, fish scripts and caches under `~/.local/share/gpy-dev`, agent socket under `/tmp/gpy-dev-$USER`) and leave your installed release untouched; `exit` returns to it. The prompt shows `[gpy-dev <version> <ref>]`. `just dev`. |
 | `test-fish.sh` | Build the debug binaries and run `tests/fish/*.test.fish`; `just test-shell` and `just check-shell fish` run it. |
 | `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the `rust-toolchain.toml` pin; names the override on a mismatch. |
 | `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
@@ -82,6 +82,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `generate-sbom.sh` | CycloneDX SBOM from `Cargo.lock` (needs `jq`). |
 | `package-release.sh` | Build the release archives and checksums; fails closed on any missing file. |
 | `release-notes.sh` | Release notes from the CHANGELOG section and the built assets. |
+| `release-gate-proven.sh --sha SHA --repo OWNER/REPO` | Decide whether the PR gate already passed on exactly the tree being released, so `release.yml` can skip its gate legs; the `perf` job runs regardless. |
 | `smoke-release.sh` | Install and run the binaries a release is about to publish, in a sandboxed `HOME`. |
 | `test-fresh-install.sh` | Install into a stock `ubuntu:24.04` container and render a prompt per shell. |
 | `wsl-smoke.sh [--contract \| --contract-only]` | Inside WSL: font detection via `gpy setup`, `gpy-agent oneshot git` on Linux and Windows-drive repos, and optionally the cross-shell contract suite. `GPY_AGENT_BIN` and `GPY_WSL_DRVFS_DIR` override paths. |
