@@ -217,6 +217,10 @@ jobs:
   build:
     name: Build Release Binaries
     needs: [validate, release-gate]
+    # release-gate runs on `always()` so a proven gate (its legs skipped) still
+    # passes; without a status function here the implicit success() would skip
+    # this job because an ancestor (gate-legs) was skipped.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.release-gate.result == 'success' }}
     timeout-minutes: 60
     strategy:
       matrix:
@@ -326,6 +330,7 @@ jobs:
   package:
     name: Create Release Package
     needs: [validate, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -382,6 +387,7 @@ jobs:
     # (arm64 runner); `--version` and `gpy --help` on Windows (CLI-only).
     name: Smoke-run packaged binaries (${{ matrix.os }})
     needs: [validate, package]
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -428,8 +434,13 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [validate, build, package, smoke]
-    # A manual dispatch is a dry run unless `publish` is set.
-    if: ${{ github.event_name == 'push' || inputs.publish }}
+    # A manual dispatch is a dry run unless `publish` is set. Publish only when
+    # every upstream job succeeded; `!cancelled()` keeps a skipped gate leg
+    # (a proven gate) from skipping this job through the implicit success().
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' || inputs.publish)
+      && needs.build.result == 'success' && needs.package.result == 'success'
+      && needs.smoke.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugins: `plugin install` needs `--force` to take over another plugin's segment, reloads a running agent, rejects built-in segment names and escape sequences in `version`; script plugin manifests get the same ownership check as scripts; `username` works without `$USER`.
 - Shells: blank Enter no longer re-shows the Fish duration, Fish retries registration every prompt, Zsh and Bash negatively cache a late agent, Zsh repaints a doorbell that arrives during `precmd`, the `nc` fallback half-closes on netcat-openbsd, clock and status renders are memoized, and `bash/gpy.bash` and the runner survive `CDPATH` and `cd` wrappers.
 - Release pipeline: the fallback full gate reuses the PR gate legs (macOS, Windows, fresh install), `just bench-ci` runs on every release, a manual publish tags the built commit, and release runs are serialized per version. `install.sh` handles native Windows (binaries only) and Rosetta; `cleanup-test-agents.sh` only stops this checkout's agents.
+- Release pipeline: when the PR gate already proved the tagged commit, the build, package, smoke and publish jobs now run; they were skipped because their skipped gate legs skipped them in turn.
 - File watcher: the event queue holds at most 4096 events, so a burst of file changes (a checkout, `npm install`) no longer grows agent memory without limit. When the queue is full, further events are dropped and every watched repository gets a full refresh, so no change is missed.
 
 ### Added

@@ -10,6 +10,8 @@
 #   (c) the shell job's shards (in gate-legs.yml, which pr-gate.yml calls as
 #       its `gate-legs` job) run every `quality-check.sh --shell-only` part
 #       exactly once, so sharding cannot drop a suite
+#   (d) release.yml's build, package, smoke and create-release jobs carry
+#       `!cancelled()`, so a proven gate (skipped legs) still builds and publishes
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -84,5 +86,18 @@ else
         fail "the shell shards run [$(tr '\n' ' ' <<<"$have")] but each of [$(tr '\n' ' ' <<<"$want")] must run exactly once: $(tr '\n' ' ' <<<"$shard_entries")"
     fi
 fi
+
+echo "--- (d) release jobs run when the gate was proven (its legs skipped) ---"
+# release-gate runs on always() so skipped gate legs pass; every job after it
+# needs a status function, or the implicit success() skips it because an
+# ancestor was skipped and a proven release would never build or publish.
+RELEASE=".github/workflows/release.yml"
+for job in build package smoke create-release; do
+    if [[ "$(yq ".jobs.\"$job\".if" "$RELEASE")" == *'!cancelled()'* ]]; then
+        pass "release job $job uses !cancelled()"
+    else
+        fail "release job $job has no !cancelled() in its if: a skipped gate leg would skip it"
+    fi
+done
 
 test_finish "the CI gate keeps its shape"
