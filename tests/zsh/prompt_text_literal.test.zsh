@@ -83,6 +83,10 @@ ipc_git_shows_branch() {
     [[ "$(shown "$ipc_git")" == *"$branch"* ]]
 }
 shell_e2e_poll 5 ipc_git_shows_branch
+if ! ipc_git_shows_branch; then
+    echo "--- diagnostics: HEAD is $(git -C "$SHELL_E2E_REPO" symbolic-ref -q HEAD) ---"
+    grep -v 'Clock\|Connection accepted\|Waiting for connection' "$GPY_DEBUG_LOG" 2>/dev/null | tail -n 80
+fi
 assert_shows "IPC git render" "$ipc_git" "$branch"
 
 __gpy_cache_variant_suffix git true true suffix
