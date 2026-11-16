@@ -222,6 +222,33 @@ concatenates them into the prompt.
 
 See [bash-limitations.md](../user/bash-limitations.md) for details.
 
+### Cross-Shell Divergences
+
+Where the three integrations knowingly differ today. All three resolve the
+agent binary the same way (`gpy-agent` on `PATH`, else
+`$HOME/.local/bin/gpy-agent`) and give a connected-but-silent agent the same
+5 s late window (only non-path ops open it; a doorbell clears it).
+
+| Topic | Bash | Zsh | Fish |
+|-------|------|-----|------|
+| Shell options touched | `shopt -s promptvars` on every render; `failglob`, `nocasematch`, `nullglob` toggled and restored inside functions | `setopt prompt_subst prompt_percent` globally at load; functions use `emulate -L zsh` / `local_options`; `prompt_bang` left as the user set it | None |
+| Interactive guard | None: sourcing `gpy.bash` loads it | None: sourcing `gpy.zsh` loads it | `conf.d/gpy_init.fish` returns unless `status is-interactive` |
+| `TERM=dumb` | Not special-cased | Not special-cased | Not special-cased |
+| Vi mode | No mode indicator | No mode indicator | No mode indicator |
+| Refresh-throttle state | Stamp files under `<runtime>/refresh-throttle/<pid>.*` (segments run in `$(...)`), removed on exit; the late window is a `<pid>.agent-late` file there | Same stamp files; late window in shell globals | Shell globals (`__gpy_<op>_refresh_ms_*`, `__gpy_agent_late_*`); nothing on disk |
+
+Script (G) segments run through the same `bash/core/g_runner.bash`, but each
+shell feeds it differently:
+
+| Topic | Bash | Zsh | Fish |
+|-------|------|-----|------|
+| Runner process | Sourced; scan and batch run in `$(...)` subshells | `bash -p -c` child for the batch; the trigger scan runs in Zsh; child stdin `/dev/null` | One `bash -p -c` child for scan plus batch; child stdin is the terminal, so Ctrl-C reaches it |
+| Deadline origin | No caller sets `__gpy_g_t0`: deadlines count from the runner's own start (Bash 5 `EPOCHREALTIME`; Bash 3.2-4.4 start a timer per segment) | Same, measured in the Bash child, so its start-up is not charged | Same as Zsh |
+| Failed reload | Startup/background load unsets `__gpy_script_segments` first, so a failed export leaves none; `fresh` fetches first and keeps the running set on failure | Same | Same |
+| Clock stepping back | Cache fresh only while `0 <= age < ttl`, so a backward step expires it; clock is `EPOCHSECONDS`, else `printf %(%s)T`, else `$SECONDS` (Bash 3.2-4.1) | Same rule, `EPOCHSECONDS` | Same rule, `__gpy_now_seconds` |
+| `cmd_duration` input | `__gpy_cmd_duration` measured in `PROMPT_COMMAND` (resolution depends on the duration method); empty before the first command | Last command's ms from `EPOCHREALTIME`, kept across a prompt due only to a `$PWD` change; empty before the first command | Fish's `$CMD_DURATION`; empty until `fish_postexec` first fires |
+| Base environment | Cleaned `PATH`, `HOME USER LOGNAME LANG TERM TZ TMPDIR LC_*` read from shell variables, so unexported values are forwarded too | Same list, but only exported values reach the child | Same as Zsh |
+
 ### Cross-Shell Compatibility Patterns
 
 #### Pattern 1: Conditional Feature Detection

@@ -891,6 +891,18 @@ __gpy_oneshot_claim() {
     return 0
 }
 
+# The gpy-agent command into variable $1: PATH first, then ~/.local/bin (the
+# installer's default), as in Fish. Status 1 when neither exists. Fork-free.
+__gpy_agent_binary_into() {
+    if command -v gpy-agent &>/dev/null; then
+        printf -v "$1" '%s' gpy-agent
+    elif [[ -n "${HOME:-}" && -x "$HOME/.local/bin/gpy-agent" ]]; then
+        printf -v "$1" '%s' "$HOME/.local/bin/gpy-agent"
+    else
+        return 1
+    fi
+}
+
 # Returns __gpy_seg_status_oneshot whenever it forked oneshot, even with no
 # output, so the budget is tracked; 1 otherwise.
 __gpy_fallback_oneshot() {
@@ -900,7 +912,8 @@ __gpy_fallback_oneshot() {
     local is_last="${4:-false}"
     local is_first="${5:-false}"
 
-    command -v gpy-agent &>/dev/null || return 1
+    local agent
+    __gpy_agent_binary_into agent || return 1
     __gpy_oneshot_claim || return 1
 
     local args=("$op" --cwd "$path" --format "$format")
@@ -911,7 +924,7 @@ __gpy_fallback_oneshot() {
         args+=(--first)
     fi
 
-    gpy-agent oneshot "${args[@]}" 2>/dev/null
+    "$agent" oneshot "${args[@]}" 2>/dev/null
     return "$__gpy_seg_status_oneshot"
 }
 
@@ -952,7 +965,8 @@ __gpy_request_duration() {
     # 2 = connected but the reply was late: omit rather than recompute.
     if (( send_status != 0 && send_status != 2 )); then
         # Capped to one oneshot fork per render; oneshot has no --prev-bg.
-        if command -v gpy-agent &>/dev/null && __gpy_oneshot_claim; then
+        local agent
+        if __gpy_agent_binary_into agent && __gpy_oneshot_claim; then
             used_oneshot=1
             local args=(duration --duration-ms "$duration_ms" --format bash-prompt)
             if [[ "$is_last" != "true" ]]; then
@@ -961,7 +975,7 @@ __gpy_request_duration() {
             if [[ "$is_first" == "true" ]]; then
                 args+=(--first)
             fi
-            result="$(gpy-agent oneshot "${args[@]}" 2>/dev/null)"
+            result="$("$agent" oneshot "${args[@]}" 2>/dev/null)"
         fi
     fi
 
@@ -991,7 +1005,8 @@ __gpy_request_character() {
     send_status=$?
     # 2 = connected but the reply was late: omit rather than recompute.
     if (( send_status != 0 && send_status != 2 )); then
-        if command -v gpy-agent &>/dev/null && __gpy_oneshot_claim; then
+        local agent
+        if __gpy_agent_binary_into agent && __gpy_oneshot_claim; then
             used_oneshot=1
             local exit_code=1
             [[ "$success" == "1" ]] && exit_code=0
@@ -999,7 +1014,7 @@ __gpy_request_character() {
             if [[ "$is_last" != "true" ]]; then
                 args+=(--not-last)
             fi
-            result="$(gpy-agent oneshot "${args[@]}" 2>/dev/null)"
+            result="$("$agent" oneshot "${args[@]}" 2>/dev/null)"
         fi
     fi
 

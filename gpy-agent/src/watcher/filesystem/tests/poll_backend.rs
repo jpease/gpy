@@ -584,7 +584,7 @@ fn split_poll_unwatch_releases_a_common_dir_after_unregister() {
     std::fs::create_dir_all(&refs).expect("refs dir");
     registry.register_common_gitdir(&common_dir, &root);
 
-    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    let (event_tx, event_rx) = event_queue(EVENT_QUEUE_CAPACITY);
     let mut watcher =
         SplitPollWatcher::new_split(&event_tx, Duration::from_millis(100), Arc::clone(&registry))
             .expect("split poll watcher");

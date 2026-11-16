@@ -10,6 +10,7 @@
 //! instead; larger ones rely on size and the full-precision mtime.
 
 use super::FileSystemWatcher;
+use super::queue::EventSender;
 use crate::sync_ext::MutexExt;
 use notify::Event;
 use notify::event::{CreateKind, DataChange, EventKind, ModifyKind, RemoveKind};
@@ -124,7 +125,7 @@ type Targets = Arc<Mutex<HashMap<PathBuf, TargetSnapshot>>>;
 
 /// Rescan every target once, forwarding the differences. Filesystem reads run
 /// without the lock, so `watch`/`unwatch` never wait on a slow mount.
-fn scan_all(targets: &Mutex<HashMap<PathBuf, TargetSnapshot>>, event_tx: &Sender<Event>) {
+fn scan_all(targets: &Mutex<HashMap<PathBuf, TargetSnapshot>>, event_tx: &EventSender) {
     let paths: Vec<PathBuf> = targets.lock_or_recover().keys().cloned().collect();
     for target in paths {
         let fresh = snapshot(&target);
@@ -155,7 +156,7 @@ impl MetadataPoller {
     ///
     /// # Errors
     /// Returns an error if the scan thread cannot be spawned.
-    pub(super) fn new(event_tx: &Sender<Event>, poll_interval: Duration) -> notify::Result<Self> {
+    pub(super) fn new(event_tx: &EventSender, poll_interval: Duration) -> notify::Result<Self> {
         let targets: Targets = Arc::default();
         let (stop, stop_rx) = mpsc::channel::<()>();
         let targets_for_scan = Arc::clone(&targets);

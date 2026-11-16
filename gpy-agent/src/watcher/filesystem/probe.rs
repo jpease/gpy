@@ -3,6 +3,7 @@
 use super::super::WatchRegistry;
 use super::super::watch_set::{WatchMode, WatchSet};
 use super::backend::{BackendKind, WatcherBackend, build_poll_watcher, poll_watch_targets};
+use super::queue::EventSender;
 use crate::deadline::Deadline;
 use crate::env_config::{WATCH_FORCE_POLL, WATCH_POLL_MS, WATCH_PROBE_MS};
 use crate::sync_ext::MutexExt;
@@ -83,7 +84,7 @@ impl FallbackPolicy {
 /// doesn't heal mid-session, and re-probing would flap and drop events.
 pub(super) fn spawn_health_probe(
     backend: &Arc<Mutex<WatcherBackend>>,
-    event_tx: &Sender<Event>,
+    event_tx: &EventSender,
     stop_flag: &Arc<AtomicBool>,
     timing: ProbeTiming,
     registry: &Arc<WatchRegistry>,
@@ -179,7 +180,7 @@ pub(super) fn apply_poll_swap(
 /// since `PollWatcher` baselines at arm time and would miss earlier changes.
 pub(super) fn engage_poll_fallback(
     backend: &Arc<Mutex<WatcherBackend>>,
-    event_tx: &Sender<Event>,
+    event_tx: &EventSender,
     stop_flag: &AtomicBool,
     poll_interval: Duration,
     registry: &Arc<WatchRegistry>,
@@ -227,7 +228,7 @@ pub(super) fn engage_poll_fallback(
         let rescan = Event::new(EventKind::Any)
             .add_path(path)
             .set_flag(Flag::Rescan);
-        let _ = event_tx.send(rescan);
+        event_tx.send(rescan);
     }
 }
 
@@ -316,7 +317,7 @@ const fn device_of(_path: &Path) -> Option<u64> {
 /// What a repository-filesystem probe needs from its watcher.
 pub(super) struct ProbeContext<'a> {
     pub(super) backend: &'a Arc<Mutex<WatcherBackend>>,
-    pub(super) event_tx: &'a Sender<Event>,
+    pub(super) event_tx: &'a EventSender,
     pub(super) stop_flag: &'a Arc<AtomicBool>,
     pub(super) registry: &'a Arc<WatchRegistry>,
 }
