@@ -530,6 +530,43 @@ fn uninstall_after_new_layout_keeps_the_fish_config_dir() {
     assert!(is_absent(&env.root().join(".local/share/gpy/fish")));
 }
 
+/// The loader `gpy setup` moved aside is named, and left in place.
+#[test]
+fn uninstall_names_the_moved_aside_fish_loader_and_keeps_it() {
+    let env = CliTestEnv::new().unwrap();
+    let conf_d = env.xdg_config_home().join("fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    fs::write(conf_d.join("gpy_init.fish"), "set -gx MINE 1\n").unwrap();
+    setup_shell(&env, "fish");
+    let backups: Vec<PathBuf> = fs::read_dir(&conf_d)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("gpy_init.fish.backup.")
+        })
+        .collect();
+    let [backup] = backups.as_slice() else {
+        panic!("setup moves the loader aside once: {backups:?}");
+    };
+
+    let result = uninstall(&env, &["--yes"]);
+    result.assert_success("gpy uninstall --yes");
+
+    let line = result
+        .stdout
+        .lines()
+        .find(|line| line.contains(&backup.display().to_string()))
+        .unwrap_or_else(|| panic!("the backup is named: {}", combined(&result)));
+    assert!(
+        line.contains("Fish does not load them") && line.contains("delete them by hand"),
+        "{line}"
+    );
+    assert_eq!(fs::read(backup).unwrap(), b"set -gx MINE 1\n");
+}
+
 /// `gpy uninstall` on a pty, answering the prompt with `answer`; returns the
 /// exit code.
 fn uninstall_on_pty(env: &CliTestEnv, answer: &[u8]) -> u32 {

@@ -699,21 +699,35 @@ fn fish_setup_retires_the_pre_0_9_layout_and_names_the_old_directories() {
     );
 }
 
+/// An incomplete block is left alone and reported with its own exit code,
+/// after everything else is installed.
 #[test]
-fn setup_warns_about_an_incomplete_rc_block_instead_of_claiming_it_is_configured() {
+fn setup_exits_5_on_an_incomplete_rc_block_after_installing_everything_else() {
     let home = TempDir::new().unwrap();
     let rc = home.path().join(".zshrc");
-    fs::write(
-        &rc,
-        "export A=1\n# >>> gpy-init >>>\n# GPY shell integration\n",
-    )
-    .unwrap();
+    let text = "export A=1\n# >>> gpy-init >>>\n# GPY shell integration\n";
+    fs::write(&rc, text).unwrap();
 
     let output = setup(home.path(), &["--shell", "zsh"]);
-    assert_ok(&output);
 
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(gpy_agent::commands::exit_codes::SETUP_INCOMPLETE)),
+        "{output:?}"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("incomplete"), "{stderr}");
+    assert!(!stderr.contains("Error:"), "{stderr}");
     assert!(!stdout.contains("already configured"), "{stdout}");
+    assert!(stdout.contains("Installed bundled plugins"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&rc).unwrap(),
+        text,
+        "the block is not touched"
+    );
+    let data = home.path().join(".local/share/gpy");
+    for installed in ["zsh/gpy.zsh", "bash/gpy.bash", "fish/conf.d/gpy_init.fish"] {
+        assert!(data.join(installed).is_file(), "{installed} not installed");
+    }
 }

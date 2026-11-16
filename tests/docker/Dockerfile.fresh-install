@@ -13,6 +13,14 @@
 # archive, both `--version`s, a oneshot render, a responding agent, and a
 # prompt from fish, zsh and bash through their rc files.
 #
+# The same image then runs each tests/docker/scenarios/*.sh in its own
+# container (helpers in tests/docker/scenario-lib.sh): an upgrade from the
+# published v0.10.5 with a live agent and shell, the pre-0.9 Fish layout of
+# v0.8.0 through setup and uninstall, `gpy setup` idempotency, and the
+# SECURITY.md promises that a repository's core.fsmonitor and pinned toolchains
+# neither run nor install. The two old releases are downloaded at run time
+# from GitHub over HTTPS and checked against their .sha256 sidecars.
+#
 # Run it with scripts/test-fresh-install.sh.
 
 ARG RUST_IMAGE=rust:1.100.0-bookworm
@@ -67,8 +75,14 @@ RUN set -eu; \
     rm -rf /opt/build
 
 COPY scripts/smoke-release.sh /opt/smoke-release.sh
+# The scenarios scripts/test-fresh-install.sh runs after the smoke, one fresh
+# container each, and the helpers they share.
+COPY tests/docker/scenario-lib.sh /opt/scenario-lib.sh
+COPY tests/docker/scenarios /opt/scenarios
 # An unprivileged user with a fresh, empty home directory.
-RUN useradd -m -s /bin/bash gpy && chmod 0755 /opt/smoke-release.sh
+RUN useradd -m -s /bin/bash gpy \
+    && chmod 0755 /opt/smoke-release.sh /opt/scenarios/*.sh \
+    && chmod 0644 /opt/scenario-lib.sh
 USER gpy
 WORKDIR /tmp
 ENV GPY_RELEASE_VERSION=""

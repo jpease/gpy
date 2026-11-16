@@ -342,9 +342,18 @@ main() {
     esac
 
     # gpy setup reads confirmation from /dev/tty, so it can prompt despite the pipe.
+    # Exit 5 means everything is installed but the rc file holds an incomplete
+    # GPY block, so the shell does not load GPY: finish, then say so.
+    rc_block_incomplete=0
     if [ -n "$CURRENT_SHELL" ]; then
         info "Setting up $CURRENT_SHELL integration..."
-        "$INSTALL_DIR/gpy" setup --shell "$CURRENT_SHELL" --from "$STAGE_DIR" || die "gpy setup failed; the binaries are installed but $CURRENT_SHELL is not wired up. After fixing the problem above, run: $INSTALL_DIR/gpy setup --shell $CURRENT_SHELL --from <checkout of $REPO at $VERSION>"
+        setup_rc=0
+        "$INSTALL_DIR/gpy" setup --shell "$CURRENT_SHELL" --from "$STAGE_DIR" || setup_rc=$?
+        case $setup_rc in
+            0) ;;
+            5) rc_block_incomplete=1 ;;
+            *) die "gpy setup failed; the binaries are installed but $CURRENT_SHELL is not wired up. After fixing the problem above, run: $INSTALL_DIR/gpy setup --shell $CURRENT_SHELL --from <checkout of $REPO at $VERSION>" ;;
+        esac
     fi
 
     # Always run `start`: it is the only path that restarts a version-mismatched daemon.
@@ -359,7 +368,9 @@ main() {
     esac
 
     echo ""
-    if [ -n "$CURRENT_SHELL" ]; then
+    if [ "$rc_block_incomplete" = 1 ]; then
+        warn "GPY installed, but $CURRENT_SHELL does not load it yet (see the last line)"
+    elif [ -n "$CURRENT_SHELL" ]; then
         ok "GPY installed successfully"
     else
         warn "GPY binaries installed; shell integration was NOT set up. Re-run with GPY_SHELL=fish, zsh or bash"
@@ -372,6 +383,10 @@ main() {
     echo "Agent logs:    tail -f $CACHE_HOME/gpy/agent.log"
     echo "Documentation: https://github.com/jpease/gpy"
     echo "Uninstall:     $INSTALL_DIR/gpy uninstall"
+    if [ "$rc_block_incomplete" = 1 ]; then
+        echo ""
+        warn "GPY is NOT active: the GPY block in your $CURRENT_SHELL rc file is incomplete (gpy setup named the file above). Delete the lines from '# >>> gpy-init >>>' that GPY added, then re-run this installer"
+    fi
 }
 
 main "$@"

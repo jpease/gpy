@@ -256,10 +256,19 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
 fi
 
 # Shell is detected from $SHELL; GPY_SHELL overrides.
+# Exit 5 from `gpy setup` means everything is installed but the rc file holds
+# an incomplete GPY block, so the shell does not load GPY: finish, then say so.
+rc_block_incomplete=0
 if [ "$wire_shell" = 1 ]; then
     CURRENT_STEP="gpy setup (shell integration; binaries are already installed)"
     info "Installing shell integration..."
-    "$INSTALL_DIR/$DEST_CLI" setup --shell "$shell_name" --from "$(pwd)"
+    setup_rc=0
+    "$INSTALL_DIR/$DEST_CLI" setup --shell "$shell_name" --from "$(pwd)" || setup_rc=$?
+    case $setup_rc in
+        0) ;;
+        5) rc_block_incomplete=1 ;;
+        *) handle_error "$setup_rc" ;;
+    esac
 fi
 
 # Restart so an old daemon picks up the new binary; `start` is a no-op when the
@@ -277,7 +286,9 @@ if [ "$WINDOWS" != 1 ]; then
 fi
 
 echo ""
-if [ "$wire_shell" = 1 ]; then
+if [ "$rc_block_incomplete" = 1 ]; then
+    warn "GPY installed, but $shell_name does not load it yet (see the last line)"
+elif [ "$wire_shell" = 1 ]; then
     ok "GPY installed successfully"
 elif [ "$WINDOWS" = 1 ]; then
     warn "GPY CLI installed; native Windows has no prompt integration or agent. Use WSL for the prompt"
@@ -289,3 +300,7 @@ echo "Agent:     $INSTALL_DIR/$DEST_AGENT"
 echo "CLI:       $INSTALL_DIR/$DEST_CLI"
 echo "Verify:    gpy --version; gpy-agent --help"
 echo "Uninstall: $INSTALL_DIR/$DEST_CLI uninstall (keeps ~/.config/gpy; --purge-config removes it)"
+if [ "$rc_block_incomplete" = 1 ]; then
+    echo ""
+    warn "GPY is NOT active: the GPY block in your $shell_name rc file is incomplete (gpy setup named the file above). Delete the lines from '# >>> gpy-init >>>' that GPY added, then re-run bash install.sh"
+fi

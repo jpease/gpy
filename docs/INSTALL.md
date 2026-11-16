@@ -349,7 +349,12 @@ It:
    prints `rm -rf '<dir>'` lines for old trees it no longer uses
    (`~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh,bundled-plugins}`), and
    `gpy uninstall` removes them too. A start marker with no matching end (an
-   incomplete block) is reported, and setup warns. The Bash block loads GPY only in interactive shells, and
+   incomplete block) is left alone and reported on stderr; setup still
+   finishes every other step, then exits `5` because the shell does not load
+   GPY. Delete the lines from `# >>> gpy-init >>>` that GPY added and run
+   `gpy setup` again. The installers treat exit `5` as a warning: they finish
+   the install, start the agent, and end with a line saying GPY is not active
+   in the rc file. The Bash block loads GPY only in interactive shells, and
    setup rewrites an unedited Bash block or loader from an earlier release to
    that form; a block whose text differs is left as it is.
 4. Moves a theme file in `~/.config/gpy/themes/` that is an unedited copy of a
@@ -607,6 +612,11 @@ Your configuration directory (`~/.config/gpy`: `config.toml`, themes, palettes,
 plugins) is kept unless you pass `--purge-config`; without it, the directory is removed
 only when nothing is left in it. `gpy uninstall` stops the agent first; if it does not
 stop, nothing is removed and the command exits 1 with the `kill` hint from `gpy stop`.
+
+A `~/.config/fish/conf.d/gpy_init.fish.backup.<stamp>` is a loader `gpy setup`
+moved aside because it was not GPY's link. `gpy uninstall` does not delete it;
+it prints a `Left in place:` line naming each one. Fish does not load these
+files, so delete them by hand once you know you do not need them.
 
 It asks for confirmation first and removes nothing unless it gets it: with no
 terminal to answer (stdin closed or at end of input) it exits 1, so pass `--yes`

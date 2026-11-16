@@ -156,7 +156,9 @@ jobs:
 
   fresh-install:
     # Installs from a locally built archive into a stock ubuntu:24.04 with an
-    # empty $HOME and renders a prompt in each shell.
+    # empty $HOME and renders a prompt in each shell, then runs the upgrade,
+    # idempotency and repository-code scenarios in tests/docker/scenarios/
+    # (two of them download published releases from github.com).
     name: Fresh install in a clean container
     runs-on: ubuntu-latest
     timeout-minutes: 45

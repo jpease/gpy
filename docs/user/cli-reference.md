@@ -115,8 +115,12 @@ removed; any other file moves to `gpy_init.fish.backup.<stamp>`) and, after the
 run, prints one `rm -rf '<dir>'` line for each old-layout tree that is still
 there (`~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh,bundled-plugins}`); run
 them after restarting your shells. `--from` follows symlinks (Nix, stow). An
-incomplete rc block (a start marker without its end) makes setup warn, and
-`gpy doctor` fail.
+incomplete rc block (a start marker without its end) makes setup warn on
+stderr, leave the block alone, finish every other step, and exit `5`: the
+files are installed but the shell does not load GPY. Delete the lines from
+`# >>> gpy-init >>>` that GPY added, then run `gpy setup` again. `gpy doctor`
+fails on such a block, and the installers report exit `5` as a warning and
+finish the install.
 
 The last step picks `ui.show_icons`: it detects whether a Nerd Font is
 installed and, on a terminal, shows a sample prompt line and asks whether the
@@ -141,6 +145,9 @@ The binaries are deleted only when this `gpy` lives in `~/.local/bin`, where the
 installers put it; otherwise remove them with the tool that installed them
 (`brew uninstall gpy` for Homebrew). It also removes the old-layout trees (`~/.config/fish/gpy`, `~/.config/gpy/{bash,zsh,bundled-plugins}`). It asks `Uninstall GPY? [y/N]`; with no
 terminal to answer, it removes nothing and exits `1` unless you pass `--yes`.
+A `~/.config/fish/conf.d/gpy_init.fish.backup.<stamp>` that `gpy setup` moved
+aside is not removed: uninstall names each one on a `Left in place:` line
+(Fish does not load them; delete them by hand).
 See [Uninstallation](../INSTALL.md#uninstallation).
 
 ### Agent Lifecycle
@@ -1458,16 +1465,17 @@ In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the d
 
 ## Exit Codes
 
-| Command | 0 | 1 | 2 | 3 | 4 | 6 |
-|---|---|---|---|---|---|---|
-| `gpy status`, `gpy-agent status` | the agent answered, or it is alive but shedding load (busy) | – | usage error | not running: no socket, or the socket refuses connections (stale file) | the socket accepts but the agent never replies (wedged), or the status could not be determined (an `Error:` line names it) | – |
-| `gpy start`, `gpy-agent start` | agent running afterwards: started, replaced an older agent, already running (including busy), or a newer agent left in place | error, including "could not verify whether an agent is running" | usage error | – | – | disabled by `agent.enabled = false` |
-| `gpy stop`, `gpy-agent stop` | agent stopped afterwards, including "was not running" and "removed a stale socket" | the agent is still answering or did not answer the shutdown | usage error | – | – | – |
-| `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | as `start` |
-| `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – |
-| `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – |
-| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), the agent could not be stopped (nothing is removed), or a path or rc file could not be handled | usage error | – | – | – |
-| `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – |
+| Command | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| `gpy status`, `gpy-agent status` | the agent answered, or it is alive but shedding load (busy) | – | usage error | not running: no socket, or the socket refuses connections (stale file) | the socket accepts but the agent never replies (wedged), or the status could not be determined (an `Error:` line names it) | – | – |
+| `gpy start`, `gpy-agent start` | agent running afterwards: started, replaced an older agent, already running (including busy), or a newer agent left in place | error, including "could not verify whether an agent is running" | usage error | – | – | – | disabled by `agent.enabled = false` |
+| `gpy stop`, `gpy-agent stop` | agent stopped afterwards, including "was not running" and "removed a stale socket" | the agent is still answering or did not answer the shutdown | usage error | – | – | – | – |
+| `gpy restart`, `gpy-agent restart` | as `start` | as `start` | usage error | – | – | – | as `start` |
+| `gpy-agent config reload` | applied, or no agent running (unchanged) | rejected or not answered | usage error | – | – | – | – |
+| `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – | – |
+| `gpy setup` | set up (including `--check` and `--redetect-icons`) | failure: one line starting with `Error:` on stderr | usage error | – | – | everything is installed, but the rc file holds an incomplete GPY block, so the shell does not load GPY (a warning on stderr names the file) | – |
+| `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), the agent could not be stopped (nothing is removed), or a path or rc file could not be handled | usage error | – | – | – | – |
+| `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – | – |
 
 `stop` never exits `6`: a disabled agent that is not running is already in the
 requested state, and one that is still running must be stoppable. `2` is the

@@ -112,7 +112,7 @@ check_shellcheck() {
     command -v shellcheck >/dev/null 2>&1 || { skip_tool shellcheck; return; }
     local failed=0 checked=0 target
     for target in install.sh install-oneline.sh scripts/*.sh scripts/lib/*.sh tests/bash/*.test.bash tests/repo/*.test.bash \
-        benchmarks/*/*.sh bash/*.bash bash/*/*.bash plugins/*/bin/*.sh; do
+        tests/docker/*.sh tests/docker/scenarios/*.sh benchmarks/*/*.sh bash/*.bash bash/*/*.bash plugins/*/bin/*.sh; do
         [[ -f "$target" ]] || continue
         checked=$((checked + 1))
         case "$target" in

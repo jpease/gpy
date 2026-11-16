@@ -135,6 +135,7 @@ pub fn run(options: &UninstallOptions) -> Result<ExitCode> {
         output::plain(format_args!("Removed empty {}", plan.data_root.0.display()));
     }
     restore_fish_prompt(&plan.config_home, &plan.data_root, &mut tally);
+    report_fish_loader_backups(&plan.config_home);
     remove_binaries(&plan.binaries, &mut tally);
     remove_config(&plan.config_dir, options.purge_config, &mut tally);
     if let Some(cache) = &plan.cache {
@@ -524,6 +525,33 @@ fn is_backup_stamp(stamp: &str) -> bool {
             && time.len() == 6
             && date.bytes().chain(time.bytes()).all(|b| b.is_ascii_digit())
     })
+}
+
+/// Name the `conf.d/gpy_init.fish.backup.*` files `gpy setup` moved a
+/// loader it did not recognise to. They may be the user's, so they stay.
+fn report_fish_loader_backups(config_home: &Path) {
+    let conf_d = config_home.join("fish").join("conf.d");
+    let mut backups: Vec<PathBuf> = fs::read_dir(&conf_d)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("gpy_init.fish.backup.")
+        })
+        .map(|entry| entry.path())
+        .collect();
+    if backups.is_empty() {
+        return;
+    }
+    backups.sort();
+    output::plain(format_args!(
+        "Left in place: {}. `gpy setup` moved these old Fish loaders aside; Fish does not \
+         load them, so delete them by hand when you no longer need them.",
+        join_paths(&backups)
+    ));
 }
 
 /// The newest `<prompt>.backup.<stamp>` beside `prompt`. A symlink into
