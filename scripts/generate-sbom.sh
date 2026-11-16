@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --output) OUTPUT="${2:-}"; shift 2 ;;
         --version) VERSION="${2:-}"; shift 2 ;;
-        -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+        -h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 2 ;;
         *) die "unknown argument: $1" ;;
     esac
 done

@@ -1,7 +1,8 @@
 name: Release
 
 # Validates the tag against every declared version, proves or runs the full
-# gate and budgets (see `proven` below), builds, packages
+# PR gate (reusable gate-legs.yml and windows-gate.yml, plus fresh-install; see
+# `proven` below), always runs the performance budgets, builds, packages
 # (scripts/package-release.sh, fail-closed), smoke-tests the archive, and
 # publishes.
 
@@ -23,6 +24,12 @@ on:
 
 permissions:
   contents: read
+
+# One release per version at a time; a re-run queues instead of racing the
+# artifact uploads or the tag creation.
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -115,44 +122,101 @@ jobs:
           echo "version=$VERSION" >>"$GITHUB_OUTPUT"
           echo "Version metadata is consistent across Cargo.toml and CHANGELOG.md"
 
+  # Everything below runs the same legs a PR does, by calling the workflows
+  # the PR gate calls, so the unproven path cannot drift into a weaker gate.
+  # Skipped only when `validate` found the PR gate already green on this exact
+  # tree. (`new-allows` is not repeated: it diffs a PR against its base, and a
+  # tagged commit on main has no such diff.)
+  gate-legs:
+    name: Gate legs
+    needs: validate
+    if: ${{ needs.validate.outputs.gate-proven != 'true' }}
+    uses: ./.github/workflows/gate-legs.yml
+    with:
+      cache: true
+      save-cache: false
+
+  windows-gate:
+    name: Windows gate
+    needs: validate
+    if: ${{ needs.validate.outputs.gate-proven != 'true' }}
+    uses: ./.github/workflows/windows-gate.yml
+
+  fresh-install:
+    name: Fresh install in a clean container
+    needs: validate
+    if: ${{ needs.validate.outputs.gate-proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image and run the fresh install
+        run: ./scripts/test-fresh-install.sh
+
+  # Never skipped, even on a proven tree: `just bench-ci` adds the end-to-end
+  # budgets (ci-bench.sh) that no PR job runs, and re-runs the micro-benchmark
+  # budgets on the exact tree being shipped. Shared runners are noisy, so
+  # these are the loose `max` ceilings (plus tolerance): they catch
+  # order-of-magnitude regressions, not a few percent.
+  perf:
+    name: Performance budgets
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Set up Rust
-        if: steps.proven.outputs.proven != 'true'
         uses: ./.github/actions/setup-rust
         with:
-          components: clippy, rustfmt
+          shared-key: rust
+          save-if: "false"
 
-      - name: Install Rust tooling (nextest, audit, deny, machete)
-        if: steps.proven.outputs.proven != 'true'
+      - name: Install just
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just,shellcheck
+          tool: just
 
       - name: Install shells and shell-suite prerequisites
-        if: steps.proven.outputs.proven != 'true'
         uses: ./.github/actions/install-shells
 
-      # The same gate a PR runs, so a tag cannot ship what would not merge.
-      # Skipped only when the proof step found that gate already green on
-      # this exact tree.
-      - name: Rust toolchain gate
-        if: steps.proven.outputs.proven != 'true'
-        run: just check-rust
-
-      - name: Shell integration gate
-        if: steps.proven.outputs.proven != 'true'
-        run: just check-shell
-
-      # The PR gate enforces the micro-benchmark budgets; release adds the
-      # end-to-end ones (ci-bench.sh). Shared runners are noisy, so these are
-      # the loose `max` ceilings: they catch order-of-magnitude regressions,
-      # not a few percent.
       - name: Performance budgets
-        if: steps.proven.outputs.proven != 'true'
         run: just bench-ci
+
+  # One verdict for build to depend on: validate and perf must succeed; the
+  # gate jobs must succeed or have been skipped as proven.
+  release-gate:
+    name: Release gate
+    if: ${{ always() }}
+    needs: [validate, gate-legs, windows-gate, fresh-install, perf]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Every required job succeeded or was proven
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$NEEDS" | jq -r 'to_entries[]
+            | select(.value.result != "success")
+            | select((.key == "validate" or .key == "perf") or .value.result != "skipped")
+            | .key')"
+          if [ -n "$bad" ]; then
+            echo "::error::release gate job(s) did not succeed: $(echo "$bad" | tr '\n' ' ')"
+            exit 1
+          fi
 
   build:
     name: Build Release Binaries
-    needs: validate
+    needs: [validate, release-gate]
     timeout-minutes: 60
     strategy:
       matrix:
@@ -410,6 +474,8 @@ jobs:
         with:
           name: GPY ${{ needs.validate.outputs.version }}
           tag_name: ${{ needs.validate.outputs.version }}
+          # A manual dispatch creates the tag; pin it to the commit built.
+          target_commitish: ${{ github.sha }}
           body_path: release_notes.md
           # Each binary sits next to its .sha256, the URL install-oneline.sh
           # fetches. SHA256SUMS is for verifying a release by hand.

@@ -96,7 +96,7 @@ else
     pass "SHELL=/bin/sh without GPY_SHELL never runs gpy setup (--check or otherwise)"
 fi
 
-echo "--- Windows arm: setup --check is never called ---"
+echo "--- Windows arm: binaries only, no setup, no agent start ---"
 SHIM_BIN="$SHELL_E2E_ROOT/shim-bin"
 mkdir -p "$SHIM_BIN"
 cat >"$SHIM_BIN/uname" <<'EOF'
@@ -115,10 +115,12 @@ mkdir -p "$STUB_HOME"
 : >"$STUB_LOG"
 (cd "$STUB_PKG" && env HOME="$STUB_HOME" SHELL=/bin/bash STUB_LOG="$STUB_LOG" PATH="$SHIM_BIN:$PATH" bash ./install.sh) \
     >"$SHELL_E2E_ROOT/install-win.log" 2>&1
-if [ -s "$STUB_LOG" ] && ! grep -qF 'setup --check' "$STUB_LOG"; then
-    pass "the MINGW arm installs without calling setup --check"
+win_rc=$?
+if [ "$win_rc" -eq 0 ] && [ -x "$STUB_HOME/.local/bin/gpy.exe" ] && [ -x "$STUB_HOME/.local/bin/gpy-agent.exe" ] &&
+    [ -s "$STUB_LOG" ] && ! grep -qE '^(setup|start)' "$STUB_LOG"; then
+    pass "the MINGW arm installs .exe binaries, exits 0 and never runs setup or starts the agent"
 else
-    fail "MINGW arm: stub log empty or contains setup --check: $(cat "$STUB_LOG")"
+    fail "MINGW arm: rc=$win_rc, log: $(cat "$STUB_LOG")"
     sed -n '1,30p' "$SHELL_E2E_ROOT/install-win.log"
 fi
 rm -rf "$STUB_PKG"

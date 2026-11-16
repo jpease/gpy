@@ -274,9 +274,9 @@ echo "--- installers install both binaries from their resolved names ---"
 
 # shellcheck disable=SC2016  # the literal $VARS in the installer source are what is matched
 {
-    grep -qF 'stage_binary "bin/$BINARY" "$INSTALL_DIR/gpy-agent"' "$INSTALLER" ||
+    grep -qF 'stage_binary "bin/$BINARY" "$INSTALL_DIR/$DEST_AGENT"' "$INSTALLER" ||
         fail "install.sh does not install bin/\$BINARY as gpy-agent"
-    grep -qF 'stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/gpy"' "$INSTALLER" ||
+    grep -qF 'stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/$DEST_CLI"' "$INSTALLER" ||
         fail "install.sh does not install bin/\$CLI_BINARY as gpy"
     grep -qF 'stage_binary "$BINARY_NAME" gpy-agent' "$ONELINE" ||
         fail "install-oneline.sh does not install \$BINARY_NAME as gpy-agent"

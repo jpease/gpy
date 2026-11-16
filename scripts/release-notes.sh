@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
         --version) VERSION="${2:-}"; shift 2 ;;
         --assets) ASSETS_DIR="${2:-}"; shift 2 ;;
         --output) OUTPUT="${2:-}"; shift 2 ;;
-        -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+        -h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 2 ;;
         *) die "unknown argument: $1" ;;
     esac
 done

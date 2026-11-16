@@ -32,6 +32,9 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+        with:
+          # Only main saves; a PR's or tag's cache would be visible to that ref alone.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install nextest
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2

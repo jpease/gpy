@@ -165,14 +165,25 @@ if [[ "$(yq '.jobs.validate.steps[] | select(.id == "proven") | .run' "$WF")" ==
 else
     fail "validate has no step with id 'proven' running scripts/release-gate-proven.sh"
 fi
-for step in "Rust toolchain gate" "Shell integration gate" "Performance budgets"; do
-    cond="$(yq ".jobs.validate.steps[] | select(.name == \"$step\") | .if" "$WF")"
-    if [[ "$cond" == *"steps.proven.outputs.proven != 'true'"* ]]; then
-        pass "'$step' is skipped only when the gate is proven"
+for job in gate-legs windows-gate fresh-install; do
+    cond="$(yq ".jobs.\"$job\".if" "$WF")"
+    if [[ "$cond" == *"needs.validate.outputs.gate-proven != 'true'"* ]]; then
+        pass "'$job' is skipped only when the gate is proven"
     else
-        fail "'$step' is not conditioned on steps.proven.outputs.proven != 'true' (got '$cond')"
+        fail "'$job' is not conditioned on needs.validate.outputs.gate-proven != 'true' (got '$cond')"
     fi
 done
+cond="$(yq '.jobs.perf.if // ""' "$WF")"
+if [[ "$cond" != *proven* ]]; then
+    pass "'perf' (just bench-ci) runs even on a proven tree"
+else
+    fail "'perf' must not depend on the proof (got '$cond')"
+fi
+if [[ "$(yq '.jobs.build.needs[]' "$WF")" == *release-gate* ]]; then
+    pass "build needs release-gate"
+else
+    fail "build does not need release-gate, so a red gate would not stop the release"
+fi
 for step in "Resolve and validate version" "Require the release commit to be on main"; do
     cond="$(yq ".jobs.validate.steps[] | select(.name == \"$step\") | .if // \"\"" "$WF")"
     if [[ "$cond" != *proven* ]]; then

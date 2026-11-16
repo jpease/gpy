@@ -37,12 +37,24 @@ report() {
     failures=$((failures + 1))
 }
 
+# Runs `git grep "$@"` into RAW. Exit 1 is "no match"; anything higher is a
+# failed scan (unsafe repository, broken index), which must not read as clean.
+tracked_grep() {
+    local rc=0
+    RAW="$(git grep "$@")" || rc=$?
+    if ((rc > 1)); then
+        echo "error: git grep failed (exit $rc); the tracked files were not scanned" >&2
+        exit 2
+    fi
+}
+
 # -o per occurrence, so an allowlisted example cannot mask a real path on the same line.
 scan_user_paths() {
     local allow hits
     allow="$(IFS='|'; echo "${ALLOWLIST_USERS[*]}")"
 
-    hits="$(git grep -n -I -oE '/(Users|home)/[A-Za-z0-9_][^/[:space:]"'"'"'`()<>,;:]*' -- . 2>/dev/null |
+    tracked_grep -n -I -oE '/(Users|home)/[A-Za-z0-9_][^/[:space:]"'"'"'`()<>,;:]*' -- .
+    hits="$(printf '%s\n' "$RAW" |
         grep -Ev "^($SELF_PATHS):" |
         sed -E 's/[].!?}*]+$//' |
         grep -Ev ":/(Users|home)/($allow)\$" || true)"
@@ -56,7 +68,8 @@ scan_private_identifiers() {
     [[ ${#PRIVATE_IDENTIFIERS[@]} -eq 0 ]] && return 0
     ids="$(IFS='|'; echo "${PRIVATE_IDENTIFIERS[*]}")"
 
-    hits="$(git grep -n -I -iE "$ids" -- . 2>/dev/null |
+    tracked_grep -n -I -iE "$ids" -- .
+    hits="$(printf '%s\n' "$RAW" |
         grep -Ev "^($SELF_PATHS):" || true)"
 
     # Never echo the names themselves: CI logs and terminals may be shared.
@@ -66,7 +79,8 @@ scan_private_identifiers() {
 
 scan_socket_paths() {
     local hits
-    hits="$(git grep -n -I -E 'UNIX-CONNECT:/(Users|home)/' -- . 2>/dev/null |
+    tracked_grep -n -I -E 'UNIX-CONNECT:/(Users|home)/' -- .
+    hits="$(printf '%s\n' "$RAW" |
         grep -Ev "^($SELF_PATHS):" || true)"
 
     [[ -n "$hits" ]] && report "Hardcoded workstation socket path:" "$hits"
@@ -76,7 +90,8 @@ scan_socket_paths() {
 # References to the private tracker or to its per-issue scratch names.
 scan_private_refs() {
     local hits
-    hits="$(git grep -n -I -E 'gpy-archive|gpy[0-9]{3}[.A-Za-z]' -- . 2>/dev/null |
+    tracked_grep -n -I -E 'gpy-archive|gpy[0-9]{3}[.A-Za-z]' -- .
+    hits="$(printf '%s\n' "$RAW" |
         grep -Ev "^($SELF_PATHS):" || true)"
 
     [[ -n "$hits" ]] && report "Reference to the private issue tracker:" "$hits"

@@ -105,26 +105,34 @@ check_fish_formatting() {
 }
 
 # Discovered by glob so a new script cannot go unchecked. install-oneline.sh
-# is POSIX sh: it runs under whatever /bin/sh the user has.
+# and the bundled plugin scripts are POSIX sh: they run under whatever /bin/sh
+# the user has.
 # shellcheck disable=SC2329
 check_shellcheck() {
     command -v shellcheck >/dev/null 2>&1 || { skip_tool shellcheck; return; }
     local failed=0 checked=0 target
     for target in install.sh install-oneline.sh scripts/*.sh scripts/lib/*.sh tests/bash/*.test.bash tests/repo/*.test.bash \
-        benchmarks/*/*.sh bash/*.bash bash/*/*.bash; do
+        benchmarks/*/*.sh bash/*.bash bash/*/*.bash plugins/*/bin/*.sh; do
         [[ -f "$target" ]] || continue
         checked=$((checked + 1))
-        if [[ "$target" == install-oneline.sh ]]; then
-            shellcheck -s sh "$target" || failed=1
-        else
-            shellcheck -x "$target" || failed=1
-        fi
+        case "$target" in
+            install-oneline.sh | plugins/*/bin/*.sh) shellcheck -s sh "$target" || failed=1 ;;
+            *) shellcheck -x "$target" || failed=1 ;;
+        esac
     done
     if [[ "$checked" -eq 0 ]]; then
         err "shellcheck matched no files"
         failed=1
     fi
     return "$failed"
+}
+
+# Lints the workflows and the composite actions' shell steps; a missing
+# actionlint skips like the other optional tools.
+# shellcheck disable=SC2329
+check_actionlint() {
+    command -v actionlint >/dev/null 2>&1 || { skip_tool actionlint; return; }
+    actionlint
 }
 
 # Stop any gpy-agent still bound under the hermetic XDG root $1 (agent binary
@@ -294,6 +302,7 @@ run_shell_checks() {
     if shell_part checks; then
         run_fish_lint
         run_check "Shellcheck" "check_shellcheck" || true
+        run_check "Actionlint" "check_actionlint" || true
     fi
     run_shell_tests
 }
@@ -347,8 +356,9 @@ main() {
     # Use the wrapper from Cargo's config, not an environment override.
     unset RUSTC_WRAPPER
     require_tools cargo rustc rustfmt fish cargo-audit cargo-deny
-    cargo clippy -V >/dev/null 2>&1 || { err "cargo clippy missing (rustup component add clippy)"; exit 1; }
-    cargo nextest --version >/dev/null 2>&1 || { err "cargo nextest missing (cargo install cargo-nextest)"; exit 1; }
+    # From gpy-agent/, where rust-toolchain.toml pins the toolchain these components belong to.
+    (cd gpy-agent && cargo clippy -V) >/dev/null 2>&1 || { err "cargo clippy missing (rustup component add clippy)"; exit 1; }
+    (cd gpy-agent && cargo nextest --version) >/dev/null 2>&1 || { err "cargo nextest missing (cargo install cargo-nextest)"; exit 1; }
 
     run_repo_checks
     run_shell_checks
@@ -425,6 +435,7 @@ case "${1:-}" in
         run_repo_checks
         run_check "Fish syntax" "check_fish_syntax" || true
         run_check "Shellcheck" "check_shellcheck" || true
+        run_check "Actionlint" "check_actionlint" || true
         run_check "Bash parity tests" "$GPY_BASH tests/bash/parity.test.bash" || true
         if command -v zsh &>/dev/null; then
             run_check "Zsh parity tests" "zsh tests/zsh/parity.test.zsh" || true

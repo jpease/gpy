@@ -28,16 +28,16 @@ fi
 
 fetch_to() {
     case "$DOWNLOADER" in
-        curl) curl -fsSL "$1" -o "$2" ;;
-        wget) wget -q "$1" -O "$2" ;;
+        curl) curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$2" ;;
+        wget) wget --https-only --secure-protocol=TLSv1_2 -q "$1" -O "$2" ;;
         *) return 1 ;;
     esac
 }
 
 fetch_stdout() {
     case "$DOWNLOADER" in
-        curl) curl -fsSL "$1" ;;
-        wget) wget -qO- "$1" ;;
+        curl) curl --proto '=https' --tlsv1.2 -fsSL "$1" ;;
+        wget) wget --https-only --secure-protocol=TLSv1_2 -qO- "$1" ;;
         *) return 1 ;;
     esac
 }
@@ -126,8 +126,10 @@ stage_binary() {
     mv "$sb_download" "$sb_staged"
     clear_quarantine "$sb_staged"
 
-    if ! "$sb_staged" --version >/dev/null 2>&1; then
-        die "The $sb_label binary is not functional on this host; the existing install was left untouched"
+    # Keep the loader's message: it names a missing glibc symbol or interpreter.
+    if ! sb_probe=$("$sb_staged" --version 2>&1 >/dev/null); then
+        [ -z "$sb_probe" ] || warn "$sb_probe"
+        die "The $sb_label binary is not functional on this host; the existing install was left untouched. The Linux binaries need glibc 2.31 or newer; musl systems (Alpine) must build from source: https://github.com/$REPO/blob/main/docs/INSTALL.md#building-from-source"
     fi
 }
 
@@ -196,6 +198,15 @@ main() {
     info "Detecting system configuration..."
     PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
+
+    # A shell running under Rosetta reports x86_64 on an Apple Silicon Mac;
+    # install the native binaries so the prompt does not run translated.
+    if [ "$PLATFORM" = darwin ] && [ "$ARCH" = x86_64 ]; then
+        if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ] ||
+            [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+            ARCH=arm64
+        fi
+    fi
 
     # No Windows arm, unlike install.sh: there is no shell integration to install there.
     case "$PLATFORM" in
@@ -268,7 +279,14 @@ main() {
 
     # Stage and test both binaries (and fetch the shell files) before replacing
     # anything, so a bad archive fails before any installed binary is replaced.
-    trap 'rm -f "${STAGED_AGENT:-}" "${STAGED_CLI:-}" 2>/dev/null; rm -rf "${TEMP_DIR:-}" 2>/dev/null' EXIT
+    # dash skips the EXIT trap on a signal, so each signal cleans up and exits.
+    cleanup() {
+        rm -f "${STAGED_AGENT:-}" "${STAGED_CLI:-}" 2>/dev/null
+        rm -rf "${TEMP_DIR:-}" 2>/dev/null
+    }
+    trap cleanup EXIT
+    trap 'cleanup; exit 130' INT
+    trap 'cleanup; exit 143' TERM HUP
 
     TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gpy-install.XXXXXX") || die "Failed to create a temp directory for downloads"
 

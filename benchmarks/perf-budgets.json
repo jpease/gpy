@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "description": "Performance baselines and budgets for GPY agent",
+  "description": "Performance budgets for GPY agent. max_* is the budget the gates enforce, with regression_thresholds.measurement_variance_percent added on top as shared-runner headroom; target_* is the goal and is never enforced.",
   "budgets": {
     "ipc_latency": {
       "target_ms": 1.0,
@@ -92,10 +92,10 @@
       "max_mb": 50.0,
       "description": "Agent peak RSS budget under sustained long-running prompt load"
     },
-    "config_validation": {
+    "config_load": {
       "target_ms": 50.0,
       "max_ms": 100.0,
-      "description": "Configuration validation budget"
+      "description": "Configuration file load budget (config_load_from_file)"
     },
     "theme_manager_load": {
       "target_ms": 5.0,

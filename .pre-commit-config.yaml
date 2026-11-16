@@ -1,5 +1,5 @@
-# Hooks without an explicit `stages` run on commit and on push only.
-default_stages: [pre-commit, pre-push]
+# Hooks without an explicit `stages` run on commit only; clippy opts into push.
+default_stages: [pre-commit]
 
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
@@ -20,7 +20,8 @@ repos:
     hooks:
     -   id: rustfmt
         name: rustfmt
-        entry: bash -c './scripts/check-active-toolchain.sh && rustfmt --edition 2024 "$@"' --
+        # From gpy-agent/, where rust-toolchain.toml applies, so the formatter is the pinned one the guard checks.
+        entry: bash -c 'cd gpy-agent && ../scripts/check-active-toolchain.sh && rustfmt --edition 2024 "${@#gpy-agent/}"' --
         language: system
         types: [rust]
         files: ^gpy-agent/
@@ -32,6 +33,7 @@ repos:
         language: system
         files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)\.clippy\.toml$)'
         pass_filenames: false
+        stages: [pre-push]
     -   id: new-allows
         name: new-allows
         description: Reject a newly added allow attribute that has no reason
@@ -60,5 +62,6 @@ repos:
         entry: bash -c 'command -v gitleaks >/dev/null 2>&1 || exit 0; gitleaks git --staged --redact'
         language: system
         pass_filenames: false
-    # Heavy gates run in CI (pr-gate.yml); clippy also runs on push so a
-    # --no-verify commit is still linted.
+    # Heavy gates run in CI (pr-gate.yml). Stages are deliberate: commit runs the
+    # fast fixers and checks; push runs only clippy, so a --no-verify commit is
+    # still linted.
