@@ -231,7 +231,7 @@ fn build_plan(env: &Environment) -> Result<Plan> {
         unreadable,
         binaries: binaries_of(env, &home),
         cache: paths::cache_root(),
-        runtime: paths::runtime_dir(),
+        runtime: paths::runtime_dir()?,
     })
 }
 

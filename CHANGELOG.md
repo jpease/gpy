@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A git or language reply no longer rings the shells' doorbell; shells are repainted only when the agent's rendered output changes, and with `agent.live_updates = false` requests never trigger a repaint. A client's process start time is looked up at most once per 2 s instead of a full process refresh per ring.
+- `GPY_CONFIG_PATH` is honoured whenever it is set, even before the file exists; the XDG file no longer shadows it.
+- With no usable `HOME`/`XDG_*` the agent and CLI fail with one clear error and the shells stay off for that session, instead of using the shared `/tmp/gpy` runtime root or a relative `./.config/gpy` config root. The bundled-plugin data root has no relative fallback either.
+- The agent reuses a cached git status of an unwatched repository for up to 2 s (fixed) instead of rescanning on every prompt past the 150 ms cooldown; a status scanned under a live watch is never reused after that watch ends.
+- `gpy plugin install --force` and `gpy plugin remove` keep only the newest 3 backups of that plugin id in `plugins.bak` and delete older ones.
+- Fish runs one Bash child per due prompt for script segments (was up to two), registers with the agent after the first prompt is painted, and its own pills honour `GPY_COLOR_DEPTH`; the Bash and Zsh pills do too.
 - A request the agent refuses (a working directory under `/etc`, `/dev`, `/proc`, `/sys`, a raw control byte in the request) now gets a `{"error":...}` line in every format; the shells treat any `{"error"` reply as a permanent refusal, never draw or memoize it, and fall back to `oneshot`. An empty reply still means the agent is alive but late. The shells' JSON escapers now write control bytes as `\u00XX`.
 - Git no longer runs a repository's `core.fsmonitor` command (every agent git call passes `-c core.fsmonitor=false`); version probes no longer let `rustup`, Go or `mise` auto-install a repo-pinned toolchain; the untracked-cache setup skips repositories mid-merge/rebase.
 - Bash TAB completion no longer executes `$(...)` in a theme, palette or plugin name, and only valid file stems are offered.
@@ -29,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy theme import` output is sorted, no longer recommends the `character` segment, and imports `truncate_to_repo`, `show_milliseconds` and `disabled = true`.
 - Pre-commit runs only the fast hooks; clippy runs at pre-push.
 - The perf budget key `config_validation` is now `config_load`.
+
+### Removed
+- `GPY_SIGURG_THROTTLE_MS`: the per-path repaint throttle it tuned no longer has a caller.
 
 ## [0.10.5] - 2026-11-10
 

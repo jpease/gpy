@@ -3,10 +3,16 @@ function segment_git_detect
     test -n "$(__gpy_memoized_git_root $PWD)"
 end
 
+# Whether the agent's socket file exists. Fails with no endpoint (no runtime
+# root): `test -S` with no argument would be true.
+function __gpy_git_socket_present
+    set -l endpoint (__gpy_ipc_endpoint); and test -n "$endpoint"; and test -S "$endpoint"
+end
+
 # Returns 0 when the render must print nothing (agent down, cold miss), so git takes no position.
 function segment_git_omit
     not __gpy_agent_enabled; and return 1
-    not __gpy_instant_cache_present git $PWD; and not test -S (__gpy_ipc_endpoint)
+    not __gpy_instant_cache_present git $PWD; and not __gpy_git_socket_present
 end
 
 # Serve-stale render from the instant cache; bounded sync IPC on cold miss.
@@ -38,7 +44,7 @@ function segment_git_render --argument-names is_last is_first
         # Cold miss: bounded IPC-only query (oneshot is unbounded); instant omit if the socket is absent.
         # Nothing to show yet, so it may wait the longer cold budget.
         __gpy_register_with_agent >/dev/null 2>&1
-        if test -S (__gpy_ipc_endpoint)
+        if __gpy_git_socket_present
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
             set -l synced (__gpy_ipc_send $payload (__gpy_ipc_cold_timeout_ms) | string collect)
             set -l send_status $pipestatus[1]
@@ -67,7 +73,7 @@ function segment_git_render --argument-names is_last is_first
 
     # Served `.none` entry: chevron colour is wrong, so re-query with the real prev_bg.
     if __gpy_cache_status_variant $cache_status
-        if test -S (__gpy_ipc_endpoint)
+        if __gpy_git_socket_present
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
             set -l synced (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms) | string collect)
             if test -n "$synced"
@@ -84,7 +90,7 @@ function segment_git_render --argument-names is_last is_first
 
     # `test -S`, not a ping: a connect probe can block the prompt.
     if __gpy_cache_status_stale $cache_status
-        if test -S (__gpy_ipc_endpoint)
+        if __gpy_git_socket_present
             # Agent up: serve stale, background refresh repaints via SIGURG.
             __gpy_maybe_refresh git "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         else

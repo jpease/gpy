@@ -1331,7 +1331,11 @@ owned by you or root, not group- or other-writable, and inside the plugin root.
 `--force` replaces an installed user plugin with the same id (the old
 directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
 needed to shadow a bundled plugin. Backups and staging live outside
-`plugins/` because discovery would load them as plugins.
+`plugins/` because discovery would load them as plugins. Only the newest 3
+backups of that plugin id are kept; older ones are deleted (they are your data,
+not recoverable) and the command prints `Pruned N old backup(s) of <id>`. Other
+plugins' backups and entries it does not recognise are never touched, and a
+prune failure only warns.
 
 **Output:**
 ```
@@ -1343,7 +1347,7 @@ Enable its segments: gpy enable demo_status
 
 Move the user plugin `<id>` to `~/.config/gpy/plugins.bak/<id>.<timestamp>` and
 remove its segments from `ui.enabled_segments`, except a segment another plugin also provides, which stays enabled. Plugins that ship with GPY are
-refused (disable their segments with `gpy disable`).
+refused (disable their segments with `gpy disable`). Like `install --force`, it keeps only the newest 3 backups of `<id>` in `plugins.bak` and prints `Pruned N old backup(s) of <id>` when it deletes older ones.
 
 #### `gpy plugin validate <id-or-path>`
 

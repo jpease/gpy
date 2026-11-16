@@ -410,7 +410,7 @@ model.
 ### Runner
 
 There is one runner, `bash/core/g_runner.bash`. Bash runs it inside `$( )` in
-the interactive shell. Zsh runs it in one Bash child per prompt; Fish may run two on a due prompt (the trigger scan, then the batch run): the
+the interactive shell. Zsh and Fish each run it in one Bash child per due prompt (Fish uses the combined scan-and-batch entry point `__gpy_g_scan_batch`, so the trigger scan and the batch run share that child): the
 first Bash 4 or later on `PATH`, else `/bin/bash`, resolved once per shell.
 `gpy setup` installs it into the Fish and Zsh trees as `core/g_runner.bash`;
 from a checkout, a release staging directory or Homebrew `share/gpy` they use

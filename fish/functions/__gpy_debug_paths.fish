@@ -3,14 +3,12 @@
 # Emit resolved paths as `key=value` in the agent's key order; diffed against
 # `gpy debug paths --format kv` by tests/fish/path_parity.test.fish.
 function __gpy_debug_paths --description 'Dump every GPY path resolved from the environment'
-    set -l runtime_root (__gpy_runtime_root)
-    test -n "$runtime_root"; or set runtime_root '<unresolved>'
+    set -l runtime_root (__gpy_runtime_root); or set runtime_root '<unresolved>'
 
     set -l socket (__gpy_ipc_endpoint)
     test -n "$socket"; or set socket '<unresolved>'
 
-    set -l registry (__gpy_shell_registry_dir)
-    test -n "$registry"; or set registry '<unresolved>'
+    set -l registry (__gpy_shell_registry_dir); or set registry '<unresolved>'
 
     set -l instant_dir (__gpy_instant_cache_dir)
     set -l cache_root '<unresolved>'

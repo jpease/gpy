@@ -53,6 +53,8 @@ Use **Unix Domain Sockets** for IPC between Fish and the Rust agent.
 <runtime root>/gpy.sock  (runtime root: first of $XDG_RUNTIME_DIR/gpy, $XDG_CACHE_HOME/gpy, ~/.cache/gpy, /tmp/gpy)
 ```
 
+[note 2026-11-16: Superseded in part. The `/tmp/gpy` fallback is gone; with no usable `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME` or `HOME`, the agent fails closed (`start` exits 1, `status` exits 4).]
+
 **Permissions:**
 - Socket file: 0600 (user read/write only)
 - Directory: 0700 (user access only)

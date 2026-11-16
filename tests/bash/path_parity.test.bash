@@ -78,7 +78,25 @@ PARITY_SRC=bash/core/ipc.bash
 compare home_empty HOME= XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare home_empty_cache_unset HOME= XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
 compare home_unset_cache_unset XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
+# Nothing usable (a relative HOME, relative or empty XDG_*): no runtime root
+# anywhere, so both sides say <unresolved>; only an explicit socket resolves.
+compare nothing_usable HOME=rel/home XDG_RUNTIME_DIR=run XDG_CACHE_HOME= XDG_CONFIG_HOME=cfg
+compare nothing_usable_socket_override HOME=rel/home GPY_AGENT_SOCKET_PATH="$tmp/custom.sock"
 PARITY_SRC=bash/gpy.bash
+
+echo "--- no usable root: GPY stays off for the session ---"
+mkdir -p "$tmp/homeless"
+# shellcheck disable=SC2016 # expanded by the inner bash, on purpose
+homeless_probe='PROMPT_COMMAND=orig; PS1=orig; source "$1/bash/gpy.bash"; echo "rc=$? pc=$PROMPT_COMMAND ps1=$PS1"; declare -F __gpy_init >/dev/null && echo loaded || echo off'
+for debug in 0 1; do
+    out="$(cd "$tmp/homeless" && env -i PATH="$PATH" HOME=rel/home GPY_DEBUG="$debug" bash --noprofile --norc -c "$homeless_probe" _ "$ROOT" 2>"$tmp/homeless.err")"
+    check "GPY_DEBUG=$debug: gpy.bash loads nothing and leaves the prompt alone" "rc=0 pc=orig ps1=orig
+off" "$out"
+    want_lines=0
+    [ "$debug" = 1 ] && want_lines=1
+    check "GPY_DEBUG=$debug: stderr carries $want_lines line(s)" "$want_lines" "$(wc -l <"$tmp/homeless.err" | tr -d ' ')"
+done
+check "nothing is created under the working directory" "" "$(ls -A "$tmp/homeless")"
 
 echo "--- __gpy_home never evals a hostile username ---"
 mkdir -p "$tmp/f11"

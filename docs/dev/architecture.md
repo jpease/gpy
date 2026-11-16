@@ -160,7 +160,7 @@ set -l send_status $status
 **Shell-agnostic behavior** ([ADR-0007](adr/adr-0007-sigurg-doorbell-notifications.md)): the agent sends only SIGURG, whose default disposition is ignore, so a shell without a handler (e.g. mid-`exec`) is never killed. Meaning travels in empty flag files under `<runtime_root>/shells/`, written by the agent before the signal. One handler:
 1. `<pid>.reregister` exists → remove it, re-register with the agent
 2. `<pid>.reload` exists → remove it, reload theme/config variables
-3. Always repaint (no flag = plain repaint: git/clock update)
+3. Always repaint (no flag = plain repaint: git/clock update). The agent rings only when its rendered cache output changed (a watcher event, or a request that wrote new content), never for a reply that carries nothing new; with `agent.live_updates = false` requests never ring, while reload and re-register rings are still sent
 
 **Shell-specific implementation**:
 - Fish: `__gpy_doorbell_handler` (`--on-signal SIGURG`, `fish/core/ipc.fish`) → increment `$__gpy_repaint_trigger`; `__gpy_repaint_on_variable` then runs `commandline -f force-repaint`
@@ -658,7 +658,7 @@ DebouncedEvent → callback
 agent::events::handle_file_event():
   - Check if cache is fresh (cooldown window)
   - If stale: run git status, update cache
-  - Notify all registered clients with SIGURG
+  - Ring registered clients with SIGURG only if the agent's rendered cache output changed
   ↓
 Fish processes receive SIGURG (no flag file)
   ↓
@@ -697,7 +697,7 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 
 **Socket Location** (`paths::SocketPath`, `paths::runtime_root_for`):
 - Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`/`config reload`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
-- Default: `<runtime root>/gpy.sock`, where the runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy` and `/tmp/gpy`; relative `XDG_*` values are ignored
+- Default: `<runtime root>/gpy.sock`, where the runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy` and `$HOME/.cache/gpy`; relative `XDG_*` values are ignored. There is no `/tmp/gpy` fallback: with none usable, `gpy-agent start` exits 1 and `status` exits 4 (a `--socket` or `GPY_AGENT_SOCKET_PATH` still works). The config root (`$XDG_CONFIG_HOME/gpy` or `~/.config/gpy`) and data root (`$XDG_DATA_HOME/gpy` or `~/.local/share/gpy`) have no relative fallback either
 - There is no `config.toml` key. Fish, Bash and Zsh resolve the same path in `__gpy_ipc_endpoint`; `gpy debug paths` prints it
 - Only `gpy-agent start` creates the default runtime directory (`agent::lifecycle::ensure_runtime_dir`); other commands only resolve the path
 - The path must fit the Unix socket limit (103 bytes on macOS, 107 on Linux); `gpy-agent` refuses a longer one
@@ -837,6 +837,7 @@ The gates enforce `max` plus the 15% `measurement_variance_percent`, so a 1.5 ms
 
 **Git status cache** (`git/cache.rs`, `cache/policy.rs`, `cache/bounded.rs`):
 - TTL: 30 s from the last full scan (`CachePolicy::git_status`), which catches changes the watcher cannot see. A hit within the 150 ms cooldown (`GIT_STATUS_COOLDOWN`) after any update skips background revalidation
+- Unwatched repositories: a status scanned while the repository was already unwatched (no live watch, `agent.live_updates = false`, or the watcher failed to start) is reused for up to 2 s (`UNWATCHED_TRUST_TTL`, `get_canonical_unwatched`) instead of being rescanned every prompt. A status scanned under a live watch is never reused after the watch ends, and an invalidation or full-scan change event ends reuse at once
 - Updates: file events merge a pathspec scan into the entry, or replace it with a full scan
 - Eviction: least recently updated entries beyond `GIT_STATUS_CACHE_CAPACITY` (512 repositories); per-file detail beyond `GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES` (10 MiB, about 80 B per dirty file) is dropped oldest first, and such an entry needs a full scan before it takes another pathspec merge
 
@@ -854,13 +855,14 @@ The gates enforce `max` plus the 15% `measurement_variance_percent`, so a 1.5 ms
 ### Loading Hierarchy
 
 ```
-1. $GPY_CONFIG_PATH (explicit override; empty counts as unset)
+1. $GPY_CONFIG_PATH (when set and non-empty, the ONLY config file: read and created there even if absent;
+                     a relative value is made absolute against the launch directory; empty counts as unset)
 2. $XDG_CONFIG_HOME/gpy/config.toml
 3. ~/.config/gpy/config.toml
 4. Built-in defaults (config::Config::default())
 ```
 
-The first existing file wins (`config/location.rs`). A theme is not a separate file in this chain: `ui.theme` names a theme, resolved user (`~/.config/gpy/themes/<name>.toml`), then plugin, then built-in (`default`, `text`, `starship`).
+Without `GPY_CONFIG_PATH` the first existing file of 2 and 3 wins (`config/location.rs`). A theme is not a separate file in this chain: `ui.theme` names a theme, resolved user (`~/.config/gpy/themes/<name>.toml`), then plugin, then built-in (`default`, `text`, `starship`).
 
 ### Config Structure
 

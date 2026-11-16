@@ -56,24 +56,59 @@ end
 # another protocol or version (left running across an upgrade). Later prompts
 # run the rate-limited restart check. Registration is retried on every prompt
 # until it succeeds, whatever the supervisor setting and whether or not the
-# binary resolves; with no socket file that costs no fork. The workspace sync
-# runs here too, once per prompt and only when $PWD changed.
+# binary resolves; with no socket file that costs no fork. In an interactive
+# shell the first prompt's attempt waits until that prompt is on screen
+# (__gpy_defer_registration_past_paint). The workspace sync runs here too,
+# once per prompt and only when $PWD changed.
 function __gpy_supervisor_on_prompt --on-event fish_prompt --description 'Start the agent on the first prompt, then check it on later prompts'
     __gpy_agent_enabled; or return 0
+
+    # A deferral still pending here never saw GPY's fish_prompt draw again
+    # (another prompt function): this prompt registers as usual.
+    set -e __gpy_register_deferred
 
     if not set -q __gpy_supervisor_initialized
         set -g __gpy_supervisor_initialized 1
         # The startup start counts as the first check.
         set -g __gpy_supervisor_last_check_time (__gpy_now_seconds)
         __gpy_start_agent_detached
+        __gpy_defer_registration_past_paint
     else
         __gpy_supervisor_check
     end
 
+    # Asks nothing while the registration is deferred.
     if not set -q __gpy_registered
         __gpy_register_with_agent
     end
     __gpy_sync_workspace
+    return 0
+end
+
+# Fish has no hook that runs once a prompt is drawn: the fish_prompt event
+# and function both run before it. A readline function queued here
+# (`commandline -f repaint`) runs only after the reader drew the prompt, and
+# it calls fish_prompt again, which then registers
+# (__gpy_register_after_paint). Until then __gpy_register_with_agent sends
+# nothing, so neither this handler nor a segment holds the first paint with
+# a round trip (and the agent's registration scan). A non-interactive Fish
+# draws no prompt and registers at once.
+function __gpy_defer_registration_past_paint --description 'Hold the first registration until the first prompt is drawn'
+    status is-interactive; or return 1
+    commandline -f repaint 2>/dev/null; or return 1
+    set -g __gpy_register_deferred drawing
+end
+
+# fish_prompt calls this while a registration is deferred. Its first call
+# draws the deferred prompt; the next one (the queued repaint) runs with
+# that prompt on screen and registers.
+function __gpy_register_after_paint --description 'Register once the first prompt is on screen'
+    if test "$__gpy_register_deferred" = drawing
+        set -g __gpy_register_deferred drawn
+        return 0
+    end
+    set -e __gpy_register_deferred
+    __gpy_register_with_agent >/dev/null 2>&1
     return 0
 end
 

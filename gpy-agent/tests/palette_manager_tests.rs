@@ -213,7 +213,7 @@ fn user_palettes_dir_keeps_a_non_utf8_xdg_config_home() {
     .unwrap();
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", &xdg);
 
-    assert_eq!(PaletteManager::user_palettes_dir(), palettes_dir);
+    assert_eq!(PaletteManager::user_palettes_dir().unwrap(), palettes_dir);
     let found = PaletteManager::discover_available_palettes();
     assert!(
         found

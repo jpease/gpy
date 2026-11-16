@@ -266,7 +266,6 @@ impl Agent {
     pub fn new(socket: SocketPath) -> Result<Self> {
         let watcher_config = WatcherConfig::from_env();
         let client_registry = ClientDirectory::new().shared();
-        client_registry.set_throttle_ms(watcher_config.throttle_ms());
         let git_cache = Arc::new(GitStatusCache::new());
 
         let config_manager = Self::init_config_manager()?;

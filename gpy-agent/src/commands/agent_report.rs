@@ -194,8 +194,15 @@ fn notice_text(notice: &StartNotice, socket: &str) -> Option<String> {
 ///
 /// # Errors
 /// Returns an error if the agent cannot be started or its socket's owner
-/// cannot be verified.
+/// cannot be verified; on native Windows, always the unsupported-platform
+/// error, before any path is resolved.
 pub fn start(socket: Option<&Path>, quiet: bool) -> Result<ExitCode> {
+    #[cfg(not(unix))]
+    {
+        let _ = (socket, quiet);
+        Err(crate::ipc::native_windows_unsupported())
+    }
+    #[cfg(unix)]
     start_agent(&SocketPath::resolve(socket)?, quiet)
 }
 

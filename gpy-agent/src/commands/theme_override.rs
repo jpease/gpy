@@ -140,7 +140,7 @@ pub fn reset(name: &str) -> Result<()> {
             "No user copy of builtin theme '{name}' to reset\n  \
              Diagnostic: {} does not exist, so the builtin theme is already in use.\n  \
              Remediation: Nothing to do; `gpy theme diff {name}` compares a copy once one exists.",
-            user_copy::user_copy_path(name).display()
+            user_copy::user_copy_path(name)?.display()
         )));
     };
 
@@ -224,7 +224,7 @@ pub(super) fn is_active(name: &str) -> bool {
 
 /// The user theme file for `name`, if it exists.
 fn existing_user_file(name: &str) -> Option<std::path::PathBuf> {
-    let path = user_copy::user_copy_path(name);
+    let path = user_copy::user_copy_path(name).ok()?;
     path.is_file().then_some(path)
 }
 
@@ -237,7 +237,10 @@ fn extends_of(path: &Path) -> Option<String> {
 
 /// Stems of the other user theme files that extend `name`, sorted.
 fn overlays_extending(name: &str, own_path: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(ThemeManager::user_themes_dir()) else {
+    let Some(entries) = ThemeManager::user_themes_dir()
+        .ok()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+    else {
         return Vec::new();
     };
     let mut found: Vec<String> = entries

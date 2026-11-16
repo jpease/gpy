@@ -136,35 +136,34 @@ if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" && "$GPY_AGENT_SOCKET_PATH" != /* ]]; then
     export GPY_AGENT_SOCKET_PATH="$PWD/$GPY_AGENT_SOCKET_PATH"
 fi
 
-# XDG vars count only when non-empty and absolute, matching the agent. Writes
-# into variable $1 without a fork; locals are __gpy_ie_* so a caller's OUTVAR
-# is not shadowed.
+# Writes into variable $1 without a fork; locals are __gpy_ie_* so a caller's
+# OUTVAR is not shadowed. Non-zero status (and an empty $1) when there is no
+# override and no runtime root, as the agent refuses the default socket then.
 # Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
 # once at load, like `paths::absolutize`.
 function __gpy_ipc_endpoint_into() {
-    local __gpy_ie_home
+    local __gpy_ie_root
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
         printf -v "$1" '%s' "$GPY_AGENT_SOCKET_PATH"
-    elif [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
-        printf -v "$1" '%s' "$XDG_RUNTIME_DIR/gpy/gpy.sock"
-    elif [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
-        printf -v "$1" '%s' "$XDG_CACHE_HOME/gpy/gpy.sock"
-    elif __gpy_home __gpy_ie_home; then
-        printf -v "$1" '%s' "$__gpy_ie_home/.cache/gpy/gpy.sock"
+    elif __gpy_runtime_root __gpy_ie_root; then
+        printf -v "$1" '%s' "$__gpy_ie_root/gpy.sock"
     else
-        printf -v "$1" '%s' "/tmp/gpy/gpy.sock"
+        printf -v "$1" '%s' ""
+        return 1
     fi
 }
 
 # Prints the socket path (for `gpy debug paths` parity and tests).
 function __gpy_ipc_endpoint() {
     local __gpy_ie_out
-    __gpy_ipc_endpoint_into __gpy_ie_out
+    __gpy_ipc_endpoint_into __gpy_ie_out || return 1
     print -r -- "$__gpy_ie_out"
 }
 
-# Mirrors the agent's paths::runtime_root_for. Writes into variable $1 so hot
-# paths need no `$(...)` fork.
+# Mirrors the agent's paths::runtime_root_for: XDG vars count only when
+# non-empty and absolute. Writes into variable $1 so hot paths need no `$(...)`
+# fork. Non-zero status when nothing is usable: there is no shared /tmp
+# fallback, and gpy.zsh leaves GPY off for a session that starts that way.
 function __gpy_runtime_root() {
     local __gpy_rr_home
     if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
@@ -174,18 +173,20 @@ function __gpy_runtime_root() {
     elif __gpy_home __gpy_rr_home; then
         printf -v "$1" '%s' "$__gpy_rr_home/.cache/gpy"
     else
-        printf -v "$1" '%s' "/tmp/gpy"
+        return 1
     fi
 }
 
 # The file name is the PID the agent signals; doorbell flags live beside it.
 function __gpy_shell_registry_dir() {
     local root
-    __gpy_runtime_root root
+    __gpy_runtime_root root || return 1
     print -r -- "$root/shells"
 }
 function __gpy_shell_registry_file() {
-    print -r -- "$(__gpy_shell_registry_dir)/$$"
+    local dir
+    dir=$(__gpy_shell_registry_dir) || return 1
+    print -r -- "$dir/$$"
 }
 
 # The agent only nudges PIDs listed here. Caches the flag base so TRAPURG
@@ -193,7 +194,7 @@ function __gpy_shell_registry_file() {
 typeset -g __gpy_shell_flag_base=""
 function __gpy_track_shell_for_agent_recovery() {
     local dir
-    dir=$(__gpy_shell_registry_dir)
+    dir=$(__gpy_shell_registry_dir) || return 0
     __gpy_shell_flag_base="$dir/$$"
     mkdir -p "$dir" 2>/dev/null || return 0
     print -r -- "$$" >"$dir/$$" 2>/dev/null || true
@@ -201,11 +202,11 @@ function __gpy_track_shell_for_agent_recovery() {
 
 function __gpy_untrack_shell_for_agent_recovery() {
     local file
-    file=$(__gpy_shell_registry_file)
+    file=$(__gpy_shell_registry_file) || return 0
     rm -f "$file" "$file.reload" "$file.reregister" 2>/dev/null || true
     # (N): an unmatched glob must not print "no matches found" on exit.
     local throttle_dir
-    __gpy_runtime_root throttle_dir
+    __gpy_runtime_root throttle_dir || return 0
     throttle_dir+="/refresh-throttle"
     rm -f "$throttle_dir"/$$.*(N) 2>/dev/null || true
 }
@@ -750,7 +751,7 @@ function __gpy_maybe_refresh() {
 
     local dir bucket stamp_name stamp stamped="" last_ms=0 now_ms path_key
     # On disk because segments run in subshells that can't keep in-memory state.
-    __gpy_runtime_root dir
+    __gpy_runtime_root dir || return 0
     dir+="/refresh-throttle"
     # The dot-free fields lead, so the bucket stays injective; the encoded
     # path has no spaces, so it is everything after the stamp's first space.
@@ -1029,11 +1030,12 @@ function __gpy_debug_paths() {
         cache_root="<unresolved>"
     fi
 
-    local runtime_root
-    __gpy_runtime_root runtime_root
+    local runtime_root registry
+    __gpy_runtime_root runtime_root || runtime_root="<unresolved>"
+    registry=$(__gpy_shell_registry_dir) || registry="<unresolved>"
     print -r -- "runtime_root=$runtime_root"
     print -r -- "socket=$socket"
-    print -r -- "shell_registry_dir=$(__gpy_shell_registry_dir)"
+    print -r -- "shell_registry_dir=$registry"
     print -r -- "cache_root=$cache_root"
     print -r -- "instant_prompts_dir=$instant_dir"
     print -r -- "theme_export_file=<unimplemented>"

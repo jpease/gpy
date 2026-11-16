@@ -1,40 +1,5 @@
+# Also defines __gpy_home and __gpy_runtime_root.
 source (path dirname (status filename))/flags.fish
-
-# Home directory with the agent's passwd fallback: an empty $HOME counts as
-# unset, else a blanked HOME resolves /.cache/gpy while the agent uses passwd.
-# Rust counterpart: the `home` argument `paths::xdg_path`'s callers pass.
-function __gpy_home --description 'Home directory with the passwd fallback'
-    set -l home "$HOME"
-    if test -z "$home"
-        set -l user (id -un 2>/dev/null)
-        # Only a plausible username reaches eval; a leading - would make ~- expand to $OLDPWD.
-        string match -qr '^[A-Za-z0-9_][A-Za-z0-9._-]*$' -- "$user"; or return 1
-        # eval, not `~$user`: Fish 4.2 does not tilde-expand `~$var` (fixed in
-        # 4.3). An unknown user stays literal and the guard below rejects it.
-        eval "set home ~$user"
-    end
-    string match -q '/*' -- "$home"; or return 1
-    printf '%s' "$home"
-end
-
-# Runtime root, agent precedence. Per the XDG spec, empty or relative values
-# count as unset.
-# Rust counterpart: `paths::runtime_root_for`.
-function __gpy_runtime_root --description 'XDG runtime root for GPY'
-    if set -q XDG_RUNTIME_DIR; and test -n "$XDG_RUNTIME_DIR"; and string match -q '/*' -- "$XDG_RUNTIME_DIR"
-        echo "$XDG_RUNTIME_DIR/gpy"
-        return
-    else if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"
-        echo "$XDG_CACHE_HOME/gpy"
-        return
-    end
-    set -l home (__gpy_home)
-    if test -n "$home"
-        echo "$home/.cache/gpy"
-    else
-        echo /tmp/gpy
-    end
-end
 
 # Rust counterpart: `paths::cache_root_for`.
 function __gpy_instant_cache_dir --description 'Instant-prompt cache directory'
@@ -46,14 +11,17 @@ function __gpy_instant_cache_dir --description 'Instant-prompt cache directory'
     end
 end
 
+# Status 1 and no output without a runtime root.
 function __gpy_shell_registry_dir --description 'Directory of Fish shell PIDs for agent recovery nudges'
-    echo (__gpy_runtime_root)/shells
+    set -l root (__gpy_runtime_root); or return 1
+    echo $root/shells
 end
 
 function __gpy_shell_registry_file --description 'Fish shell PID file for agent recovery nudges'
+    set -l dir (__gpy_shell_registry_dir); or return 1
     # $fish_pid, not %self: %-expansion only happens at argument start, and the
     # agent parses this filename as the PID to signal.
-    echo (__gpy_shell_registry_dir)/$fish_pid
+    echo $dir/$fish_pid
 end
 
 # A relative override resolves once against the directory the integration loads
@@ -65,7 +33,8 @@ if set -q GPY_AGENT_SOCKET_PATH; and test -n "$GPY_AGENT_SOCKET_PATH"
 end
 
 # Rust counterpart: `SocketPath::resolve`; a relative override is absolutized
-# once at load, like `paths::absolutize`.
+# once at load, like `paths::absolutize`. Status 1 and no output when there is
+# no override and no runtime root, as the agent refuses the default socket.
 function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
     # Empty counts as unset, matching Bash and Zsh.
     if set -q GPY_AGENT_SOCKET_PATH; and test -n "$GPY_AGENT_SOCKET_PATH"
@@ -73,7 +42,7 @@ function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
         return
     end
 
-    set -l root (__gpy_runtime_root)
+    set -l root (__gpy_runtime_root); or return 1
     echo "$root/gpy.sock"
 end
 
@@ -690,13 +659,13 @@ function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_
 end
 
 function __gpy_track_shell_for_agent_recovery --description 'Track this Fish PID so agent restarts can wake existing shells'
-    set -l registry_dir (__gpy_shell_registry_dir)
+    set -l registry_dir (__gpy_shell_registry_dir); or return 0
     mkdir -p "$registry_dir" 2>/dev/null
-    echo $fish_pid >(__gpy_shell_registry_file) 2>/dev/null
+    echo $fish_pid >"$registry_dir/$fish_pid" 2>/dev/null
 end
 
 function __gpy_untrack_shell_for_agent_recovery --description 'Remove this Fish PID from agent recovery tracking'
-    set -l registry_file (__gpy_shell_registry_file)
+    set -l registry_file (__gpy_shell_registry_file); or return 0
     rm -f $registry_file $registry_file.reload $registry_file.reregister 2>/dev/null
 end
 
@@ -738,6 +707,9 @@ function __gpy_register_with_agent --description 'Register this Fish process wit
     if set -q __gpy_registered
         return 0
     end
+    # The first interactive prompt registers once it is drawn
+    # (__gpy_defer_registration_past_paint); every caller waits until then.
+    set -q __gpy_register_deferred; and return 1
 
     if not __gpy_agent_enabled
         __gpy_log_debug ipc "Registration skipped: agent integration disabled"
@@ -808,7 +780,7 @@ end
 # Defined unconditionally. SIGURG's default disposition is ignore, so a shell
 # that `exec`s itself survives an early ring; meaning travels in flag files.
 function __gpy_doorbell_handler --on-signal SIGURG
-    set -l registry_file (__gpy_shell_registry_file)
+    set -l registry_file (__gpy_shell_registry_file); or return 0
     # Each flag is removed BEFORE acting so a ring mid-action re-queues.
     if test -e $registry_file.reregister
         rm -f $registry_file.reregister

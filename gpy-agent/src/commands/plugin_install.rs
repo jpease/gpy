@@ -93,6 +93,7 @@ pub fn install(source: &Path, force: bool) -> Result<()> {
     for segment in &manifest.provided_segments {
         output::plain(format_args!("Enable its segments: gpy enable {segment}"));
     }
+    prune_backups(&manifest.id);
     reload_agent_and_notify();
     Ok(())
 }
@@ -194,8 +195,80 @@ pub fn remove(id: &str) -> Result<()> {
         "Removed plugin {plugin_id}; its files are in {}",
         backup.display()
     ));
+    prune_backups(&plugin_id);
     reload_agent_and_notify();
     Ok(())
+}
+
+/// Backups kept per plugin id in `plugins.bak`.
+const BACKUPS_KEPT: usize = 3;
+
+/// Whether `name` is a backup of `id`: `<id>.<YYYYMMDD_HHMMSS>` with an
+/// optional `.blocking` suffix. Returns the stamp.
+fn backup_stamp_of<'a>(name: &'a str, id: &str) -> Option<&'a str> {
+    let rest = name.strip_prefix(id)?.strip_prefix('.')?;
+    let stamp = rest.get(..15)?;
+    let tail = rest.get(15..)?;
+    let digits =
+        |part: Option<&str>| part.is_some_and(|p| p.bytes().all(|byte| byte.is_ascii_digit()));
+    let well_formed =
+        digits(stamp.get(..8)) && stamp.get(8..9) == Some("_") && digits(stamp.get(9..));
+    (well_formed && (tail.is_empty() || tail == ".blocking")).then_some(stamp)
+}
+
+/// Delete all but the newest [`BACKUPS_KEPT`] backups of `id` in `plugins.bak`,
+/// ordered by the stamp in the name. Other plugins' backups and unrecognised
+/// entries are left alone. A failure only warns: the command already succeeded.
+fn prune_backups(id: &PluginId) {
+    let Ok(root) = config_root() else {
+        return;
+    };
+    let backup_dir = root.join("plugins.bak");
+    let Ok(read) = std::fs::read_dir(&backup_dir) else {
+        return;
+    };
+    let mut found: Vec<(String, PathBuf)> = read
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stamp = backup_stamp_of(&name, id.as_str())?.to_owned();
+            Some((stamp, entry.path()))
+        })
+        .collect();
+    let mut stamps: Vec<&String> = found.iter().map(|(stamp, _)| stamp).collect();
+    stamps.sort_unstable();
+    stamps.dedup();
+    let Some(cutoff) = stamps
+        .len()
+        .checked_sub(BACKUPS_KEPT)
+        .and_then(|index| stamps.get(index))
+        .map(|stamp| (*stamp).clone())
+    else {
+        return;
+    };
+    found.retain(|(stamp, _)| *stamp < cutoff);
+    let mut deleted = 0_usize;
+    for (_, path) in &found {
+        let is_dir = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
+        let result = if is_dir {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        match result {
+            Ok(()) => deleted = deleted.saturating_add(1),
+            Err(err) => {
+                output::warn(format_args!(
+                    "could not prune old backup {}: {err}",
+                    path.display()
+                ));
+                break;
+            }
+        }
+    }
+    if deleted > 0 {
+        output::plain(format_args!("Pruned {deleted} old backup(s) of {id}"));
+    }
 }
 
 /// The loaded plugin in `discovery` that provides `segment`, if any.
@@ -212,7 +285,10 @@ fn provider_of<'a>(discovery: &'a PluginDiscovery, segment: &str) -> Option<&'a 
 /// The error for an id with no user plugin: either nothing by that name, or a
 /// directory discovery could not load.
 fn unknown_user_plugin(id: &PluginId) -> Error {
-    let direct = user_plugins_dir().join(id.as_str());
+    let direct = match user_plugins_dir() {
+        Ok(dir) => dir.join(id.as_str()),
+        Err(err) => return err,
+    };
     if std::fs::symlink_metadata(&direct).is_ok() {
         Error::invalid(format!(
             "{path} exists but is not a loadable plugin; run gpy plugin validate {path} to see why, or move it away yourself",
@@ -358,7 +434,7 @@ fn plan_install(id: &PluginId, force: bool) -> Result<Plan> {
         .find(|plugin| plugin.manifest.id == *id && !matches!(plugin.source, PluginSource::User))
         .map(|plugin| plugin.source);
 
-    let target = user_plugins_dir().join(id.as_str());
+    let target = user_plugins_dir()?.join(id.as_str());
     let mut to_move: Vec<PathBuf> = existing.iter().cloned().collect();
     // Discovery omits a directory that is broken or has no `plugin.toml`, and
     // renaming onto a non-empty directory fails, so look at the path itself.
@@ -412,7 +488,7 @@ fn backup_targets(id: &PluginId, to_move: &[PathBuf]) -> Result<Vec<(PathBuf, Pa
         .duration_since(std::time::UNIX_EPOCH)
         .map_or_default(|elapsed| elapsed.as_secs());
     let stamp = backup_stamp(now);
-    let backup_dir = config_root().join("plugins.bak");
+    let backup_dir = config_root()?.join("plugins.bak");
 
     let mut backups = Vec::new();
     for (index, from) in to_move.iter().enumerate() {
@@ -436,9 +512,9 @@ fn backup_targets(id: &PluginId, to_move: &[PathBuf]) -> Result<Vec<(PathBuf, Pa
 /// Copy `source` into `<config root>/plugins.staging/<id>-<pid>` with modes the
 /// trust check accepts. Returns the staging directory.
 fn stage_copy(source: &Path, entries: &[TreeEntry], id: &PluginId) -> Result<PathBuf> {
-    let staging_root = config_root().join("plugins.staging");
+    let staging_root = config_root()?.join("plugins.staging");
     ensure_dir_chain(&staging_root)?;
-    ensure_dir_chain(&user_plugins_dir())?;
+    ensure_dir_chain(&user_plugins_dir()?)?;
     prune_dead_stages(&staging_root);
 
     let stage = staging_root.join(format!("{id}-{}", std::process::id()));

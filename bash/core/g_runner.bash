@@ -5,10 +5,12 @@
 # g_runner.bash - Runner for script (G) segments: runs the scripts and the
 # trigger scan under deadlines (ADR-0011).
 #
-# Bash 3.2 code only. Bash sources this file and calls both entry points
-# inside `$( )`, so the interactive shell keeps its `$!`, jobs, traps, options
-# and descriptors. Fish and Zsh run this file in a Bash child
-# (`bash -p -c "$src" gpy ARGS`); `gpy setup` installs it into their trees as
+# Bash 3.2 code only. Bash sources this file and calls __gpy_g_scan and
+# __gpy_g_batch inside `$( )`, so the interactive shell keeps its `$!`, jobs,
+# traps, options and descriptors. Fish and Zsh run this file in a Bash child
+# (`bash -p -c "$src" gpy ARGS`): Zsh calls __gpy_g_batch (it scans by
+# itself), Fish calls __gpy_g_scan_batch, so a due Fish prompt starts one
+# child. `gpy setup` installs this file into their trees as
 # core/g_runner.bash.
 # No comment in this file may hold an apostrophe: Bash 3.2 mis-parses one
 # inside a process substitution.
@@ -42,6 +44,16 @@
 #   hit|miss|timeout RS". The ancestor walk counts levels of the physical
 #   working directory, which the child resolves itself, so a caller never
 #   passes PWD and a symlinked path walks the levels the `../` lookups reach.
+#
+# __gpy_g_scan_batch SH NW [WORD...] [DEP ID T_MS CWD CMD REQ N NAME...]...
+#   The scan and the batch in one child. The NW words after NW are the
+#   __gpy_g_scan arguments; with NW > 0 the scan runs first and its records
+#   are printed. Then GS (0x1d), then the records of one __gpy_g_batch SH
+#   call holding the segments that follow, each led by DEP: empty, or the
+#   scan ID that must hit for the segment to run (a segment whose DEP did
+#   not hit is dropped, and prints no record). The values stay in
+#   __gpy_g_v<K>_<NAME> with K the 0-based index among all given segments;
+#   they are moved to the index of each kept segment in the batch call.
 #
 # Process rules per run (batch): the reader takes the segments in deadline
 # order, so each script group gets TERM and CONT at its own deadline (or on
@@ -518,4 +530,52 @@ __gpy_g_scan() {
         shift $((nf + nd + ne))
         printf '%s\037timeout\036' "$id"
     done
+}
+
+__gpy_g_scan_batch() {
+    set +euf
+    local IFS=$' \t\n'
+    local sh=$1 nw=$2 res= rec hits=' ' dep n k=0 j=0 name src dst
+    local -a scan args
+    [[ -n $nw && $nw != *[!0-9]* && ${#nw} -le 6 ]] || return 0
+    shift 2
+    nw=$((10#$nw))
+    ((nw <= $#)) || return 0
+    scan=("${@:1:nw}")
+    shift "$nw"
+    if ((nw > 0)); then
+        res=$(__gpy_g_scan "${scan[@]}")
+        printf '%s' "$res"
+        while [[ $res == *$'\036'* ]]; do
+            rec=${res%%$'\036'*}
+            res=${res#*$'\036'}
+            [[ $rec == *$'\037'hit ]] && hits+="${rec%%$'\037'*} "
+        done
+    fi
+    printf '\035'
+    while (($# >= 7)); do
+        dep=$1 n=$7
+        [[ -n $n && $n != *[!0-9]* && ${#n} -le 6 ]] || break
+        n=$((10#$n))
+        ((n <= $# - 7)) || break
+        if [[ -z $dep || $hits == *" $dep "* ]]; then
+            args+=("${@:2:6+n}")
+            # Earlier indices are free once read: K only grows, J <= K.
+            for name in "${@:8:n}"; do
+                [[ -n $name && $name != [0-9]* && $name != *[!A-Za-z0-9_]* ]] || continue
+                src=__gpy_g_v${k}_$name dst=__gpy_g_v${j}_$name
+                [[ $src == "$dst" ]] && continue
+                if [[ -n ${!src+x} ]]; then
+                    printf -v "$dst" '%s' "${!src}"
+                else
+                    unset "$dst"
+                fi
+            done
+            j=$((j + 1))
+        fi
+        shift $((7 + n))
+        k=$((k + 1))
+    done
+    ((j > 0)) && __gpy_g_batch "$sh" "${args[@]}"
+    return 0
 }

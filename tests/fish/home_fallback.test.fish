@@ -41,4 +41,25 @@ for state in empty unset
     check "HOME $state: the instant-cache dir is under it" "$pwhome/.cache/gpy/instant-prompts" (resolve $state __gpy_instant_cache_dir)
 end
 
+# A relative HOME is no home at all, and with no usable XDG_* either there is
+# no runtime root: GPY stays off for the session (no /tmp/gpy fallback), with
+# at most one debug line under GPY_DEBUG=1.
+set -l homeless_cwd (mktemp -d)
+test_track_dir $homeless_cwd
+for debug in 0 1
+    set -l err $homeless_cwd.err
+    set -l out (env -i PATH="$PATH" HOME=rel/home XDG_RUNTIME_DIR=run XDG_CACHE_HOME= GPY_DEBUG=$debug fish --no-config -i -c '
+        cd $argv[2]
+        source $argv[1]/fish/conf.d/gpy_init.fish
+        functions -q __gpy_request_character; and echo loaded; or echo off
+        set -q __gpy_load_failed; and echo agent-off
+        __gpy_agent_enabled; and echo agent-on' $repo_root $homeless_cwd </dev/null 2>$err)
+    check "GPY_DEBUG=$debug: nothing usable leaves GPY off" "off agent-off" "$out"
+    set -l want_lines 0
+    test $debug = 1; and set want_lines 1
+    check "GPY_DEBUG=$debug: stderr carries $want_lines line(s)" $want_lines (count (cat $err))
+    rm -f $err
+end
+check "nothing usable: nothing is created under the working directory" "" (ls -A $homeless_cwd | string collect)
+
 test_finish "Fish empty-HOME fallback"

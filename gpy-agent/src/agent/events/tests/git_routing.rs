@@ -487,7 +487,7 @@ fn create_watcher_skips_refresh_for_unregistered_repo_and_refreshes_registered_o
     watcher
         .attach_client(std::process::id() + 1, &sentinel)
         .expect("register sentinel with watcher");
-    // Nonexistent PID: `notify_repaint_force` prunes it via ESRCH, so the
+    // Nonexistent PID: `notify_repaint` prunes it via ESRCH, so the
     // sentinel is rewritten until its first refresh lands.
     let sentinel_pid = 999_998_u32;
     let sentinel_deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -520,7 +520,7 @@ fn create_watcher_skips_refresh_for_unregistered_repo_and_refreshes_registered_o
         "an unregistered repo must not gain a cache entry from a real watcher event"
     );
 
-    // Nonexistent PID: `notify_repaint_force` prunes it via ESRCH.
+    // Nonexistent PID: `notify_repaint` prunes it via ESRCH.
     let fake_pid = 999_999_u32;
     ctx.registry.register(fake_pid, Some(repo.clone()));
     fs::write(repo.join("b.txt"), "two\n").expect("write b.txt");

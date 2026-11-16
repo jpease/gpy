@@ -34,15 +34,15 @@ pub(super) fn resolve_top(name: &str) -> ChainLink {
     overlay::resolve_top(name).unwrap_or_else(|| ChainLink::embedded(name))
 }
 
-/// Watches `chain` needs beyond the always-watched user themes dir: the
-/// directory of each file outside it (a plugin's `themes/`), and each file on
-/// disk, since some notify backends report truncate/write saves only on a
-/// file watch.
-fn watch_paths(chain: &ThemeChain, user_themes_dir: &Path) -> Vec<PathBuf> {
+/// Watches `chain` needs beyond the always-watched user themes dir (none
+/// without a config root): the directory of each file outside it (a plugin's
+/// `themes/`), and each file on disk, since some notify backends report
+/// truncate/write saves only on a file watch.
+fn watch_paths(chain: &ThemeChain, user_themes_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for link in chain.iter() {
         if let Some(dir) = link.path.parent()
-            && dir != user_themes_dir
+            && Some(dir) != user_themes_dir
         {
             push_unique(&mut paths, dir);
         }
@@ -201,9 +201,10 @@ impl ReloadTarget {
         let Some(coordinator) = slot.as_mut() else {
             return;
         };
+        let user_themes_dir = ThemeManager::user_themes_dir().ok();
         let wanted = watch_paths(
             &self.state.read_or_recover().chain,
-            &ThemeManager::user_themes_dir(),
+            user_themes_dir.as_deref(),
         );
         let mut armed = self.source_watches.lock_or_recover();
         ThemeManager::rearm_source_watches(coordinator, &mut armed, wanted);
@@ -527,22 +528,23 @@ impl ThemeManager {
                 callback,
                 Some(Arc::clone(watch_registry)),
             )?;
-            let user_themes_dir = Self::user_themes_dir();
-            // Best-effort: a read-only config tree only loses override detection;
-            // the active chain is still watched below.
-            if let Err(e) = std::fs::create_dir_all(&user_themes_dir)
-                .map_err(Error::from)
-                .and_then(|()| watcher.watch_directory(&user_themes_dir))
+            let user_themes_dir = Self::user_themes_dir().ok();
+            // Best-effort: a read-only config tree (or none) only loses
+            // override detection; the active chain is still watched below.
+            if let Some(dir) = &user_themes_dir
+                && let Err(e) = std::fs::create_dir_all(dir)
+                    .map_err(Error::from)
+                    .and_then(|()| watcher.watch_directory(dir))
             {
                 crate::debug::warn_fallback(
-                    &format!("Watching {}", user_themes_dir.display()),
+                    &format!("Watching {}", dir.display()),
                     "watching only the active theme source",
                     &e,
                 );
             }
             let mut armed = self.source_watches.lock_or_recover();
             armed.clear();
-            let wanted = watch_paths(&self.state().chain, &user_themes_dir);
+            let wanted = watch_paths(&self.state().chain, user_themes_dir.as_deref());
             Self::rearm_source_watches(&mut watcher, &mut armed, wanted);
             drop(armed);
             Ok(watcher)
@@ -720,9 +722,11 @@ impl ThemeManager {
     }
 
     /// Get the directory where user themes are stored.
-    #[must_use]
-    pub fn user_themes_dir() -> PathBuf {
-        crate::paths::config_root().join("themes")
+    ///
+    /// # Errors
+    /// Returns an error when there is no config root ([`crate::paths::config_root`]).
+    pub fn user_themes_dir() -> Result<PathBuf> {
+        Ok(crate::paths::config_root()?.join("themes"))
     }
 
     fn insert_plugin_themes(merged: &mut BTreeMap<String, Discovered>) {
@@ -738,7 +742,9 @@ impl ThemeManager {
     }
 
     fn insert_user_themes(merged: &mut BTreeMap<String, Discovered>) {
-        discovery::insert_toml_dir(merged, &Self::user_themes_dir(), &Source::User);
+        if let Ok(dir) = Self::user_themes_dir() {
+            discovery::insert_toml_dir(merged, &dir, &Source::User);
+        }
     }
 
     /// Poll target. The chain is re-resolved whenever theme resolution's

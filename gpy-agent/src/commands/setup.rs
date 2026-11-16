@@ -79,34 +79,20 @@ impl Environment {
 
     /// `$XDG_CONFIG_HOME`, or `$HOME/.config`; fails without an absolute home.
     pub(super) fn config_home(&self) -> Result<PathBuf> {
-        let home = self.home.as_deref();
-        if home.is_none() {
-            return Err(Error::invalid(
-                "cannot find your home directory (HOME is unset or not an absolute path)",
-            ));
-        }
-        let root = paths::config_root_for(self.xdg_config_home.as_deref(), home, Os::Unix);
+        let home = self.home.as_deref().ok_or_else(no_home)?;
         // `config_root_for` returns `<config home>/gpy`.
-        root.parent()
-            .map(Path::to_path_buf)
+        paths::config_root_for(self.xdg_config_home.as_deref(), Some(home), Os::Unix)
+            .and_then(|root| root.parent().map(Path::to_path_buf))
             .ok_or_else(|| Error::invalid("cannot resolve the config directory"))
     }
 
     /// The data root, `$XDG_DATA_HOME/gpy` or `~/.local/share/gpy`, where the
     /// shell trees and bundled plugins are installed.
     pub(super) fn data_root(&self) -> Result<DataRoot> {
-        paths::data_root_for(
-            self.xdg_data_home.as_deref(),
-            self.home.as_deref(),
-            None,
-            Os::Unix,
-        )
-        .map(DataRoot)
-        .ok_or_else(|| {
-            Error::invalid(
-                "cannot find your home directory (HOME is unset or not an absolute path)",
-            )
-        })
+        let (xdg, home) = (self.xdg_data_home.as_deref(), self.home.as_deref());
+        paths::data_root_for(xdg, home, None, Os::Unix)
+            .map(DataRoot)
+            .ok_or_else(no_home)
     }
 
     /// The home directory.
@@ -115,6 +101,11 @@ impl Environment {
             .as_deref()
             .ok_or_else(|| Error::invalid("cannot find your home directory"))
     }
+}
+
+/// The error for a missing or relative `HOME`.
+fn no_home() -> Error {
+    Error::invalid("cannot find your home directory (HOME is unset or not an absolute path)")
 }
 
 /// The directory `gpy setup` installs the shell trees and bundled plugins into.

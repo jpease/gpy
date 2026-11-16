@@ -168,17 +168,6 @@ impl Message {
             | Self::ConfigReload => None,
         }
     }
-
-    /// Path that live-update notifications are scoped to, if the message carries one.
-    #[must_use]
-    pub fn notify_path(&self) -> Option<String> {
-        match self {
-            Self::RepositoryStatus { path, .. }
-            | Self::LanguageDetect { path, .. }
-            | Self::DirectoryRequest { path, .. } => Some(path.to_string()),
-            _ => None,
-        }
-    }
 }
 
 /// Replies the agent sends; [`wire::encode_json`] is their JSON form.

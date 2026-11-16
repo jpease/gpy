@@ -213,7 +213,7 @@ fn refresh_language_for(
     }
 
     if wrote {
-        ctx.registry.notify_repaint_force(Some(root));
+        ctx.registry.notify_repaint(Some(root));
     }
     wrote
 }
@@ -310,10 +310,10 @@ pub(super) fn refresh_and_notify_if_changed(
     if should_notify {
         debug_log!(
             "agent",
-            "Status changed for {}, notifying clients via SIGURG (forced)",
+            "Status changed for {}, notifying clients via SIGURG",
             git_root.display()
         );
-        ctx.registry.notify_repaint_force(Some(git_root));
+        ctx.registry.notify_repaint(Some(git_root));
     } else {
         debug_log!(
             "agent",

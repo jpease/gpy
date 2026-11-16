@@ -48,8 +48,8 @@ execute script plugins (`entry_type = "script"`) as you, once per command; see
 **The agent trusts whoever can open its socket.** The socket is chmod'ed to
 `0600` immediately after bind. That mode does not stop anyone who can write the
 socket's directory from replacing the socket, so the directory is checked for
-every socket path, the default `$XDG_RUNTIME_DIR/gpy` (or its cache, home or
-`/tmp/gpy` fallback) and an explicit `GPY_AGENT_SOCKET_PATH` or `--socket`
+every socket path, the default `$XDG_RUNTIME_DIR/gpy` (or its cache or home
+fallback; there is no `/tmp/gpy` fallback) and an explicit `GPY_AGENT_SOCKET_PATH` or `--socket`
 alike. The agent refuses to use a directory that is a symlink, is not a
 directory, or is owned by another user, so a socket directly in `/tmp` is
 refused. A directory owned by you that is group- or world-writable is treated

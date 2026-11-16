@@ -39,12 +39,13 @@ use crate::paths::SocketPath;
 /// `--socket`/`GPY_AGENT_SOCKET_PATH` override). Only the start path calls this.
 ///
 /// # Errors
-/// Returns an error naming the runtime directory if it cannot be created.
+/// Returns an error when there is no runtime directory (no usable
+/// `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME` or `HOME`) or it cannot be created.
 pub fn ensure_runtime_dir(socket: &SocketPath) -> Result<()> {
     if socket.is_override() {
         return Ok(());
     }
-    let path = crate::paths::runtime_dir();
+    let path = crate::paths::runtime_dir()?;
     std::fs::create_dir_all(&path).map_err(|e| crate::Error::Agent {
         message: format!("cannot create runtime directory {}", path.display()),
         source: Some(Box::new(e)),

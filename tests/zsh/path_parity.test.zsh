@@ -93,7 +93,24 @@ PARITY_SRC=zsh/core/ipc.zsh
 compare home_empty HOME= XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare home_empty_cache_unset HOME= XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
 compare home_unset_cache_unset XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
+# Nothing usable (a relative HOME, relative or empty XDG_*): no runtime root
+# anywhere, so both sides say <unresolved>; only an explicit socket resolves.
+compare nothing_usable HOME=rel/home XDG_RUNTIME_DIR=run XDG_CACHE_HOME= XDG_CONFIG_HOME=cfg
+compare nothing_usable_socket_override HOME=rel/home GPY_AGENT_SOCKET_PATH="$tmp/custom.sock"
 PARITY_SRC=zsh/gpy.zsh
+
+echo "--- no usable root: GPY stays off for the session ---"
+mkdir -p "$tmp/homeless"
+homeless_probe='PROMPT=orig; source "$1/zsh/gpy.zsh"; print -r -- "rc=$? ps=$PROMPT pre=${(j:,:)precmd_functions}"; (( $+functions[__gpy_preexec] )) && print loaded || print off'
+for debug in 0 1; do
+    out="$(cd "$tmp/homeless" && env -i PATH="$PATH" HOME=rel/home GPY_DEBUG="$debug" zsh -f -c "$homeless_probe" _ "$ROOT" 2>"$tmp/homeless.err")"
+    check "GPY_DEBUG=$debug: gpy.zsh loads nothing and leaves the prompt alone" "rc=0 ps=orig pre=
+off" "$out"
+    want_lines=0
+    [ "$debug" = 1 ] && want_lines=1
+    check "GPY_DEBUG=$debug: stderr carries $want_lines line(s)" "$want_lines" "$(wc -l <"$tmp/homeless.err" | tr -d ' ')"
+done
+check "nothing is created under the working directory" "" "$(ls -A "$tmp/homeless")"
 
 # --- cache key encoding, against a file the agent wrote ----------------------------
 echo "--- cache key encoding ---"

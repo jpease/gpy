@@ -30,9 +30,11 @@ pub fn builtin_names() -> impl Iterator<Item = &'static str> {
 }
 
 /// Path of the user theme file for `name` (it may not exist).
-#[must_use]
-pub fn user_copy_path(name: &str) -> PathBuf {
-    ThemeManager::user_themes_dir().join(format!("{name}.toml"))
+///
+/// # Errors
+/// Returns an error when there is no config root ([`crate::paths::config_root`]).
+pub fn user_copy_path(name: &str) -> Result<PathBuf> {
+    Ok(ThemeManager::user_themes_dir()?.join(format!("{name}.toml")))
 }
 
 /// The user file for `name`, when it exists and shadows an embedded builtin.
@@ -42,7 +44,7 @@ pub fn shadowing_copy(name: &str) -> Option<PathBuf> {
     if !is_builtin(name) {
         return None;
     }
-    let path = user_copy_path(name);
+    let path = user_copy_path(name).ok()?;
     path.is_file().then_some(path)
 }
 
@@ -74,7 +76,10 @@ pub fn recovery_hint(name: &str) -> String {
          `gpy theme rebase {name}` keeps only your changes as an overlay of the builtin, \
          `gpy theme reset {name}` moves it to {name}.toml.bak so the builtin takes over. \
          See the upgrade notes in CHANGELOG.md.",
-        path = user_copy_path(name).display(),
+        path = user_copy_path(name).map_or_else(
+            |_| format!("{name}.toml"),
+            |path| path.display().to_string()
+        ),
     )
 }
 
@@ -91,7 +96,11 @@ pub fn annotate_load_error(path: &Path, error: Error) -> Error {
         .file_stem()
         .and_then(std::ffi::OsStr::to_str)
         .filter(|name| is_builtin(name))
-        .filter(|name| path.is_file() && path == user_copy_path(name) && !is_overlay_file(path));
+        .filter(|name| {
+            path.is_file()
+                && user_copy_path(name).is_ok_and(|copy| path == copy)
+                && !is_overlay_file(path)
+        });
     match (builtin, error) {
         (Some(name), Error::Config { message, source }) => Error::Config {
             message: format!("{message}\n  {}", recovery_hint(name)),

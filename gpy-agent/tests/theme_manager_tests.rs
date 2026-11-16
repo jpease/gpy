@@ -496,7 +496,7 @@ fn test_theme_manager_loads_from_non_utf8_xdg_config_home() {
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", &xdg_path);
 
     assert_eq!(
-        ThemeManager::user_themes_dir(),
+        ThemeManager::user_themes_dir().unwrap(),
         xdg_path.join("gpy").join("themes")
     );
     let manager = ThemeManager::new("odd_bytes").unwrap();

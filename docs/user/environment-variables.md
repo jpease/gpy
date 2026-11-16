@@ -14,12 +14,12 @@ Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GPY_CONFIG_PATH` | unset | Explicit path to `config.toml`, checked before the XDG and `$HOME` locations. An empty value is ignored. |
-| `XDG_CONFIG_HOME` | `~/.config` | Config root `$XDG_CONFIG_HOME/gpy`, also where user themes, palettes and plugins live. |
+| `GPY_CONFIG_PATH` | unset | The only `config.toml` GPY reads and creates, even if the file does not exist yet and a global config does. A relative value is made absolute against the launch directory. An empty value is ignored. |
+| `XDG_CONFIG_HOME` | `~/.config` | Config root `$XDG_CONFIG_HOME/gpy`, also where user themes, palettes and plugins live. Only an absolute value counts. |
 | `XDG_CACHE_HOME` | `~/.cache` | Cache root `$XDG_CACHE_HOME/gpy`: theme exports, instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
 | `XDG_DATA_HOME` | `~/.local/share` | Data root `$XDG_DATA_HOME/gpy`: the installed `fish/`, `zsh/`, `bash/` trees and bundled `plugins/`. Only an absolute value counts. |
 | `XDG_RUNTIME_DIR` | unset | Runtime root `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
-| `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. |
+| `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. With no usable home there is no `/tmp/gpy` or relative fallback: GPY fails closed (see [Troubleshooting](troubleshooting.md#no-usable-home-directory)). |
 | `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. See [below](#gpy_agent_socket_path). |
 | `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
 | `VISUAL`, `EDITOR` | platform editor | The editor `gpy config open` launches, in that order. |
@@ -75,7 +75,6 @@ Read by the agent. Each is off, or at the default shown, unless set.
 | `GPY_WATCH_PROBE_MS` | `2000` | Milliseconds the native watcher gets to deliver its probe event before polling replaces it. `0` disables the probe. |
 | `GPY_WATCH_POLL_MS` | `2000` | Interval of the polling backend, once armed or forced. See [below](#watcher-backends). |
 | `GPY_DEBOUNCE_MS` | `100` | Debounce window for the git/language watcher; coalesces bursts of events into one reconcile. |
-| `GPY_SIGURG_THROTTLE_MS` | `150` | Minimum gap between repaint signals sent to one shell. Reload and re-register signals are never throttled. |
 | `GPY_WATCH_WORKTREE` | on | Overrides `git.watch_worktree`. See [below](#gpy_watch_worktree). |
 
 ### GPY_DISABLE_WATCHER
@@ -124,15 +123,14 @@ Anything else is ignored with one warning and falls through to detection. A reco
 
 ### GPY_COLOR_DEPTH
 
-The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. Pills the shell draws itself (for example the Zsh renderer's) still emit truecolor.
+The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. The pills the shells draw themselves (Bash, Zsh and Fish: clock, status and character fallbacks) honour the same values and the same automatic 256-colour downgrade; with `none` they emit no colour sequences, only their resets.
 
 ---
 
 ## Prompt freshness
 
-Four timers decide how stale a segment can be:
+Three timers decide how stale a segment can be:
 
 - **Shell, 5 s.** The shell shows a git entry the agent confirmed within `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` (5 s) at once, and refreshes it in the background after that. The language entry uses `GPY_LANGUAGE_CACHE_TTL_SECONDS` (30 s).
-- **Agent, 30 s and 150 ms.** The agent reuses its git status for 30 s from its last full scan, and never recomputes it within 150 ms of its previous update of any kind. Neither value is tunable.
-- **Repaint signals, 150 ms.** `GPY_SIGURG_THROTTLE_MS` limits repaint signals only; it does not change the 150 ms status cooldown.
+- **Agent, 30 s, 2 s and 150 ms.** The agent reuses its git status for 30 s from its last full scan, and never recomputes it within 150 ms of its previous update of any kind. A status scanned while the repository was unwatched (no live watch, `agent.live_updates = false`, or the watcher failed to start) is reused for up to 2 s instead of being rescanned every prompt; an invalidation or a full-scan change event ends that reuse at once. None of these values is tunable.
 - **Reconcile, 45 s.** `GPY_RECONCILE_INTERVAL_SECS` sets how often the agent rescans every watched repository to catch events the watcher missed.

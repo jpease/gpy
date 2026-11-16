@@ -10,8 +10,6 @@ use crate::Error;
 use crate::Result;
 #[cfg(unix)]
 use crate::debug_log;
-#[cfg(unix)]
-use crate::ipc::Response;
 use crate::ipc::{
     ClientDirectory,
     handlers::{ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, RenderDeps},
@@ -155,7 +153,6 @@ pub struct EndpointHandle {
     socket_ownership_check: Duration,
     security_config: GuardSettings,
     rate_limiter: RateLimiter,
-    client_registry: Arc<ClientDirectory>,
     config_manager: Arc<crate::config::manager::ConfigManager>,
     /// How [`Self::bind_socket`] treats a socket directory we own that others
     /// can write; the caller knows whether GPY owns the directory.
@@ -169,71 +166,6 @@ pub struct EndpointHandle {
     /// shutdown sent before the loop starts is still received.
     shutdown_rx: Option<broadcast::Receiver<()>>,
     pub(crate) handler_registry: Arc<HandlerRegistry>,
-}
-
-/// `io::Write` that feeds a hasher, so a payload is hashed as it serializes, with no buffer.
-#[cfg(unix)]
-struct HashWriter<'a>(&'a mut std::collections::hash_map::DefaultHasher);
-
-#[cfg(unix)]
-impl std::io::Write for HashWriter<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        use std::hash::Hasher;
-        self.0.write(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// Content hash of a live-update response's JSON payload for the repaint
-/// throttle. `None` for any other variant or if serialization fails. Payloads
-/// carry no timestamps, so equal state coalesces.
-#[cfg(unix)]
-fn content_token(response: &Response) -> Option<u64> {
-    use std::hash::Hasher;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let mut sink = HashWriter(&mut hasher);
-    match response {
-        Response::RepositoryStatus(status) => serde_json::to_writer(&mut sink, status).ok()?,
-        Response::Language { languages } => serde_json::to_writer(&mut sink, languages).ok()?,
-        _ => return None,
-    }
-    Some(hasher.finish())
-}
-
-/// Signal live-update subscribers when a response affects git/language state
-/// and live updates are enabled.
-#[cfg(unix)]
-pub(super) fn notify_clients_for_response(
-    config_manager: &crate::config::manager::ConfigManager,
-    client_registry: &Arc<ClientDirectory>,
-    response: &Response,
-    notify_path: Option<&str>,
-) {
-    let config = config_manager.get();
-    if !config.agent.live_updates {
-        return;
-    }
-
-    if matches!(
-        response,
-        Response::RepositoryStatus(_) | Response::Language { .. }
-    ) {
-        match notify_path {
-            // Content-derived token: duplicates coalesce, real changes get through.
-            Some(path) => {
-                let target = std::path::Path::new(path);
-                match content_token(response) {
-                    Some(token) => client_registry.notify_repaint_coalesced(Some(target), token),
-                    None => client_registry.notify_repaint(Some(target)),
-                }
-            }
-            None => client_registry.notify_repaint(None),
-        }
-    }
 }
 
 impl EndpointHandle {
@@ -292,7 +224,6 @@ impl EndpointHandle {
             socket_ownership_check: SOCKET_OWNERSHIP_CHECK,
             security_config: deps.security_config,
             rate_limiter,
-            client_registry: deps.client_registry,
             config_manager: deps.config_manager,
             #[cfg(unix)]
             socket_dir_repair: deps.socket_dir_repair,
@@ -491,7 +422,6 @@ impl EndpointHandle {
     fn spawn_client_handler(&self, stream: UnixStream) {
         // Computed before fields are moved into the task.
         let connection_deadline = self.connection_deadline();
-        let client_registry = Arc::clone(&self.client_registry);
         let semaphore = Arc::clone(&self.connection_semaphore);
 
         // Only per-connection dependencies travel into the task.
@@ -516,7 +446,7 @@ impl EndpointHandle {
             // lifetime. Elapse drops `stream` and `_permit`, closing and releasing.
             match timeout(
                 connection_deadline,
-                connection_handler.handle_client(stream, client_registry),
+                connection_handler.handle_client(stream),
             )
             .await
             {
@@ -601,60 +531,6 @@ impl RejectionLog {
         }
         self.window_start = Some(now);
         Some(std::mem::take(&mut self.count))
-    }
-}
-
-#[cfg(all(test, unix))]
-mod content_token_tests {
-    #![allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
-    )]
-
-    use super::content_token;
-    use crate::git::{RepositoryState, RepositoryStatus};
-    use crate::ipc::Response;
-
-    fn status_response(untracked: u32) -> Response {
-        Response::RepositoryStatus(RepositoryStatus {
-            branch: "main".to_owned(),
-            ahead: 0,
-            behind: 0,
-            ahead_capped: false,
-            behind_capped: false,
-            staged: 0,
-            unstaged: 0,
-            untracked,
-            conflicts: 0,
-            state: RepositoryState::Clean,
-            stash_count: 0,
-            detached: false,
-            stale_error: false,
-            rebase_progress: None,
-        })
-    }
-
-    #[test]
-    fn identical_responses_hash_to_the_same_token() {
-        let token_a = content_token(&status_response(0));
-        let token_b = content_token(&status_response(0));
-        assert!(token_a.is_some(), "a hashable response must yield a token");
-        assert_eq!(
-            token_a, token_b,
-            "identical repository state must coalesce (same token)"
-        );
-    }
-
-    #[test]
-    fn distinct_responses_hash_to_distinct_tokens() {
-        let clean = content_token(&status_response(0));
-        let dirty = content_token(&status_response(3));
-        assert!(clean.is_some() && dirty.is_some());
-        assert_ne!(
-            clean, dirty,
-            "a different repository state must produce a distinct token (latest-wins)"
-        );
     }
 }
 

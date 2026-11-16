@@ -22,6 +22,19 @@ unset __gpy_core_file
 source "$__gpy_zsh_root/core/constants.zsh"
 source "$__gpy_zsh_root/core/renderer.zsh"
 source "$__gpy_zsh_root/core/ipc.zsh"
+
+# No usable XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME: the agent refuses to run
+# and there is no shared /tmp fallback, so GPY stays off for this session
+# (no hooks, no agent, no oneshot) and the prompt is left alone.
+if ! __gpy_runtime_root __gpy_core_file; then
+    if [[ ${GPY_DEBUG-} == 1 ]]; then
+        print -r -- "gpy[init]: debug: no runtime directory (set XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME to an absolute path) - GPY disabled" >&2
+    fi
+    unset __gpy_core_file __gpy_zsh_root
+    return 0
+fi
+unset __gpy_core_file
+
 source "$__gpy_zsh_root/core/signals.zsh"
 source "$__gpy_zsh_root/core/supervisor.zsh"
 source "$__gpy_zsh_root/core/script.zsh"

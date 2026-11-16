@@ -16,10 +16,12 @@
 #
 # Runner. Fish has no subshell, sub-second timer or read timeout, so the
 # runner is bash/core/g_runner.bash, found beside this tree in a checkout and
-# in the data root, run in Bash children: on a due prompt one for the file
-# trigger scan (only when a segment declares require_files, require_folders
-# or require_extensions) and one for the batch (only when a segment misses
-# its cache). The child is the first Bash 4 or later on PATH, else
+# in the data root, run in one Bash child per due prompt
+# (__gpy_g_scan_batch): first the file trigger scan (only when a segment
+# declares require_files, require_folders or require_extensions), then the
+# batch (the segments that miss their cache and whose trigger held). A due
+# prompt where every segment hits its cache and none declares a trigger
+# starts no child. The child is the first Bash 4 or later on PATH, else
 # /bin/bash, resolved once. Command substitution returns when that direct
 # child exits, so a leftover holding the pipe cannot hold the prompt; Fish
 # starts no background job, so $last_pid and the job table never change. The
@@ -401,44 +403,23 @@ function __gpy_g_run_due
     function __gpy_g_sigint --on-signal SIGINT
     end
 
-    # The file scan: one bounded child for every segment that needs it.
-    if set -q scan_toks[1]
-        set -l res (command $__gpy_g_bash -p -c "$__gpy_g_src"\n'__gpy_g_scan "$@"' gpy $scan_args 2>/dev/null)
-        for rec in (string split -n \x1e -- $res)
-            set -l f (string split \x1f -- $rec)
-            contains -- "$f[1]" $scan_toks; or continue
-            set -l tok $f[1]
-            switch "$f[2]"
-                case hit
-                    set -g __gpy_g_t_{$tok}_scanfails 0
-                    set -a pass_toks $tok
-                case miss
-                    set -g __gpy_g_t_{$tok}_scanfails 0
-                case timeout
-                    __gpy_g_trip $tok scan
-            end
-        end
-        for tok in $scan_toks
-            contains -- $tok $pass_toks; or __gpy_g_uncache $tok
-        end
-    end
-
-    # Cache hits show their stored text; the rest run in one batch (the
-    # runner reads at most 40 segments per call; more stay hidden).
+    # Batch candidates: every segment that misses its cache, led by the scan
+    # ID it waits for (its own token when it declares a trigger, else ""). The
+    # runner drops those whose scan did not hit and renumbers the values
+    # (`__gpy_g_v<k>_<NAME>`, k counting candidates); its batch reads at most
+    # 40 segments, so more stay hidden.
     set -l batch_args
     set -l batch_toks
     set -l k 0
     for tok in $__gpy_g_tokens
-        contains -- $tok $pass_toks; or continue
-        set -l v __gpy_g_r_{$tok}_hit
-        if test "$$v" = 1
-            set v __gpy_g_t_{$tok}_ctext
-            set -g __gpy_g_t_{$tok}_text "$$v"
-            set v __gpy_g_t_{$tok}_cvariant
-            set -g __gpy_g_t_{$tok}_variant "$$v"
+        set -l dep ""
+        if contains -- $tok $scan_toks
+            set dep $tok
+        else if not contains -- $tok $pass_toks
             continue
         end
-        test $k -lt 40; or continue
+        set -l v __gpy_g_r_{$tok}_hit
+        test "$$v" = 1; and continue
         set -l nv __gpy_g_r_{$tok}_names
         set -l vv __gpy_g_r_{$tok}_vals
         set -l i 1
@@ -450,44 +431,81 @@ function __gpy_g_run_due
         set -l cmd_v __gpy_g_r_{$tok}_cmd
         set -l req_v __gpy_g_r_{$tok}_req
         set -l t_v __gpy_g_r_{$tok}_timeout
-        set -a batch_args $tok $$t_v "$$cwd_v" "$$cmd_v" "$$req_v" (count $$nv) $$nv
+        set -a batch_args "$dep" $tok $$t_v "$$cwd_v" "$$cmd_v" "$$req_v" (count $$nv) $$nv
         set -a batch_toks $tok
         set k (math $k + 1)
     end
 
-    if set -q batch_toks[1]
-        # stdin stays the terminal: Fish then makes the child the foreground
-        # group, so Ctrl-C reaches it (scripts themselves get /dev/null).
-        set -l res (command $__gpy_g_bash -p -c "$__gpy_g_src"\n'__gpy_g_batch "$@"' gpy "$__gpy_script_sh" $batch_args 2>/dev/null)
-        for rec in (string split -n \x1e -- $res)
-            set -l f (string split \x1f -- $rec)
-            contains -- "$f[1]" $batch_toks; or continue
-            set -l tok $f[1]
-            set -l text ""
-            set -l variant ""
-            switch "$f[2]"
-                case ok
-                    set -g __gpy_g_t_{$tok}_runfails 0
-                    set text "$f[3]"
-                    string match -qr '\A[a-z0-9_]{1,32}\z' -- "$f[4]"; and set variant $f[4]
-                case exit req c1
-                case timeout cap
-                    __gpy_g_trip $tok run
-                    continue
-                case '*'
-                    # intr, or a malformed record: hidden, not cached.
-                    continue
-            end
-            set -g __gpy_g_t_{$tok}_text "$text"
-            set -g __gpy_g_t_{$tok}_variant "$variant"
-            set -l ttl_v __gpy_g_r_{$tok}_ttl
-            if test "$$ttl_v" -gt 0
-                set -l key_v __gpy_g_r_{$tok}_key
-                set -g __gpy_g_t_{$tok}_ckey "$$key_v"
-                set -g __gpy_g_t_{$tok}_ctext "$text"
-                set -g __gpy_g_t_{$tok}_cvariant "$variant"
-                set -g __gpy_g_t_{$tok}_at $now
-            end
+    # One child: the scan records, GS, then the batch records. stdin stays
+    # the terminal: Fish then makes the child the foreground group, so Ctrl-C
+    # reaches it (scripts themselves get /dev/null).
+    set -l scan_res ""
+    set -l batch_res ""
+    if set -q scan_toks[1]; or set -q batch_toks[1]
+        set -l res (command $__gpy_g_bash -p -c "$__gpy_g_src"\n'__gpy_g_scan_batch "$@"' gpy "$__gpy_script_sh" (count $scan_args) $scan_args $batch_args 2>/dev/null)
+        set -l parts (string split -m1 \x1d -- "$res")
+        set scan_res "$parts[1]"
+        set -q parts[2]; and set batch_res "$parts[2]"
+    end
+
+    # The file scan: a hit lets the segment show (its cache or its run).
+    for rec in (string split -n \x1e -- $scan_res)
+        set -l f (string split \x1f -- $rec)
+        contains -- "$f[1]" $scan_toks; or continue
+        set -l tok $f[1]
+        switch "$f[2]"
+            case hit
+                set -g __gpy_g_t_{$tok}_scanfails 0
+                set -a pass_toks $tok
+            case miss
+                set -g __gpy_g_t_{$tok}_scanfails 0
+            case timeout
+                __gpy_g_trip $tok scan
+        end
+    end
+    for tok in $scan_toks
+        contains -- $tok $pass_toks; or __gpy_g_uncache $tok
+    end
+
+    # Cache hits show their stored text.
+    for tok in $pass_toks
+        set -l v __gpy_g_r_{$tok}_hit
+        test "$$v" = 1; or continue
+        set v __gpy_g_t_{$tok}_ctext
+        set -g __gpy_g_t_{$tok}_text "$$v"
+        set v __gpy_g_t_{$tok}_cvariant
+        set -g __gpy_g_t_{$tok}_variant "$$v"
+    end
+
+    for rec in (string split -n \x1e -- $batch_res)
+        set -l f (string split \x1f -- $rec)
+        contains -- "$f[1]" $batch_toks; or continue
+        contains -- "$f[1]" $pass_toks; or continue
+        set -l tok $f[1]
+        set -l text ""
+        set -l variant ""
+        switch "$f[2]"
+            case ok
+                set -g __gpy_g_t_{$tok}_runfails 0
+                set text "$f[3]"
+                string match -qr '\A[a-z0-9_]{1,32}\z' -- "$f[4]"; and set variant $f[4]
+            case exit req c1
+            case timeout cap
+                __gpy_g_trip $tok run
+                continue
+            case '*'
+                # intr, or a malformed record: hidden, not cached.
+                continue
+        end
+        set -g __gpy_g_t_{$tok}_text "$text"
+        set -g __gpy_g_t_{$tok}_variant "$variant"
+        set -l ttl_v __gpy_g_r_{$tok}_ttl
+        if test "$$ttl_v" -gt 0
+            set -l key_v __gpy_g_r_{$tok}_key
+            set -g __gpy_g_t_{$tok}_ckey "$$key_v"
+            set -g __gpy_g_t_{$tok}_ctext "$text"
+            set -g __gpy_g_t_{$tok}_cvariant "$variant"
+            set -g __gpy_g_t_{$tok}_at $now
         end
     end
 

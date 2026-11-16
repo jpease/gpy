@@ -204,7 +204,7 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
             "'{stem}' is a {provider} palette; importing would shadow it. Pass --name <other>, or --force to override"
         )));
     }
-    let dest = PaletteManager::palette_path(&stem);
+    let dest = PaletteManager::palette_path(&stem)?;
     let already_exists = || {
         Error::config(format!(
             "palette '{stem}' already exists at {}; pass --force to overwrite",

@@ -83,11 +83,14 @@ impl ShellFlag {
 }
 
 #[cfg(unix)]
-/// `<runtime_root>/shells`. The shells' `__gpy_shell_registry_dir` copy is
-/// pinned by `xdg_absoluteness_shared_vectors` and the `path_parity` tests.
+/// `<runtime_root>/shells`, or `None` without a runtime root. The shells'
+/// `__gpy_shell_registry_dir` copy is pinned by
+/// `xdg_absoluteness_shared_vectors` and the `path_parity` tests.
 #[must_use]
-pub(crate) fn default_shell_dir() -> PathBuf {
-    crate::paths::runtime_dir().join("shells")
+pub(crate) fn default_shell_dir() -> Option<PathBuf> {
+    crate::paths::runtime_dir()
+        .ok()
+        .map(|root| root.join("shells"))
 }
 
 #[cfg(unix)]
@@ -115,10 +118,16 @@ pub(super) fn ring_doorbell(pid: u32) -> nix::Result<()> {
 }
 
 /// Start time (epoch seconds) of the process occupying `pid`, if determinable.
+/// Refreshes only that PID's base entry: no memory, CPU, disk, exe or task
+/// reads, which a plain `refresh_processes` adds.
 #[cfg(unix)]
 pub(super) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Option<u64> {
     let sys_pid = sysinfo::Pid::from_u32(pid);
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]), true);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[sys_pid]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
     sys.process(sys_pid).map(sysinfo::Process::start_time)
 }
 
@@ -352,7 +361,9 @@ pub(crate) fn renudge_unregistered_shells(
     renudger: &mut ShellRenudger,
     registry: &ClientDirectory,
 ) {
-    renudge_unregistered_shells_in(&default_shell_dir(), renudger, registry);
+    if let Some(shell_dir) = default_shell_dir() {
+        renudge_unregistered_shells_in(&shell_dir, renudger, registry);
+    }
 }
 
 /// [`renudge_unregistered_shells`] against an explicit tracking directory.

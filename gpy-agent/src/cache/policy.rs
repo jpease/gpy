@@ -5,8 +5,7 @@
 use std::time::Duration;
 
 /// How long after a cache update of any kind a hit skips background
-/// revalidation. Independent of `GPY_SIGURG_THROTTLE_MS`, which tunes only
-/// the prompt repaint throttle.
+/// revalidation.
 pub const GIT_STATUS_COOLDOWN: Duration = Duration::from_millis(150);
 
 /// Cache timing policy that defines TTL and cooldown parameters

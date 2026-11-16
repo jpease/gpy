@@ -25,6 +25,14 @@ const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_mins(1);
 /// full capture on every prompt.
 const FAILURE_TTL: Duration = Duration::from_secs(5);
 
+/// How long the status of a repository nothing watches (no live watch,
+/// `agent.live_updates = false`, or no watcher) is trusted without a rescan,
+/// so prompts in quick succession share one scan. Only a status scanned
+/// while the repository was already unwatched qualifies, and a noted change
+/// ends it at once; see [`GitStatusCache::get_canonical_unwatched`]. Deliberately
+/// not configurable: it bounds how stale an unwatched prompt can be.
+const UNWATCHED_TRUST_TTL: Duration = Duration::from_secs(2);
+
 /// Recent failures by canonical repository root.
 type FailureCache = TtlMap<PathBuf, String>;
 
@@ -41,7 +49,25 @@ enum Watch {
     Since(Instant),
     /// Nothing reports changes: the watch was torn down (no client in the
     /// repository), live updates are off, or the watcher failed to start.
+    /// Only a young status scanned while unwatched is trusted; see
+    /// [`UNWATCHED_TRUST_TTL`].
     Unwatched,
+}
+
+/// What keeps `git_root`'s cached status current, given the handler's
+/// `watcher` slot (`None`: none wired in); see [`Watch`].
+fn watch_state(watcher: Option<&WatcherSlot>, git_root: &Path, config: &Config) -> Watch {
+    let Some(slot) = watcher else {
+        return Watch::Untracked;
+    };
+    if !config.agent.live_updates {
+        return Watch::Unwatched;
+    }
+    // Clone out so the slot lock is not held across the watcher call.
+    let current = slot.lock_or_recover().clone();
+    current
+        .and_then(|repo_watcher| repo_watcher.watched_since(git_root))
+        .map_or(Watch::Unwatched, Watch::Since)
 }
 
 /// Handler for Git repository status queries.
@@ -65,6 +91,8 @@ struct GitStatusJob {
     cache: Arc<GitStatusCache>,
     failures: Arc<FailureCache>,
     render: RenderDeps,
+    /// Whether each scan starts with the repository unwatched; see [`watch_state`].
+    watcher: Option<WatcherSlot>,
     /// Frees the single-flight slot even if the status capture panics.
     guard: JobGuard<PathBuf, SharedGitStatusResult>,
 }
@@ -84,7 +112,7 @@ pub(super) fn publish_and_repaint(
     let result = deps
         .instant_cache
         .write_git(git_root, status, &config, &theme, prev_bg, &palette);
-    notify_if_changed(&deps.client_registry, git_root, result, "git");
+    notify_if_changed(deps, git_root, result, "git");
 }
 
 /// How many times a status job scans again because the repository changed
@@ -130,8 +158,9 @@ impl GitHandler {
 
     /// Trust a cached status only while `watcher` reports changes to its
     /// repository, and only if it was scanned after that watch went live;
-    /// otherwise a request rescans, keeping the cached status as the
-    /// fallback for a scan that times out.
+    /// a repository nothing watches trusts only a status scanned while
+    /// unwatched, for [`UNWATCHED_TRUST_TTL`]. Otherwise a request rescans,
+    /// keeping the cached status as the fallback for a scan that times out.
     #[must_use]
     pub fn with_watcher(mut self, watcher: WatcherSlot) -> Self {
         self.watcher = Some(watcher);
@@ -140,27 +169,20 @@ impl GitHandler {
 
     /// What keeps `git_root`'s cached status current; see [`Watch`].
     fn watch_state(&self, git_root: &Path, config: &Config) -> Watch {
-        let Some(slot) = &self.watcher else {
-            return Watch::Untracked;
-        };
-        if !config.agent.live_updates {
-            return Watch::Unwatched;
-        }
-        // Clone out so the slot lock is not held across the watcher call.
-        let watcher = slot.lock_or_recover().clone();
-        watcher
-            .and_then(|current| current.watched_since(git_root))
-            .map_or(Watch::Unwatched, Watch::Since)
+        watch_state(self.watcher.as_ref(), git_root, config)
     }
 
     /// The cached status a request may answer with without waiting on a
-    /// scan: within its TTL and current per `watch`, or still within the
+    /// scan: within its TTL and current per `watch` (for an unwatched
+    /// repository, see [`UNWATCHED_TRUST_TTL`]), or still within the
     /// cooldown of its last update.
     fn trusted_cached(&self, git_root: &Path, watch: Watch) -> Option<git::RepositoryStatus> {
         let current = match watch {
             Watch::Untracked => self.git_cache.get_canonical(git_root),
             Watch::Since(since) => self.git_cache.get_canonical_scanned_since(git_root, since),
-            Watch::Unwatched => None,
+            Watch::Unwatched => self
+                .git_cache
+                .get_canonical_unwatched(git_root, UNWATCHED_TRUST_TTL),
         };
         current.or_else(|| {
             if self.git_cache.is_fresh_canonical(git_root) {
@@ -239,7 +261,10 @@ impl GitHandler {
 
             // The watcher may have missed an event (submodules, dropped FSEvents),
             // so revalidate in the background past the cooldown; never awaited.
-            self.revalidate_stale_hit(&git_root, path_buf, config.git.max_ahead_behind);
+            // An unwatched hit is young by construction and rescans once it is not.
+            if !matches!(watch, Watch::Unwatched) {
+                self.revalidate_stale_hit(&git_root, path_buf, config.git.max_ahead_behind);
+            }
 
             return Ok(Self::make_git_response(
                 cached_status,
@@ -342,6 +367,7 @@ impl GitHandler {
         let cache = Arc::clone(&self.git_cache);
         let failures = Arc::clone(&self.failures);
         let render = self.render.clone();
+        let watcher = self.watcher.clone();
         let git_root_owned = git_root.to_path_buf();
         // Fallback if the job panics before finishing.
         let fallback: SharedGitStatusResult = Err("git status job panicked".to_owned());
@@ -354,6 +380,7 @@ impl GitHandler {
                     cache,
                     failures,
                     render,
+                    watcher,
                     guard,
                 });
             })
@@ -362,7 +389,13 @@ impl GitHandler {
     fn spawn_git_status_job(job_spec: GitStatusJob) {
         let job = move || {
             let config = job_spec.render.config_manager.get();
+            // Whether the latest scan started with nothing watching the repository.
+            let mut unwatched = false;
             let (started, result) = scan_past_changes(&job_spec.cache, &job_spec.git_root, || {
+                unwatched = matches!(
+                    watch_state(job_spec.watcher.as_ref(), &job_spec.git_root, &config),
+                    Watch::Unwatched
+                );
                 crate::git::native::NativeGitBackend::get_complete_status(
                     &job_spec.path,
                     job_spec.max_ahead_behind,
@@ -376,12 +409,22 @@ impl GitHandler {
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
                     // `git_root` is already canonical.
-                    if let Some(published) = job_spec.cache.apply_full_scan(
-                        &job_spec.git_root,
-                        started,
-                        status.clone(),
-                        files,
-                    ) {
+                    let applied = if unwatched {
+                        job_spec.cache.apply_unwatched_full_scan(
+                            &job_spec.git_root,
+                            started,
+                            status.clone(),
+                            files,
+                        )
+                    } else {
+                        job_spec.cache.apply_full_scan(
+                            &job_spec.git_root,
+                            started,
+                            status.clone(),
+                            files,
+                        )
+                    };
+                    if let Some(published) = applied {
                         // The request path may have served stale data; publish the
                         // fresh status. No request context, so prev_bg is None.
                         publish_and_repaint(&job_spec.render, &job_spec.git_root, &published, None);
@@ -732,8 +775,9 @@ mod tests {
     }
 
     /// With a watcher wired in, a repository nothing watches (its last
-    /// client left, so its watch was torn down) does not answer from its
-    /// cached status: a change made meanwhile is read from git.
+    /// client left, so its watch was torn down) does not answer from a
+    /// status scanned under that watch, however young: a change made since
+    /// the teardown is read from git.
     #[test]
     fn unwatched_repo_does_not_trust_its_cached_status() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -757,6 +801,99 @@ mod tests {
                 .get_any_canonical(&git_root)
                 .map(|cached| cached.state),
             Some(RepositoryState::Dirty)
+        );
+    }
+
+    fn served_state(handler: &GitHandler, root: &Path) -> RepositoryState {
+        let safe_path =
+            crate::security::SafePath::new(root.to_str().expect("utf8 path")).expect("safe path");
+        let Response::RepositoryStatus(served) = handler.status(&safe_path, None).expect("status")
+        else {
+            panic!("expected a RepositoryStatus response");
+        };
+        served.state
+    }
+
+    /// An unwatched repository answers from a status scanned while it was
+    /// unwatched for `UNWATCHED_TRUST_TTL`, without starting a scan, and
+    /// rescans once that status is older.
+    #[test]
+    fn unwatched_repo_trusts_a_young_unwatched_scan() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let git_root = init_dirty_repo(&temp_dir);
+        let cache = zero_cooldown_cache();
+        let (unwired, _registry) = make_handler_with_cache(Arc::clone(&cache));
+        let handler = unwired.with_watcher(Arc::new(Mutex::new(None)));
+        // Clean, scanned unwatched; the tree is really Dirty.
+        assert!(
+            cache
+                .apply_unwatched_full_scan(&git_root, Instant::now(), status(0), HashMap::new())
+                .is_some()
+        );
+
+        assert_eq!(served_state(&handler, &git_root), RepositoryState::Clean);
+        assert!(
+            handler.in_flight.is_idle(),
+            "a trusted unwatched hit starts neither a rescan nor a revalidation"
+        );
+
+        cache.age_entry_for_test(&git_root, UNWATCHED_TRUST_TTL, UNWATCHED_TRUST_TTL);
+        assert_eq!(served_state(&handler, &git_root), RepositoryState::Dirty);
+    }
+
+    /// A noted change ends the unwatched trust at once, whatever the age.
+    #[test]
+    fn unwatched_repo_rescans_after_a_noted_change() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let git_root = init_dirty_repo(&temp_dir);
+        let cache = zero_cooldown_cache();
+        let (unwired, _registry) = make_handler_with_cache(Arc::clone(&cache));
+        let handler = unwired.with_watcher(Arc::new(Mutex::new(None)));
+        assert!(
+            cache
+                .apply_unwatched_full_scan(&git_root, Instant::now(), status(0), HashMap::new())
+                .is_some()
+        );
+        std::thread::sleep(Duration::from_millis(2));
+        cache.note_change_canonical(&git_root);
+
+        assert_eq!(served_state(&handler, &git_root), RepositoryState::Dirty);
+    }
+
+    /// A job records whether its scan started unwatched: with the watcher
+    /// slot empty (or live updates off) the result is trusted unwatched;
+    /// with no watcher wired in it is not.
+    #[test]
+    fn status_job_marks_scans_taken_while_unwatched() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let git_root = init_dirty_repo(&temp_dir);
+
+        let cache = zero_cooldown_cache();
+        let (unwired, _registry) = make_handler_with_cache(Arc::clone(&cache));
+        let handler = unwired.with_watcher(Arc::new(Mutex::new(None)));
+        handler
+            .git_status_job(&git_root, git_root.clone(), 0)
+            .wait_timeout(STATUS_TIMEOUT)
+            .expect("the job finishes")
+            .expect("status succeeds");
+        assert_eq!(
+            cache
+                .get_canonical_unwatched(&git_root, UNWATCHED_TRUST_TTL)
+                .map(|cached| cached.state),
+            Some(RepositoryState::Dirty)
+        );
+
+        let untracked_cache = zero_cooldown_cache();
+        let (untracked, _r) = make_handler_with_cache(Arc::clone(&untracked_cache));
+        untracked
+            .git_status_job(&git_root, git_root.clone(), 0)
+            .wait_timeout(STATUS_TIMEOUT)
+            .expect("the job finishes")
+            .expect("status succeeds");
+        assert!(untracked_cache.get_any_canonical(&git_root).is_some());
+        assert_eq!(
+            untracked_cache.get_canonical_unwatched(&git_root, UNWATCHED_TRUST_TTL),
+            None
         );
     }
 

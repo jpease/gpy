@@ -36,11 +36,11 @@ What CI runs on each platform is in [CI coverage by platform](dev/testing.md#ci-
 ### Terminal requirements
 
 The prompt draws 24-bit (truecolor) colour. Apple Terminal and the Linux
-console do not support it, so the agent's formatter falls back to 256 colours
+console do not support it, so GPY falls back to 256 colours
 there (`TERM_PROGRAM=Apple_Terminal` or `TERM=linux`). Set `GPY_COLOR_DEPTH` to
 `truecolor`, `256`, `16` or `none` to override the choice; see
 [Environment Variables](user/environment-variables.md#output-and-terminal).
-Shell-drawn pieces (for example the Zsh renderer's pills) still emit truecolor.
+It applies to the agent's formatter and to the pills the shells draw themselves.
 
 ### Shells
 

@@ -36,7 +36,6 @@ fn unhandled_registered_process_survives_repaint_and_reload() {
 
     let registry = ClientDirectory::with_shell_dir(dir.path().to_path_buf());
     registry.register(pid, None);
-    registry.notify_repaint_force(None);
     registry.notify_repaint(None);
     registry.notify_reload();
     // Negative proof: give a default-terminate disposition time to kill the child.

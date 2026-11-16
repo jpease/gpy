@@ -1,5 +1,5 @@
-//! Registry of shells that want live updates: the clients registered over IPC,
-//! the per-repo repaint throttle, and the broadcast that reaches them.
+//! Registry of shells that want live updates: the clients registered over IPC
+//! and the broadcast that reaches them.
 //!
 //! Shells are notified only by the doorbell (`SIGURG`, ignored by default, so a
 //! handler-less shell survives it); any payload is a flag file written first.
@@ -7,12 +7,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::debug_log;
-use crate::env_config::DEFAULT_THROTTLE_MS;
 use crate::sync_ext::MutexExt;
 
 #[cfg(unix)]
@@ -32,9 +30,13 @@ use shell_tracking::{
     evict_exited_processes, process_start_time_secs, ring_doorbell, write_shell_flag,
 };
 
-/// How long a throttle entry is kept: entries older than this cannot affect a
-/// throttle decision, and dropping them keeps the map bounded.
-const THROTTLE_ENTRY_TTL: Duration = Duration::from_hours(1);
+/// How long a start-time match stays trusted without another lookup. The
+/// kernel hands PIDs out in sequence, so a PID is reused only after every
+/// other one has been allocated (at least 32768 on Linux, 99999 on macOS),
+/// which no system does within this window: a client verified this recently
+/// is still the process that registered. A plain exit is caught by the ring's
+/// `ESRCH` regardless.
+const IDENTITY_TRUST: Duration = Duration::from_secs(2);
 
 /// Whether a registered PID still belongs to the process that registered it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,33 +55,12 @@ struct ClientSnapshot {
     #[cfg_attr(not(unix), allow(dead_code))]
     cwd: Option<PathBuf>,
     started_at: Option<u64>,
-}
-
-/// Whether a broadcast bypasses the per-repo throttle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BroadcastMode {
-    Throttled,
-    /// Used after a confirmed repository mutation.
-    Force,
-}
-
-/// Last signal time and content token per repo; the token lets a *distinct*
-/// change through within the window. `None` means time-only suppression.
-#[cfg_attr(
-    not(unix),
-    expect(dead_code, reason = "only read by the Unix-only `should_notify_repo`")
-)]
-#[derive(Clone, Copy)]
-struct ThrottleRecord {
-    at: Instant,
-    token: Option<u64>,
+    verified_at: Option<Instant>,
 }
 
 /// Shared registry of client PIDs.
 pub struct ClientDirectory {
     inner: Mutex<HashMap<u32, ClientInfo>>,
-    last_notify: Mutex<HashMap<PathBuf, ThrottleRecord>>,
-    throttle_ms: AtomicU64,
     /// `None` resolves `default_shell_dir` at write time.
     #[cfg_attr(
         not(unix),
@@ -110,9 +91,13 @@ impl Default for ClientDirectory {
 #[derive(Clone, Debug)]
 struct ClientInfo {
     cwd: Option<PathBuf>,
-    /// Start time at registration, re-checked before every signal so a recycled
+    /// Start time at registration, re-checked before a signal so a recycled
     /// PID is never signaled. `None` means "nothing to compare", not a mismatch.
     started_at: Option<u64>,
+    /// When `started_at` last matched the PID's current start time
+    /// (registration counts); trusted for [`IDENTITY_TRUST`]. `None` forces a
+    /// lookup. Dropped with the entry when the PID leaves the registry.
+    verified_at: Option<Instant>,
 }
 
 impl ClientDirectory {
@@ -131,8 +116,6 @@ impl ClientDirectory {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            last_notify: Mutex::new(HashMap::new()),
-            throttle_ms: AtomicU64::new(DEFAULT_THROTTLE_MS),
             shell_dir: None,
             #[cfg(unix)]
             sysinfo: Mutex::new(sysinfo::System::new()),
@@ -161,6 +144,7 @@ impl ClientDirectory {
             ClientInfo {
                 cwd: stored_cwd,
                 started_at,
+                verified_at: started_at.map(|_| Instant::now()),
             },
         );
     }
@@ -188,13 +172,34 @@ impl ClientDirectory {
         }
     }
 
-    /// Whether `pid` still belongs to the process that registered it. One
-    /// start-time lookup per call.
-    fn pid_identity(&self, pid: u32, recorded: Option<u64>) -> PidIdentity {
-        if recorded.is_none() {
+    /// Whether `client` still belongs to the process that registered it. Looks
+    /// the start time up only when the last match is older than
+    /// [`IDENTITY_TRUST`], and records a fresh match.
+    fn pid_identity(&self, client: &ClientSnapshot) -> PidIdentity {
+        let Some(recorded) = client.started_at else {
+            return PidIdentity::Matches;
+        };
+        if client
+            .verified_at
+            .is_some_and(|at| at.elapsed() < IDENTITY_TRUST)
+        {
             return PidIdentity::Matches;
         }
-        Self::classify_identity(recorded, self.process_start_time(pid))
+        let identity = Self::classify_identity(Some(recorded), self.process_start_time(client.pid));
+        if identity == PidIdentity::Matches {
+            self.mark_verified(client.pid, recorded);
+        }
+        identity
+    }
+
+    /// Note that `pid` still started at `started_at`, unless its entry was
+    /// meanwhile replaced by a registration with another start time.
+    fn mark_verified(&self, pid: u32, started_at: u64) {
+        if let Some(info) = self.inner.lock_or_recover().get_mut(&pid)
+            && info.started_at == Some(started_at)
+        {
+            info.verified_at = Some(Instant::now());
+        }
     }
 
     /// Whether `pid` is currently in the registry.
@@ -242,13 +247,6 @@ impl ClientDirectory {
         true
     }
 
-    /// Drop throttle entries older than an hour so the map stays bounded.
-    fn prune_throttle_map(&self) {
-        self.last_notify
-            .lock_or_recover()
-            .retain(|_, record| record.at.elapsed() < THROTTLE_ENTRY_TTL);
-    }
-
     /// Prune dead clients from the registry.
     ///
     /// Removes dead or confirmed-recycled PIDs and returns them for watcher cleanup.
@@ -258,7 +256,7 @@ impl ClientDirectory {
 
         for client in self.client_snapshots() {
             if !Self::is_client_alive(client.pid)
-                || self.pid_identity(client.pid, client.started_at) == PidIdentity::Recycled
+                || self.pid_identity(&client) == PidIdentity::Recycled
             {
                 dead_pids.push(client.pid);
             }
@@ -277,7 +275,6 @@ impl ClientDirectory {
             );
         }
 
-        self.prune_throttle_map();
         #[cfg(unix)]
         self.evict_unregistered_processes();
 
@@ -296,30 +293,17 @@ impl ClientDirectory {
         });
     }
 
-    /// Ring the repaint doorbell for all (or matching) clients, pruning dead PIDs.
-    /// `target` and client paths must already be canonical.
+    /// Ring the repaint doorbell for all clients, or those whose cwd is related
+    /// to `target`, pruning dead PIDs. `target` and client paths must already
+    /// be canonical.
     pub fn notify_repaint(&self, target: Option<&Path>) {
-        self.notify_with_signal(target, BroadcastMode::Throttled, None, None);
+        self.notify_with_signal(target, None);
     }
 
-    /// Ring a throttled repaint doorbell carrying a content token.
-    ///
-    /// Like [`Self::notify_repaint`], but a token differing from the last one
-    /// for that repo bypasses the throttle window (latest-wins).
-    pub fn notify_repaint_coalesced(&self, target: Option<&Path>, token: u64) {
-        self.notify_with_signal(target, BroadcastMode::Throttled, None, Some(token));
-    }
-
-    /// Ring the repaint doorbell bypassing the throttle, after a confirmed mutation.
-    pub fn notify_repaint_force(&self, target: Option<&Path>) {
-        self.notify_with_signal(target, BroadcastMode::Force, None, None);
-    }
-
-    /// Ask every client to reload: write `<pid>.reload`, then ring. Forced, so
-    /// the flag is never left unread by a throttled-away doorbell.
+    /// Ask every client to reload: write `<pid>.reload`, then ring.
     pub fn notify_reload(&self) {
         debug_log!("agent", "Notifying clients to reload via SIGURG");
-        self.notify_with_signal(None, BroadcastMode::Force, Some(ShellFlag::Reload), None);
+        self.notify_with_signal(None, Some(ShellFlag::Reload));
     }
 
     /// Copy clients out so the broadcast loop never holds the lock during syscalls.
@@ -331,66 +315,41 @@ impl ClientDirectory {
                 pid: *pid,
                 cwd: info.cwd.clone(),
                 started_at: info.started_at,
+                verified_at: info.verified_at,
             })
             .collect()
     }
 
-    fn notify_with_signal(
-        &self,
-        target: Option<&Path>,
-        mode: BroadcastMode,
-        flag: Option<ShellFlag>,
-        token: Option<u64>,
-    ) {
+    fn notify_with_signal(&self, target: Option<&Path>, flag: Option<ShellFlag>) {
         #[cfg(not(unix))]
         {
-            let _ = (target, mode, flag, token);
+            let _ = (target, flag);
         }
         #[cfg(unix)]
         {
             let clients = self.client_snapshots();
-            let shell_dir = flag.map(|_| self.shell_dir.clone().unwrap_or_else(default_shell_dir));
+            let shell_dir = flag.and_then(|_| self.shell_dir.clone().or_else(default_shell_dir));
 
             let mut stale: Vec<u32> = Vec::new();
 
-            // Already canonical (`validate_path`); no blocking canonicalize.
-            let target_owned = target.map(Path::to_path_buf);
-
-            // Decided at most once per broadcast, not per client.
-            let mut should_notify: Option<bool> = None;
-
-            for ClientSnapshot {
-                pid,
-                cwd,
-                started_at,
-            } in clients
-            {
-                if matches!(
-                    (target_owned.as_ref(), cwd.as_ref()),
-                    (Some(target_path), Some(client_path))
-                        if !Self::paths_related(client_path, target_path)
-                ) {
+            for client in clients {
+                if let (Some(target_path), Some(client_path)) = (target, client.cwd.as_deref())
+                    && !Self::paths_related(client_path, target_path)
+                {
                     continue;
                 }
 
-                let allow = *should_notify.get_or_insert_with(|| {
-                    self.should_broadcast(target_owned.as_deref(), mode, token)
-                });
-                if !allow {
-                    continue;
-                }
-
-                match self.pid_identity(pid, started_at) {
+                match self.pid_identity(&client) {
                     PidIdentity::Matches => {}
                     PidIdentity::Recycled => {
-                        stale.push(pid);
+                        stale.push(client.pid);
                         continue;
                     }
                     PidIdentity::Unverified => continue,
                 }
 
-                if !self.deliver(pid, flag.zip(shell_dir.as_deref())) {
-                    stale.push(pid);
+                if !self.deliver(client.pid, flag.zip(shell_dir.as_deref())) {
+                    stale.push(client.pid);
                 }
             }
 
@@ -422,11 +381,6 @@ impl ClientDirectory {
 
         // EPERM: the process exists but we lack permission -- keep it.
         !matches!((self.doorbell)(pid), Err(nix::errno::Errno::ESRCH))
-    }
-
-    /// Override the per-repository throttle interval used when broadcasting notifications.
-    pub fn set_throttle_ms(&self, ms: u64) {
-        self.throttle_ms.store(ms, Ordering::Relaxed);
     }
 
     /// Create a shared reference suitable for passing between subsystems.
@@ -466,60 +420,6 @@ impl ClientDirectory {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    /// Whether the whole broadcast proceeds. Mutates `last_notify` on approval,
-    /// so call at most once per broadcast or later clients get starved.
-    #[cfg(unix)]
-    fn should_broadcast(
-        &self,
-        target: Option<&Path>,
-        mode: BroadcastMode,
-        token: Option<u64>,
-    ) -> bool {
-        target.is_none_or(|repo_path| match mode {
-            BroadcastMode::Force => true,
-            BroadcastMode::Throttled => self.should_notify_repo(repo_path, token),
-        })
-    }
-
-    /// Pure per-repo throttle decision: suppress (record unchanged) only a
-    /// duplicate (same or no token) inside `window`; otherwise allow and refresh.
-    #[cfg(unix)]
-    fn throttle_decision(
-        prev: Option<ThrottleRecord>,
-        now: Instant,
-        window: Duration,
-        token: Option<u64>,
-    ) -> (bool, ThrottleRecord) {
-        let Some(record) = prev else {
-            return (true, ThrottleRecord { at: now, token });
-        };
-
-        let within_window = now.saturating_duration_since(record.at) < window;
-        let is_duplicate = token.is_none_or(|current| record.token == Some(current));
-        if within_window && is_duplicate {
-            return (false, record);
-        }
-
-        (true, ThrottleRecord { at: now, token })
-    }
-
-    /// Apply the per-repo throttle for `repo` and record the outcome.
-    #[cfg(unix)]
-    fn should_notify_repo(&self, repo: &Path, token: Option<u64>) -> bool {
-        let throttle_ms = self.throttle_ms.load(Ordering::Relaxed);
-        if throttle_ms == 0 {
-            return true;
-        }
-
-        let window = Duration::from_millis(throttle_ms);
-        let now = Instant::now();
-        let mut guard = self.last_notify.lock_or_recover();
-        let prev = guard.get(repo).copied();
-        let (allow, record) = Self::throttle_decision(prev, now, window, token);
-        guard.insert(repo.to_path_buf(), record);
-        allow
     }
 }
 

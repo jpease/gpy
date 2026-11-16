@@ -14,7 +14,8 @@ The agent determines the socket path using the following precedence order (based
 2.  `$XDG_RUNTIME_DIR/gpy/gpy.sock` (Linux standard)
 3.  `$XDG_CACHE_HOME/gpy/gpy.sock`
 4.  `~/.cache/gpy/gpy.sock` (macOS/Fallback)
-5.  `/tmp/gpy/gpy.sock` (Final fallback)
+
+There is no `/tmp/gpy` fallback: with none of these usable, `gpy-agent start` exits 1 and `status` exits 4.
 
 The `gpy status` command displays the active socket path.
 
