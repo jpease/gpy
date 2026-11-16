@@ -29,7 +29,6 @@ use crate::{Error, Result};
 use common_dir::release_common_dir_watches;
 use scope::RepoTarget;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -98,7 +97,7 @@ type DirIdentity = Option<(u64, u64)>;
 #[cfg(unix)]
 fn dir_identity(path: &Path) -> DirIdentity {
     use std::os::unix::fs::MetadataExt as _;
-    let meta = fs::metadata(path).ok()?;
+    let meta = std::fs::metadata(path).ok()?;
     Some((meta.dev(), meta.ino()))
 }
 
