@@ -84,6 +84,8 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                 repo.worktree = repo_watches.worktree;
                 repo.armed = repo_watches.armed;
                 repo.last_arm_attempt = Instant::now();
+                // The stale watch may have missed changes before this one went live.
+                repo.watched_since = Instant::now();
                 if let Some(client_pid) = pid {
                     repo.clients.insert(client_pid);
                     repo.idle_since = None;

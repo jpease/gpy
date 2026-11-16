@@ -94,7 +94,7 @@ Controls the background agent process that serves prompt data over IPC.
 |---|---|---|---|---|
 | `enabled` | bool | `true` | — | Enables background agent mode. When `false`, every prompt render falls back to oneshot mode (slower, no persistent process). |
 | `timeout_seconds` | integer | `5` | `1`–`300` | How long the agent waits for one request on a connection before dropping it, and the deadline for a language request including version probes. A connection is closed after four times this value. This is the agent's limit, not the shell's: the shell waits [`GPY_IPC_TIMEOUT_MS`](environment-variables.md#shell-integration) and omits a segment whose reply is late. |
-| `live_updates` | bool | `true` | — | Enables live prompt updates pushed via signals (e.g., when a file watcher detects a git change) instead of only refreshing on the next command. |
+| `live_updates` | bool | `true` | — | Enables live prompt updates pushed via signals (e.g., when a file watcher detects a git change) instead of only refreshing on the next command. With `false` no repository is watched, so every prompt past a 150 ms cooldown rescans the repository (bounded by `git.timeout_seconds`). |
 
 ### `[agent.supervisor]`
 

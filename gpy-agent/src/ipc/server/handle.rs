@@ -261,7 +261,10 @@ impl EndpointHandle {
         let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
         let render = deps.render();
-        let git_handler = Arc::new(GitHandler::new(render.clone(), Arc::clone(&deps.git_cache)));
+        let git_handler = Arc::new(
+            GitHandler::new(render.clone(), Arc::clone(&deps.git_cache))
+                .with_watcher(Arc::clone(&deps.watcher_slot)),
+        );
         let language_handler = Arc::new(LanguageHandler::new(
             render.clone(),
             deps.language_cache.clone(),

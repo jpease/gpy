@@ -147,6 +147,23 @@ impl GitStatusCache {
     /// [`get`](Self::get) for an already-canonical key.
     #[must_use]
     pub fn get_canonical(&self, key: &Path) -> Option<RepositoryStatus> {
+        self.lookup(key, None)
+    }
+
+    /// [`get_canonical`](Self::get_canonical) that also misses when the
+    /// entry's full scan started before `since`, the start of its
+    /// repository's watch: changes made before then were never reported.
+    #[must_use]
+    pub fn get_canonical_scanned_since(
+        &self,
+        key: &Path,
+        since: Instant,
+    ) -> Option<RepositoryStatus> {
+        self.lookup(key, Some(since))
+    }
+
+    /// A within-TTL status whose full scan started no earlier than `since`.
+    fn lookup(&self, key: &Path, since: Option<Instant>) -> Option<RepositoryStatus> {
         let (aggregates, full_scan_at) = self
             .entries
             .lock_or_recover()
@@ -160,6 +177,14 @@ impl GitStatusCache {
                 key.display(),
                 full_scan_at.elapsed(),
                 self.policy.ttl()
+            );
+            return None;
+        }
+        if since.is_some_and(|watch_start| full_scan_at < watch_start) {
+            debug_log!(
+                "cache",
+                "Cache UNTRUSTED for {}: scanned before its watch went live",
+                key.display()
             );
             return None;
         }
@@ -701,6 +726,29 @@ mod tests {
         );
         assert_eq!(cache.get_any_canonical(&key), Some(after));
         assert!(cache.is_fresh_canonical(&key));
+    }
+
+    /// A status scanned before its repository's watch went live is not
+    /// trusted; one scanned since is.
+    #[test]
+    fn scanned_since_misses_a_status_from_before_the_watch() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/scanned-since");
+        let scanned = Instant::now();
+        assert!(
+            cache
+                .apply_full_scan(&key, scanned, dummy_status(), HashMap::new())
+                .is_some()
+        );
+        std::thread::sleep(Duration::from_millis(2));
+        let watch_start = Instant::now();
+
+        assert!(cache.get_canonical(&key).is_some());
+        assert_eq!(cache.get_canonical_scanned_since(&key, watch_start), None);
+        assert_eq!(
+            cache.get_canonical_scanned_since(&key, scanned),
+            Some(dummy_status())
+        );
     }
 
     /// Scans are ordered by when they started: an older scan finishing after

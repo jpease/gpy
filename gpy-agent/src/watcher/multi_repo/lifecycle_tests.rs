@@ -290,3 +290,40 @@ fn returning_to_an_idle_repo_queues_one_catch_up_refresh() {
 
     assert_eq!(refreshes(&log, &root), 2, "arming plus the return");
 }
+
+/// A repo reports a watched period only while a client is attached, and a
+/// client returning to it starts a new one: changes made while it was idle
+/// were never reported, so a status scanned before must not be trusted.
+#[test]
+fn watched_since_covers_only_attached_periods() {
+    let (_temp, roots) = plain_repos(&["a"]);
+    let root = roots.first().expect("repo a").clone();
+    let (watcher, _log) = fake_watcher(Duration::from_secs(3_600));
+    assert_eq!(watcher.watched_since(&root), None);
+
+    watcher.attach_client(1, &root).expect("attach");
+    let first = watcher
+        .watched_since(&root)
+        .expect("watched while attached");
+    watcher.attach_client(2, &root).expect("join the live repo");
+    assert_eq!(
+        watcher.watched_since(&root),
+        Some(first),
+        "joining keeps it"
+    );
+
+    watcher.unregister_client(1);
+    watcher.unregister_client(2);
+    assert_eq!(watcher.watched_since(&root), None, "idle: nothing reports");
+
+    std::thread::sleep(Duration::from_millis(2));
+    watcher
+        .attach_client(1, &root)
+        .expect("return within the grace");
+    assert!(
+        watcher
+            .watched_since(&root)
+            .is_some_and(|since| since > first),
+        "returning starts a new watched period"
+    );
+}

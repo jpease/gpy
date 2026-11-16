@@ -55,6 +55,9 @@ struct WatchedRepo {
     last_arm_attempt: Instant,
     /// When the last client left; the repo stays armed for the teardown grace.
     idle_since: Option<Instant>,
+    /// Start of the current watched period: arming, re-arming, or a client
+    /// returning to an idle repo. Changes before it were never reported.
+    watched_since: Instant,
 }
 
 /// Requested vs. effective worktree-watch state; `effective && !requested`
@@ -544,7 +547,11 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                 pid
             );
             repo.clients.insert(pid);
-            repo.idle_since.take().is_some()
+            let was_idle = repo.idle_since.take().is_some();
+            if was_idle {
+                repo.watched_since = Instant::now();
+            }
+            was_idle
         };
         // Git events of a client-free repo are dropped, so catch up once.
         if was_idle && let Some(w) = self.watcher.lock_or_recover().as_ref() {
@@ -583,6 +590,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                     clients,
                     last_arm_attempt: Instant::now(),
                     idle_since: None,
+                    watched_since: Instant::now(),
                 },
             );
         }
@@ -683,6 +691,18 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             .filter(|repo| !repo.clients.is_empty())
             .map(|repo| repo.git_root.clone())
             .collect()
+    }
+
+    /// Start of `git_root`'s current watched period, while a client is
+    /// attached to it: change events after that instant are reported; `None`
+    /// when nothing would report a change to it.
+    #[must_use]
+    pub fn watched_since(&self, git_root: &Path) -> Option<Instant> {
+        self.watched_repos
+            .lock_or_recover()
+            .get(git_root)
+            .filter(|repo| !repo.clients.is_empty())
+            .map(|repo| repo.watched_since)
     }
 }
 
