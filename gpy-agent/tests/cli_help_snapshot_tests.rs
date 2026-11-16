@@ -372,3 +372,22 @@ fn lifecycle_help_lists_exit_codes() {
         "`gpy status` and `gpy-agent status` document the same codes"
     );
 }
+
+/// `gpy setup --help` and the top-level summary name the incomplete-block code.
+#[test]
+fn setup_help_lists_the_incomplete_block_exit_code() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let code = gpy_agent::commands::exit_codes::SETUP_INCOMPLETE;
+    let setup = exit_status_paragraph(&help_of(&env, &["setup"]));
+    let flat = setup.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(&format!("{code} files installed")) && flat.contains("incomplete GPY block"),
+        "`gpy setup --help` lists exit {code}:\n{setup}"
+    );
+    let top = exit_status_paragraph(&help_of(&env, &[]));
+    assert!(
+        top.lines()
+            .any(|line| line.starts_with(&format!("setup: {code} "))),
+        "`gpy --help` summarises the setup code:\n{top}"
+    );
+}

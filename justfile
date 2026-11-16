@@ -42,6 +42,11 @@ check-shell parts="":
 check-platforms *args:
     ./{{scripts_dir}}/check-platforms.sh {{args}}
 
+# Run the untracked-cache guard tests against Debian's older git in Docker; needs Docker
+[group('gate')]
+test-old-git:
+    ./{{scripts_dir}}/test-old-git.sh
+
 # Apply auto-fixes (formatting, clippy fixes)
 [group('gate')]
 fix:

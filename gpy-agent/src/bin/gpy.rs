@@ -100,6 +100,7 @@ enum Commands {
     ///
     /// Installs the shell scripts, adds the rc-file block, and picks an icon
     /// style. Safe to re-run.
+    #[command(after_help = commands::exit_codes::SETUP_HELP)]
     Setup {
         /// Shell to set up. Defaults to `GPY_SHELL`, then your login shell (`$SHELL`).
         #[arg(long, value_enum)]
@@ -539,12 +540,13 @@ fn run_setup(
     non_interactive: bool,
     check: bool,
     redetect_icons: bool,
-) -> Result<()> {
+) -> Result<ExitCode> {
     if redetect_icons {
-        return commands::init::run(commands::init::InitOptions {
+        commands::init::run(commands::init::InitOptions {
             non_interactive,
             redetect: true,
-        });
+        })?;
+        return Ok(ExitCode::SUCCESS);
     }
     commands::setup::run(
         &commands::setup::SetupOptions {
@@ -620,8 +622,8 @@ fn main() -> ExitCode {
 }
 
 /// Dispatch the parsed command. The lifecycle commands return `gpy-agent`'s
-/// exit code (see `commands::exit_codes`); every other command returns 0 or
-/// an error.
+/// exit code, and `setup` and `uninstall` their own (see
+/// `commands::exit_codes`); every other command returns 0 or an error.
 ///
 /// # Errors
 /// Returns the subcommand's error for [`main`] to report.
@@ -646,7 +648,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             non_interactive,
             check,
             redetect_icons,
-        } => run_setup(shell, from, non_interactive, check, redetect_icons)?,
+        } => return run_setup(shell, from, non_interactive, check, redetect_icons),
         Commands::Uninstall { yes, purge_config } => {
             return commands::uninstall::run(&commands::uninstall::UninstallOptions {
                 yes,

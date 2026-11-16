@@ -8,12 +8,14 @@
 use super::rc_block::{BlockChange, BlockState, block_state, ensure_block, has_block};
 use super::setup_fish::{leftover_trees, link_fish_prompt, report_leftovers, retire_fish_loader};
 use super::setup_install::{InstallMode, install_bundled_plugins, install_files, preflight};
+use crate::commands::exit_codes::SETUP_INCOMPLETE;
 use crate::commands::init::{self, InitOptions};
 use crate::paths::{self, Os};
 use crate::shell::Shell;
 use crate::{Error, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 /// Comment on the line after the block's start marker that says what the block is for.
 pub(super) const RC_BLOCK_HEADER: &str = "GPY shell integration";
@@ -129,10 +131,16 @@ struct Outcome {
 /// Every shell tree in the source is installed, so an upgrade run for one
 /// shell leaves the others on current scripts too.
 ///
+/// Returns [`SETUP_INCOMPLETE`] when the rc file holds an incomplete GPY
+/// block: everything else is done, but the shell does not load GPY.
+///
 /// # Errors
 /// Fails when no shell can be determined, the scripts cannot be found, or a
 /// file cannot be written. The rc file is touched last.
-pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>>) -> Result<()> {
+pub fn run(
+    options: &SetupOptions,
+    completions: impl Fn(Shell) -> Result<Vec<u8>>,
+) -> Result<ExitCode> {
     if cfg!(not(unix)) {
         return Err(Error::invalid(
             "shell integration needs a Unix shell; on Windows, use GPY under WSL",
@@ -153,7 +161,7 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
             source_root.display(),
             shell_dir.display()
         ));
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
     crate::commands::output::plain(format_args!(
         "Setting up GPY for {shell} from {}",
@@ -197,7 +205,10 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
     }
     print_next_steps(shell, &outcome.rc_file, env.login_shell.as_deref());
     report_leftovers(&outcome.leftovers);
-    Ok(())
+    if outcome.rc_change == BlockChange::Incomplete {
+        return Ok(ExitCode::from(SETUP_INCOMPLETE));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// One installed shell integration, as `gpy doctor` reports it.

@@ -35,4 +35,5 @@ Getting started: `gpy setup`, then `gpy doctor`. Customize: `gpy config wizard`.
 Exit status: 0 success; 1 failure (one `Error:` line on stderr); 2 usage error.
 status: 0 running (or busy); 3 not running; 4 not answering or unknown.
 start, restart: 6 disabled by agent.enabled = false.
+setup: 5 the rc file holds an incomplete GPY block; GPY is not active.
 doctor: 1 only when a check failed.

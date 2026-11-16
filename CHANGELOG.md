@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-16
+
 ### Fixed
 - Bash and Zsh find `gpy-agent` in `~/.local/bin` when it is not on `PATH` (as Fish does) for agent start, theme export and oneshot; Fish now skips a connected-but-silent agent for 5 s after one timed-out request, as Bash and Zsh do.
 - A git or language reply no longer rings the shells' doorbell; shells are repainted only when the agent's rendered output changes, and with `agent.live_updates = false` requests never trigger a repaint. A client's process start time is looked up at most once per 2 s instead of a full process refresh per ring.
@@ -37,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy theme import` output is sorted, no longer recommends the `character` segment, and imports `truncate_to_repo`, `show_milliseconds` and `disabled = true`.
 - Pre-commit runs only the fast hooks; clippy runs at pre-push.
 - The perf budget key `config_validation` is now `config_load`.
+- `gpy setup` exits `5` (was `0`) when the rc file holds an incomplete GPY block: it still installs every file and finishes the other steps, but the shell does not load GPY. `install.sh` and `install-oneline.sh` treat `5` as a warning, finish the install and end with a line saying GPY is not active; any other setup failure still aborts them.
+- `gpy uninstall` names each `~/.config/fish/conf.d/gpy_init.fish.backup.<stamp>` that `gpy setup` moved aside, says Fish does not load it, and leaves it for you to delete.
 
 ### Removed
 - `GPY_SIGURG_THROTTLE_MS`: the per-path repaint throttle it tuned no longer has a caller.
@@ -1162,7 +1166,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.10.5...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/jpease/gpy/releases/tag/v0.11.0
 [0.10.5]: https://github.com/jpease/gpy/releases/tag/v0.10.5
 [0.10.4]: https://github.com/jpease/gpy/releases/tag/v0.10.4
 [0.10.3]: https://github.com/jpease/gpy/releases/tag/v0.10.3
