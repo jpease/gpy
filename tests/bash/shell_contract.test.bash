@@ -270,6 +270,12 @@ BETWEEN
         write_config "$sandbox" "$row_prime"
         sync_agent_config "$sandbox" || return 1
         SCN_RAW_OUT="" run_driver "$sandbox" "$sh" "$sandbox/prime.out" "$sandbox/prime.err"
+        # The priming shell's detached start must log before calls.log is
+        # reset below, or it is counted against the render under test.
+        for _ in $(seq 1 20); do
+            (($(count_starts "$sandbox/calls.log") >= 1)) && break
+            sleep 0.1
+        done
         # Let the priming render's cache entries settle first.
         local seen="" now
         for _ in $(seq 1 50); do
