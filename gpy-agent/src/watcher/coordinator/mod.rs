@@ -256,6 +256,17 @@ impl WatchCoordinator {
         }
     }
 
+    /// Queue one whole-repository Git refresh for `repo` through the debouncer,
+    /// as an overflow rescan does: changes made before its watch went live,
+    /// or while nobody subscribed to it, were never delivered.
+    pub fn queue_refresh(&self, repo: &Path) {
+        ingest(
+            &self.debouncer,
+            &self.flush_kick,
+            PendingEvent::git_whole_repo(repo.to_path_buf()),
+        );
+    }
+
     /// Release one recursive [`WatchCoordinator::watch_directory`] of `path`
     /// (see [`filesystem::FileSystemWatcher::unwatch`]).
     ///

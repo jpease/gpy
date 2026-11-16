@@ -33,9 +33,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Teardown grace the agent uses: how long a repository with no clients
+/// Teardown grace the agent passes: how long a repository with no clients
 /// stays armed before [`MultiRepoWatcher::release_idle_repos`] releases it.
-pub const DEFAULT_TEARDOWN_GRACE: Duration = Duration::from_secs(30);
+/// Zero (tear down at once): the agent drops Git events for a repository no
+/// client's directory is in, so a parked repository's cached status went stale
+/// with nothing to refresh it (`tests/zsh/prompt_text_literal.test.zsh`).
+pub const DEFAULT_TEARDOWN_GRACE: Duration = Duration::ZERO;
 
 #[derive(Debug, Clone)]
 struct WatchedRepo {
@@ -142,6 +145,11 @@ pub trait WatchTarget {
     /// Prepare for events from a freshly armed repository (force-added
     /// listing, filesystem probe); a no-op unless overridden.
     fn repo_armed(&self, _git_root: &Path, _git_dir: &Path) {}
+
+    /// Queue one Git refresh of `git_root`, for changes no event delivered
+    /// (made before its watch was live, or while it had no client); a no-op
+    /// unless overridden.
+    fn request_refresh(&self, _git_root: &Path) {}
 }
 
 impl WatchTarget for WatchCoordinator {
@@ -171,6 +179,10 @@ impl WatchTarget for WatchCoordinator {
 
     fn repo_armed(&self, git_root: &Path, git_dir: &Path) {
         self.prepare_armed_repo(git_root, git_dir);
+    }
+
+    fn request_refresh(&self, git_root: &Path) {
+        self.queue_refresh(git_root);
     }
 }
 
@@ -520,22 +532,25 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             return Ok(true);
         }
 
-        {
+        let was_idle = {
             let mut repos = self.watched_repos.lock_or_recover();
-            if let Some(repo) = repos.get_mut(git_root) {
-                debug_log!(
-                    "watcher",
-                    "Already watching {}, adding client {}",
-                    git_root.display(),
-                    pid
-                );
-                repo.clients.insert(pid);
-                repo.idle_since = None;
-                return Ok(true);
-            }
+            let Some(repo) = repos.get_mut(git_root) else {
+                return Ok(false);
+            };
+            debug_log!(
+                "watcher",
+                "Already watching {}, adding client {}",
+                git_root.display(),
+                pid
+            );
+            repo.clients.insert(pid);
+            repo.idle_since.take().is_some()
+        };
+        // Git events of a client-free repo are dropped, so catch up once.
+        if was_idle && let Some(w) = self.watcher.lock_or_recover().as_ref() {
+            w.request_refresh(git_root);
         }
-
-        Ok(false)
+        Ok(true)
     }
 
     /// Insert a newly watched repository into the internal map.

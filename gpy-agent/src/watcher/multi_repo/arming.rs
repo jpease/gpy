@@ -95,7 +95,9 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
     }
 
     /// Arm watches for a repo, prepare the watcher for its events
-    /// ([`WatchTarget::repo_armed`]), and log one `Watch ready` line, the
+    /// ([`WatchTarget::repo_armed`]), queue one catch-up refresh for changes
+    /// made before the watch was live (the debounce window delivers it after
+    /// the caller records the repo), and log one `Watch ready` line, the
     /// marker the e2e tests wait on before touching the tree.
     ///
     /// # Errors
@@ -109,6 +111,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         let watches = self.arm_watches(git_root, git_dir, watch_worktree)?;
         if let Some(w) = self.watcher.lock_or_recover().as_ref() {
             w.repo_armed(git_root, git_dir);
+            w.request_refresh(git_root);
         }
         debug_log!("watcher", "Watch ready for {}", git_root.display());
         Ok(watches)
@@ -239,7 +242,11 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
                     continue;
                 }
                 match w.watch(&git_root) {
-                    Ok(()) => rearmed.push(git_root),
+                    Ok(()) => {
+                        // Worktree edits while degraded were never seen.
+                        w.request_refresh(&git_root);
+                        rearmed.push(git_root);
+                    }
                     Err(e) => debug_log!(
                         "watcher",
                         "Worktree watch of {} still failing: {e}",

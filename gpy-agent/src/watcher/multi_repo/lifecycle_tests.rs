@@ -1,14 +1,90 @@
-//! Client attach/detach without `ops_lock`, the teardown grace, and retrying a
-//! degraded worktree watch.
+//! Client attach/detach without `ops_lock`, the teardown grace, retrying a
+//! degraded worktree watch, and the catch-up refresh once a watch is live.
 
-use super::MultiRepoWatcher;
 use super::tests::{RecordingTarget, no_fault, recording_watcher, test_registry, tracked_worktree};
-use crate::Error;
+use super::{MultiRepoWatcher, WatchTarget};
+use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tempfile::TempDir;
+
+/// Calls a [`FakeTarget`] received, in order.
+type CallLog = Arc<Mutex<Vec<String>>>;
+
+/// A target that arms nothing and records every call, so ordering between a
+/// watch going live and its catch-up refresh is deterministic.
+struct FakeTarget {
+    log: CallLog,
+}
+
+impl FakeTarget {
+    fn record(&self, call: &str, path: &Path) {
+        self.log
+            .lock()
+            .expect("call log")
+            .push(format!("{call} {}", path.display()));
+    }
+}
+
+impl WatchTarget for FakeTarget {
+    fn watch(&mut self, path: &Path) -> Result<()> {
+        self.record("watch", path);
+        Ok(())
+    }
+
+    fn watch_shallow(&mut self, path: &Path) -> Result<()> {
+        self.record("watch_shallow", path);
+        Ok(())
+    }
+
+    fn covers(&self, _path: &Path) -> bool {
+        false
+    }
+
+    fn unwatch(&mut self, path: &Path) -> Result<()> {
+        self.record("unwatch", path);
+        Ok(())
+    }
+
+    fn unwatch_shallow(&mut self, path: &Path) -> Result<()> {
+        self.record("unwatch_shallow", path);
+        Ok(())
+    }
+
+    fn stop_watching(&mut self) {}
+
+    fn request_refresh(&self, git_root: &Path) {
+        self.record("refresh", git_root);
+    }
+}
+
+/// A watcher over a [`FakeTarget`] with `grace`, and the target's call log.
+fn fake_watcher(grace: Duration) -> (MultiRepoWatcher<FakeTarget>, CallLog) {
+    let log = CallLog::default();
+    let watcher = MultiRepoWatcher {
+        watcher: Arc::new(Mutex::new(Some(FakeTarget {
+            log: Arc::clone(&log),
+        }))),
+        watched_repos: Arc::default(),
+        registry: test_registry(true),
+        common_watches: Mutex::default(),
+        ops_lock: Mutex::new(()),
+        teardown_grace: grace,
+    };
+    (watcher, log)
+}
+
+/// How many catch-up refreshes `root` has been sent.
+fn refreshes(log: &CallLog, root: &Path) -> usize {
+    let expected = format!("refresh {}", root.display());
+    log.lock()
+        .expect("call log")
+        .iter()
+        .filter(|call| **call == expected)
+        .count()
+}
 
 /// Generous ceiling for a call that must not block; only a hang reaches it.
 const PROMPT_BUDGET: Duration = Duration::from_secs(5);
@@ -170,4 +246,47 @@ fn degraded_repo_is_rearmed_when_another_repo_releases_its_watches() {
         tracked_worktree(&watcher, &degraded),
         "released watches must let the degraded repo re-arm its worktree"
     );
+}
+
+/// A change made before a repo's watch is live (e.g. a checkout racing the
+/// shell's registration) has no event; arming queues one refresh after the
+/// watch call, and joining the live repo queues none.
+#[test]
+fn arming_queues_one_catch_up_refresh_after_the_watch_is_live() {
+    let (_temp, roots) = plain_repos(&["a"]);
+    let root = roots.first().expect("repo a").clone();
+    let (watcher, log) = fake_watcher(Duration::ZERO);
+
+    watcher.attach_client(1, &root).expect("attach");
+    let calls = log.lock().expect("call log").clone();
+    let watch_at = calls
+        .iter()
+        .position(|call| *call == format!("watch {}", root.display()))
+        .expect("the repo was watched");
+    let refresh_at = calls
+        .iter()
+        .position(|call| *call == format!("refresh {}", root.display()))
+        .expect("a catch-up refresh was queued");
+    assert!(watch_at < refresh_at, "refresh before the watch: {calls:?}");
+    assert_eq!(refreshes(&log, &root), 1);
+
+    watcher.attach_client(2, &root).expect("join the live repo");
+    assert_eq!(refreshes(&log, &root), 1, "a live repo needs no catch-up");
+}
+
+/// Git events for a client-free repo in its grace are dropped, so a client
+/// returning to it queues one catch-up refresh.
+#[test]
+fn returning_to_an_idle_repo_queues_one_catch_up_refresh() {
+    let (_temp, roots) = plain_repos(&["a"]);
+    let root = roots.first().expect("repo a").clone();
+    let (watcher, log) = fake_watcher(Duration::from_secs(3_600));
+
+    watcher.attach_client(1, &root).expect("attach");
+    watcher.unregister_client(1);
+    watcher
+        .attach_client(1, &root)
+        .expect("return within the grace");
+
+    assert_eq!(refreshes(&log, &root), 2, "arming plus the return");
 }
