@@ -363,3 +363,62 @@ mod tests {
         assert_eq!(remove_literal("${a(:)b}", "(:)"), "${a(:)b}");
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::{Token, remove_literal, rename_vars, tokens};
+    use proptest::prelude::*;
+    use proptest::test_runner::FileFailurePersistence;
+
+    fn config() -> ProptestConfig {
+        ProptestConfig {
+            // A failure prints its shrunk counterexample; no regression file is
+            // written into the source tree.
+            failure_persistence: Some(Box::new(FileFailurePersistence::Off)),
+            ..ProptestConfig::default()
+        }
+    }
+
+    /// Format strings built from the tokenizer's own markers.
+    fn format_string() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                3 => prop::sample::select(vec!["$", "${", "}", "\\", "$a", "${b}", " ", "é"])
+                    .prop_map(str::to_owned),
+                1 => ".{0,4}",
+            ],
+            0..16,
+        )
+        .prop_map(|parts| parts.concat())
+    }
+
+    proptest! {
+        #![proptest_config(config())]
+
+        /// Tokens tile the input exactly: joining them gives the input back.
+        #[test]
+        fn tokens_reassemble_the_input(format in format_string()) {
+            let rebuilt: String = tokens(&format)
+                .into_iter()
+                .map(|token| match token {
+                    Token::Literal(text) => text,
+                    Token::Var { raw, .. } => raw,
+                })
+                .collect();
+            prop_assert_eq!(rebuilt, format);
+        }
+
+        /// Renaming with no renames is the identity.
+        #[test]
+        fn empty_rename_is_identity(format in format_string()) {
+            prop_assert_eq!(rename_vars(&format, &[]), format);
+        }
+
+        /// Removing text never panics (multi-byte needles included) and never
+        /// grows the string.
+        #[test]
+        fn remove_literal_never_grows(format in format_string(), needle in "[^\\$]{1,3}") {
+            prop_assert!(remove_literal(&format, &needle).len() <= format.len());
+        }
+    }
+}
