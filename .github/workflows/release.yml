@@ -291,6 +291,12 @@ jobs:
 
       - name: Build release binary
         working-directory: gpy-agent
+        env:
+          # setup-rust-toolchain 2.x sets CARGO_BUILD_WARNINGS=deny, which also
+          # fails on the zig linker's "ignoring deprecated linker optimization
+          # setting '1'" note. Code warnings are denied by the PR gate's clippy
+          # and test builds; the release build must not fail on a linker note.
+          CARGO_BUILD_WARNINGS: warn
         # zigbuild drops the `.<glibc>` suffix from the output directory.
         run: |
           case "${{ matrix.target }}" in
