@@ -705,8 +705,13 @@ g_check_runs() {
 
 # Renders CONFIG's prompts once and checks each segment ran (or hit) as the
 # variant claims, so a silently skipped script can never pass as cheap.
+# One discarded render comes first: a shell's very first run of a script on a
+# cold runner can overrun the segment timeout and show nothing (a timeout is
+# not cached, so the next prompt runs it again), which made the checked render
+# flaky; the warm-up pays that cold start once (page cache, interpreter).
 g_preflight() {
   local cfg="$1" out modes
+  eval "$(g_command "$cfg" "$G_PREFLIGHT_ITERS" show)" >/dev/null 2>&1 || true
   if ! out="$(eval "$(g_command "$cfg" "$G_PREFLIGHT_ITERS" show)" 2>/dev/null)"; then
     record_hard "script segments $cfg: preflight render failed"
     return 1
