@@ -33,6 +33,8 @@ export XDG_CACHE_HOME="$TMP_DIR/cache"
 unset PROMPT_COMMAND
 
 source bash/gpy.bash
+# shellcheck source=tests/lib/shell_render_only.bash
+source tests/lib/shell_render_only.bash
 
 check "prompt hook installed with the agent disabled" "yes" \
     "$([[ "${PROMPT_COMMAND:-}" == *__gpy_precmd* ]] && echo yes || echo no)"

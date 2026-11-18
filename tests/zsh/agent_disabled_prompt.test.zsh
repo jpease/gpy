@@ -32,6 +32,7 @@ export GPY_AGENT_SOCKET_PATH="$TMP_DIR/agent.sock"
 export XDG_CACHE_HOME="$TMP_DIR/cache"
 
 source zsh/gpy.zsh
+source tests/lib/shell_render_only.zsh
 
 check "precmd hook installed with the agent disabled" yes \
     "$([[ ${precmd_functions[(r)__gpy_precmd]} == __gpy_precmd ]] && echo yes || echo no)"
