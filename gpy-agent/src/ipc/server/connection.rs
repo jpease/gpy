@@ -630,8 +630,9 @@ mod tests {
             "unexpected error reply: {payload}"
         );
 
-        // 4 position variants, each written once per output dialect.
-        let expected = 4 * crate::formatter::PromptDialect::ALL.len();
+        // 4 position variants plus the presence marker, each written once per
+        // output dialect.
+        let expected = 5 * crate::formatter::PromptDialect::ALL.len();
         let calls = render.instant_cache.write_call_count() - before;
         assert_eq!(
             calls,

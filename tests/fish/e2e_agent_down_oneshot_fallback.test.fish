@@ -24,7 +24,7 @@ source (dirname (status -f))/../lib/test_helpers.fish
 
 # Predicate for poll_until: a git instant-cache file exists for the repo.
 function __gpy_git_cache_file_present
-    set -l f (ls $XDG_CACHE_HOME/gpy/instant-prompts/*.git.*.ansi 2>/dev/null | head -1)
+    set -l f (ls $XDG_CACHE_HOME/gpy/instant-prompts/*.git.none.ansi 2>/dev/null | head -1)
     test -n "$f"
 end
 
