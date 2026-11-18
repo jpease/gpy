@@ -22,6 +22,8 @@
 cd "${SCN_CWD:-$GPY_ROOT}" || exit 1
 # shellcheck source=/dev/null
 source "$GPY_ROOT/bash/gpy.bash" >/dev/null 2>&1
+# shellcheck source=tests/lib/shell_render_only.bash
+source "$GPY_ROOT/tests/lib/shell_render_only.bash"
 
 # Read by the integration at call time.
 # shellcheck disable=SC2034

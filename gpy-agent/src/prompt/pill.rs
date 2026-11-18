@@ -1,8 +1,10 @@
-//! The pills the Bash integration draws itself (`bash/core/renderer.bash`):
-//! the clock and status fallbacks and the root/no-character prompt tail.
-//! Byte-for-byte ports, so `gpy prompt` and the shell path print the same
-//! `PS1`; `parity` tests pin them against the shell functions.
+//! The pills the shell integrations draw themselves (`bash/core/renderer.bash`,
+//! `zsh/core/renderer.zsh`): the clock and status fallbacks, script segment
+//! pills and the root/no-character prompt tail. Byte-for-byte ports, so
+//! `gpy prompt` and the shell path print the same prompt; the parity tests
+//! pin them against the shell functions.
 
+use super::dialect::Dialect;
 use super::vars::ShellVars;
 
 /// `ESC`, as the shell's `__GPY_SGR_ESC`.
@@ -37,6 +39,25 @@ impl Depth {
             _ if term_program == Some("Apple_Terminal") || term == Some("linux") => Self::Ansi256,
             _ => Self::TrueColor,
         }
+    }
+}
+
+/// How a pill is painted: the colour depth and the shell's prompt syntax.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Paint {
+    pub(crate) depth: Depth,
+    pub(crate) dialect: Dialect,
+}
+
+impl Paint {
+    /// Escape data for the prompt (`__gpy_prompt_escape`).
+    pub(crate) fn escape(self, text: &str) -> String {
+        self.dialect.escape(text)
+    }
+
+    /// The zero-width SGR reset that ends every pill.
+    fn reset(self) -> String {
+        self.dialect.invisible(&format!("{ESC}[0m"))
     }
 }
 
@@ -209,28 +230,15 @@ fn sgr_param(bg: bool, color: &str, depth: Depth) -> String {
     }
 }
 
-/// One `\[ESC[fg;bgm\]` sequence, or nothing when both parameters are empty.
-fn sgr_pair(fg: &str, bg: &str, depth: Depth) -> String {
-    let f = sgr_param(false, fg, depth);
-    let b = sgr_param(true, bg, depth);
+/// One zero-width `ESC[fg;bgm` sequence, or nothing when both parameters are
+/// empty.
+fn sgr_pair(fg: &str, bg: &str, paint: Paint) -> String {
+    let f = sgr_param(false, fg, paint.depth);
+    let b = sgr_param(true, bg, paint.depth);
     if f.is_empty() && b.is_empty() {
         return String::new();
     }
-    format!("\\[{ESC}[{f};{b}m\\]")
-}
-
-/// Escape text for `PS1` under `promptvars`, as `__gpy_prompt_escape`.
-pub(crate) fn prompt_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\\\\\"),
-            '$' => out.push_str("\\\\$"),
-            '`' => out.push_str("\\\\`"),
-            _ => out.push(ch),
-        }
-    }
-    out
+    paint.dialect.invisible(&format!("{ESC}[{f};{b}m"))
 }
 
 /// Where a pill sits in the chain.
@@ -276,9 +284,9 @@ impl<'a> Cap<'a> {
         )
     }
 
-    fn draw(&self, depth: Depth) -> String {
-        let mut out = sgr_pair(self.color, self.back, depth);
-        out.push_str(&prompt_escape(self.glyph));
+    fn draw(&self, paint: Paint) -> String {
+        let mut out = sgr_pair(self.color, self.back, paint);
+        out.push_str(&paint.escape(self.glyph));
         out
     }
 }
@@ -297,30 +305,30 @@ pub(crate) struct Caps<'a> {
 /// source (escape data first).
 pub(crate) fn section_standalone(
     vars: &ShellVars,
-    depth: Depth,
+    paint: Paint,
     bg: &str,
     fg: &str,
     content: &str,
     place: Place,
 ) -> String {
-    section(vars, depth, [bg, fg], content, place, None)
+    section(vars, paint, [bg, fg], content, place, None)
 }
 
 /// `__gpy_section_standalone` for a script segment pill (CAPS `o`, `c`, `d`).
 pub(crate) fn section_with_caps(
     vars: &ShellVars,
-    depth: Depth,
+    paint: Paint,
     [bg, fg]: [&str; 2],
     content: &str,
     place: Place,
     caps: &Caps<'_>,
 ) -> String {
-    section(vars, depth, [bg, fg], content, place, Some(caps))
+    section(vars, paint, [bg, fg], content, place, Some(caps))
 }
 
 fn section(
     vars: &ShellVars,
-    depth: Depth,
+    paint: Paint,
     [bg, fg]: [&str; 2],
     content: &str,
     place: Place,
@@ -367,15 +375,15 @@ fn section(
         },
         |values| Cap::resolve(values, bg, fg),
     );
-    let mut out = open.draw(depth);
-    out.push_str(&sgr_pair(fg, bg, depth));
+    let mut out = open.draw(paint);
+    out.push_str(&sgr_pair(fg, bg, paint));
     out.push_str(content);
     if !place.is_last {
-        out.push_str(&sgr_pair("normal", bg, depth));
+        out.push_str(&sgr_pair("normal", bg, paint));
         out.push(' ');
     }
-    out.push_str(&close.draw(depth));
-    out.push_str("\\[\u{1b}[0m\\]");
+    out.push_str(&close.draw(paint));
+    out.push_str(&paint.reset());
     out
 }
 
@@ -396,12 +404,12 @@ pub(crate) fn status_icon(vars: &ShellVars, ok: bool) -> &str {
 /// the prompt or root symbol.
 pub(crate) fn prompt_tail(
     vars: &ShellVars,
-    depth: Depth,
+    paint: Paint,
     exit: i32,
     root: bool,
     show_status: bool,
 ) -> String {
-    let reset = format!("\\[{ESC}[0m\\]");
+    let reset = paint.reset();
     let mut out = String::new();
     if show_status {
         let (icon, color) = if exit == 0_i32 {
@@ -409,8 +417,8 @@ pub(crate) fn prompt_tail(
         } else {
             (status_icon(vars, false), "red")
         };
-        out.push_str(&sgr_pair(color, "normal", depth));
-        out.push_str(&prompt_escape(icon));
+        out.push_str(&sgr_pair(color, "normal", paint));
+        out.push_str(&paint.escape(icon));
         out.push(' ');
         out.push_str(&reset);
     }
@@ -425,8 +433,8 @@ pub(crate) fn prompt_tail(
             vars.or_nonempty("__prompt_color", "green"),
         )
     };
-    out.push_str(&sgr_pair(color, "normal", depth));
-    out.push_str(&prompt_escape(icon));
+    out.push_str(&sgr_pair(color, "normal", paint));
+    out.push_str(&paint.escape(icon));
     out.push(' ');
     out.push_str(&reset);
     out
@@ -473,10 +481,5 @@ mod tests {
         assert_eq!(sgr_param(true, "transparent", Depth::TrueColor), "49");
         assert_eq!(sgr_param(true, "red", Depth::NoColor), "");
         assert_eq!(sgr_param(false, "#808080", Depth::Ansi256), "38;5;244");
-    }
-
-    #[test]
-    fn prompt_escape_doubles_for_promptvars() {
-        assert_eq!(prompt_escape(r"a\b$c`d"), r"a\\\\b\\$c\\`d");
     }
 }

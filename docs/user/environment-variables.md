@@ -48,7 +48,6 @@ Read by the shell scripts. Export them in `config.fish`, `.zshrc` or `.bashrc` b
 | `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` | from config | Fish, Zsh, Bash | Overrides `agent.supervisor.check_interval_seconds`; `0` checks on every prompt. Not range-checked. |
 | `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` | from config | Fish, Zsh, Bash | Overrides `agent.supervisor.max_restart_attempts`; `0` never restarts. Not range-checked. |
 | `GPY_DEBUG` | off | Fish, Zsh, Bash | Only `1` turns on the shell integration's own debug output, including logs of unrecognised variable values. |
-| `GPY_PROMPT_EXEC` | off | Bash | Experimental. On, one `gpy prompt bash` process draws the whole prompt instead of the shell drawing each segment, about 40% less time per prompt. The prompt is the same. It also runs script segments (`username`, `hostname`, script plugins); a script's declared `env` and `require_env` names then see only exported variables. |
 
 ### GPY_SHOW_STATUS
 

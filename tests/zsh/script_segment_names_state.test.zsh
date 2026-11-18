@@ -121,6 +121,7 @@ for f in "$TMPDIR/$$" "$TMPDIR/gpy_g_$$" "$TMPDIR/gpy-g-$$.cache" "$HOME/.gpy_g_
     print -r -- PLANTED >"$f"
 done
 source "$GPY_TEST_ROOT/zsh/gpy.zsh"
+source "$GPY_TEST_ROOT/tests/lib/shell_render_only.zsh"
 print -r -- "toks=[${(j:,:)__gpy_g_toks}] due=[$__gpy_g_due] off=[${(kj:,:)__gpy_g_off}]"
 __gpy_preexec; true; __gpy_precmd
 print -r -- "text=[${(kj:,:)__gpy_g_text}]"

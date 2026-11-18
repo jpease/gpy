@@ -10,9 +10,9 @@
 # __gpy_g_* and __gpy_script_* namespaces before loading, so nothing seeded
 # by the parent environment is read.
 #
-# State, per token <tok> (no files; nothing keyed by a PID). With
-# GPY_PROMPT_EXEC on, `gpy prompt` keeps its own copy of this state in
-# <runtime root>/refresh-throttle/<pid>.scripts instead (gpy-agent
+# State, per token <tok> (no files; nothing keyed by a PID), for the shell
+# renderer, now the fallback. `gpy prompt` keeps its own copy of this state in
+# <runtime root>/refresh-throttle/<pid>.scripts (gpy-agent
 # src/prompt/script.rs); the exit handler's `<pid>.*` sweep removes it.
 #   __gpy_g_out_<tok>  text drawn this prompt, already escaped ("" hides)
 #   __gpy_g_vnt_<tok>  colour variant drawn this prompt
@@ -449,7 +449,7 @@ __gpy_g_run_due() {
     return 0
 }
 
-# GPY_PROMPT_EXEC: `gpy prompt` runs the scripts and keeps their state
+# `gpy prompt` runs the scripts and keeps their state
 # itself (#1247). The command token it compares into variable $1: `\#` on
 # Bash 4.4+, else the commands the DEBUG trap counted, the one it saw since
 # the last prompt included. __gpy_g_exec_done consumes that and the reload.

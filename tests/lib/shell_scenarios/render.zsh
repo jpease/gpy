@@ -12,6 +12,7 @@
 
 cd "${SCN_CWD:-$GPY_ROOT}" || exit 1
 source "$GPY_ROOT/zsh/gpy.zsh" >/dev/null 2>&1
+source "$GPY_ROOT/tests/lib/shell_render_only.zsh"
 
 [[ "${SCN_CHECK_NOW:-0}" == 1 ]] && GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0
 

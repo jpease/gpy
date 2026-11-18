@@ -87,6 +87,7 @@ function __gpy_preexec() {
     # script segments are due at the next prompt.
     __gpy_g_due=1
     __gpy_g_cmd_seen=1
+    (( __gpy_g_seq++ ))
 }
 
 add-zsh-hook preexec __gpy_preexec
@@ -217,8 +218,22 @@ function __gpy_precmd() {
     # A doorbell ring zsh dropped leaves its flag behind; act on it now.
     __gpy_consume_shell_flags
 
-    # Script segments: once per command, here in this shell.
-    __gpy_g_maybe_run
+    # One `gpy prompt zsh` draws PROMPT and runs the script
+    # segments. When it declines (1), the shell runs them and renders; when it
+    # failed (2), it may have started them, so the shell renders without.
+    __gpy_render_prompt_exec $__gpy_pc_ret
+    case $? in
+        0) typeset -g __gpy_render_from=exec ;;
+        2)
+            __gpy_g_hide_all
+            typeset -g __gpy_render_from=shell
+            ;;
+        *)
+            # Script segments: once per command, here in this shell.
+            __gpy_g_maybe_run
+            typeset -g __gpy_render_from=shell
+            ;;
+    esac
 
     __gpy_update_prompts $__gpy_pc_ret
 
@@ -401,9 +416,42 @@ function __gpy_render_prompt() {
     typeset -g __gpy_render_out=$p
 }
 
+# One `gpy prompt zsh` exec draws the prompt (#1247) and runs the script
+# segments (core/g_runner.bash, under __gpy_g_bash), reading the same export
+# values, cache files and refresh-throttle stamps as __gpy_render_prompt,
+# which is now only its fallback. Sets __gpy_render_out and
+# __gpy_render_tail. Status 1 when the binary is missing or declines (exit 3:
+# an enabled segment it cannot draw); 2 when it failed otherwise. stderr
+# stays the terminal: a tripped script segment says so there.
+function __gpy_render_prompt_exec() {
+    local __gpy_rpe_cli __gpy_rpe_out
+    local -i __gpy_rpe_rc
+    # Ctrl-C ends `gpy prompt` (and the scripts it runs), not precmd, as in
+    # __gpy_g_maybe_run: the shell then draws the prompt itself.
+    setopt local_options local_traps
+    TRAPINT() { return 0 }
+    __gpy_cli_binary_into __gpy_rpe_cli || return 1
+    local -a __gpy_rpe_args=(prompt zsh --status "$1" --pid $$ --duration-ms $__gpy_cmd_duration)
+    if (( ${#__gpy_g_toks} )) && [[ $__gpy_g_bash == /* && -r $__gpy_g_runner_file ]]; then
+        __gpy_rpe_args+=(--bash "$__gpy_g_bash" --runner "$__gpy_g_runner_file" --cmd $__gpy_g_seq)
+        [[ -n $__gpy_g_reloaded ]] && __gpy_rpe_args+=(--reload)
+        [[ -n $__gpy_g_cmd_seen ]] && __gpy_rpe_args+=(--script-duration-ms "${__gpy_g_duration:-0}")
+    fi
+    __gpy_rpe_out=$("$__gpy_rpe_cli" "${__gpy_rpe_args[@]}")
+    __gpy_rpe_rc=$?
+    (( __gpy_rpe_rc == 3 )) && return 1
+    __gpy_g_reloaded=""
+    (( __gpy_rpe_rc == 0 )) && [[ $__gpy_rpe_out == *$'\x1f'* ]] || return 2
+    typeset -g __gpy_last_status=$1
+    typeset -g __gpy_render_out=${__gpy_rpe_out%%$'\x1f'*}
+    typeset -g __gpy_render_tail=${__gpy_rpe_out#*$'\x1f'}
+}
+
 # __gpy_transient_prompt is what zle-line-finish swaps in on Enter so
 # scrollback keeps the submit time: transient on → clock time + symbol;
 # off with clock → full prompt (zle re-expands `%D{...}`); off without → empty.
+# precmd has already asked `gpy prompt` (__gpy_render_from); a repaint (the
+# doorbell, zle-line-init) asks it again, and never runs a script itself.
 function __gpy_update_prompts() {
     local last_ret=${1:-0}
     # Read here, not under `setopt local_options`: zsh expands PROMPT after
@@ -414,7 +462,16 @@ function __gpy_update_prompts() {
     local bang=0
     [[ -o prompt_bang ]] && bang=1
     local __gpy_emit_tail=1
-    __gpy_render_prompt "$last_ret"
+    local from=${__gpy_render_from-}
+    typeset -g __gpy_render_from=""
+    if [[ -z $from ]]; then
+        __gpy_render_prompt_exec "$last_ret"
+        case $? in
+            0) from=exec ;;
+            2) __gpy_g_hide_all ;;
+        esac
+    fi
+    [[ $from == exec ]] || __gpy_render_prompt "$last_ret"
     local tail=$__gpy_render_tail
     if (( bang )); then
         PROMPT=${__gpy_render_out//\!/!!}

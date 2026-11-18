@@ -36,6 +36,12 @@ typeset -gA __gpy_g_text=() __gpy_g_variant=() __gpy_g_key=() __gpy_g_at=() \
 # __gpy_g_duration: the last command's duration in ms, for the cmd_duration
 # input; set by __gpy_precmd only when a command ran.
 typeset -g __gpy_g_due=1 __gpy_g_pwd="" __gpy_g_cmd_seen="" __gpy_g_duration=""
+# `gpy prompt zsh` runs the scripts and keeps their state
+# itself (#1247), in <runtime root>/refresh-throttle/<pid>.scripts. It is
+# told the commands run so far (counted in preexec) and whether the theme
+# was reloaded since its last run.
+typeset -gi __gpy_g_seq=0
+typeset -g __gpy_g_reloaded=1
 typeset -g __gpy_g_sh=/bin/sh __gpy_g_bash="" __gpy_g_bash_resolved=""
 typeset -g __gpy_g_src=""
 # Consecutive timeouts or over-cap outputs that disable a segment for this shell.
@@ -153,6 +159,7 @@ function __gpy_g_reload() {
     __gpy_g_names=("${names[@]}")
     __gpy_g_runfails=() __gpy_g_scanfails=() __gpy_g_off=()
     __gpy_g_due=1
+    __gpy_g_reloaded=1
     if (( ${#toks} )) && [[ -z $__gpy_g_bash_resolved ]]; then
         __gpy_g_resolve_bash
     fi
@@ -311,6 +318,15 @@ function __gpy_g_scan() {
 function __gpy_g_hide() {
     __gpy_g_text[$1]="" __gpy_g_variant[$1]=""
     unset "__gpy_g_key[$1]" "__gpy_g_at[$1]"
+}
+
+# Every script segment hidden (a failed `gpy prompt`, which may have started
+# the scripts: none may run twice for one prompt).
+function __gpy_g_hide_all() {
+    local tok
+    for tok in "${__gpy_g_toks[@]}"; do
+        __gpy_g_hide "$tok"
+    done
 }
 
 # Due on the first prompt, after a command (preexec), when $PWD changed

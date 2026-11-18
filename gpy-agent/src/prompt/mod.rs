@@ -1,15 +1,18 @@
-//! `gpy prompt`: the whole Bash prompt from one process, so the shell hook is
-//! one `PS1=$(gpy prompt ...)` instead of a fork per segment (#1247). It
-//! follows `bash/core/init.bash`'s `__gpy_render_prompt` step for step and
-//! reads the same theme-export values, cache files, refresh-throttle stamps
-//! and late window, so the two render paths print the same `PS1` and can run
-//! side by side. Script segments run through [`script`].
+//! `gpy prompt`: the whole Bash or Zsh prompt from one process, so the shell
+//! hook is one `PS1=$(gpy prompt ...)` instead of a fork per segment (#1247).
+//! It follows the shells' `__gpy_render_prompt` (`bash/core/init.bash`,
+//! `zsh/core/init.zsh`) step for step and reads the same theme-export
+//! values, cache files and refresh-throttle stamps, so the two render paths
+//! print the same prompt and can run side by side. Script segments run
+//! through [`script`].
 
+mod dialect;
 mod link;
 mod pill;
 mod script;
 mod vars;
 
+pub use dialect::Dialect;
 pub use script::ScriptArgs;
 
 use crate::Result;
@@ -17,16 +20,14 @@ use crate::agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request}
 use crate::cache::InstantPromptCache;
 use crate::config::{Config, loader::load_config};
 use crate::formatter::{
-    DirectoryEnv, Format, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
-    create_formatter,
+    DirectoryEnv, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
 };
 use crate::ipc::Response;
-use crate::shell::Shell;
 use crate::template::{Palette, parse_color};
 use crate::theme::export::{ScriptSegmentExport, ScriptSegmentExports, collect_script_segments};
 use crate::theme::{ThemeConfig, load::load_theme};
 use link::{Link, Reply};
-use pill::{Depth, Place};
+use pill::{Depth, Paint, Place};
 use script::{Inputs, Scripts};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -65,13 +66,27 @@ fn covers(config: &Config, scripts: &[ScriptSegmentExport]) -> bool {
     })
 }
 
-/// Render the Bash `PS1` for the current directory (`$PWD`); `None` when an
+/// A rendered prompt.
+#[derive(Debug)]
+pub struct Rendered {
+    /// `PS1` or `PROMPT`.
+    pub prompt: String,
+    /// The prompt symbol alone, without the status icon: Zsh's transient
+    /// prompt (`__gpy_render_tail`).
+    pub tail: String,
+}
+
+/// Render the prompt for the current directory (`$PWD`); `None` when an
 /// enabled segment needs the shell's own renderer, or when a script segment
 /// is enabled and the shell passed no `script` arguments.
 ///
 /// # Errors
 /// Returns an error if neither the configured nor the `default` theme loads.
-pub fn render_bash(args: PromptArgs, script: Option<&ScriptArgs>) -> Result<Option<String>> {
+pub fn render(
+    dialect: Dialect,
+    args: PromptArgs,
+    script: Option<&ScriptArgs>,
+) -> Result<Option<Rendered>> {
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
         Config::default()
@@ -107,7 +122,12 @@ pub fn render_bash(args: PromptArgs, script: Option<&ScriptArgs>) -> Result<Opti
                 args.pid,
                 &Inputs {
                     pwd: &pwd.to_string_lossy(),
-                    duration_ms: args.duration_ms,
+                    // Bash hands scripts its last duration; Zsh the last
+                    // command's, kept across a prompt due to a `cd` alone.
+                    duration_ms: match dialect {
+                        Dialect::Bash => args.duration_ms,
+                        Dialect::Zsh => given.duration_ms,
+                    },
                     prompt_icons: vars.or("__prompt_icons", ""),
                 },
             )
@@ -116,11 +136,15 @@ pub fn render_bash(args: PromptArgs, script: Option<&ScriptArgs>) -> Result<Opti
     let git_root = canonical.as_deref().and_then(find_git_root);
     let enabled = agent_enabled(&config);
     let mut render = Render {
-        depth: Depth::from_env(
-            env("GPY_COLOR_DEPTH").as_deref(),
-            env("TERM_PROGRAM").as_deref(),
-            env("TERM").as_deref(),
-        ),
+        dialect,
+        paint: Paint {
+            depth: Depth::from_env(
+                env("GPY_COLOR_DEPTH").as_deref(),
+                env("TERM_PROGRAM").as_deref(),
+                env("TERM").as_deref(),
+            ),
+            dialect,
+        },
         link: Link::new(enabled, args.pid),
         config: &config,
         theme: &theme,
@@ -183,7 +207,8 @@ fn find_git_root(canonical: &Path) -> Option<PathBuf> {
 
 /// One render's inputs and the oneshot budget.
 struct Render<'a> {
-    depth: Depth,
+    dialect: Dialect,
+    paint: Paint,
     link: Link,
     config: &'a Config,
     theme: &'a ThemeConfig,
@@ -218,7 +243,7 @@ impl Drawn {
 
 impl Render<'_> {
     /// `__gpy_render_prompt`.
-    fn prompt(&mut self) -> String {
+    fn prompt(&mut self) -> Rendered {
         let mut out = String::new();
         if self.vars.or_nonempty("__gpy_add_newline", "1") == "1" {
             out.push('\n');
@@ -263,18 +288,19 @@ impl Render<'_> {
                 &prev_bg,
             )
         };
-        if character.is_empty() {
-            out.push_str(&pill::prompt_tail(
-                &self.vars,
-                self.depth,
-                self.args.status,
-                root,
-                flag("GPY_SHOW_STATUS").unwrap_or(true),
-            ));
+        let tail = |show_status: bool| {
+            pill::prompt_tail(&self.vars, self.paint, self.args.status, root, show_status)
+        };
+        let (symbol, symbol_alone) = if character.is_empty() {
+            (tail(flag("GPY_SHOW_STATUS").unwrap_or(true)), tail(false))
         } else {
-            out.push_str(&character);
+            (character.clone(), character)
+        };
+        out.push_str(&symbol);
+        Rendered {
+            prompt: out,
+            tail: symbol_alone,
         }
-        out
     }
 
     /// `__gpy_segment_would_render`: detect, then omit.
@@ -290,7 +316,7 @@ impl Render<'_> {
                     return false;
                 };
                 !(self.link.enabled()
-                    && !marker_present(root, "git")
+                    && !marker_present(root, "git", self.dialect)
                     && !self.link.socket_present())
             }
             "language" => {
@@ -299,7 +325,7 @@ impl Render<'_> {
                 }
                 let present = self
                     .lang_key()
-                    .is_some_and(|key| marker_present(&key, "lang"));
+                    .is_some_and(|key| marker_present(&key, "lang", self.dialect));
                 if !present {
                     self.refresh(
                         "lang",
@@ -358,29 +384,34 @@ impl Render<'_> {
             "git" => self.git(place, prev_bg),
             "language" => Drawn::plain(self.language(place, prev_bg)),
             _ => Drawn::plain(self.scripts.as_ref().map_or_else(String::new, |scripts| {
-                scripts.pill(&self.vars, self.depth, segment, place)
+                scripts.pill(&self.vars, self.paint, segment, place)
             })),
         }
     }
 
     /// `__gpy_segment_clock`: the theme's clock template, else the local pill
-    /// with Bash's live `\D{…}`.
+    /// with the shell's live `\D{…}` or `%D{…}`.
     fn clock(&self, place: Place, prev_bg: &str) -> String {
         if self.vars.is_set("__clock_format") {
-            let rendered =
-                self.render_response(&Response::Clock { shell: Shell::Bash }, place, prev_bg);
+            let rendered = self.render_response(
+                &Response::Clock {
+                    shell: self.dialect.shell(),
+                },
+                place,
+                prev_bg,
+            );
             if !rendered.is_empty() {
                 return rendered;
             }
         }
         let content = format!(
-            "{}\\D{{{}}}",
-            pill::prompt_escape(self.vars.or("__prompt_time_pad", " ")),
-            pill::clock_time_spec(&self.vars)
+            "{}{}",
+            self.paint.escape(self.vars.or("__prompt_time_pad", " ")),
+            self.dialect.clock_token(&pill::clock_time_spec(&self.vars))
         );
         pill::section_standalone(
             &self.vars,
-            self.depth,
+            self.paint,
             self.vars.or_nonempty("__color_clock_bg", ""),
             self.vars.or_nonempty("__color_clock_fg", ""),
             &content,
@@ -408,8 +439,10 @@ impl Render<'_> {
                 self.vars.or_nonempty("__color_status_fail_fg", "black"),
             )
         };
-        let icon = pill::prompt_escape(&format!(" {}", pill::status_icon(&self.vars, success)));
-        pill::section_standalone(&self.vars, self.depth, bg, fg, &icon, place)
+        let icon = self
+            .paint
+            .escape(&format!(" {}", pill::status_icon(&self.vars, success)));
+        pill::section_standalone(&self.vars, self.paint, bg, fg, &icon, place)
     }
 
     /// `__gpy_segment_git`: serve the instant cache, ask the agent on a cold
@@ -420,13 +453,18 @@ impl Render<'_> {
         let Some(root) = self.git_root.clone() else {
             return Drawn::plain(String::new());
         };
-        let Some(entry) = read_entry(&root, &suffix, prev_bg, "git") else {
+        let Some(entry) = read_entry(&root, &suffix, prev_bg, "git", self.dialect) else {
             if !self.link.enabled() {
                 return self.oneshot_git(place);
             }
             let request = self.data_request("git", place, prev_bg, true);
-            if let Reply::Text(text) = self.link.send(&request, Some(link::cold_timeout_ms())) {
-                return Drawn::plain(text);
+            match self.link.send(&request, Some(link::cold_timeout_ms())) {
+                Reply::Text(text) => return Drawn::plain(text),
+                // Zsh: refused for good (a denied cwd), so a refresh would be too.
+                Reply::Refused if self.dialect == Dialect::Zsh => {
+                    return Drawn::plain(String::new());
+                }
+                _ => {}
             }
             self.refresh("git", &suffix, "", place, prev_bg);
             return Drawn::plain(String::new());
@@ -465,7 +503,7 @@ impl Render<'_> {
         let suffix = variant_suffix("lang", place);
         let Some(entry) = self
             .lang_key()
-            .and_then(|key| read_entry(&key, &suffix, prev_bg, "lang"))
+            .and_then(|key| read_entry(&key, &suffix, prev_bg, "lang", self.dialect))
         else {
             self.refresh("lang", &suffix, "", place, prev_bg);
             return String::new();
@@ -489,7 +527,7 @@ impl Render<'_> {
         let request = OneshotRequest {
             request_type: OneshotKind::GitStatus,
             path: self.pwd.to_string_lossy().into_owned(),
-            format: Format::BashPrompt,
+            format: self.dialect.format(),
             is_last: place.is_last,
             is_first: place.is_first,
             benchmark_mode: false,
@@ -511,7 +549,7 @@ impl Render<'_> {
         let mut request = json!({
             "op": op,
             "cwd": self.pwd.to_string_lossy(),
-            "format": "bash-prompt",
+            "format": self.dialect.request_format(),
         });
         if let Some(map) = request.as_object_mut() {
             if place.is_last {
@@ -551,7 +589,7 @@ impl Render<'_> {
                             root,
                             "git_bg",
                             None,
-                            PromptDialect::BashPrompt,
+                            self.dialect.prompt_dialect(),
                         )
                         .ok()
                     })
@@ -575,7 +613,7 @@ impl Render<'_> {
     /// Render `response` at `place` after a segment with background
     /// `prev_bg`, as the agent's `render_response` does; empty on failure.
     fn render_response(&self, response: &Response, place: Place, prev_bg: &str) -> String {
-        let format = Format::BashPrompt;
+        let format = self.dialect.format();
         let position =
             SegmentPosition::new(IsLast::from(place.is_last), IsFirst::from(place.is_first));
         let directory = DirectoryEnv::for_response(response, format, &self.config.ui.directory);
@@ -602,8 +640,8 @@ fn variant_suffix(base: &str, place: Place) -> String {
 }
 
 /// Whether the agent's presence marker for `base` exists under `key`.
-fn marker_present(key: &Path, base: &str) -> bool {
-    InstantPromptCache::presence_marker_for_dir(key, base, PromptDialect::BashPrompt)
+fn marker_present(key: &Path, base: &str, dialect: Dialect) -> bool {
+    InstantPromptCache::presence_marker_for_dir(key, base, dialect.prompt_dialect())
         .is_ok_and(|path| path.is_file())
 }
 
@@ -617,8 +655,14 @@ struct Entry {
 }
 
 /// Read the entry for `suffix` under `key`, falling back to `.none`.
-fn read_entry(key: &Path, suffix: &str, prev_bg: &str, base: &str) -> Option<Entry> {
-    let dialect = PromptDialect::BashPrompt;
+fn read_entry(
+    key: &Path,
+    suffix: &str,
+    prev_bg: &str,
+    base: &str,
+    shell: Dialect,
+) -> Option<Entry> {
+    let dialect = shell.prompt_dialect();
     let exact = InstantPromptCache::cache_file_for_dir(
         key,
         suffix,
