@@ -6,9 +6,11 @@
 # agent up it must print exactly the PS1 __gpy_render_prompt prints: for every
 # builtin theme, for an overlay that drops the clock and status templates (so
 # the shell's local pills draw), on success and failure, with and without a
-# duration pill, inside a repository and outside one. With the agent off it
-# renders git through its in-process oneshot, and a script segment sends the
-# render back to the shell path.
+# duration pill, inside a repository and outside one, and with script
+# segments (escaped text, an icon, a variant, an own close cap). The exec path
+# runs a script once per command, and its circuit breaker trips as the
+# shell's does. With the agent off it renders git through its in-process
+# oneshot, and a segment it cannot draw sends the render back to the shell.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -94,9 +96,106 @@ GPY_AGENT_ENABLED=0 GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
 check "agent off: the exec path renders the branch" yes \
     "$([[ "$PS1" == *main* ]] && echo yes || echo "no (PS1=[$PS1])")"
 
-# A segment the binary cannot draw hands the render back (exit 3).
+# Script segments: one plugin, styled by a theme overlay.
+PLUG="$XDG_CONFIG_HOME/gpy/plugins/ptest"
+MARKS="$SHELL_E2E_ROOT/pseg-runs"
+mkdir -p "$PLUG/bin" "$PLUG/segments"
+printf 'id = "ptest"\nname = "ptest"\nversion = "0.1.0"\napi_version = "v1"\nentry_type = "script"\nprovided_segments = ["pseg", "pvar", "pslow"]\n' \
+    >"$PLUG/plugin.toml"
+printf 'command = "bin/pseg.sh"\ninputs = ["pwd"]\nenv = ["PTEST_MARKS"]\nttl_secs = 0\ntimeout_ms = 500\n' \
+    >"$PLUG/segments/pseg.toml"
+printf 'command = "bin/pvar.sh"\nttl_secs = 3600\ntimeout_ms = 500\n' >"$PLUG/segments/pvar.toml"
+printf 'command = "bin/pslow.sh"\nttl_secs = 0\ntimeout_ms = 50\n' >"$PLUG/segments/pslow.toml"
+# shellcheck disable=SC2016  # the scripts expand their own variables
+printf '#!/bin/sh\nprintf . >>"$PTEST_MARKS"\nprintf '\''in %%s $HOME `x` \\\\\\n'\'' "${GPY_PWD##*/}"\n' \
+    >"$PLUG/bin/pseg.sh"
+printf '#!/bin/sh\nprintf '\''v1\\nwarn\\n'\''\n' >"$PLUG/bin/pvar.sh"
+printf '#!/bin/sh\nexec sleep 1\n' >"$PLUG/bin/pslow.sh"
+chmod -R go-w "$PLUG"
+export PTEST_MARKS="$MARKS"
+cat >"$XDG_CONFIG_HOME/gpy/themes/scripts.toml" <<'EOF'
+extends = "default"
+[segments.pseg]
+icon = "p$"
+bg_color = "blue"
+text_color = "white"
+[segments.pseg.close]
+icon = ">"
+icon_color = "match_bg"
+bg_color = "black"
+[segments.pvar]
+bg_color = "green"
+warn_bg_color = "yellow"
+warn_icon = "w`"
+EOF
+
+runs() {
+    if [[ -f "$MARKS" ]]; then wc -c <"$MARKS" | tr -d ' '; else echo 0; fi
+}
+# `gpy prompt` with this shell's script arguments and command token $1.
+exec_prompt() {
+    gpy prompt bash --status 0 --pid "$$" --bash "$BASH" --runner "$ROOT/bash/core/g_runner.bash" \
+        --cmd "$1" "${@:2}"
+}
+
+cd "$SHELL_E2E_REPO" || exit 1
+for theme in scripts starship; do
+    write_config "$theme" '"pseg", "directory", "pvar", "git"'
+    "$SHELL_E2E_AGENT_BIN" config reload >/dev/null 2>&1
+    gpy-prompt-reload || fail "$theme: shell reload"
+    __gpy_resolve_pwd
+    __gpy_dir_cache_key="" __gpy_char_cache_key=""
+    __gpy_g_first=1
+    __gpy_g_maybe_run
+    __gpy_render_prompt 0
+    shell_ps1="$PS1"
+    PS1=""
+    __gpy_g_first=1
+    GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+    check "$theme, script segments: the exec path renders" 0 "$?"
+    check "$theme, script segments: PS1 matches the shell renderer" "$shell_ps1" "$PS1"
+    [[ "$PS1" == *'in '"${SHELL_E2E_REPO##*/}"* && "$PS1" == *v1* ]] ||
+        fail "$theme: script text missing from PS1 [$PS1]"
+    if [[ "$theme" == scripts ]]; then
+        # Escaped text, the variant's icon and the own close cap.
+        # shellcheck disable=SC2016,SC1003  # literal PS1 escapes
+        [[ "$PS1" == *'p\\$ in '*' \\$HOME \\`x\\` \\\\'* && "$PS1" == *'w\\` v1'* && "$PS1" == *'>'* ]] ||
+            fail "$theme: script pill styling missing from PS1 [$PS1]"
+    fi
+done
+
+# Once per command: a redraw (same token, same directory) runs nothing; a
+# new command or a `cd` runs the script again.
+before=$(runs)
+exec_prompt 41 --reload >/dev/null
+exec_prompt 41 >/dev/null
+check "script: a redraw runs nothing" $((before + 1)) "$(runs)"
+exec_prompt 42 >/dev/null
+check "script: a new command runs it again" $((before + 2)) "$(runs)"
+cd "$PLAIN_DIR" || exit 1
+exec_prompt 42 >/dev/null
+check "script: a cd runs it again" $((before + 3)) "$(runs)"
+cd "$SHELL_E2E_REPO" || exit 1
+
+# Circuit breaker: the second timeout in a row disables the segment, with
+# one line on stderr, until the next theme load.
+write_config scripts '"pslow", "directory"'
+exec_prompt 50 --reload >/dev/null 2>"$SHELL_E2E_ROOT/strike1"
+exec_prompt 51 >/dev/null 2>"$SHELL_E2E_ROOT/strike2"
+exec_prompt 52 >/dev/null 2>"$SHELL_E2E_ROOT/strike3"
+check "breaker: no notice after one timeout" "" "$(cat "$SHELL_E2E_ROOT/strike1")"
+check "breaker: the second timeout disables the segment" \
+    "gpy: script segment pslow disabled for this shell after 2 failures (timeout or output over 4096 bytes)" \
+    "$(cat "$SHELL_E2E_ROOT/strike2")"
+check "breaker: the notice is printed once" "" "$(cat "$SHELL_E2E_ROOT/strike3")"
+
+# Without the script arguments, or with a segment it cannot draw, the
+# binary hands the render back (exit 3).
+write_config default '"directory", "pseg"'
+check "script segment without script arguments: exit 3" 3 \
+    "$(gpy prompt bash --status 0 --pid $$ >/dev/null 2>&1; echo $?)"
 write_config default '"directory", "username"'
-check "script segment: the binary declines with exit 3" 3 \
+check "unknown segment: the binary declines with exit 3" 3 \
     "$(gpy prompt bash --status 0 --pid $$ >/dev/null 2>&1; echo $?)"
 
 test_finish "gpy prompt bash matches the shell renderer"

@@ -27,6 +27,11 @@ impl ShellVars {
         }
     }
 
+    /// The value when set, even empty (`${name+x}` holds).
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
     /// Whether `name` holds a non-empty value (`[[ -n ${name:-} ]]`).
     pub(crate) fn is_set(&self, name: &str) -> bool {
         self.0.get(name).is_some_and(|value| !value.is_empty())

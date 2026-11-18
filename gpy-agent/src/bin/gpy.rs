@@ -50,7 +50,7 @@ enum Commands {
 
     /// Print the Bash prompt (PS1) for the current directory. Used by the
     /// shell integration when `GPY_PROMPT_EXEC=1`; exits 3 when an enabled
-    /// segment needs the shell's own renderer (script segments).
+    /// segment needs the shell's own renderer.
     #[cfg(unix)]
     #[command(hide = true)]
     Prompt {
@@ -66,6 +66,18 @@ enum Commands {
         /// PID of the shell (names its refresh-throttle stamps)
         #[arg(long)]
         pid: u32,
+        /// The Bash that runs script segments (the shell's `$BASH`)
+        #[arg(long, requires_all = ["runner", "cmd"])]
+        bash: Option<std::path::PathBuf>,
+        /// The integration's `g_runner.bash`
+        #[arg(long, requires_all = ["bash", "cmd"])]
+        runner: Option<std::path::PathBuf>,
+        /// A token that changes with every command the shell ran
+        #[arg(long, requires_all = ["bash", "runner"])]
+        cmd: Option<String>,
+        /// The theme was (re)loaded since the last prompt
+        #[arg(long, requires = "cmd")]
+        reload: bool,
     },
 
     /// Manage themes
@@ -556,13 +568,11 @@ fn run_debug(action: DebugAction) -> Result<()> {
 /// # Errors
 /// Propagates theme loading and stdout failures.
 #[cfg(unix)]
-fn run_prompt(status: i32, duration_ms: Option<u64>, pid: u32) -> Result<ExitCode> {
-    let args = gpy_agent::prompt::PromptArgs {
-        status,
-        duration_ms,
-        pid,
-    };
-    let Some(ps1) = gpy_agent::prompt::render_bash(args)? else {
+fn run_prompt(
+    args: gpy_agent::prompt::PromptArgs,
+    script: Option<&gpy_agent::prompt::ScriptArgs>,
+) -> Result<ExitCode> {
+    let Some(ps1) = gpy_agent::prompt::render_bash(args, script)? else {
         return Ok(ExitCode::from(3));
     };
     std::io::Write::write_all(&mut std::io::stdout().lock(), ps1.as_bytes())?;
@@ -686,7 +696,29 @@ fn run(command: Commands) -> Result<ExitCode> {
             status,
             duration_ms,
             pid,
-        } => return run_prompt(status, duration_ms, pid),
+            bash,
+            runner,
+            cmd,
+            reload,
+        } => {
+            let script = bash
+                .zip(runner)
+                .zip(cmd)
+                .map(
+                    |((interpreter, file), token)| gpy_agent::prompt::ScriptArgs {
+                        bash: interpreter,
+                        runner: file,
+                        cmd: token,
+                        reload,
+                    },
+                );
+            let args = gpy_agent::prompt::PromptArgs {
+                status,
+                duration_ms,
+                pid,
+            };
+            return run_prompt(args, script.as_ref());
+        }
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {
             shell,

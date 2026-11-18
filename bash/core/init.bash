@@ -198,11 +198,23 @@ __gpy_precmd() {
     # Before rendering, so a reload shows in this prompt.
     __gpy_consume_shell_flags
 
-    # Script (G) segments: once per command, here in the parent shell,
-    # before __gpy_render_prompt fixes positions.
-    __gpy_g_maybe_run
-
-    __gpy_render_prompt_exec "$__gpy_pc_status" || __gpy_render_prompt "$__gpy_pc_status"
+    # GPY_PROMPT_EXEC: one `gpy prompt` draws PS1 and runs the script
+    # segments. When it declines (1), the shell runs them and renders; when
+    # it failed (2), it may have started them, so the shell renders without.
+    __gpy_render_prompt_exec "$__gpy_pc_status"
+    case $? in
+        0) ;;
+        2)
+            __gpy_g_hide
+            __gpy_render_prompt "$__gpy_pc_status"
+            ;;
+        *)
+            # Script (G) segments: once per command, here in the parent
+            # shell, before __gpy_render_prompt fixes positions.
+            __gpy_g_maybe_run
+            __gpy_render_prompt "$__gpy_pc_status"
+            ;;
+    esac
 
     # Retry until registered (agent started late or restarted); one `test -S`
     # when nothing listens.
@@ -331,20 +343,30 @@ __gpy_cli_binary_into() {
 
 # GPY_PROMPT_EXEC=1 (opt-in): one `gpy prompt bash` exec draws PS1 instead of
 # a subshell per segment (#1247). It reads the same export values, cache
-# files and refresh-throttle stamps as __gpy_render_prompt. Status 1 when off,
-# when a script segment is enabled (the binary does not draw those yet and
-# exits 3), or when the binary is missing or fails: the caller then draws PS1
-# itself, so the prompt never goes blank.
+# files and refresh-throttle stamps as __gpy_render_prompt, and runs the
+# script segments itself (core/g_runner.bash, under this shell's Bash).
+# Status 1 when off, when the binary is missing or when it declines (exit 3:
+# an enabled segment it cannot draw); the caller then does all of it. Status
+# 2 when it failed otherwise. Either way the prompt never goes blank.
 __gpy_render_prompt_exec() {
-    local __gpy_rpe_on __gpy_rpe_cli __gpy_rpe_out
+    local __gpy_rpe_on __gpy_rpe_cli __gpy_rpe_out __gpy_rpe_cmd __gpy_rpe_rc
     __gpy_flag_value "${GPY_PROMPT_EXEC-}" off __gpy_rpe_on
     [[ "$__gpy_rpe_on" == on ]] || return 1
-    # shellcheck disable=SC2154  # set by g_segments.bash
-    ((${#__gpy_g_toks[@]})) && return 1
     __gpy_cli_binary_into __gpy_rpe_cli || return 1
     local -a __gpy_rpe_args=(prompt bash --status "$1" --pid "$$")
     [[ -n "$__gpy_cmd_duration" ]] && __gpy_rpe_args+=(--duration-ms "$__gpy_cmd_duration")
-    __gpy_rpe_out=$("$__gpy_rpe_cli" "${__gpy_rpe_args[@]}" 2>/dev/null) || return 1
+    # shellcheck disable=SC2154  # set by g_segments.bash
+    if ((${#__gpy_g_toks[@]})) && [[ $BASH == /* ]]; then
+        __gpy_g_cmd_token __gpy_rpe_cmd
+        __gpy_rpe_args+=(--bash "$BASH" --runner "$__gpy_g_runner_file" --cmd "$__gpy_rpe_cmd")
+        [[ -n $__gpy_g_first ]] && __gpy_rpe_args+=(--reload)
+    fi
+    # stderr stays the terminal: a tripped script segment says so there.
+    __gpy_rpe_out=$("$__gpy_rpe_cli" "${__gpy_rpe_args[@]}")
+    __gpy_rpe_rc=$?
+    ((__gpy_rpe_rc == 3)) && return 1
+    __gpy_g_exec_done
+    ((__gpy_rpe_rc == 0)) || return 2
     # Read by the status segment's bg on the shell path; keep them in step.
     __gpy_last_status="$1"
     shopt -s promptvars

@@ -215,12 +215,14 @@ pub(super) fn assigned_name(line: &str) -> Option<&str> {
         .then_some(name)
 }
 
-/// The values the built-in assignments give each variable for Bash, as the
-/// shell sees them after sourcing the export: derived by running
-/// [`append_builtin_assignments`] and undoing its one escape, so `gpy prompt`
-/// reads exactly what the Bash renderer reads. An `unset` leaves no entry.
+/// The values the built-in and plugin segment style assignments give each
+/// variable for Bash, as the shell sees them after sourcing the export:
+/// derived by running [`append_builtin_assignments`] and
+/// [`append_plugin_segment_assignments`] and undoing their one escape, so
+/// `gpy prompt` reads exactly what the Bash renderer reads. An `unset` leaves
+/// no entry.
 #[cfg(unix)]
-pub(crate) fn builtin_shell_values(
+pub(crate) fn prompt_shell_values(
     theme: &ThemeConfig,
     theme_name: &str,
     config: &Config,
@@ -230,15 +232,10 @@ pub(crate) fn builtin_shell_values(
         shell: Shell::Bash,
         palette,
     };
+    let glyphs = Glyphs::from(&config.ui);
     let mut output = String::new();
-    append_builtin_assignments(
-        &mut output,
-        theme,
-        theme_name,
-        config,
-        colors,
-        Glyphs::from(&config.ui),
-    );
+    append_builtin_assignments(&mut output, theme, theme_name, config, colors, glyphs);
+    append_plugin_segment_assignments(&mut output, colors, glyphs, &theme.segments.plugin);
     output
         .lines()
         .filter_map(|line| {

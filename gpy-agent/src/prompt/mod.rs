@@ -3,12 +3,14 @@
 //! follows `bash/core/init.bash`'s `__gpy_render_prompt` step for step and
 //! reads the same theme-export values, cache files, refresh-throttle stamps
 //! and late window, so the two render paths print the same `PS1` and can run
-//! side by side. Script segments are not drawn here yet: the shell keeps its
-//! own path while any is enabled.
+//! side by side. Script segments run through [`script`].
 
 mod link;
 mod pill;
+mod script;
 mod vars;
+
+pub use script::ScriptArgs;
 
 use crate::Result;
 use crate::agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request};
@@ -21,9 +23,11 @@ use crate::formatter::{
 use crate::ipc::Response;
 use crate::shell::Shell;
 use crate::template::{Palette, parse_color};
+use crate::theme::export::{ScriptSegmentExport, ScriptSegmentExports, collect_script_segments};
 use crate::theme::{ThemeConfig, load::load_theme};
 use link::{Link, Reply};
 use pill::{Depth, Place};
+use script::{Inputs, Scripts};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use vars::ShellVars;
@@ -49,36 +53,65 @@ const BUILTIN_SEGMENTS: [&str; 6] = [
     "status",
 ];
 
-/// Whether `gpy prompt` can draw every enabled segment of `config`: false
-/// while a script or plugin segment is enabled.
-fn covers(config: &Config) -> bool {
-    config
-        .effective_segments()
-        .all(|segment| BUILTIN_SEGMENTS.contains(&segment))
+/// Whether `gpy prompt` can draw every enabled segment of `config`, given
+/// the exported script segments: false while any other plugin segment is
+/// enabled.
+fn covers(config: &Config, scripts: &[ScriptSegmentExport]) -> bool {
+    config.effective_segments().all(|segment| {
+        BUILTIN_SEGMENTS.contains(&segment)
+            || scripts
+                .iter()
+                .any(|script| script.name.eq_ignore_ascii_case(segment))
+    })
 }
 
 /// Render the Bash `PS1` for the current directory (`$PWD`); `None` when an
-/// enabled segment needs the shell's own renderer.
+/// enabled segment needs the shell's own renderer, or when a script segment
+/// is enabled and the shell passed no `script` arguments.
 ///
 /// # Errors
 /// Returns an error if neither the configured nor the `default` theme loads.
-pub fn render_bash(args: PromptArgs) -> Result<Option<String>> {
+pub fn render_bash(args: PromptArgs, script: Option<&ScriptArgs>) -> Result<Option<String>> {
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
         Config::default()
     });
-    if !covers(&config) {
+    // Plugin discovery reads every manifest: only when a segment needs it.
+    let exports = if config
+        .effective_segments()
+        .all(|segment| BUILTIN_SEGMENTS.contains(&segment))
+    {
+        ScriptSegmentExports::default()
+    } else {
+        collect_script_segments(&crate::plugin::discover_plugins(), &config)
+    };
+    if !covers(&config, &exports.segments) || (!exports.segments.is_empty() && script.is_none()) {
         return Ok(None);
     }
     let theme = load_theme(config.ui.theme.as_str()).or_else(|_| load_theme("default"))?;
     let palette = crate::palette::active_palette(&config);
-    let vars = ShellVars::new(crate::theme::export::builtin_shell_values(
+    let vars = ShellVars::new(crate::theme::export::prompt_shell_values(
         &theme,
         config.ui.theme.as_str(),
         &config,
         &palette,
     ));
     let pwd = logical_pwd();
+    let scripts = script
+        .filter(|_| !exports.segments.is_empty())
+        .map(|given| {
+            Scripts::run(
+                &exports.sh,
+                exports.segments,
+                given,
+                args.pid,
+                &Inputs {
+                    pwd: &pwd.to_string_lossy(),
+                    duration_ms: args.duration_ms,
+                    prompt_icons: vars.or("__prompt_icons", ""),
+                },
+            )
+        });
     let canonical = std::fs::canonicalize(&pwd).ok();
     let git_root = canonical.as_deref().and_then(find_git_root);
     let enabled = agent_enabled(&config);
@@ -97,6 +130,7 @@ pub fn render_bash(args: PromptArgs) -> Result<Option<String>> {
         pwd,
         canonical,
         git_root,
+        scripts,
         oneshot_used: false,
     };
     Ok(Some(render.prompt()))
@@ -161,6 +195,8 @@ struct Render<'a> {
     /// `$PWD` with symlinks resolved, when it resolves.
     canonical: Option<PathBuf>,
     git_root: Option<PathBuf>,
+    /// The script segments after this prompt's run.
+    scripts: Option<Scripts>,
     /// One in-process oneshot per render (`__gpy_oneshot_claim`).
     oneshot_used: bool,
 }
@@ -278,7 +314,10 @@ impl Render<'_> {
                 }
                 present
             }
-            _ => false,
+            _ => self
+                .scripts
+                .as_ref()
+                .is_some_and(|scripts| scripts.visible(segment)),
         }
     }
 
@@ -318,7 +357,9 @@ impl Render<'_> {
             )),
             "git" => self.git(place, prev_bg),
             "language" => Drawn::plain(self.language(place, prev_bg)),
-            _ => Drawn::plain(String::new()),
+            _ => Drawn::plain(self.scripts.as_ref().map_or_else(String::new, |scripts| {
+                scripts.pill(&self.vars, self.depth, segment, place)
+            })),
         }
     }
 
@@ -524,7 +565,10 @@ impl Render<'_> {
             "clock" => var("__color_clock_bg", ""),
             "status" if self.args.status == 0_i32 => var("__color_status_ok_bg", "green"),
             "status" => var("__color_status_fail_bg", "red"),
-            _ => String::new(),
+            _ => self
+                .scripts
+                .as_ref()
+                .map_or_else(String::new, |scripts| scripts.bg(&self.vars, segment)),
         }
     }
 

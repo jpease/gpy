@@ -61,11 +61,11 @@ fn prompt_symbol_export_drops_control_characters() {
 /// a symbol with every character the export escapes comes back unescaped.
 #[cfg(unix)]
 #[test]
-fn builtin_shell_values_undo_the_export_escape() {
+fn prompt_shell_values_undo_the_export_escape() {
     let mut theme = ThemeConfig::default();
     theme.segments.character.success_symbol = r#"a\b$c"d`e"#.to_owned();
 
-    let values = super::builtin_shell_values(&theme, "t", &Config::default(), &Palette::default());
+    let values = super::prompt_shell_values(&theme, "t", &Config::default(), &Palette::default());
 
     assert_eq!(
         values.get("__icon_prompt").map(String::as_str),
