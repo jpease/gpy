@@ -48,15 +48,16 @@ enum Commands {
     #[command(after_help = commands::exit_codes::STATUS_HELP)]
     Status,
 
-    /// Print the Bash prompt (PS1) for the current directory. Used by the
-    /// shell integration when `GPY_PROMPT_EXEC=1`; exits 3 when an enabled
-    /// segment needs the shell's own renderer.
+    /// Print the Bash `PS1` or the Zsh `PROMPT` for the current directory.
+    /// Used by the shell integrations when `GPY_PROMPT_EXEC=1`; exits 3 when
+    /// an enabled segment needs the shell's own renderer. For Zsh, the
+    /// prompt symbol alone (the transient prompt) follows after a 0x1F byte.
     #[cfg(unix)]
     #[command(hide = true)]
     Prompt {
-        /// Shell to render for (only `bash` so far)
-        #[arg(value_parser = ["bash"])]
-        shell: String,
+        /// Shell to render for
+        #[arg(value_enum)]
+        shell: gpy_agent::prompt::Dialect,
         /// Exit status of the last command
         #[arg(long, allow_negative_numbers = true)]
         status: i32,
@@ -66,7 +67,7 @@ enum Commands {
         /// PID of the shell (names its refresh-throttle stamps)
         #[arg(long)]
         pid: u32,
-        /// The Bash that runs script segments (the shell's `$BASH`)
+        /// The Bash that runs script segments
         #[arg(long, requires_all = ["runner", "cmd"])]
         bash: Option<std::path::PathBuf>,
         /// The integration's `g_runner.bash`
@@ -78,6 +79,9 @@ enum Commands {
         /// The theme was (re)loaded since the last prompt
         #[arg(long, requires = "cmd")]
         reload: bool,
+        /// Zsh: the last command's duration, for scripts' `cmd_duration` input
+        #[arg(long, requires = "cmd")]
+        script_duration_ms: Option<u64>,
     },
 
     /// Manage themes
@@ -562,20 +566,26 @@ fn run_debug(action: DebugAction) -> Result<()> {
     }
 }
 
-/// `gpy prompt bash`: print `PS1`, or exit 3 so the shell renders itself
-/// when an enabled segment needs its own renderer.
+/// `gpy prompt <shell>`: print the prompt, or exit 3 so the shell renders
+/// itself when an enabled segment needs its own renderer.
 ///
 /// # Errors
 /// Propagates theme loading and stdout failures.
 #[cfg(unix)]
 fn run_prompt(
+    dialect: gpy_agent::prompt::Dialect,
     args: gpy_agent::prompt::PromptArgs,
     script: Option<&gpy_agent::prompt::ScriptArgs>,
 ) -> Result<ExitCode> {
-    let Some(ps1) = gpy_agent::prompt::render_bash(args, script)? else {
+    let Some(rendered) = gpy_agent::prompt::render(dialect, args, script)? else {
         return Ok(ExitCode::from(3));
     };
-    std::io::Write::write_all(&mut std::io::stdout().lock(), ps1.as_bytes())?;
+    let mut out = rendered.prompt;
+    if dialect == gpy_agent::prompt::Dialect::Zsh {
+        out.push('\u{1f}');
+        out.push_str(&rendered.tail);
+    }
+    std::io::Write::write_all(&mut std::io::stdout().lock(), out.as_bytes())?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -692,7 +702,7 @@ fn run(command: Commands) -> Result<ExitCode> {
         Commands::Doctor => commands::doctor::run()?,
         #[cfg(unix)]
         Commands::Prompt {
-            shell: _,
+            shell,
             status,
             duration_ms,
             pid,
@@ -700,6 +710,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             runner,
             cmd,
             reload,
+            script_duration_ms,
         } => {
             let script = bash
                 .zip(runner)
@@ -710,6 +721,7 @@ fn run(command: Commands) -> Result<ExitCode> {
                         runner: file,
                         cmd: token,
                         reload,
+                        duration_ms: script_duration_ms,
                     },
                 );
             let args = gpy_agent::prompt::PromptArgs {
@@ -717,7 +729,7 @@ fn run(command: Commands) -> Result<ExitCode> {
                 duration_ms,
                 pid,
             };
-            return run_prompt(args, script.as_ref());
+            return run_prompt(shell, args, script.as_ref());
         }
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {

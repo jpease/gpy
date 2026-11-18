@@ -842,6 +842,17 @@ function __gpy_agent_binary_into() {
     fi
 }
 
+# The `gpy` command into variable $1, resolved as gpy-agent is. Fork-free.
+function __gpy_cli_binary_into() {
+    if (( ${+commands[gpy]} )); then
+        typeset -g "$1"=gpy
+    elif [[ -n "${HOME:-}" && -x "$HOME/.local/bin/gpy" ]]; then
+        typeset -g "$1"="$HOME/.local/bin/gpy"
+    else
+        return 1
+    fi
+}
+
 # Returns __gpy_seg_status_oneshot whenever it forked, output or not.
 function __gpy_fallback_oneshot() {
     local op=$1

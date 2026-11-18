@@ -10,7 +10,7 @@
 //! also forwards unexported ones.
 
 use super::link::now_secs;
-use super::pill::{self, Caps, Depth, Place};
+use super::pill::{self, Caps, Paint, Place};
 use super::vars::ShellVars;
 use crate::theme::export::ScriptSegmentExport;
 use serde::{Deserialize, Serialize};
@@ -26,15 +26,20 @@ use std::time::Duration;
 /// What the shell passes for its script segments.
 #[derive(Debug, Clone)]
 pub struct ScriptArgs {
-    /// The Bash that runs `g_runner.bash`: the shell's own `$BASH`.
+    /// The Bash that runs `g_runner.bash`: the shell's own `$BASH`, or for
+    /// Zsh the first Bash 4 or later on `PATH`.
     pub bash: PathBuf,
     /// `bash/core/g_runner.bash` of the loaded integration.
     pub runner: PathBuf,
-    /// A token that changes with every command the shell ran (`\#`).
+    /// A token that changes with every command the shell ran.
     pub cmd: String,
     /// The theme was (re)loaded since the last prompt: the run is due and
-    /// every circuit breaker is reset (`__gpy_g_sync`).
+    /// every circuit breaker is reset (`__gpy_g_sync`, `__gpy_g_reload`).
     pub reload: bool,
+    /// Zsh: the last command's duration for the `cmd_duration` input, kept
+    /// on a prompt due only to a `cd`; `None` before the first command.
+    /// Bash scripts get [`PromptArgs::duration_ms`](super::PromptArgs).
+    pub duration_ms: Option<u64>,
 }
 
 /// The second timeout or over-cap result in a row disables a segment.
@@ -493,7 +498,7 @@ impl Scripts {
     }
 
     /// `__gpy_g_render`: the pill of `word` at `place`.
-    pub(super) fn pill(&self, vars: &ShellVars, depth: Depth, word: &str, place: Place) -> String {
+    pub(super) fn pill(&self, vars: &ShellVars, paint: Paint, word: &str, place: Place) -> String {
         let Some((segment, state)) = self.lookup(word) else {
             return String::new();
         };
@@ -503,11 +508,11 @@ impl Scripts {
         if valid_variant(&state.variant) && !state.variant.is_empty() {
             icon = vars.or_nonempty(&format!("__icon_{token}_{}", state.variant), icon);
         }
-        let text = pill::prompt_escape(&state.text);
+        let text = paint.escape(&state.text);
         let label = if icon.is_empty() {
             format!(" {text}")
         } else {
-            format!(" {} {text}", pill::prompt_escape(icon))
+            format!(" {} {text}", paint.escape(icon))
         };
         let cap = |side: &str| {
             let prefix = format!("__gpy_segment_{token}_{side}");
@@ -523,7 +528,7 @@ impl Scripts {
             open: cap("open"),
             close: cap("close"),
         };
-        pill::section_with_caps(vars, depth, colors, &label, place, &caps)
+        pill::section_with_caps(vars, paint, colors, &label, place, &caps)
     }
 }
 
