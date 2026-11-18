@@ -621,6 +621,37 @@ impl InstantPromptCache {
             cache_file_parts(&cache_dir, &key, &format!("{variant}.{token}.{ext}"));
         Ok(parent.join(file_name))
     }
+
+    /// The presence marker for `base` (`git` or `lang`) of the project at
+    /// `dir` in `dialect`: what a shell's omit check tests.
+    /// # Errors
+    /// Returns an error if the cache directory cannot be determined.
+    pub fn presence_marker_for_dir(
+        dir: &Path,
+        base: &str,
+        dialect: PromptDialect,
+    ) -> Result<PathBuf> {
+        let cache_dir = get_instant_cache_dir()?;
+        let key = path_to_cache_key(dir);
+        let ext = dialect.cache_ext();
+        let (parent, file_name) =
+            cache_file_parts(&cache_dir, &key, &format!("{base}.{PRESENCE_TOKEN}.{ext}"));
+        Ok(parent.join(file_name))
+    }
+
+    /// The flat cache key of `path` (no chunking), as the shells' refresh
+    /// throttle names its buckets.
+    #[must_use]
+    pub fn cache_key(path: &Path) -> String {
+        path_to_cache_key(path)
+    }
+
+    /// The filename token for `prev_bg` (`none` when empty), as the shells'
+    /// `__gpy_prev_bg_token` spells it.
+    #[must_use]
+    pub fn prev_bg_token(prev_bg: &str) -> String {
+        prev_bg_token((!prev_bg.is_empty()).then_some(prev_bg))
+    }
 }
 
 /// The presence marker of `kind` for `key` in `dialect`.

@@ -52,6 +52,9 @@ pub mod plugin;
 pub mod process;
 /// Simple profiling utilities for performance analysis.
 pub mod profiling;
+/// `gpy prompt`: the whole Bash prompt from one process.
+#[cfg(unix)]
+pub mod prompt;
 /// Security features like path validation and rate limiting.
 pub mod security;
 /// Shell identification and syntax templates.

@@ -202,7 +202,7 @@ __gpy_precmd() {
     # before __gpy_render_prompt fixes positions.
     __gpy_g_maybe_run
 
-    __gpy_render_prompt "$__gpy_pc_status"
+    __gpy_render_prompt_exec "$__gpy_pc_status" || __gpy_render_prompt "$__gpy_pc_status"
 
     # Retry until registered (agent started late or restarted); one `test -S`
     # when nothing listens.
@@ -315,6 +315,40 @@ __gpy_pill_segment_output() {
     fi
     printf -v "$out_var" '%s' "$result"
     return "$seg_status"
+}
+
+# The `gpy` command into variable $1: PATH first, then ~/.local/bin, as
+# __gpy_agent_binary_into resolves gpy-agent. Status 1 when neither exists.
+__gpy_cli_binary_into() {
+    if command -v gpy &>/dev/null; then
+        printf -v "$1" '%s' gpy
+    elif [[ -n "${HOME:-}" && -x "$HOME/.local/bin/gpy" ]]; then
+        printf -v "$1" '%s' "$HOME/.local/bin/gpy"
+    else
+        return 1
+    fi
+}
+
+# GPY_PROMPT_EXEC=1 (opt-in): one `gpy prompt bash` exec draws PS1 instead of
+# a subshell per segment (#1247). It reads the same export values, cache
+# files and refresh-throttle stamps as __gpy_render_prompt. Status 1 when off,
+# when a script segment is enabled (the binary does not draw those yet and
+# exits 3), or when the binary is missing or fails: the caller then draws PS1
+# itself, so the prompt never goes blank.
+__gpy_render_prompt_exec() {
+    local __gpy_rpe_on __gpy_rpe_cli __gpy_rpe_out
+    __gpy_flag_value "${GPY_PROMPT_EXEC-}" off __gpy_rpe_on
+    [[ "$__gpy_rpe_on" == on ]] || return 1
+    # shellcheck disable=SC2154  # set by g_segments.bash
+    ((${#__gpy_g_toks[@]})) && return 1
+    __gpy_cli_binary_into __gpy_rpe_cli || return 1
+    local -a __gpy_rpe_args=(prompt bash --status "$1" --pid "$$")
+    [[ -n "$__gpy_cmd_duration" ]] && __gpy_rpe_args+=(--duration-ms "$__gpy_cmd_duration")
+    __gpy_rpe_out=$("$__gpy_rpe_cli" "${__gpy_rpe_args[@]}" 2>/dev/null) || return 1
+    # Read by the status segment's bg on the shell path; keep them in step.
+    __gpy_last_status="$1"
+    shopt -s promptvars
+    PS1="$__gpy_rpe_out"
 }
 
 __gpy_render_prompt() {

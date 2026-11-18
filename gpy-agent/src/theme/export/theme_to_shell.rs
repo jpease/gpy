@@ -215,6 +215,58 @@ pub(super) fn assigned_name(line: &str) -> Option<&str> {
         .then_some(name)
 }
 
+/// The values the built-in assignments give each variable for Bash, as the
+/// shell sees them after sourcing the export: derived by running
+/// [`append_builtin_assignments`] and undoing its one escape, so `gpy prompt`
+/// reads exactly what the Bash renderer reads. An `unset` leaves no entry.
+#[cfg(unix)]
+pub(crate) fn builtin_shell_values(
+    theme: &ThemeConfig,
+    theme_name: &str,
+    config: &Config,
+    palette: &Palette,
+) -> std::collections::HashMap<String, String> {
+    let colors = ShellColors {
+        shell: Shell::Bash,
+        palette,
+    };
+    let mut output = String::new();
+    append_builtin_assignments(
+        &mut output,
+        theme,
+        theme_name,
+        config,
+        colors,
+        Glyphs::from(&config.ui),
+    );
+    output
+        .lines()
+        .filter_map(|line| {
+            let (name, quoted) = line.split_once('=')?;
+            let value = quoted.strip_prefix('"')?.strip_suffix('"')?;
+            Some((name.to_owned(), unescape_bash_value(value)))
+        })
+        .collect()
+}
+
+/// Undo [`escape_shell_value`](super::shell_assignment::escape_shell_value)
+/// for Bash: drop the backslash before each escaped `\`, `$`, `"` or backtick.
+#[cfg(unix)]
+fn unescape_bash_value(escaped: &str) -> String {
+    let mut out = String::with_capacity(escaped.len());
+    let mut chars = escaped.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(next) = chars.next()
+        {
+            out.push(next);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Serialize a theme into shell assignments. Call order is the export contract,
 /// pinned by snapshots. Every assigned value is escaped once, in
 /// [`ShellAssignment::render`](super::shell_assignment::ShellAssignment::render) or

@@ -56,3 +56,19 @@ fn prompt_symbol_export_drops_control_characters() {
     theme.segments.character.success_symbol = "\u{1b}\u{7}".to_owned();
     assert_eq!(assigned(&bash_export(&theme), "__icon_prompt"), "❯");
 }
+
+/// `gpy prompt` reads the values the shell holds after sourcing the export:
+/// a symbol with every character the export escapes comes back unescaped.
+#[cfg(unix)]
+#[test]
+fn builtin_shell_values_undo_the_export_escape() {
+    let mut theme = ThemeConfig::default();
+    theme.segments.character.success_symbol = r#"a\b$c"d`e"#.to_owned();
+
+    let values = super::builtin_shell_values(&theme, "t", &Config::default(), &Palette::default());
+
+    assert_eq!(
+        values.get("__icon_prompt").map(String::as_str),
+        Some(r#"a\b$c"d`e"#)
+    );
+}
