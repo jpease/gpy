@@ -30,6 +30,7 @@ chmod +x "$SANDBOX/stubs/gpy-agent"
 PATH="$SANDBOX/stubs:$PATH"
 
 source zsh/gpy.zsh
+source tests/lib/shell_render_only.zsh
 
 # $1 with every `%{...%}` region (the non-printing SGR) removed: what is drawn.
 printed() { printf '%s' "$1" | sed -e 's/%{[^%]*%}//g'; }

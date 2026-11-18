@@ -22,6 +22,7 @@ export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 setopt prompt_bang
 source zsh/gpy.zsh
+source tests/lib/shell_render_only.zsh
 
 [[ -o prompt_bang ]]
 check "prompt_bang is still set after GPY loads" 0 $?

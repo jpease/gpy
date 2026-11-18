@@ -36,7 +36,7 @@ typeset -gA __gpy_g_text=() __gpy_g_variant=() __gpy_g_key=() __gpy_g_at=() \
 # __gpy_g_duration: the last command's duration in ms, for the cmd_duration
 # input; set by __gpy_precmd only when a command ran.
 typeset -g __gpy_g_due=1 __gpy_g_pwd="" __gpy_g_cmd_seen="" __gpy_g_duration=""
-# GPY_PROMPT_EXEC: `gpy prompt zsh` runs the scripts and keeps their state
+# `gpy prompt zsh` runs the scripts and keeps their state
 # itself (#1247), in <runtime root>/refresh-throttle/<pid>.scripts. It is
 # told the commands run so far (counted in preexec) and whether the theme
 # was reloaded since its last run.

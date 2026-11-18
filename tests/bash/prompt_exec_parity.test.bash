@@ -2,7 +2,7 @@
 # tests/bash/prompt_exec_parity.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# GPY_PROMPT_EXEC=1 hands PS1 to one `gpy prompt bash` exec (#1247). With the
+# One `gpy prompt bash` exec draws PS1 (#1247). With the
 # agent up it must print exactly the PS1 __gpy_render_prompt prints: for every
 # builtin theme, for an overlay that drops the clock and status templates (so
 # the shell's local pills draw), on success and failure, with and without a
@@ -33,7 +33,7 @@ write_config default "$SEGMENTS"
 shell_e2e_start_agent || exit 1
 # No refresh races between the two renders of one comparison.
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600 GPY_LANGUAGE_CACHE_TTL_SECONDS=3600
-unset GPY_PROMPT_EXEC PROMPT_COMMAND
+unset PROMPT_COMMAND
 source bash/gpy.bash
 
 PLAIN_DIR="$SHELL_E2E_ROOT/plain"
@@ -52,7 +52,7 @@ compare() {
     __gpy_render_prompt "$2"
     shell_ps1="$PS1"
     PS1=""
-    if ! GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec "$2"; then
+    if ! __gpy_render_prompt_exec "$2"; then
         fail "$label: the exec path declined"
         return
     fi
@@ -92,7 +92,7 @@ cd "$SHELL_E2E_REPO" || exit 1
 write_config default "$SEGMENTS"
 gpy-prompt-reload
 PS1=""
-GPY_AGENT_ENABLED=0 GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+GPY_AGENT_ENABLED=0 __gpy_render_prompt_exec 0
 check "agent off: the exec path renders the branch" yes \
     "$([[ "$PS1" == *main* ]] && echo yes || echo "no (PS1=[$PS1])")"
 
@@ -151,7 +151,7 @@ for theme in scripts starship; do
     shell_ps1="$PS1"
     PS1=""
     __gpy_g_first=1
-    GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+    __gpy_render_prompt_exec 0
     check "$theme, script segments: the exec path renders" 0 "$?"
     check "$theme, script segments: PS1 matches the shell renderer" "$shell_ps1" "$PS1"
     [[ "$PS1" == *'in '"${SHELL_E2E_REPO##*/}"* && "$PS1" == *v1* ]] ||
@@ -180,7 +180,17 @@ cd "$SHELL_E2E_REPO" || exit 1
 # Circuit breaker: the second timeout in a row disables the segment, with
 # one line on stderr, until the next theme load.
 write_config scripts '"pslow", "directory"'
+started=${EPOCHREALTIME-}
 exec_prompt 50 --reload >/dev/null 2>"$SHELL_E2E_ROOT/strike1"
+if [[ -n $started ]]; then
+    # The script sleeps 1 s with timeout_ms = 50: the prompt must not wait it out.
+    elapsed_ms=$(((${EPOCHREALTIME/[.,]/} - ${started/[.,]/}) / 1000))
+    if ((elapsed_ms < 500)); then
+        pass "deadline: a hung script costs the prompt its timeout, not its run (${elapsed_ms} ms)"
+    else
+        fail "deadline: gpy prompt waited ${elapsed_ms} ms for a script with timeout_ms = 50"
+    fi
+fi
 exec_prompt 51 >/dev/null 2>"$SHELL_E2E_ROOT/strike2"
 exec_prompt 52 >/dev/null 2>"$SHELL_E2E_ROOT/strike3"
 check "breaker: no notice after one timeout" "" "$(cat "$SHELL_E2E_ROOT/strike1")"

@@ -160,6 +160,7 @@ write_export fish
 # would trip. E carries 1/0 per segment: fast, hung, ign shown.
 cat >"$T/child.bash" <<'EOF'
 source "$1/bash/gpy.bash" >/dev/null 2>&1 || exit 1
+source "$1/tests/lib/shell_render_only.bash"
 # Into $shown without a fork, which would land inside the timed window.
 shown_now() {
     local t
@@ -180,6 +181,7 @@ done
 EOF
 cat >"$T/child.zsh" <<'EOF'
 source "$1/zsh/gpy.zsh" >/dev/null 2>&1 || exit 1
+source "$1/tests/lib/shell_render_only.zsh"
 # A zsh script runs preexec before each top-level line; precmd is called here.
 preexec_functions=()
 if [[ -n ${3-} ]]; then

@@ -28,6 +28,8 @@ source tests/lib/supervisor_off.bash "$__gpy_integration_xdg_root"
 export GPY_AGENT_SOCKET_PATH="$__gpy_integration_xdg_root/missing.sock"
 
 source bash/gpy.bash
+# shellcheck source=tests/lib/shell_render_only.bash
+source tests/lib/shell_render_only.bash
 
 echo "=== Testing Clock Segment ==="
 # Agent unreachable: exercises the pure-bash fallback.

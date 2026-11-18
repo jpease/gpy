@@ -218,7 +218,7 @@ function __gpy_precmd() {
     # A doorbell ring zsh dropped leaves its flag behind; act on it now.
     __gpy_consume_shell_flags
 
-    # GPY_PROMPT_EXEC: one `gpy prompt zsh` draws PROMPT and runs the script
+    # One `gpy prompt zsh` draws PROMPT and runs the script
     # segments. When it declines (1), the shell runs them and renders; when it
     # failed (2), it may have started them, so the shell renders without.
     __gpy_render_prompt_exec $__gpy_pc_ret
@@ -416,22 +416,20 @@ function __gpy_render_prompt() {
     typeset -g __gpy_render_out=$p
 }
 
-# GPY_PROMPT_EXEC=1 (opt-in): one `gpy prompt zsh` exec draws the prompt
-# (#1247) and runs the script segments (core/g_runner.bash, under
-# __gpy_g_bash), reading the same export values, cache files and
-# refresh-throttle stamps as __gpy_render_prompt. Sets __gpy_render_out and
-# __gpy_render_tail. Status 1 when off, when the binary is missing or when it
-# declines (exit 3: an enabled segment it cannot draw); 2 when it failed
-# otherwise. stderr stays the terminal: a tripped script segment says so there.
+# One `gpy prompt zsh` exec draws the prompt (#1247) and runs the script
+# segments (core/g_runner.bash, under __gpy_g_bash), reading the same export
+# values, cache files and refresh-throttle stamps as __gpy_render_prompt,
+# which is now only its fallback. Sets __gpy_render_out and
+# __gpy_render_tail. Status 1 when the binary is missing or declines (exit 3:
+# an enabled segment it cannot draw); 2 when it failed otherwise. stderr
+# stays the terminal: a tripped script segment says so there.
 function __gpy_render_prompt_exec() {
-    local __gpy_rpe_on __gpy_rpe_cli __gpy_rpe_out
+    local __gpy_rpe_cli __gpy_rpe_out
     local -i __gpy_rpe_rc
     # Ctrl-C ends `gpy prompt` (and the scripts it runs), not precmd, as in
     # __gpy_g_maybe_run: the shell then draws the prompt itself.
     setopt local_options local_traps
     TRAPINT() { return 0 }
-    __gpy_flag_value "${GPY_PROMPT_EXEC-}" off __gpy_rpe_on
-    [[ $__gpy_rpe_on == on ]] || return 1
     __gpy_cli_binary_into __gpy_rpe_cli || return 1
     local -a __gpy_rpe_args=(prompt zsh --status "$1" --pid $$ --duration-ms $__gpy_cmd_duration)
     if (( ${#__gpy_g_toks} )) && [[ $__gpy_g_bash == /* && -r $__gpy_g_runner_file ]]; then

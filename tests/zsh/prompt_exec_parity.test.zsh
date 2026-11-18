@@ -2,7 +2,7 @@
 # tests/zsh/prompt_exec_parity.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# GPY_PROMPT_EXEC=1 hands PROMPT to one `gpy prompt zsh` exec (#1247), the
+# One `gpy prompt zsh` exec draws PROMPT (#1247), the
 # twin of tests/bash/prompt_exec_parity.test.bash. With the agent up it must
 # print exactly the PROMPT and the transient-prompt tail __gpy_render_prompt
 # prints: for every builtin theme, for an overlay that drops the clock and
@@ -33,7 +33,6 @@ write_config default "$SEGMENTS"
 shell_e2e_start_agent || exit 1
 # No refresh races between the two renders of one comparison.
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600 GPY_LANGUAGE_CACHE_TTL_SECONDS=3600
-unset GPY_PROMPT_EXEC
 source zsh/gpy.zsh
 # Zsh runs preexec hooks before every line of a script too; this test calls
 # __gpy_preexec itself where a real shell would (script_segment_fixture.zsh).
@@ -65,7 +64,7 @@ compare() {
     __gpy_cmd_duration=$3
     shell_render "$2"
     __gpy_render_out="" __gpy_render_tail=""
-    if ! GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec "$2"; then
+    if ! __gpy_render_prompt_exec "$2"; then
         fail "$label: the exec path declined"
         return
     fi
@@ -105,7 +104,7 @@ cd "$SHELL_E2E_REPO" || exit 1
 write_config default "$SEGMENTS"
 gpy-prompt-reload
 __gpy_render_out=""
-GPY_AGENT_ENABLED=0 GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+GPY_AGENT_ENABLED=0 __gpy_render_prompt_exec 0
 check "agent off: the exec path renders the branch" yes \
     "$([[ $__gpy_render_out == *main* ]] && echo yes || echo "no (PROMPT=[$__gpy_render_out])")"
 
@@ -157,7 +156,7 @@ for theme in scripts starship; do
     shell_render 0
     __gpy_render_out="" __gpy_render_tail=""
     __gpy_g_reloaded=1
-    GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+    __gpy_render_prompt_exec 0
     check "$theme, script segments: the exec path renders" 0 "$?"
     check "$theme, script segments: PROMPT matches the shell renderer" "$shell_out" "$__gpy_render_out"
     [[ $__gpy_render_out == *"in ${SHELL_E2E_REPO:t}"* && $__gpy_render_out == *v1* ]] ||
@@ -172,10 +171,10 @@ done
 # Once per command: a repaint runs nothing; a command (preexec) runs the
 # script again.
 before=$(runs)
-GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+__gpy_render_prompt_exec 0
 check "script: a repaint runs nothing" "$before" "$(runs)"
 __gpy_preexec
-GPY_PROMPT_EXEC=1 __gpy_render_prompt_exec 0
+__gpy_render_prompt_exec 0
 check "script: a new command runs it again" $((before + 1)) "$(runs)"
 
 # A segment it cannot draw hands the render back (exit 3).

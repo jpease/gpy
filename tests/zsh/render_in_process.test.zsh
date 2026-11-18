@@ -22,6 +22,7 @@ mkdir -p "$SANDBOX/tmp"
 export TMPDIR="$SANDBOX/tmp"
 
 source zsh/gpy.zsh
+source tests/lib/shell_render_only.zsh
 
 __color_directory_bg="black" __color_directory_fg="white"
 __icon_prompt="❯" __prompt_color="cyan"

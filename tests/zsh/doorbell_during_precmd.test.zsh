@@ -21,6 +21,7 @@ source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 source zsh/gpy.zsh
+source tests/lib/shell_render_only.zsh
 __gpy_add_newline=0 __gpy_two_line=0 __gpy_cfg_transient_prompt=0
 __gpy_shell_flag_base="$SANDBOX/flag"
 RELOADS="$SANDBOX/reloads"
