@@ -48,6 +48,26 @@ enum Commands {
     #[command(after_help = commands::exit_codes::STATUS_HELP)]
     Status,
 
+    /// Print the Bash prompt (PS1) for the current directory. Used by the
+    /// shell integration when `GPY_PROMPT_EXEC=1`; exits 3 when an enabled
+    /// segment needs the shell's own renderer (script segments).
+    #[cfg(unix)]
+    #[command(hide = true)]
+    Prompt {
+        /// Shell to render for (only `bash` so far)
+        #[arg(value_parser = ["bash"])]
+        shell: String,
+        /// Exit status of the last command
+        #[arg(long, allow_negative_numbers = true)]
+        status: i32,
+        /// Duration of the last command in milliseconds (omit before the first command)
+        #[arg(long)]
+        duration_ms: Option<u64>,
+        /// PID of the shell (names its refresh-throttle stamps)
+        #[arg(long)]
+        pid: u32,
+    },
+
     /// Manage themes
     Theme {
         #[command(subcommand)]
@@ -530,6 +550,25 @@ fn run_debug(action: DebugAction) -> Result<()> {
     }
 }
 
+/// `gpy prompt bash`: print `PS1`, or exit 3 so the shell renders itself
+/// when an enabled segment needs its own renderer.
+///
+/// # Errors
+/// Propagates theme loading and stdout failures.
+#[cfg(unix)]
+fn run_prompt(status: i32, duration_ms: Option<u64>, pid: u32) -> Result<ExitCode> {
+    let args = gpy_agent::prompt::PromptArgs {
+        status,
+        duration_ms,
+        pid,
+    };
+    let Some(ps1) = gpy_agent::prompt::render_bash(args)? else {
+        return Ok(ExitCode::from(3));
+    };
+    std::io::Write::write_all(&mut std::io::stdout().lock(), ps1.as_bytes())?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `gpy setup`, or only the icon re-detection with `--redetect-icons`.
 ///
 /// # Errors
@@ -641,6 +680,13 @@ fn run(command: Commands) -> Result<ExitCode> {
         Commands::Segments => commands::segments::list()?,
         Commands::Config { action } => run_config(action)?,
         Commands::Doctor => commands::doctor::run()?,
+        #[cfg(unix)]
+        Commands::Prompt {
+            shell: _,
+            status,
+            duration_ms,
+            pid,
+        } => return run_prompt(status, duration_ms, pid),
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {
             shell,

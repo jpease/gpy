@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Bash, experimental: with `GPY_PROMPT_EXEC=1` one `gpy prompt bash` process draws the whole prompt, cutting a prompt from about 9.3 to 5.5 ms (22.5 to 13 ms when every prompt changes directory) on macOS. It prints the same `PS1` as the shell renderer, which a test checks for every builtin theme. While a script segment is enabled the shell keeps drawing the prompt.
+
 ### Fixed
 - A prompt render no longer slows down as the instant-prompt cache grows: the shells' check for a cached git or language segment globbed the whole cache directory on every render (about 215 ms in Fish and 1.2 s in Zsh at 29,000 files). The agent now keeps an `{key}.{git|lang}.any-entry.{ext}` marker beside each repository's entries, and the shells test that single file. A cache written by an older agent gains its markers on the next refresh; until then a repository's language segment can be missing for one prompt.
 - `gpy` starts about 2 ms faster on macOS (3.6 → 1.9 ms for `gpy --version`), which every CLI call and tab completion pays: shipped binaries are linked with `-dead_strip_dylibs` and fat LTO, so dyld no longer loads system frameworks the CLI never calls. `gpy-agent` keeps the frameworks its file watcher uses.
