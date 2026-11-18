@@ -250,15 +250,10 @@ struct Cap<'a> {
 }
 
 impl<'a> Cap<'a> {
-    /// The cap the export's variables `names` describe (glyph, colour,
-    /// background); `match_bg`/`match_text` take the segment's own colours.
-    fn new(
-        vars: &'a ShellVars,
-        names: [(&str, &'a str); 3],
-        segment_bg: &'a str,
-        segment_text: &'a str,
-    ) -> Self {
-        let [glyph, color, back] = names.map(|(name, default)| match vars.or(name, default) {
+    /// A cap from its glyph, colour and background; `match_bg`/`match_text`
+    /// take the segment's own colours.
+    fn resolve(values: [&'a str; 3], segment_bg: &'a str, segment_text: &'a str) -> Self {
+        let [glyph, color, back] = values.map(|value| match value {
             "match_bg" => segment_bg,
             "match_text" => segment_text,
             other => other,
@@ -266,11 +261,36 @@ impl<'a> Cap<'a> {
         Self { glyph, color, back }
     }
 
+    /// The cap the export's variables `names` describe (glyph, colour,
+    /// background), each `${name-default}`.
+    fn new(
+        vars: &'a ShellVars,
+        names: [(&str, &'a str); 3],
+        segment_bg: &'a str,
+        segment_text: &'a str,
+    ) -> Self {
+        Self::resolve(
+            names.map(|(name, default)| vars.or(name, default)),
+            segment_bg,
+            segment_text,
+        )
+    }
+
     fn draw(&self, depth: Depth) -> String {
         let mut out = sgr_pair(self.color, self.back, depth);
         out.push_str(&prompt_escape(self.glyph));
         out
     }
+}
+
+/// A script segment's own delimiters (`__gpy_section_standalone`'s CAPS):
+/// an open or close cap (glyph, colour, background) replaces the global
+/// delimiter on that side. Without its own close cap, a last pill draws the
+/// theme's close cap on the terminal default background (`d`).
+#[derive(Debug, Default)]
+pub(crate) struct Caps<'a> {
+    pub(crate) open: Option<[&'a str; 3]>,
+    pub(crate) close: Option<[&'a str; 3]>,
 }
 
 /// `__gpy_section_standalone` without per-segment caps: `content` is `PS1`
@@ -283,7 +303,30 @@ pub(crate) fn section_standalone(
     content: &str,
     place: Place,
 ) -> String {
-    let open = if place.is_first {
+    section(vars, depth, [bg, fg], content, place, None)
+}
+
+/// `__gpy_section_standalone` for a script segment pill (CAPS `o`, `c`, `d`).
+pub(crate) fn section_with_caps(
+    vars: &ShellVars,
+    depth: Depth,
+    [bg, fg]: [&str; 2],
+    content: &str,
+    place: Place,
+    caps: &Caps<'_>,
+) -> String {
+    section(vars, depth, [bg, fg], content, place, Some(caps))
+}
+
+fn section(
+    vars: &ShellVars,
+    depth: Depth,
+    [bg, fg]: [&str; 2],
+    content: &str,
+    place: Place,
+    own: Option<&Caps<'_>>,
+) -> String {
+    let open_names = if place.is_first {
         [
             ("__segment_delim_first", "|"),
             ("__prompt_open_color", ""),
@@ -296,7 +339,11 @@ pub(crate) fn section_standalone(
             ("__segment_delimiter_bg", ""),
         ]
     };
-    let close = if place.is_last {
+    let open = own.and_then(|caps| caps.open).map_or_else(
+        || Cap::new(vars, open_names, bg, fg),
+        |values| Cap::resolve(values, bg, fg),
+    );
+    let close_names = if place.is_last {
         [
             ("__segment_delim_last", ")"),
             ("__prompt_close_color", ""),
@@ -309,14 +356,25 @@ pub(crate) fn section_standalone(
             ("__segment_delimiter_bg", ""),
         ]
     };
-    let mut out = Cap::new(vars, open, bg, fg).draw(depth);
+    let close = own.and_then(|caps| caps.close).map_or_else(
+        || {
+            let mut cap = Cap::new(vars, close_names, bg, fg);
+            // `d`: a script pill's theme close cap sits on the default background.
+            if place.is_last && own.is_some() {
+                cap.back = "";
+            }
+            cap
+        },
+        |values| Cap::resolve(values, bg, fg),
+    );
+    let mut out = open.draw(depth);
     out.push_str(&sgr_pair(fg, bg, depth));
     out.push_str(content);
     if !place.is_last {
         out.push_str(&sgr_pair("normal", bg, depth));
         out.push(' ');
     }
-    out.push_str(&Cap::new(vars, close, bg, fg).draw(depth));
+    out.push_str(&close.draw(depth));
     out.push_str("\\[\u{1b}[0m\\]");
     out
 }

@@ -9,9 +9,11 @@ mod theme_to_shell;
 
 pub use plugin_segments::{PluginVariableCollision, first_plugin_variable_collision};
 pub(crate) use script_segments::collect_script_segments;
+#[cfg(unix)]
+pub(crate) use script_segments::{ScriptSegmentExport, ScriptSegmentExports};
 pub(crate) use shell_colors::resolve_shell_color;
 #[cfg(unix)]
-pub(crate) use theme_to_shell::builtin_shell_values;
+pub(crate) use theme_to_shell::prompt_shell_values;
 pub(crate) use theme_to_shell::{PluginExports, theme_to_shell};
 
 #[cfg(test)]
