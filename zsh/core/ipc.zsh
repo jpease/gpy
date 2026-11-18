@@ -540,23 +540,16 @@ function __gpy_instant_cache_key_path() {
     [[ -n "$__gpy_kp" ]]
 }
 
-# Any variant or prev_bg token counts: `.none` exists only if some request
-# carried no prev_bg. The `git_bg` colour file is not an entry, and a file of a
-# sibling key `<key>.git` also matches the glob (the key does not escape `.`):
-# only `<variant>.<token>.zsh` tails, with no further dot, count.
+# Whether any variant/prev_bg entry exists: the agent keeps a presence marker,
+# `<key>.<base>.any-entry.zsh`, beside them. One stat, not a glob: a glob
+# reads the whole cache directory, whose size has no bound.
 function __gpy_instant_cache_present() {
-    # `(N)`: an unmatched pattern is an empty list, not a NOMATCH error.
-    emulate -L zsh
-    setopt local_options extended_glob
     local base=$1 cwd=${2:-$PWD} key_path cache_dir cache_key
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     __gpy_instant_cache_dir cache_dir || return 1
     __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
-    local prefix="$cache_dir/$cache_key."
-    local -a hits=("$prefix$base."*.zsh(N) "$prefix${base}_first."*.zsh(N) "$prefix${base}_last."*.zsh(N) "$prefix${base}_first_last."*.zsh(N))
-    hits=(${(M)hits:#${prefix}${base}(|_first|_last|_first_last).[^.]##.zsh})
-    (( ${#hits} > 0 ))
+    [[ -f "$cache_dir/$cache_key.$base.any-entry.zsh" ]]
 }
 
 # Serve-stale read of the entry for suffix $1, cwd $2, prev_bg $3 into

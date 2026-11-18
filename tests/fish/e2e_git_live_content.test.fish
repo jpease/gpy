@@ -20,7 +20,7 @@ source (dirname (status -f))/../lib/test_helpers.fish
 # in __live_cache_file. Cache files carry a prev_bg token:
 # `{key}.git.{token}.ansi`.
 function __live_cache_file_found
-    set -g __live_cache_file (ls $XDG_CACHE_HOME/gpy/instant-prompts/*.git.*.ansi 2>/dev/null | head -1)
+    set -g __live_cache_file (ls $XDG_CACHE_HOME/gpy/instant-prompts/*.git.none.ansi 2>/dev/null | head -1)
     test -n "$__live_cache_file"
 end
 

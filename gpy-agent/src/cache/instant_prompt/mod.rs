@@ -29,8 +29,8 @@ use crate::{Error, Result};
 use files::{create_private_dir, get_instant_cache_dir, write_atomic};
 use key::{NAME_MAX_BYTES, cache_file_parts, find_project_root, path_to_cache_key};
 use name::{
-    CacheFileName, CacheKind, NO_PREV_BG_TOKEN, SEGMENT_POSITIONS, parse_cache_file_name,
-    prev_bg_token,
+    CacheFileName, CacheKind, NO_PREV_BG_TOKEN, PRESENCE_TOKEN, SEGMENT_POSITIONS,
+    parse_cache_file_name, prev_bg_token,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -286,6 +286,8 @@ impl InstantPromptCache {
         if self.suppressed_git.lock_or_recover().contains_key(&key) {
             return false;
         }
+        let marker_names =
+            PromptDialect::ALL.map(|dialect| presence_marker(&key, CacheKind::Git, dialect));
         let bg_names = PromptDialect::ALL.map(|dialect| CacheFileName {
             key: &key,
             kind: CacheKind::GitBg,
@@ -293,7 +295,7 @@ impl InstantPromptCache {
             token: NO_PREV_BG_TOKEN,
             dialect,
         });
-        for name in &bg_names {
+        for name in bg_names.iter().chain(&marker_names) {
             if !self.touch_cache_file(&mut cache, name, now) {
                 return false;
             }
@@ -384,6 +386,7 @@ impl InstantPromptCache {
         render: impl Fn(SegmentPosition, Option<Color>) -> Result<DialectPrompts>,
     ) -> Result<bool> {
         let mut wrote_any = false;
+        let mut on_disk = false;
         let mut first_err = None;
         for context in self.known_contexts(key, prev_bg) {
             let token = prev_bg_token(context.as_deref());
@@ -414,13 +417,19 @@ impl InstantPromptCache {
                         dialect,
                     };
                     match self.write_cache_file(&name, &prompt) {
-                        Ok(wrote) => wrote_any |= wrote,
+                        Ok(wrote) => {
+                            wrote_any |= wrote;
+                            on_disk = true;
+                        }
                         Err(e) => {
                             first_err.get_or_insert(e);
                         }
                     }
                 }
             }
+        }
+        if on_disk {
+            self.write_presence_markers(key, kind);
         }
         match first_err {
             Some(e) if !wrote_any => Err(e),
@@ -429,6 +438,20 @@ impl InstantPromptCache {
                 Ok(true)
             }
             None => Ok(wrote_any),
+        }
+    }
+
+    /// Keep `kind`'s presence marker beside `key`'s entries in every dialect;
+    /// the marker never changes content, so it never rings a shell. A failed
+    /// write is logged: the shell then omits the segment until the next write.
+    fn write_presence_markers(&self, key: &str, kind: CacheKind) {
+        for dialect in PromptDialect::ALL {
+            if let Err(e) = self.write_cache_file(&presence_marker(key, kind, dialect), "") {
+                debug_log!(
+                    "cache",
+                    "Could not write instant cache presence marker: {e}"
+                );
+            }
         }
     }
 
@@ -600,6 +623,17 @@ impl InstantPromptCache {
     }
 }
 
+/// The presence marker of `kind` for `key` in `dialect`.
+const fn presence_marker(key: &str, kind: CacheKind, dialect: PromptDialect) -> CacheFileName<'_> {
+    CacheFileName {
+        key,
+        kind,
+        position: SEGMENT_POSITIONS[0],
+        token: PRESENCE_TOKEN,
+        dialect,
+    }
+}
+
 /// A rendered cache entry for each [`PromptDialect`].
 type DialectPrompts = Vec<(PromptDialect, String)>;
 
@@ -635,6 +669,8 @@ mod git_bg_tests;
 mod git_root_vectors_tests;
 #[cfg(test)]
 mod naming_vectors_tests;
+#[cfg(test)]
+mod presence_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

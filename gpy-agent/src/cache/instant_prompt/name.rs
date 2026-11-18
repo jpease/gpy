@@ -15,6 +15,12 @@ pub(super) const SEGMENT_POSITIONS: [SegmentPosition; 4] = [
 /// Cache-filename token of a context-free render (no `prev_bg`).
 pub(super) const NO_PREV_BG_TOKEN: &str = "none";
 
+/// Token slot of a kind's presence marker, `{key}.{kind}.any-entry.{ext}`:
+/// the agent keeps it beside any renderable entry of that kind, so a shell's
+/// omit check is one `test -f` instead of a scan of the cache directory.
+/// [`prev_bg_token`] maps `-` to `_`, so no render context can produce it.
+pub(super) const PRESENCE_TOKEN: &str = "any-entry";
+
 /// Filename token for the `prev_bg` an entry was rendered with: `none` when
 /// absent, else non-alphanumeric bytes → `_`. Never contains `.`.
 /// The shells' `__gpy_prev_bg_token` copy is pinned by
@@ -102,9 +108,11 @@ impl CacheFileName<'_> {
 
     /// Whether a restarted agent, which tracks `prev_bg` contexts in memory
     /// only, would never refresh this file: every language file, and any
-    /// rendered for a specific `prev_bg`.
+    /// rendered for a specific `prev_bg`. The git presence marker stays with
+    /// the git `.none` entries it vouches for.
     pub(super) fn is_unrefreshable(&self) -> bool {
-        self.kind == CacheKind::Lang || self.token != NO_PREV_BG_TOKEN
+        self.kind == CacheKind::Lang
+            || (self.token != NO_PREV_BG_TOKEN && self.token != PRESENCE_TOKEN)
     }
 }
 

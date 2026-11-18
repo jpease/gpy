@@ -80,6 +80,8 @@ With the agent disabled, or after a refusal (`{"error"…}` reply), the shell ru
 - `token`: the previous segment's background colour, which the rendered chevron bakes in (`none` when there is none)
 - `ext`: the dialect (`ansi`, `zsh`, `bash`)
 
+Beside a key's git or language entries the agent keeps an empty presence marker, `{key}.{git|lang}.any-entry.{ext}`. The shells' omit check (`__gpy_instant_cache_present`) tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows. The marker is written with the entries, refreshed with them, and removed with them (`remove_git`, the restart clear of language files); `prev_bg_token` never emits `-`, so no render context can name it.
+
 Who writes and who reads:
 - The agent writes a file while handling a request, again on a background refresh, on a watcher event, and for a theme or config change before it rings the reload doorbell.
 - A shell serves any file it finds. A file older than the shell-side TTL is stale (git 5 s, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`; language 30 s, `GPY_LANGUAGE_CACHE_TTL_SECONDS`) and also triggers a refresh. A `.none` file served for a request that has a real `prev_bg` re-queries the agent, because its chevron colour is wrong.

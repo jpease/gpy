@@ -113,28 +113,31 @@ set -l cache_key (__gpy_path_to_cache_key (__gpy_find_git_root $repo))
 mkdir -p $cache_dir
 printf GITNONE >$cache_dir/$cache_key.git.none.ansi
 printf GITWARM >$cache_dir/$cache_key.git_last.black.ansi
+touch $cache_dir/$cache_key.git.any-entry.ansi
 set -g __enabled_segments directory git
 set out (render_plain | string collect)
 check "warm git cache: directory is first, not last" pass (string match -q '*DIR[|true]*' -- $out; and echo pass; or echo fail)
 check "warm git cache: git renders its exact variant" pass (string match -q '*DIR[|true]GITWARM*' -- $out; and echo pass; or echo fail)
 string match -q '*DIR[|true]GITWARM*' -- $out; or echo "  got: "(string escape -- $out)
 
-# --- The presence probe counts contextual-only entries (no `.none`) ---
-# A cache populated only by requests that carried a prev_bg has no `.none`
-# file; the probe must still see it rather than hiding a renderable segment.
+# --- The presence probe reads the agent's marker, not the entries ---
+# A glob over the entries reads the whole cache directory on every render;
+# the agent keeps `<key>.<base>.any-entry.<ext>` beside them instead.
 set -l project_key (__gpy_path_to_cache_key (path resolve -- $project))
 check "probe: no language entry before the cache is written" pass (__gpy_instant_cache_present lang $project; and echo fail; or echo pass)
 printf LANG >$cache_dir/$project_key.lang_first.magenta.ansi
-check "probe: a contextual-only language entry counts as present" pass (__gpy_instant_cache_present lang $project; and echo pass; or echo fail)
+check "probe: an entry without its marker does not count" pass (__gpy_instant_cache_present lang $project; and echo fail; or echo pass)
+touch $cache_dir/$project_key.lang.any-entry.ansi
+check "probe: the presence marker counts" pass (__gpy_instant_cache_present lang $project; and echo pass; or echo fail)
 
 # A key over 200 characters is stored under chunk directories; the probe looks there.
 set -l long_project $temp_home/(string repeat -n 80 l)/(string repeat -n 80 m)/(string repeat -n 60 n)
 mkdir -p $long_project
 set -l long_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key (path resolve -- $long_project)))
 mkdir -p $cache_dir/(path dirname -- $long_key)
-printf LANG >$cache_dir/$long_key.lang_first.magenta.ansi
+touch $cache_dir/$long_key.lang.any-entry.ansi
 check "probe: a key over 200 characters is chunked" pass (string match -q '*/*' -- $long_key; and echo pass; or echo fail)
-check "probe: a contextual-only entry under a chunked key counts as present" pass (__gpy_instant_cache_present lang $long_project; and echo pass; or echo fail)
+check "probe: a marker under a chunked key counts as present" pass (__gpy_instant_cache_present lang $long_project; and echo pass; or echo fail)
 
 cd "$repo_root"
 rm -rf $temp_home $repo $project
