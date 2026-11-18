@@ -40,6 +40,8 @@ pub mod plugin;
 pub mod plugin_install;
 /// Theme files shipped in a plugin's `themes/` directory, for `gpy plugin validate`.
 mod plugin_themes;
+/// PROTOTYPE (#1247): single-process prompt render.
+pub mod prompt;
 /// The `gpy-init` rc-file block shared by the setup steps.
 mod rc_block;
 /// Static checks of script segment files for `gpy plugin validate`.

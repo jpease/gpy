@@ -48,6 +48,20 @@ enum Commands {
     #[command(after_help = commands::exit_codes::STATUS_HELP)]
     Status,
 
+    /// PROTOTYPE (#1247): print the whole prompt for one shell
+    #[command(hide = true)]
+    Prompt {
+        /// fish, zsh or bash
+        #[arg(long)]
+        shell: String,
+        /// Exit status of the last command
+        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
+        status: i32,
+        /// Duration of the last command in milliseconds
+        #[arg(long, default_value_t = 0)]
+        duration_ms: u64,
+    },
+
     /// Manage themes
     Theme {
         #[command(subcommand)]
@@ -641,6 +655,26 @@ fn run(command: Commands) -> Result<ExitCode> {
         Commands::Segments => commands::segments::list()?,
         Commands::Config { action } => run_config(action)?,
         Commands::Doctor => commands::doctor::run()?,
+        Commands::Prompt {
+            shell: shell_name,
+            status,
+            duration_ms,
+        } => {
+            use std::io::Write as _;
+            let shell = match shell_name.as_str() {
+                "fish" => gpy_agent::Shell::Fish,
+                "bash" => gpy_agent::Shell::Bash,
+                _ => gpy_agent::Shell::Zsh,
+            };
+            let cwd = std::env::current_dir()?;
+            let text = commands::prompt::render(&commands::prompt::PromptInput {
+                shell,
+                status,
+                duration_ms,
+                cwd: &cwd,
+            })?;
+            std::io::stdout().write_all(text.as_bytes())?;
+        }
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {
             shell,
