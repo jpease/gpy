@@ -123,6 +123,8 @@ crossterm = "0.29"
 libc = "0.2"
 fork = "0.10"
 nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
+# Local time for the Fish clock `gpy prompt fish` draws (#1247).
+jiff = { version = "1.0.0", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Process start time, so a recycled PID is never signaled; the crate forbids
 # unsafe and macOS has no /proc.
 sysinfo = "0.39"

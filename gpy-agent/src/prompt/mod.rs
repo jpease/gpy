@@ -71,8 +71,9 @@ fn covers(config: &Config, scripts: &[ScriptSegmentExport]) -> bool {
 pub struct Rendered {
     /// `PS1` or `PROMPT`.
     pub prompt: String,
-    /// The prompt symbol alone, without the status icon: Zsh's transient
-    /// prompt (`__gpy_render_tail`).
+    /// Zsh: the prompt symbol alone, without the status icon (the
+    /// transient prompt, `__gpy_render_tail`). Fish: the whole transient
+    /// line (`__gpy_transient_prompt`). Empty for Bash.
     pub tail: String,
 }
 
@@ -122,11 +123,11 @@ pub fn render(
                 args.pid,
                 &Inputs {
                     pwd: &pwd.to_string_lossy(),
-                    // Bash hands scripts its last duration; Zsh the last
-                    // command's, kept across a prompt due to a `cd` alone.
+                    // Bash hands scripts its last duration; Zsh and Fish the
+                    // last command's, kept across a prompt due to a `cd` alone.
                     duration_ms: match dialect {
                         Dialect::Bash => args.duration_ms,
-                        Dialect::Zsh => given.duration_ms,
+                        Dialect::Zsh | Dialect::Fish => given.duration_ms,
                     },
                     prompt_icons: vars.or("__prompt_icons", ""),
                 },
@@ -288,19 +289,53 @@ impl Render<'_> {
                 &prev_bg,
             )
         };
-        let tail = |show_status: bool| {
+        let prompt_tail = |show_status: bool| {
             pill::prompt_tail(&self.vars, self.paint, self.args.status, root, show_status)
         };
         let (symbol, symbol_alone) = if character.is_empty() {
-            (tail(flag("GPY_SHOW_STATUS").unwrap_or(true)), tail(false))
+            (
+                prompt_tail(flag("GPY_SHOW_STATUS").unwrap_or(true)),
+                prompt_tail(false),
+            )
         } else {
             (character.clone(), character)
         };
         out.push_str(&symbol);
-        Rendered {
-            prompt: out,
-            tail: symbol_alone,
+        let tail = match self.dialect {
+            Dialect::Bash => String::new(),
+            Dialect::Zsh => symbol_alone,
+            Dialect::Fish => self.fish_transient(&symbol_alone),
+        };
+        Rendered { prompt: out, tail }
+    }
+
+    /// `__gpy_transient_prompt`: the line Fish leaves in scrollback, the
+    /// clock time (when the clock is enabled) and the prompt symbol.
+    fn fish_transient(&self, symbol: &str) -> String {
+        let mut line = String::new();
+        if self.vars.or_nonempty("__gpy_add_newline", "1") != "0" {
+            line.push('\n');
         }
+        if self
+            .config
+            .effective_segments()
+            .any(|segment| segment == "clock")
+        {
+            line.push_str(&pill::fg_text(
+                self.paint,
+                self.vars.or("__color_clock_fg", ""),
+                &format!(
+                    "{}{}",
+                    self.vars.or("__prompt_time_pad", " "),
+                    self.dialect.clock_token(&pill::clock_time_spec(&self.vars))
+                ),
+            ));
+            if !pill::strip_sgr(symbol).starts_with(' ') {
+                line.push(' ');
+            }
+        }
+        line.push_str(symbol);
+        line
     }
 
     /// `__gpy_segment_would_render`: detect, then omit.
@@ -390,8 +425,9 @@ impl Render<'_> {
     }
 
     /// `__gpy_segment_clock`: the theme's clock template, else the local pill
-    /// with the shell's live `\D{…}` or `%D{…}`.
+    /// with the shell's live `\D{…}` or `%D{…}`, or Fish's time now.
     fn clock(&self, place: Place, prev_bg: &str) -> String {
+        let spec = pill::clock_time_spec(&self.vars);
         if self.vars.is_set("__clock_format") {
             let rendered = self.render_response(
                 &Response::Clock {
@@ -401,13 +437,18 @@ impl Render<'_> {
                 prev_bg,
             );
             if !rendered.is_empty() {
-                return rendered;
+                // Fish's pill carries the bare spec where the time goes.
+                return if self.dialect == Dialect::Fish {
+                    rendered.replacen(&spec, &self.dialect.clock_token(&spec), 1)
+                } else {
+                    rendered
+                };
             }
         }
         let content = format!(
             "{}{}",
             self.paint.escape(self.vars.or("__prompt_time_pad", " ")),
-            self.dialect.clock_token(&pill::clock_time_spec(&self.vars))
+            self.dialect.clock_token(&spec)
         );
         pill::section_standalone(
             &self.vars,
@@ -460,9 +501,13 @@ impl Render<'_> {
             let request = self.data_request("git", place, prev_bg, true);
             match self.link.send(&request, Some(link::cold_timeout_ms())) {
                 Reply::Text(text) => return Drawn::plain(text),
-                // Zsh: refused for good (a denied cwd), so a refresh would be too.
+                // Refused for good (a denied cwd), so a refresh would be too:
+                // Zsh omits git, Fish draws it agent-free.
                 Reply::Refused if self.dialect == Dialect::Zsh => {
                     return Drawn::plain(String::new());
+                }
+                Reply::Refused if self.dialect == Dialect::Fish => {
+                    return self.oneshot_git(place);
                 }
                 _ => {}
             }

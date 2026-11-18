@@ -12,6 +12,7 @@ function test_status_indicator_gated_by_agent_render
     source fish/core/init.fish
     # Load the prompt function from the repo (not any autoloaded/installed copy).
     source fish/functions/fish_prompt.fish
+    source tests/lib/shell_render_only.fish
 
     # Minimal, deterministic prompt environment (no enabled segments).
     set -g __enabled_segments

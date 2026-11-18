@@ -43,6 +43,11 @@ __gpy_g_reset_namespace
 
 set -g __gpy_g_tokens
 set -g __gpy_g_due 1
+# `gpy prompt fish` runs the scripts and keeps their state itself (#1247), in
+# <runtime root>/refresh-throttle/<pid>.scripts. It is told the commands run
+# so far (counted in fish_postexec) and whether the theme was reloaded.
+set -g __gpy_g_seq 0
+set -g __gpy_g_reloaded 1
 set -g __gpy_g_pwd ""
 set -g __gpy_g_ran 0
 set -g __gpy_g_runner_state unresolved
@@ -97,6 +102,7 @@ function __gpy_g_sync --description 'Adopt __gpy_script_segments after a theme e
     end
     set -g __gpy_g_tokens $tokens
     set -g __gpy_g_due 1
+    set -g __gpy_g_reloaded 1
 end
 
 # Define segment_<name>_detect/_render for a listed script segment. Called
@@ -152,10 +158,25 @@ end
 function __gpy_g_on_postexec --on-event fish_postexec
     set -g __gpy_g_due 1
     set -g __gpy_g_ran 1
+    set -g __gpy_g_seq (math $__gpy_g_seq + 1)
+end
+
+# Every script segment hidden (a failed `gpy prompt`, which may have started
+# the scripts: none may run twice for one prompt).
+function __gpy_g_hide_all
+    for tok in $__gpy_g_tokens
+        set -g __gpy_g_t_{$tok}_text ""
+        set -g __gpy_g_t_{$tok}_variant ""
+    end
 end
 
 function __gpy_g_on_prompt --on-event fish_prompt
     set -q __gpy_g_tokens[1]; or return 0
+    # The binary runs them while it draws the prompt (fish_prompt), unless
+    # it is missing or declined the last prompt.
+    if not set -q __gpy_exec_declined; and __gpy_resolve_cli_binary >/dev/null
+        return 0
+    end
     if test "$PWD" != "$__gpy_g_pwd"
         set -g __gpy_g_due 1
         set -g __gpy_g_pwd $PWD

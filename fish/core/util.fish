@@ -18,6 +18,20 @@ function __gpy_resolve_agent_binary --description 'Resolve the gpy-agent binary 
     return 1
 end
 
+# The `gpy` binary, resolved as gpy-agent is.
+function __gpy_resolve_cli_binary --description 'Resolve the gpy binary path'
+    set -l command_path (command -s gpy)
+    if test -n "$command_path"
+        echo "$command_path"
+        return 0
+    end
+    if test -x "$HOME/.local/bin/gpy"
+        echo "$HOME/.local/bin/gpy"
+        return 0
+    end
+    return 1
+end
+
 function __gpy_file_mtime --argument-names file
     # `path mtime` is a builtin: no fork.
     path mtime "$file" 2>/dev/null

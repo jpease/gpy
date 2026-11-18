@@ -5,6 +5,7 @@ function fish_prompt
 
     # Fish 4.2+ --final-rendering stays in scrollback; runs before the resets (shares the char memo).
     if contains -- --final-rendering $argv; and test "$__gpy_cfg_transient_prompt" != 0
+        __gpy_render_prompt_exec $last_status transient; and return
         __gpy_transient_prompt $last_status
         return
     end
@@ -12,6 +13,10 @@ function fish_prompt
 
     # The first prompt's registration, once that prompt is drawn (core/supervisor.fish).
     set -q __gpy_register_deferred; and __gpy_register_after_paint
+
+    # One `gpy prompt fish` draws the prompt (#1247); the rest of this
+    # function is its fallback (binary missing, declined or failed).
+    __gpy_render_prompt_exec $last_status; and return
 
     set -g __gpy_last_status $last_status
 
@@ -214,5 +219,48 @@ function __gpy_sync_fish_transient_prompt
     else if set -q __gpy_owns_fish_transient_prompt
         set -e -g fish_transient_prompt
         set -e -g __gpy_owns_fish_transient_prompt
+    end
+end
+
+# Print the prompt (or with `transient`, the transient line) `gpy prompt fish`
+# draws, and run the script segments in it. Status 1 when GPY's core is not
+# loaded, the binary is missing or it declines (exit 3: an enabled segment it
+# cannot draw, e.g. a `.fish` plugin segment); the shell then runs its script
+# segments itself from the next prompt. Status 2 when it failed otherwise:
+# it may have started the scripts, so the fallback draws them hidden.
+function __gpy_render_prompt_exec --argument-names last_status part
+    functions -q __gpy_g_resolve_runner; or return 1
+    set -l cli (__gpy_resolve_cli_binary); or return 1
+    set -l args prompt fish --status $last_status --pid $fish_pid
+    if not set -q __gpy_duration_idle; and string match -qr '\A[0-9]+\z' -- "$CMD_DURATION"
+        set -a args --duration-ms $CMD_DURATION
+    end
+    if set -q __gpy_g_tokens[1]; and __gpy_g_resolve_runner; and test "$__gpy_g_runner_state" = ready
+        set -a args --bash $__gpy_g_bash --runner $__gpy_g_runner_file --cmd $__gpy_g_seq
+        test "$__gpy_g_reloaded" = 1; and set -a args --reload
+        if test "$__gpy_g_ran" = 1; and string match -qr '\A[0-9]+\z' -- "$CMD_DURATION"
+            set -a args --script-duration-ms $CMD_DURATION
+        end
+    end
+    set -l out (command $cli $args | string collect -N)
+    set -l rc $pipestatus[1]
+    if test "$rc" = 3
+        set -g __gpy_exec_declined 1
+        return 1
+    end
+    set -e __gpy_exec_declined
+    set -g __gpy_g_reloaded 0
+    if test "$rc" != 0; or not string match -q -- "*"\x1f"*" "$out"
+        __gpy_g_hide_all
+        return 2
+    end
+    # Each part may hold newlines: cut with `string replace`; `string
+    # collect` drops the newline `string replace` adds (neither part ends in
+    # one).
+    if test "$part" = transient
+        printf '%s' (string replace -r -- '\A[^\x1f]*\x1f' '' "$out" | string collect)
+    else
+        set -g __gpy_last_status $last_status
+        printf '%s' (string replace -r -- '\x1f[\s\S]*\z' '' "$out" | string collect)
     end
 end

@@ -82,6 +82,7 @@ set -g repo $tmp/repo
 set -g __gpy_test_segments osa osb osc
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish
+source tests/lib/shell_render_only.fish
 
 fish_prompt >/dev/null 2>&1
 check "at most one oneshot fork per render" 1 (wc -c <$counter | string trim)
