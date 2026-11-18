@@ -207,7 +207,7 @@ harness = false
 
 # Local `--release` builds and `cargo bench` (the bench profile inherits this).
 # Keep symbols in local --release and bench builds (Cargo would default to strip = "debuginfo").
-# Shipped binaries use `release-dist`, which inherits this profile and overrides `lto` and `strip`.
+# Shipped binaries use `release-dist`, which inherits this profile and overrides `strip`.
 [profile.release]
 opt-level = 3
 lto = true
@@ -222,7 +222,9 @@ debug = false
 overflow-checks = false
 
 # Shipped binaries (build-release-binaries.sh and the release workflow).
+# Fat LTO, not thin: thin keeps dead references into macOS frameworks, so
+# `-dead_strip_dylibs` (.cargo/config.toml) cannot drop them and `gpy` pays
+# ~2 ms of dyld loading per start (3.6 -> 1.9 ms for `gpy --version`).
 [profile.release-dist]
 inherits = "release"
-lto = "thin"
 strip = true

@@ -6,3 +6,11 @@
 # ignores it; pin an exact version there.
 [registry]
 global-min-publish-age = "3 days"
+
+# macOS links every framework a dependency names (notify's FSEvents, sysinfo,
+# exacl), and dyld loads each one at exec even when the binary never calls
+# it: about 2 ms of every `gpy` start (3.7 -> 1.7 ms for `gpy --version`).
+# `-dead_strip_dylibs` drops the unused ones; `gpy-agent` keeps those it uses.
+# RUSTFLAGS in the environment replaces this table, so CI must not set it.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-dead_strip_dylibs"]
