@@ -529,21 +529,15 @@ function __gpy_instant_cache_key_path --argument-names suffix cwd --description 
     printf '%s' "$key_path"
 end
 
-# Whether any variant/prev_bg entry exists; the agent writes `.none` only for
-# context-free requests, so probing `.none` alone would miss. The `git_bg` colour
-# file is not an entry, and a sibling key `<key>.git` (the key does not escape
-# `.`) also matches the glob, so only `<variant>.<token>.ansi` tails count.
+# Whether any variant/prev_bg entry exists: the agent keeps a presence marker,
+# `<key>.<base>.any-entry.ansi`, beside them. One stat, not a glob: a glob
+# reads the whole cache directory, whose size has no bound.
 function __gpy_instant_cache_present --argument-names base cwd --description 'Whether any instant-cache entry exists for git|lang under cwd'
     set -l key_path (__gpy_instant_cache_key_path $base $cwd); or return 1
     set -l cache_dir (__gpy_instant_cache_dir)
     test -n "$cache_dir"; or return 1
     set -l cache_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key $key_path))
-    set -l prefix $cache_dir/$cache_key.
-    for hit in $prefix$base.*.ansi $prefix$base"_first".*.ansi $prefix$base"_last".*.ansi $prefix$base"_first_last".*.ansi
-        set -l tail (string replace -- $prefix '' $hit)
-        string match -rq '^'$base'(_first|_last|_first_last)?\.[^.]+\.ansi$' -- $tail; and return 0
-    end
-    return 1
+    test -f "$cache_dir/$cache_key.$base.any-entry.ansi"
 end
 
 # Exit status: 1 = miss; else bit 2 = stale, bit 4 = served via `.none` fallback.

@@ -65,22 +65,22 @@ __gpy_path_to_cache_key "$key_path" cache_key
 mkdir -p "$cache_dir"
 printf LANGNONE >"$cache_dir/$cache_key.lang.none.zsh"
 printf LANGWARM >"$cache_dir/$cache_key.lang_first.black.zsh"
+: >"$cache_dir/$cache_key.lang.any-entry.zsh"
 __enabled_segments=(language directory)
 __gpy_render_prompt 0; PROMPT=$__gpy_render_out
 check "warm language cache: language first, directory last" true \
     "$([[ "$PROMPT" == *"LANGWARMDIR[true|]"* ]] && echo true || echo false)"
 
-# --- The presence probe counts contextual-only entries (no `.none`) ---
+# --- The presence probe reads the agent's marker, not the entries ---
 rm -f "$cache_dir/$cache_key".lang*
 check "probe: no entry once the cache is cleared" 1 \
     "$(__gpy_instant_cache_present lang "$project"; echo $?)"
 printf LANG >"$cache_dir/$cache_key.lang_first.magenta.zsh"
-check "probe: a contextual-only entry counts as present" 0 \
+check "probe: an entry without its marker does not count" 1 \
     "$(__gpy_instant_cache_present lang "$project"; echo $?)"
-rm -f "$cache_dir/$cache_key".lang*
-# NOMATCH is on by default; an unmatched probe must not print an error.
-check "probe: a miss prints no NOMATCH error" "1" \
-    "$(__gpy_instant_cache_present lang "$project" 2>&1; echo $?)"
+: >"$cache_dir/$cache_key.lang.any-entry.zsh"
+check "probe: the presence marker counts" 0 \
+    "$(__gpy_instant_cache_present lang "$project"; echo $?)"
 
 # --- A key over 200 characters is stored under chunk directories; the probe looks there ---
 long_project="$TMP_ROOT/${(l:80::l:)}/${(l:80::m:)}/${(l:60::n:)}"
@@ -89,8 +89,8 @@ __gpy_instant_cache_key_path lang "$long_project" key_path
 __gpy_path_to_cache_key "$key_path" long_key
 __gpy_chunk_cache_key long_key
 mkdir -p "$cache_dir/${long_key%/*}"
-printf LANG >"$cache_dir/$long_key.lang_first.magenta.zsh"
-check "probe: a contextual-only entry under a chunked key counts as present" "chunked 0" \
+: >"$cache_dir/$long_key.lang.any-entry.zsh"
+check "probe: a marker under a chunked key counts as present" "chunked 0" \
     "$([[ "$long_key" == */* ]] && printf 'chunked '; __gpy_instant_cache_present lang "$long_project"; echo $?)"
 
 test_finish "omitted segment positions"

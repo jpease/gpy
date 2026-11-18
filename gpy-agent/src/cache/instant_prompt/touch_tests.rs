@@ -84,10 +84,11 @@ fn touch_refreshes_mtime_without_rewriting() {
     let (_dir, cache, repo) = cache_with_repo();
     assert!(write(&cache, &repo, Some("blue")).expect("write"));
     let files = git_files(&cache);
-    // The segment files plus one git background file per dialect.
+    // The segment files plus one git background file and one presence marker
+    // per dialect.
     assert_eq!(
         files.len(),
-        SEGMENT_FILES_PER_CONTEXT + PromptDialect::ALL.len()
+        SEGMENT_FILES_PER_CONTEXT + 2 * PromptDialect::ALL.len()
     );
     let sentinel = in_context(&files, "blue")
         .into_iter()

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A prompt render no longer slows down as the instant-prompt cache grows: the shells' check for a cached git or language segment globbed the whole cache directory on every render (about 215 ms in Fish and 1.2 s in Zsh at 29,000 files). The agent now keeps an `{key}.{git|lang}.any-entry.{ext}` marker beside each repository's entries, and the shells test that single file. A cache written by an older agent gains its markers on the next refresh; until then a repository's language segment can be missing for one prompt.
+
 ## [0.11.0] - 2026-11-16
 
 ### Fixed

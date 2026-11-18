@@ -57,22 +57,22 @@ __gpy_path_to_cache_key "$key_path" cache_key
 mkdir -p "$cache_dir"
 printf LANGNONE >"$cache_dir/$cache_key.lang.none.bash"
 printf LANGWARM >"$cache_dir/$cache_key.lang_first.black.bash"
+: >"$cache_dir/$cache_key.lang.any-entry.bash"
 __enabled_segments="language directory"
 __gpy_render_prompt 0
 check "warm language cache: language first, directory last" true \
     "$([[ "$PS1" == *"LANGWARMDIR[true|]"* ]] && echo true || echo false)"
 
+# --- The presence probe reads the agent's marker, not the entries ---
 rm -f "$cache_dir/$cache_key".lang*
 check "probe: no entry once the cache is cleared" 1 \
     "$(__gpy_instant_cache_present lang "$project"; echo $?)"
 printf LANG >"$cache_dir/$cache_key.lang_first.magenta.bash"
-check "probe: a contextual-only entry counts as present" 0 \
+check "probe: an entry without its marker does not count" 1 \
     "$(__gpy_instant_cache_present lang "$project"; echo $?)"
-rm -f "$cache_dir/$cache_key".lang*
-shopt -s failglob
-check "probe: failglob neither errors on a miss nor stays lifted" "1|on" \
-    "$(__gpy_instant_cache_present lang "$project" 2>&1; echo "$?|$(shopt -q failglob && echo on || echo off)")"
-shopt -u failglob
+: >"$cache_dir/$cache_key.lang.any-entry.bash"
+check "probe: the presence marker counts" 0 \
+    "$(__gpy_instant_cache_present lang "$project"; echo $?)"
 
 # A key over 200 characters is stored under chunk directories; the probe looks there.
 long_project="$TMP_ROOT/$(printf 'l%.0s' {1..80})/$(printf 'm%.0s' {1..80})/$(printf 'n%.0s' {1..60})"
@@ -82,8 +82,8 @@ long_key=""
 __gpy_path_to_cache_key "$key_path" long_key
 __gpy_chunk_cache_key long_key
 mkdir -p "$cache_dir/${long_key%/*}"
-printf LANG >"$cache_dir/$long_key.lang_first.magenta.bash"
-check "probe: a contextual-only entry under a chunked key counts as present" "chunked 0" \
+: >"$cache_dir/$long_key.lang.any-entry.bash"
+check "probe: a marker under a chunked key counts as present" "chunked 0" \
     "$([[ "$long_key" == */* ]] && printf 'chunked '; __gpy_instant_cache_present lang "$long_project"; echo $?)"
 
 test_finish "omitted segment positions"
