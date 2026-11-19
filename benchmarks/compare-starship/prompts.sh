@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # benchmarks/compare-starship/prompts.sh
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck disable=SC2016 # the bodies hold `$` for the shell under test to expand
 #
 # GPY vs Starship: the cost of one whole prompt in Bash, Zsh and Fish, through
 # each tool's real shell integration (`bash/gpy.bash`, `zsh/gpy.zsh`,
@@ -111,12 +112,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Fixtures: a private copy of each (a clone on APFS), so neither tool's index
-# writes reach the cached repositories.
+# writes reach the cached repositories. A copy has new file times, so its
+# index is refreshed once (one `git status` that may write it, under the
+# sample environment), as a user's own git commands keep it fresh; without it
+# every status re-reads every file.
 IFS=, read -r -a REPO_LIST <<<"$REPOS"
 for repo in "${REPO_LIST[@]}"; do
     src="$HOME/.cache/gpy-bench/repos/$repo"
     [[ -d "$src/.git" ]] || { echo "no fixture $src (run: benchmarks/compare-starship/run.sh fixtures)" >&2; exit 2; }
     cp -Rc "$src" "$SB/repos/$repo" 2>/dev/null || cp -R "$src" "$SB/repos/$repo"
+    "${ENV_ARGS[@]}" GIT_OPTIONAL_LOCKS=1 git -C "$SB/repos/$repo" status --porcelain >/dev/null
     sub="$(cd "$SB/repos/$repo" && find . -mindepth 1 -maxdepth 1 -type d ! -name '.*' | sort | head -n 1)"
     printf '%s\n' "${sub#./}" >"$SB/repos/$repo.sub"
 done
