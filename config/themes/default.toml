@@ -97,7 +97,7 @@ fail_bg_color = "red"
 format = "[ ](fg:prev_bg)[$symbol]($style) "
 
 [segments.git]
-format = "([$sep_open](fg:$bg bg:default))[ $symbol $branch]($style)([ $state]($style))([ $ahead_behind]($style))([ $status]($style))([ $stash]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+format = "([$sep_open](fg:$bg bg:default))[ ($symbol )$branch]($style)([ $state]($style))([ $ahead_behind]($style))([ $status]($style))([ $stash]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 text_color = "black"
 bg_color = "white"
 clean_text_color = "black"

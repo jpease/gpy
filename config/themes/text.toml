@@ -55,7 +55,7 @@ fail_bg_color = "red"
 format = "[$symbol]($style)"
 
 [segments.git]
-format = "[$symbol $branch]($style)([ $ahead_behind]($style))([ $status]($style))"
+format = "[($symbol )$branch]($style)([ $ahead_behind]($style))([ $status]($style))"
 text_color = "white"
 bg_color = "black"
 clean_text_color = "white"
