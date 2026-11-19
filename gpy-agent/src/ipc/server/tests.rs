@@ -94,8 +94,13 @@ fn build_test_endpoint(
     crate::security::SafePath,
     TempDir,
 ) {
-    let config_manager =
-        config_manager_with(config_dir, "[ui]\nenabled_segments = [\"language\"]\n");
+    // No version probe: it runs the language's own binary within the request
+    // budget, which a slow runner can miss (jpease/gpy-archive#1245). The test
+    // is about the segment toggle, so detection alone is enough.
+    let config_manager = config_manager_with(
+        config_dir,
+        "[ui]\nenabled_segments = [\"language\"]\n[language]\nshow_versions = false\n",
+    );
     let handle = EndpointHandle::new(endpoint_deps(
         Path::new(sock_name),
         render_deps(Arc::clone(&config_manager)),
