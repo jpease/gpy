@@ -69,7 +69,7 @@ pub(crate) fn config_refresh_required(old_config: &Config, new_config: &Config) 
 }
 
 /// Every `UiSettings` field but `retire_unmodified_themes` (read by `gpy setup`
-/// only) affects rendering; shells learn `transient_prompt` from the theme export.
+/// only) affects rendering.
 pub(super) fn ui_refresh_required(
     old: &crate::config::UiSettings,
     new: &crate::config::UiSettings,
@@ -175,8 +175,7 @@ pub(super) fn language_refresh_required(
 }
 
 /// Process-management fields (`timeout_seconds`, `supervisor`) are excluded: they
-/// render nothing, and shells get them from the theme export, whose change rings
-/// the reload doorbell on its own.
+/// render nothing, and `gpy prompt` reads them from the config on every prompt.
 pub(super) fn agent_refresh_required(
     old: &crate::config::AgentSettings,
     new: &crate::config::AgentSettings,

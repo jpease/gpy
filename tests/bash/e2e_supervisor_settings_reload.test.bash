@@ -2,10 +2,10 @@
 # tests/bash/e2e_supervisor_settings_reload.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # `gpy config set agent.supervisor.enabled` reaches an open Bash shell without
-# a restart: the `<pid>.reload` doorbell is consumed by the next prompt, and
-# `gpy prompt` reads the setting on every prompt. With it off, a stopped
-# agent stays down across prompts; turned back on (the agent down, so no
-# doorbell), the next prompt restarts it.
+# a restart or a doorbell: `gpy prompt` reads the setting on every prompt, and
+# the setting renders nothing, so the agent raises no `<pid>.reload`. With it
+# off, a stopped agent stays down across prompts; turned back on, the next
+# prompt restarts it.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -28,24 +28,24 @@ registered() { shell_e2e_assert_registered "$client_pid"; }
 shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
 reload_flag="$XDG_RUNTIME_DIR/gpy/shells/$client_pid.reload"
-flag_written() { [ -e "$reload_flag" ]; }
-flag_consumed() { [ ! -e "$reload_flag" ]; }
+# The agent announces its start (`.reload` + `.reregister`) to every tracked
+# shell once its socket accepts; on a fast host that can catch this shell's
+# PID file. That announcement has run by the time the client registered, so
+# drop its flag: only the setting change below may raise one.
+rm -f "$reload_flag"
 agent_down() { ! shell_e2e_agent_responding; }
 
 if ! gpy config set agent.supervisor.enabled false >"$SHELL_E2E_ROOT/config-set.log" 2>&1; then
     fail "gpy config set agent.supervisor.enabled false failed: $(cat "$SHELL_E2E_ROOT/config-set.log")"
 fi
-if shell_e2e_poll 5 flag_written; then
-    pass "the setting rang the reload doorbell"
+# Absence cannot be polled for: give a wrong doorbell a fixed window.
+sleep 1.5
+if [ -e "$reload_flag" ]; then
+    fail "agent.supervisor.enabled rang the reload doorbell; it renders nothing"
 else
-    fail "no .reload flag after setting agent.supervisor.enabled"
+    pass "the setting rang no reload doorbell"
 fi
 shell_e2e_send '\r'
-if shell_e2e_poll 5 flag_consumed; then
-    pass "the next prompt consumed the .reload flag"
-else
-    fail "the shell left the .reload flag"
-fi
 
 shell_e2e_stop_agent
 shell_e2e_send '\r'

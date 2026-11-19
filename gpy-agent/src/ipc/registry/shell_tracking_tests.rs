@@ -58,7 +58,7 @@ fn restart_nudge_cleans_up_tracking_files_for_dead_shells() {
         std::fs::write(dir.path().join(name), "").expect("seed flag");
     }
 
-    announce_start_in(dir.path(), || Ok(false));
+    announce_start_in(dir.path());
 
     let leftovers: Vec<_> = std::fs::read_dir(dir.path())
         .expect("read dir")
@@ -110,7 +110,7 @@ fn nudge_skips_and_removes_tracking_file_older_than_its_process() {
         .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000))
         .expect("backdate tracking file");
 
-    announce_start_in(dir.path(), || Ok(false));
+    announce_start_in(dir.path());
 
     assert!(
         !dir.path().join(format!("{pid}.reregister")).exists(),
@@ -282,7 +282,8 @@ fn renudge_keeps_a_verified_shell_whose_tracking_file_looks_older() {
     assert!(kept, "a verified shell's tracking file must survive");
 }
 
-/// The restart nudge writes `.reregister`, and a shell without a handler survives.
+/// The restart nudge writes `.reregister` and `.reload`, and a shell without
+/// a handler survives.
 #[test]
 fn restart_nudge_writes_reregister_flag_and_spares_unhandled_shell() {
     let dir = tempfile::tempdir().expect("create tempdir");
@@ -293,13 +294,17 @@ fn restart_nudge_writes_reregister_flag_and_spares_unhandled_shell() {
     let pid = child.id();
     track_shells(dir.path(), &[pid]);
 
-    announce_start_in(dir.path(), || Ok(false));
+    announce_start_in(dir.path());
     // Give an unhandled SIGURG time to kill the child, if it would.
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     assert!(
         dir.path().join(format!("{pid}.reregister")).exists(),
         "the restart nudge must write the reregister flag"
+    );
+    assert!(
+        dir.path().join(format!("{pid}.reload")).exists(),
+        "the restart nudge must ask for a reload"
     );
     assert!(
         child.try_wait().expect("poll child").is_none(),
@@ -309,66 +314,9 @@ fn restart_nudge_writes_reregister_flag_and_spares_unhandled_shell() {
     let _ = child.wait();
 }
 
-/// The startup warm-up raises `.reload` only when the export changed.
-#[test]
-fn warm_theme_export_flags_reload_only_when_the_export_changed() {
-    let shell_dir = tempfile::tempdir().expect("create shell dir");
-    let cache = tempfile::tempdir().expect("create cache dir");
-    let config = crate::config::Config::default();
-    let default_theme = crate::theme::ThemeManager::builtin("default").expect("default theme");
-    let text_theme = crate::theme::ThemeManager::builtin("text").expect("text theme");
-    // The previous agent's export, as the shell sourced it.
-    crate::cache::theme_export::write_theme_export_to_dir(
-        cache.path(),
-        &default_theme,
-        &config,
-        &crate::template::Palette::default(),
-    )
-    .expect("seed export");
-
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .expect("spawn unhandled stand-in shell");
-    let pid = child.id();
-    track_shells(shell_dir.path(), &[pid]);
-    let reload_flag = shell_dir.path().join(format!("{pid}.reload"));
-
-    announce_start_in(shell_dir.path(), || {
-        crate::cache::theme_export::write_theme_export_to_dir(
-            cache.path(),
-            &default_theme,
-            &config,
-            &crate::template::Palette::default(),
-        )
-    });
-    let flagged_on_unchanged = reload_flag.exists();
-
-    announce_start_in(shell_dir.path(), || {
-        crate::cache::theme_export::write_theme_export_to_dir(
-            cache.path(),
-            &text_theme,
-            &config,
-            &crate::template::Palette::default(),
-        )
-    });
-    let flagged_on_changed = reload_flag.exists();
-
-    let _ = child.kill();
-    let _ = child.wait();
-    assert!(
-        !flagged_on_unchanged,
-        "an unchanged export must not ask shells to reload"
-    );
-    assert!(
-        flagged_on_changed,
-        "a changed export must write the tracked shell's reload flag"
-    );
-}
-
-/// A start that changed the export rings each shell once, with `.reload`
-/// and `.reregister` both already written: Zsh drops a second ring that
-/// lands while its trap for the first is running.
+/// A start rings each shell once, with `.reload` and `.reregister` both
+/// already written: Zsh drops a second ring that lands while its trap for the
+/// first is running.
 #[test]
 fn announce_start_rings_once_for_reload_and_reregister() {
     let dir = tempfile::tempdir().expect("create tempdir");
@@ -387,7 +335,7 @@ fn announce_start_rings_once_for_reload_and_reregister() {
     std::thread::sleep(std::time::Duration::from_millis(200));
     track_shells(dir.path(), &[child.id()]);
 
-    announce_start_in(dir.path(), || Ok(true));
+    announce_start_in(dir.path());
     let rang = wait_for(&mark);
     // Room for a second ring to show up, if one were sent.
     std::thread::sleep(std::time::Duration::from_millis(300));

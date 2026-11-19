@@ -148,9 +148,6 @@ cargo bench --bench agent_startup_bench
   — **16.4µs** mean
 - `theme_manager_load` - `ThemeManager::new`, the exact call
   `Agent::init_theme_manager` makes — **40.7µs** mean
-- `theme_export_write` - `write_theme_export_cache`'s render + atomic-write
-  work, benched through the `write_theme_export_to_dir` explicit-directory
-  seam into a tempdir — **164.6µs** mean
 - `version_command_spawn` - `execute_version_command`'s spawn +
   own-process-group placement + reader thread + timeout wait + parse, using a
   stub `VersionSource` (`true` / `cmd /C exit 0`) so no real toolchain is
@@ -426,7 +423,6 @@ The agent and shell integration run on every prompt render. Budgets live in
 | Cache Read | `cache_read` | `cache_read_hit` |
 | Config Load | `config_load` | `config_load_from_file` |
 | Theme Manager Load | `theme_manager_load` | `theme_manager_load` |
-| Theme Export Write | `theme_export_write` | `theme_export_write` |
 | Version Command Spawn | `version_command_spawn` | `version_command_spawn`, stub command |
 | Language Detection | `language_detection` | `lang_detect_5k` |
 

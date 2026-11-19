@@ -1,47 +1,21 @@
-//! Assignments for the global settings, the prompt, the built-in segments and the delimiters.
+//! Values for the global settings, the prompt, the built-in segments and the delimiters.
 
-use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
+use super::values::{Assignments, set};
 use crate::config::{Config, DEFAULT_UI_ROOT_PROMPT_COLOR, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
-use crate::shell::Shell;
 use crate::template::sanitize_control_chars;
 use crate::theme::model::{GitState, ThemeConfig};
 
-/// Render a boolean setting as the `1`/`0` the shell integration expects.
+/// Render a boolean setting as the `1`/`0` the renderer expects.
 const fn flag(value: bool) -> &'static str {
     if value { "1" } else { "0" }
 }
 
-/// The five config mirrors a shell reads, as non-exported `__gpy_cfg_*` values: `1`/`0` flags or integers.
-/// Never exported: `GPY_*` names are user overrides only.
-fn config_export_assignments(config: &Config) -> Vec<ShellAssignment> {
-    let agent = &config.agent;
-    let supervisor = &agent.supervisor;
-    vec![
-        ShellAssignment::local("__gpy_cfg_agent_enabled", flag(agent.enabled)),
-        ShellAssignment::local("__gpy_cfg_supervisor_enabled", flag(supervisor.enabled)),
-        ShellAssignment::local(
-            "__gpy_cfg_supervisor_check_interval",
-            supervisor.check_interval_seconds.to_string(),
-        ),
-        ShellAssignment::local(
-            "__gpy_cfg_supervisor_max_restarts",
-            supervisor.max_restart_attempts.to_string(),
-        ),
-        ShellAssignment::local(
-            "__gpy_cfg_transient_prompt",
-            flag(config.ui.transient_prompt),
-        ),
-    ]
-}
-
-/// Agent/git/language/UI settings, the theme name, and the powerline glyph pair.
-pub(super) fn append_global_assignments(
-    output: &mut String,
-    shell: Shell,
+/// The icon style and the powerline glyph pair.
+pub(super) fn insert_global_values(
+    assignments: &mut Assignments,
     theme: &ThemeConfig,
-    theme_name: &str,
     config: &Config,
 ) {
     let prompt_icon_style = if config.ui.show_icons {
@@ -65,28 +39,25 @@ pub(super) fn append_global_assignments(
             .map_or("", |cfg| cfg.icon.as_str()),
     );
 
-    let mut assignments = vec![ShellAssignment::local("__gpy_theme_name", theme_name)];
-    assignments.extend(config_export_assignments(config));
-    assignments.extend([
-        ShellAssignment::local("__prompt_icons", prompt_icon_style),
-        ShellAssignment::local("__icon_powerline_segment_start", powerline_start),
-        ShellAssignment::local("__icon_powerline_segment_end", powerline_end),
-    ]);
-    append_shell_assignments(output, shell, assignments);
+    set(assignments, "__prompt_icons", prompt_icon_style);
+    set(
+        assignments,
+        "__icon_powerline_segment_start",
+        powerline_start,
+    );
+    set(assignments, "__icon_powerline_segment_end", powerline_end);
 }
 
-/// Prompt and root-prompt icons/colors plus the two-line layout flag.
+/// Prompt and root-prompt icons/colors plus the layout flags.
 /// `__icon_prompt`/`__prompt_color` follow `segments.character`'s
 /// `success_symbol`/`success_color`; the symbol is stripped of control
-/// characters (`❯` if nothing is left) because the shells print it raw.
+/// characters (`❯` if nothing is left) because it is printed raw.
 /// `__root_prompt_color` falls back to [`DEFAULT_UI_ROOT_PROMPT_COLOR`].
-pub(super) fn append_prompt_assignments(
-    output: &mut String,
+pub(super) fn insert_prompt_values(
+    assignments: &mut Assignments,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
 ) {
-    let shell = colors.shell;
-
     let character = &theme.segments.character;
     let clean = sanitize_control_chars(&character.success_symbol);
     let symbol = if clean.is_empty() {
@@ -94,199 +65,142 @@ pub(super) fn append_prompt_assignments(
     } else {
         clean.into_owned()
     };
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__icon_prompt", symbol),
+    set(assignments, "__icon_prompt", symbol);
+    set(
+        assignments,
+        "__prompt_color",
+        colors.resolve(&character.success_color),
     );
 
-    let symbol_color = &character.success_color;
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__prompt_color", colors.resolve(symbol_color)),
-    );
-
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__icon_root_prompt", theme.ui.root_prompt_icon.as_str()),
+    set(
+        assignments,
+        "__icon_root_prompt",
+        theme.ui.root_prompt_icon.as_str(),
     );
     let root_color = theme
         .ui
         .root_prompt_color
         .as_deref()
         .unwrap_or(DEFAULT_UI_ROOT_PROMPT_COLOR);
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__root_prompt_color", colors.resolve(root_color)),
+    set(
+        assignments,
+        "__root_prompt_color",
+        colors.resolve(root_color),
     );
 
-    // Always emit 0/1 so disabling in-session re-exports 0.
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__gpy_two_line", flag(theme.ui.two_line)),
-    );
-
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__gpy_add_newline", flag(theme.ui.add_newline)),
-    );
+    set(assignments, "__gpy_two_line", flag(theme.ui.two_line));
+    set(assignments, "__gpy_add_newline", flag(theme.ui.add_newline));
 }
 
 /// Built-in clock, directory, and duration segment settings.
 ///
-/// Directory/duration render from agent ANSI. `__clock_format` is a presence flag only:
-/// the agent re-derives the template, and exporting it raw would allow shell injection.
-/// Threshold and bg colors feed the shell's visibility gate and chevrons.
-pub(super) fn append_builtin_segment_assignments(
-    output: &mut String,
+/// `__clock_format` is a presence flag only: the agent re-derives the template.
+/// Threshold and bg colors feed the visibility gate and chevrons.
+pub(super) fn insert_builtin_segment_values(
+    assignments: &mut Assignments,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
 ) {
-    let shell = colors.shell;
-    append_shell_assignments(
-        output,
-        shell,
-        [
-            ShellAssignment::local(
-                "__color_clock_bg",
-                colors.resolve(&theme.segments.clock.bg_color),
-            ),
-            ShellAssignment::local(
-                "__color_clock_fg",
-                colors.resolve(&theme.segments.clock.text_color),
-            ),
-        ],
+    let segments = &theme.segments;
+    let clock = &segments.clock;
+    set(
+        assignments,
+        "__color_clock_bg",
+        colors.resolve(&clock.bg_color),
     );
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local("__time_format", theme.segments.clock.time_format()),
+    set(
+        assignments,
+        "__color_clock_fg",
+        colors.resolve(&clock.text_color),
     );
-    append_shell_assignments(
-        output,
-        shell,
-        [
-            ShellAssignment::local(
-                "__clock_show_leading_zero",
-                flag(theme.segments.clock.show_leading_zero()),
-            ),
-            ShellAssignment::local(
-                "__clock_show_seconds",
-                flag(theme.segments.clock.show_seconds()),
-            ),
-            ShellAssignment::local(
-                "__clock_format",
-                if theme.segments.clock.format.is_some() {
-                    "1"
-                } else {
-                    ""
-                },
-            ),
-            ShellAssignment::local(
-                "__duration_threshold_ms",
-                theme.segments.duration.show_if_exceeds_ms.to_string(),
-            ),
-            ShellAssignment::local(
-                "__color_directory_bg",
-                colors.resolve(&theme.segments.directory.bg_color),
-            ),
-            ShellAssignment::local(
-                "__color_duration_bg",
-                colors.resolve(&theme.segments.duration.bg_color),
-            ),
-        ],
+    set(assignments, "__time_format", clock.time_format());
+    set(
+        assignments,
+        "__clock_show_leading_zero",
+        flag(clock.show_leading_zero()),
+    );
+    set(
+        assignments,
+        "__clock_show_seconds",
+        flag(clock.show_seconds()),
+    );
+    set(
+        assignments,
+        "__clock_format",
+        if clock.format.is_some() { "1" } else { "" },
+    );
+    set(
+        assignments,
+        "__duration_threshold_ms",
+        segments.duration.show_if_exceeds_ms.to_string(),
+    );
+    set(
+        assignments,
+        "__color_directory_bg",
+        colors.resolve(&segments.directory.bg_color),
+    );
+    set(
+        assignments,
+        "__color_duration_bg",
+        colors.resolve(&segments.duration.bg_color),
     );
 }
 
 /// Status segment icons, the ok/fail colors and the template presence flag. An
-/// icon is erased when unset, or when [`Glyphs::Plain`] drops it, so the shell
-/// draws its ASCII fallback.
-pub(super) fn append_status_assignments(
-    output: &mut String,
+/// icon is unset when not configured, or when [`Glyphs::Plain`] drops it, so
+/// the renderer draws its ASCII fallback.
+pub(super) fn insert_status_values(
+    assignments: &mut Assignments,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
     glyphs: Glyphs,
 ) {
-    let shell = colors.shell;
     let status = &theme.segments.status;
 
     for (name, icon) in [
         ("__icon_status_ok", status.ok_icon.as_ref()),
         ("__icon_status_fail", status.fail_icon.as_ref()),
     ] {
-        append_shell_assignment(
-            output,
-            shell,
-            icon.and_then(|configured| glyphs.icon(configured.as_str()))
-                .map_or_else(
-                    || ShellAssignment::unset(name),
-                    |text| ShellAssignment::local(name, text),
-                ),
-        );
+        let text = icon.and_then(|configured| glyphs.icon(configured.as_str()));
+        assignments.insert(name.to_owned(), text.map(str::to_owned));
     }
-    append_shell_assignments(
-        output,
-        shell,
-        [
-            ShellAssignment::local(
-                "__color_status_ok_bg",
-                colors.resolve(&theme.segments.status.ok_bg_color),
-            ),
-            ShellAssignment::local(
-                "__color_status_ok_fg",
-                colors.resolve(&theme.segments.status.ok_text_color),
-            ),
-            ShellAssignment::local(
-                "__color_status_fail_bg",
-                colors.resolve(&theme.segments.status.fail_bg_color),
-            ),
-            ShellAssignment::local(
-                "__color_status_fail_fg",
-                colors.resolve(&theme.segments.status.fail_text_color),
-            ),
-            // PRESENCE FLAG ONLY, like `__hostname_format`: the agent re-derives the template.
-            ShellAssignment::local(
-                "__status_format",
-                if theme.segments.status.format.is_some() {
-                    "1"
-                } else {
-                    ""
-                },
-            ),
-        ],
+    for (name, color) in [
+        ("__color_status_ok_bg", &status.ok_bg_color),
+        ("__color_status_ok_fg", &status.ok_text_color),
+        ("__color_status_fail_bg", &status.fail_bg_color),
+        ("__color_status_fail_fg", &status.fail_text_color),
+    ] {
+        set(assignments, name, colors.resolve(color));
+    }
+    // Presence flag only: the agent re-derives the template.
+    set(
+        assignments,
+        "__status_format",
+        if status.format.is_some() { "1" } else { "" },
     );
 }
 
 /// Git/language bg colors only (they render from agent ANSI), for powerline chevrons.
-pub(super) fn append_git_language_color_assignments(
-    output: &mut String,
+pub(super) fn insert_git_language_color_values(
+    assignments: &mut Assignments,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
 ) {
     let git = &theme.segments.git;
-
-    append_shell_assignments(
-        output,
-        colors.shell,
-        [
-            ShellAssignment::local(
-                "__color_git_clean_bg",
-                colors.resolve(git.get_bg_color(GitState::Clean)),
-            ),
-            ShellAssignment::local(
-                "__color_git_dirty_bg",
-                colors.resolve(git.get_bg_color(GitState::Modified)),
-            ),
-            ShellAssignment::local(
-                "__color_language_bg",
-                colors.resolve(&theme.segments.language.bg_color),
-            ),
-        ],
+    set(
+        assignments,
+        "__color_git_clean_bg",
+        colors.resolve(git.get_bg_color(GitState::Clean)),
+    );
+    set(
+        assignments,
+        "__color_git_dirty_bg",
+        colors.resolve(git.get_bg_color(GitState::Modified)),
+    );
+    set(
+        assignments,
+        "__color_language_bg",
+        colors.resolve(&theme.segments.language.bg_color),
     );
 }
 
@@ -297,47 +211,35 @@ fn delimiter_colors(delimiter: Option<&DelimiterConfig>) -> (&str, &str) {
     })
 }
 
-/// Delimiter glyphs and colors. With [`Glyphs::Plain`], Nerd Font glyphs export empty.
+/// Delimiter glyphs and colors. With [`Glyphs::Plain`], Nerd Font glyphs are empty.
 #[expect(clippy::similar_names, reason = "deliberate fg/bg pairs")]
-pub(super) fn append_delimiter_assignments(
-    output: &mut String,
+pub(super) fn insert_delimiter_values(
+    assignments: &mut Assignments,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
     glyphs: Glyphs,
 ) {
-    let shell = colors.shell;
+    let ui = &theme.ui;
+    for (name, delimiter) in [
+        ("__segment_delim_first", ui.get_prompt_open_delimiter()),
+        ("__segment_delim_start", ui.get_segment_open_delimiter()),
+        ("__segment_delim_end", ui.get_segment_close_delimiter()),
+        ("__segment_delim_last", ui.get_prompt_close_delimiter()),
+    ] {
+        set(assignments, name, glyphs.delimiter(delimiter));
+    }
 
-    let (prompt_open_fg, prompt_open_bg) = delimiter_colors(theme.ui.prompt_open.as_ref());
-    let (prompt_close_fg, prompt_close_bg) = delimiter_colors(theme.ui.prompt_close.as_ref());
-    let (seg_delim_fg, seg_delim_bg) = delimiter_colors(theme.ui.segment_open.as_ref());
-    append_shell_assignments(
-        output,
-        shell,
-        [
-            ShellAssignment::local(
-                "__segment_delim_first",
-                glyphs.delimiter(theme.ui.get_prompt_open_delimiter()),
-            ),
-            ShellAssignment::local(
-                "__segment_delim_start",
-                glyphs.delimiter(theme.ui.get_segment_open_delimiter()),
-            ),
-            ShellAssignment::local(
-                "__segment_delim_end",
-                glyphs.delimiter(theme.ui.get_segment_close_delimiter()),
-            ),
-            ShellAssignment::local(
-                "__segment_delim_last",
-                glyphs.delimiter(theme.ui.get_prompt_close_delimiter()),
-            ),
-            ShellAssignment::local("__prompt_open_color", colors.resolve(prompt_open_fg)),
-            ShellAssignment::local("__prompt_open_bg", colors.resolve(prompt_open_bg)),
-            ShellAssignment::local("__prompt_close_color", colors.resolve(prompt_close_fg)),
-            ShellAssignment::local("__prompt_close_bg", colors.resolve(prompt_close_bg)),
-            ShellAssignment::local("__segment_delimiter_color", colors.resolve(seg_delim_fg)),
-            ShellAssignment::local("__segment_delimiter_bg", colors.resolve(seg_delim_bg)),
-            ShellAssignment::local("__prompt_base_bg", "normal"),
-            ShellAssignment::local("__prompt_base_fg", "normal"),
-        ],
-    );
+    let (prompt_open_fg, prompt_open_bg) = delimiter_colors(ui.prompt_open.as_ref());
+    let (prompt_close_fg, prompt_close_bg) = delimiter_colors(ui.prompt_close.as_ref());
+    let (seg_delim_fg, seg_delim_bg) = delimiter_colors(ui.segment_open.as_ref());
+    for (name, color) in [
+        ("__prompt_open_color", prompt_open_fg),
+        ("__prompt_open_bg", prompt_open_bg),
+        ("__prompt_close_color", prompt_close_fg),
+        ("__prompt_close_bg", prompt_close_bg),
+        ("__segment_delimiter_color", seg_delim_fg),
+        ("__segment_delimiter_bg", seg_delim_bg),
+    ] {
+        set(assignments, name, colors.resolve(color));
+    }
 }

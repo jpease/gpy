@@ -1,14 +1,7 @@
-//! Assignments that let a shell adapter run an enabled script segment
-//! (`entry_type = "script"`) without calling GPY: the interpreter, the
-//! canonical script paths, triggers, inputs, `env` names, resolved settings,
-//! limits and the static part of the cache key.
-//!
-//! Every variable is `__gpy_script_sh`, `__gpy_script_segments` or
-//! `__gpy_script_<token>_<field>`, where `<field>` is one word without `_`, so
-//! no two segments (or a segment and the two globals) can name the same
-//! variable. The per-shell contract is in docs/dev/plugins.md ("Theme export").
+//! Enabled script segments (`entry_type = "script"`) resolved for the prompt:
+//! the interpreter, the canonical script paths, triggers, inputs, `env` names,
+//! resolved settings, limits and the static part of the cache key.
 
-use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_list};
 use crate::config::Config;
 use crate::config::plugin_segments::{self, PluginSegmentConfig};
 use crate::debug_log;
@@ -16,7 +9,6 @@ use crate::plugin::{
     BuiltinSegment, DiscoveredPlugin, EntryType, InputName, PluginDiscovery, ScriptSegmentManifest,
     SegmentName, check_owned_and_not_shared,
 };
-use crate::shell::Shell;
 use crate::{Error, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -28,17 +20,11 @@ const DEFAULT_SH: &str = "/bin/sh";
 /// that shell directly, as `sh`, saves about 0.8 ms per script run.
 const MACOS_SH_SELECTOR: &str = "/private/var/select/sh";
 
-/// The list of exported script segment tokens, assigned last.
-const SEGMENTS_VAR: &str = "__gpy_script_segments";
-
-/// The absolute interpreter path every script and `require_command` runs with.
-const SH_VAR: &str = "__gpy_script_sh";
-
-/// One enabled script segment, resolved for export. Paths are canonical and
+/// One enabled script segment, resolved for the prompt. Paths are canonical and
 /// absolute; every string is UTF-8 without control characters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScriptSegmentExport {
-    /// The segment's shell variable token (`[a-z0-9_]+`).
+    /// The segment's variable token (`[a-z0-9_]+`).
     pub token: String,
     /// The segment name (`[a-z0-9_-]+`).
     pub name: String,
@@ -72,10 +58,10 @@ pub(crate) struct ScriptSegmentExport {
     pub key: String,
 }
 
-/// What theme export writes for script segments, in every shell.
+/// The enabled script segments and the interpreter they run with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScriptSegmentExports {
-    /// The interpreter path (`__gpy_script_sh`).
+    /// The interpreter path.
     pub sh: String,
     /// Enabled script segments in `ui.enabled_segments` order.
     pub segments: Vec<ScriptSegmentExport>,
@@ -90,77 +76,7 @@ impl Default for ScriptSegmentExports {
     }
 }
 
-impl ScriptSegmentExport {
-    /// Every `__gpy_script_<token>_<field>` assignment, in contract order.
-    fn append_assignments(&self, output: &mut String, shell: Shell) {
-        let prefix = format!("__gpy_script_{}", self.token);
-        let scalar = |out: &mut String, field: &str, value: &str| {
-            append_shell_assignment(
-                out,
-                shell,
-                ShellAssignment::local(format!("{prefix}_{field}"), value),
-            );
-        };
-        let list = |out: &mut String, field: &str, values: &[String]| {
-            append_shell_list(
-                out,
-                shell,
-                &format!("{prefix}_{field}"),
-                values.iter().map(String::as_str),
-            );
-        };
-        scalar(output, "name", &self.name);
-        scalar(output, "root", &self.root);
-        scalar(output, "command", &self.command);
-        scalar(output, "reqcommand", &self.require_command);
-        append_shell_list(
-            output,
-            shell,
-            &format!("{prefix}_inputs"),
-            self.inputs.iter().copied(),
-        );
-        list(output, "env", &self.env);
-        list(output, "opts", &self.opts);
-        scalar(output, "ttl", &self.ttl_secs.to_string());
-        scalar(output, "timeout", &self.timeout_ms.to_string());
-        scalar(output, "scope", self.scope);
-        list(output, "reqfiles", &self.require_files);
-        list(output, "reqfolders", &self.require_folders);
-        list(output, "reqexts", &self.require_extensions);
-        list(output, "reqenv", &self.require_env);
-        scalar(output, "key", &self.key);
-    }
-}
-
-/// `__gpy_script_sh`, then every exported segment's variables, then
-/// `__gpy_script_segments`: the list is assigned last, so every token in it
-/// has all of its variables. Both globals are assigned in every export, so a
-/// value inherited from the parent environment never survives one.
-pub(super) fn append_script_segment_assignments(
-    output: &mut String,
-    shell: Shell,
-    scripts: &ScriptSegmentExports,
-) {
-    append_shell_assignment(
-        output,
-        shell,
-        ShellAssignment::local(SH_VAR, scripts.sh.as_str()),
-    );
-    for segment in &scripts.segments {
-        segment.append_assignments(output, shell);
-    }
-    append_shell_list(
-        output,
-        shell,
-        SEGMENTS_VAR,
-        scripts
-            .segments
-            .iter()
-            .map(|segment| segment.token.as_str()),
-    );
-}
-
-/// Resolve every enabled script segment for export, in `ui.enabled_segments`
+/// Resolve every enabled script segment, in `ui.enabled_segments`
 /// order. Built-in names, names that are not script segments and repeated
 /// tokens are skipped; a segment that fails containment, the ownership check
 /// or its `[plugin.<segment>]` overrides is skipped with a debug log line.
@@ -335,17 +251,11 @@ fn launcher_target(selector: &Path) -> Option<String> {
         .filter(|text| !text.chars().any(char::is_control))
 }
 
-#[cfg(unix)]
 fn is_executable(meta: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
     meta.permissions().mode() & 0o111 != 0
 }
 
-#[cfg(not(unix))]
-const fn is_executable(_meta: &std::fs::Metadata) -> bool {
-    false
-}
-
 #[cfg(test)]
 #[path = "script_segments_tests.rs"]
-pub(super) mod tests;
+mod tests;

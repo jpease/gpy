@@ -11,6 +11,9 @@ mod script;
 mod session;
 mod vars;
 
+#[cfg(test)]
+mod tests;
+
 pub use dialect::Dialect;
 
 use crate::Result;
@@ -99,10 +102,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
     let theme = load_theme(config.ui.theme.as_str()).or_else(|_| load_theme("default"))?;
     let palette = crate::palette::active_palette(&config);
     let vars = ShellVars::new(crate::theme::export::prompt_shell_values(
-        &theme,
-        config.ui.theme.as_str(),
-        &config,
-        &palette,
+        &theme, &config, &palette,
     ));
     let pwd = logical_pwd();
     let scripts = if exports.segments.is_empty() {
@@ -149,6 +149,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
         git_root,
         scripts,
         oneshot_used: false,
+        is_root: nix::unistd::geteuid().is_root(),
     };
     let rendered = render.prompt();
     // After the render, so a cold start never delays this prompt.
@@ -229,6 +230,8 @@ struct Render<'a> {
     scripts: Option<Scripts>,
     /// One in-process oneshot per render (`__gpy_oneshot_claim`).
     oneshot_used: bool,
+    /// Effective UID 0: the root symbol instead of the `character` segment.
+    is_root: bool,
 }
 
 /// What a segment printed and whether it fell back to oneshot.
@@ -278,7 +281,7 @@ impl Render<'_> {
         if self.vars.or_nonempty("__gpy_two_line", "0") == "1" {
             out.push('\n');
         }
-        let root = nix::unistd::geteuid().is_root();
+        let root = self.is_root;
         let character = if root {
             String::new()
         } else {

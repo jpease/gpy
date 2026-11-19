@@ -2,8 +2,8 @@
 # tests/bash/e2e_config_reload.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # config.toml edit -> `<pid>.reload` + SIGURG -> Bash's next prompt reloads.
-# Flipping show_icons must (a) rewrite theme-export.bash, (b) show at the NEXT prompt
-#   (Bash has no SIGURG trap), (c) source cleanly under `bash -u`.
+# Flipping show_icons must (a) write the shell's `.reload` flag, (b) show at the
+#   NEXT prompt (Bash has no SIGURG trap).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -32,20 +32,19 @@ fi
 registered() { shell_e2e_assert_registered "$client_pid"; }
 shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
-export_file="$XDG_CACHE_HOME/gpy/theme-export.bash"
-[ -f "$export_file" ] || fail "no theme export at $export_file"
-# Content is the evidence of a rewrite; no mtime (`stat` flags differ GNU/BSD).
-grep -q '__prompt_icons="nerd"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
+reload_flag="$XDG_RUNTIME_DIR/gpy/shells/$client_pid.reload"
+# The agent's start announcement (`.reload` + `.reregister`) can catch this
+# shell's PID file on a fast host; it has run by the time the client
+# registered, so drop its flag and let only the edit raise one.
+rm -f "$reload_flag"
 
 shell_e2e_text_config '"directory", "git"'
 
-export_rewritten() {
-    grep -q '__prompt_icons="ascii"' "$export_file"
-}
-if shell_e2e_poll 10 export_rewritten; then
-    pass "the theme export was rewritten with show_icons=0"
+flag_written() { [ -e "$reload_flag" ]; }
+if shell_e2e_poll 10 flag_written; then
+    pass "the edit wrote the shell's .reload flag"
 else
-    fail "the theme export was not rewritten within 10 s"
+    fail "no .reload flag within 10 s of the edit"
 fi
 
 # Readline can't repaint idle; the new PS1 appears after one Enter.
@@ -64,12 +63,6 @@ if shell_e2e_poll 5 no_glyph_repaint; then
     pass "the next prompt after Enter renders without the branch glyph"
 else
     fail "the prompt after Enter still carries the branch glyph"
-fi
-
-if bash -u -c 'source "$1"' bash "$export_file" 2>"$SHELL_E2E_ROOT/nounset.err"; then
-    pass "the export sources cleanly under bash -u"
-else
-    fail "the export fails under nounset: $(cat "$SHELL_E2E_ROOT/nounset.err")"
 fi
 
 shell_e2e_send 'exit\r'

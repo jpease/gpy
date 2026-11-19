@@ -24,7 +24,6 @@ fn config_reload_disables_and_reenables_watcher() {
         palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial_config)),
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
-        theme_export_dir: temp_export_dir(),
         announce_gate: Arc::new(Mutex::new(())),
     };
 

@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-pcstatus.XXXXXX")"
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
-# The child's config dir disables the supervisor (the theme export would re-enable it).
+# The child's config dir and env flags disable the agent and its supervisor.
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 mkdir -p "$SANDBOX/run" "$SANDBOX/bin"
 # A stub gpy records the --status each prompt hands it in $GPY_STATUS_LOG.

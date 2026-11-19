@@ -1,5 +1,5 @@
 //! Config hot-reload: a config change must request a reload (`<pid>.reload`
-//! flag + SIGURG) so Fish refreshes `__enabled_segments` and delimiters.
+//! flag + SIGURG) so shells repaint.
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -163,103 +163,6 @@ enabled_segments = ["clock", "directory", "git"]
     registry.notify_reload();
 
     assert_reload_delivered(&doorbell, &shell_dir, initial_count, "git is listed again").await;
-}
-
-/// With git disabled, the theme export drops "git" from `__enabled_segments`.
-#[test]
-fn test_theme_export_updates_enabled_segments_when_git_disabled() {
-    use gpy_agent::config::Config;
-    use gpy_agent::shell::Shell;
-    use gpy_agent::theme::ThemeManager;
-
-    let mut config = Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned()];
-
-    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(
-        fish_output.contains("set -g __enabled_segments clock directory"),
-        "Git should be absent from enabled_segments when unlisted. Got: {fish_output}"
-    );
-    assert!(
-        !fish_output.contains("clock directory git"),
-        "Enabled segments should not include git when unlisted. Got: {fish_output}"
-    );
-}
-
-#[test]
-fn test_theme_export_includes_git_when_enabled() {
-    use gpy_agent::config::Config;
-    use gpy_agent::shell::Shell;
-    use gpy_agent::theme::ThemeManager;
-
-    let mut config = Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
-
-    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(
-        fish_output.contains("set -g __enabled_segments clock directory git"),
-        "Git should be included in enabled_segments when listed. Got: {fish_output}"
-    );
-}
-
-#[test]
-fn test_theme_export_updates_enabled_segments_when_language_disabled() {
-    use gpy_agent::config::Config;
-    use gpy_agent::shell::Shell;
-    use gpy_agent::theme::ThemeManager;
-
-    let mut config = Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
-
-    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(
-        fish_output.contains("set -g __enabled_segments clock directory git"),
-        "Language should be absent from enabled_segments when unlisted. Got: {fish_output}"
-    );
-    assert!(
-        !fish_output.contains("__enabled_segments clock language directory git"),
-        "Enabled segments should not include language when unlisted. Got: {fish_output}"
-    );
-}
-
-#[test]
-fn test_theme_export_updates_enabled_segments_when_both_disabled() {
-    use gpy_agent::config::Config;
-    use gpy_agent::shell::Shell;
-    use gpy_agent::theme::ThemeManager;
-
-    let mut config = Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned()];
-
-    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(
-        fish_output.contains("set -g __enabled_segments clock directory"),
-        "Both git and language should be absent when unlisted. Got: {fish_output}"
-    );
 }
 
 /// The config watcher triggers a reload.

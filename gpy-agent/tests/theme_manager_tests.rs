@@ -16,14 +16,23 @@ mod sigurg;
 mod wait;
 
 use env_guard::EnvGuard;
-use gpy_agent::shell::Shell;
-use gpy_agent::{config::discovery::Source, theme::ThemeManager};
+use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 use wait::wait_until;
+
+/// The prompt values of `manager`'s theme under the default config.
+fn values(manager: &ThemeManager) -> HashMap<String, String> {
+    gpy_agent::theme::export::prompt_shell_values(
+        &manager.get(),
+        &gpy_agent::config::Config::default(),
+        &gpy_agent::template::Palette::default(),
+    )
+}
 
 // Helper to create a test theme file
 fn create_test_theme_toml(dir: &Path, theme_name: &str, content: &str) -> PathBuf {
@@ -238,42 +247,35 @@ fn test_theme_manager_loads_custom_theme() {
 
 #[test]
 #[serial]
-fn test_theme_manager_export_fish_format() {
+fn test_theme_manager_values() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    create_test_theme_toml(&config_dir, "export_test", CUSTOM_THEME);
+    create_test_theme_toml(&config_dir, "values_test", CUSTOM_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
-    // Load the theme
-    let manager = ThemeManager::new("export_test").unwrap();
+    let manager = ThemeManager::new("values_test").unwrap();
+    let values = values(&manager);
 
-    // Export to Fish format
-    let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
-    let fish_output = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(fish_output.contains("# GPY Theme: export_test"));
-    assert!(fish_output.contains("set -g __gpy_theme_name \"export_test\""));
-    assert!(fish_output.contains("set -g __icon_prompt \"→\""));
-    assert!(fish_output.contains("set -g __icon_root_prompt \"⚡\""));
-    assert!(fish_output.contains("set -g __prompt_color \"cyan\""));
-    assert!(fish_output.contains("set -g __root_prompt_color \"red\""));
-    assert!(fish_output.contains("set -g __color_clock_bg \"magenta\""));
-    assert!(fish_output.contains("set -g __color_clock_fg \"yellow\""));
-    assert!(fish_output.contains("set -g __time_format \"%H:%M:%S\""));
-    assert!(fish_output.contains("set -g __clock_show_seconds \"1\""));
-    // Duration is agent-rendered, so the theme export carries no shell-side
-    // duration icon.
-    assert!(!fish_output.contains("__icon_duration"));
-    assert!(fish_output.contains("set -g __enabled_segments clock directory git"));
-    assert!(fish_output.starts_with("set -g __gpy_export_version \"1\"\n"));
-    assert!(fish_output.contains("set -g __gpy_cfg_agent_enabled \"1\""));
+    for (name, expected) in [
+        ("__icon_prompt", "→"),
+        ("__icon_root_prompt", "⚡"),
+        ("__prompt_color", "cyan"),
+        ("__root_prompt_color", "red"),
+        ("__color_clock_bg", "magenta"),
+        ("__color_clock_fg", "yellow"),
+        ("__time_format", "%H:%M:%S"),
+        ("__clock_show_seconds", "1"),
+    ] {
+        assert_eq!(
+            values.get(name).map(String::as_str),
+            Some(expected),
+            "{name}"
+        );
+    }
+    // Duration is agent-rendered: no prompt-side duration icon.
+    assert!(!values.contains_key("__icon_duration"));
 }
 
 #[test]
@@ -306,29 +308,6 @@ fn test_theme_manager_reload() {
         assert_eq!(theme.segments.character.success_symbol, "→");
         assert_eq!(theme.segments.clock.bg_color, "magenta");
     }
-}
-
-#[test]
-#[serial]
-fn test_disabled_git_removed_from_segment_list() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_dir = temp_dir.path().join("gpy");
-    create_test_theme_toml(&config_dir, "disabled_git", CUSTOM_THEME);
-
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    let manager = ThemeManager::new("disabled_git").unwrap();
-    let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned()];
-
-    let fish_output = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    assert!(!fish_output.contains("clock directory git"));
-    assert!(fish_output.contains("set -g __enabled_segments clock directory"));
 }
 
 #[test]
@@ -505,71 +484,45 @@ fn test_theme_manager_loads_from_non_utf8_xdg_config_home() {
 
 #[test]
 #[serial]
-fn test_theme_manager_export_includes_all_segments() {
+fn test_theme_manager_values_include_every_builtin_segment() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
-    create_test_theme_toml(&config_dir, "full_export", CUSTOM_THEME);
+    create_test_theme_toml(&config_dir, "full_values", CUSTOM_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
-    // Load the theme
-    let manager = ThemeManager::new("full_export").unwrap();
+    let manager = ThemeManager::new("full_values").unwrap();
+    let values = values(&manager);
 
-    // Export with all segments
-    let all_segments = vec![
-        "clock".to_owned(),
-        "directory".to_owned(),
-        "duration".to_owned(),
-        "status".to_owned(),
-        "git".to_owned(),
-        "language".to_owned(),
-    ];
-    let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = all_segments;
-    let fish_output = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    // Clock and status still render shell-side and keep their color exports.
-    // Directory/duration colors are agent-rendered and not exported here.
-    assert!(fish_output.contains("__color_clock_bg"));
-    assert!(fish_output.contains("__color_status_ok_bg"));
-    assert!(fish_output.contains("__color_status_fail_bg"));
-
-    assert!(fish_output.contains("__segment_delim_first"));
-    assert!(fish_output.contains("__segment_delim_start"));
-    assert!(fish_output.contains("__segment_delim_end"));
-    assert!(fish_output.contains("__segment_delim_last"));
-
-    assert!(
-        fish_output
-            .contains("set -g __enabled_segments clock directory duration status git language")
-    );
+    for name in [
+        "__color_clock_bg",
+        "__color_status_ok_bg",
+        "__color_status_fail_bg",
+        "__segment_delim_first",
+        "__segment_delim_start",
+        "__segment_delim_end",
+        "__segment_delim_last",
+    ] {
+        assert!(values.contains_key(name), "missing {name}");
+    }
 }
 
 #[test]
 #[serial]
-fn export_omits_migrated_color_vars() {
-    // Segments render from agent-provided ANSI, so their fg/text color exports
-    // and format toggles are not exported. Only bg colors for directory,
-    // duration, git, and language are exported, for powerline chevron
-    // tracking (`__gpy_last_segment_bg`). Clock and status still render
-    // shell-side and must keep their full `__color_*` exports.
+fn values_omit_migrated_color_vars() {
+    // Segments render from agent-provided ANSI, so their fg/text colors and
+    // format toggles are not prompt values. Only bg colors for directory,
+    // duration, git, and language are, for powerline chevrons. Clock and
+    // status keep their full `__color_*` values.
     let temp_dir = TempDir::new().unwrap();
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::builtin("default").expect("builtin theme manager");
-    let config = gpy_agent::config::Config::default();
-    let exported = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
+    let values = values(&manager);
+    let has = |prefix: &str| values.keys().any(|name| name.starts_with(prefix));
 
-    // No fg/text color exports for agent-rendered segments.
+    // No fg/text colors for agent-rendered segments.
     for still_migrated in [
         "__color_directory_fg",
         "__color_duration_fg",
@@ -578,8 +531,8 @@ fn export_omits_migrated_color_vars() {
         "__color_language_text",
     ] {
         assert!(
-            !exported.contains(still_migrated),
-            "agent-rendered segment color var {still_migrated} must not be exported"
+            !has(still_migrated),
+            "agent-rendered segment color var {still_migrated} must not be set"
         );
     }
 
@@ -590,12 +543,12 @@ fn export_omits_migrated_color_vars() {
         "__gpy_character_format",
     ] {
         assert!(
-            !exported.contains(toggle),
-            "legacy format toggle {toggle} must not be exported"
+            !has(toggle),
+            "legacy format toggle {toggle} must not be set"
         );
     }
 
-    // Re-added bg color exports for powerline chevron tracking.
+    // Bg colors for powerline chevrons.
     for bg_var in [
         "__color_directory_bg",
         "__color_duration_bg",
@@ -604,20 +557,13 @@ fn export_omits_migrated_color_vars() {
         "__color_language_bg",
     ] {
         assert!(
-            exported.contains(bg_var),
-            "powerline bg var {bg_var} must be exported for chevron tracking"
+            values.contains_key(bg_var),
+            "powerline bg var {bg_var} must be set"
         );
     }
 
-    // Surgical keep: clock and status remain shell-rendered.
-    assert!(
-        exported.contains("__color_clock_"),
-        "clock color vars must still be exported (shell-rendered)"
-    );
-    assert!(
-        exported.contains("__color_status_"),
-        "status color vars must still be exported (shell-rendered)"
-    );
+    assert!(has("__color_clock_"), "clock color vars must be set");
+    assert!(has("__color_status_"), "status color vars must be set");
 }
 
 #[test]
@@ -765,161 +711,38 @@ fail_text_color = "white"
 
 #[test]
 #[serial]
-fn test_theme_export_fish_includes_plugin_segment_vars() {
+fn test_theme_values_include_plugin_segment_vars() {
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
-    create_test_theme_toml(&config_dir, "plugin_export_fish", PLUGIN_SEGMENT_THEME);
+    create_test_theme_toml(&config_dir, "plugin_values", PLUGIN_SEGMENT_THEME);
 
     let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
-    let manager = ThemeManager::new("plugin_export_fish").unwrap();
-    let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "k8s".to_owned()];
-    let output = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
+    let manager = ThemeManager::new("plugin_values").unwrap();
+    let values = values(&manager);
 
-    assert!(output.contains("set -g __gpy_cfg_transient_prompt \"1\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_id \"k8s\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_bg_color \"#073642\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_text_color \"white\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_icon \"⎈\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_variant_prod_bg_color \"#326ce5\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_variant_prod_text_color \"#aaaaaa\""));
-    assert!(output.contains("set -g __color_k8s_bg \"#073642\""));
-    assert!(output.contains("set -g __color_k8s_fg \"white\""));
-    assert!(output.contains("set -g __color_k8s_prod_bg \"#326ce5\""));
-    assert!(output.contains("set -g __color_k8s_prod_fg \"#aaaaaa\""));
-    assert!(output.contains("set -g __icon_k8s \"⎈\""));
-    assert!(output.contains("set -g __gpy_segment_my_seg_id \"my-seg\""));
-    assert!(output.contains("set -g __color_my_seg_bg \"cyan\""));
-    assert!(output.contains("set -g __color_clock_bg \"black\""));
-}
-
-#[test]
-#[serial]
-fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_dir = temp_dir.path().join("gpy");
-    create_test_theme_toml(&config_dir, "plugin_export_posix", PLUGIN_SEGMENT_THEME);
-
-    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
-
-    let manager = ThemeManager::new("plugin_export_posix").unwrap();
-    let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "k8s".to_owned()];
-
-    let zsh_output = manager.export(
-        Shell::Zsh,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-    assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_id=\"k8s\""));
-    assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_bg_color=\"#073642\""));
-    assert!(zsh_output.contains("typeset -g __color_k8s_prod_bg=\"#326ce5\""));
-    assert!(
-        zsh_output.contains("typeset -g __gpy_segment_k8s_variant_prod_text_color=\"#aaaaaa\"")
-    );
-
-    let bash_output = manager.export(
-        Shell::Bash,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-    assert!(bash_output.contains("__gpy_segment_k8s_id=\"k8s\""));
-    assert!(bash_output.contains("__gpy_segment_k8s_bg_color=\"#073642\""));
-    assert!(bash_output.contains("__color_k8s_prod_bg=\"#326ce5\""));
-    assert!(bash_output.contains("__gpy_segment_k8s_variant_prod_text_color=\"#aaaaaa\""));
-}
-
-#[test]
-#[serial]
-fn test_theme_discovery_includes_starship_builtin() {
-    let temp_dir = TempDir::new().unwrap();
-
-    let mut env = EnvGuard::default();
-    env.set("XDG_CONFIG_HOME", temp_dir.path());
-    env.remove("GPY_BUNDLED_PLUGIN_DIR");
-
-    let themes = ThemeManager::discover_available_themes();
-    let starship = themes
-        .iter()
-        .find(|theme| theme.name == "starship")
-        .expect("starship preset present as builtin");
-    assert_eq!(starship.source, Source::Builtin);
-
-    // The other builtins remain discoverable.
-    assert!(themes.iter().any(|t| t.name == "default"));
-    assert!(themes.iter().any(|t| t.name == "text"));
-}
-
-#[test]
-#[serial]
-fn test_theme_discovery_includes_user_themes() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_dir = temp_dir.path().join("gpy");
-
-    create_test_theme_toml(&config_dir, "community", MINIMAL_THEME);
-
-    let mut env = EnvGuard::default();
-    env.set("XDG_CONFIG_HOME", temp_dir.path());
-    env.remove("GPY_BUNDLED_PLUGIN_DIR");
-
-    let themes = ThemeManager::discover_available_themes();
-    let community = themes
-        .iter()
-        .find(|theme| theme.name == "community")
-        .expect("community theme present");
-    assert_eq!(community.source, Source::User);
-    assert!(community.path.is_some());
-}
-
-#[test]
-#[serial]
-fn test_theme_discovery_prefers_user_over_plugin() {
-    let user_temp = TempDir::new().unwrap();
-    let bundled_temp = TempDir::new().unwrap();
-
-    // User theme
-    create_test_theme_toml(&user_temp.path().join("gpy"), "shared", MINIMAL_THEME);
-
-    // Bundled plugin with same theme name
-    let plugin_dir = bundled_temp.path().join("demo");
-    let themes_dir = plugin_dir.join("themes");
-    fs::create_dir_all(&themes_dir).unwrap();
-    fs::write(
-        plugin_dir.join("plugin.toml"),
-        r#"
-id = "demo"
-name = "Demo"
-version = "0.1.0"
-api_version = "v1"
-entry_type = "script"
-provided_segments = ["demo"]
-"#,
-    )
-    .unwrap();
-    fs::create_dir_all(plugin_dir.join("segments")).unwrap();
-    fs::write(
-        plugin_dir.join("segments/demo.toml"),
-        "command = \"run.sh\"\n",
-    )
-    .unwrap();
-    fs::write(plugin_dir.join("run.sh"), "echo demo\n").unwrap();
-    fs::write(themes_dir.join("shared.toml"), MINIMAL_THEME).unwrap();
-
-    let mut env = EnvGuard::default();
-    env.set("XDG_CONFIG_HOME", user_temp.path());
-    env.set("GPY_BUNDLED_PLUGIN_DIR", bundled_temp.path());
-
-    let themes = ThemeManager::discover_available_themes();
-    let shared = themes
-        .iter()
-        .find(|theme| theme.name == "shared")
-        .expect("shared theme present");
-    assert_eq!(shared.source, Source::User);
+    for (name, expected) in [
+        ("__gpy_segment_k8s_id", "k8s"),
+        ("__gpy_segment_k8s_bg_color", "#073642"),
+        ("__gpy_segment_k8s_text_color", "white"),
+        ("__gpy_segment_k8s_icon", "⎈"),
+        ("__gpy_segment_k8s_variant_prod_bg_color", "#326ce5"),
+        ("__gpy_segment_k8s_variant_prod_text_color", "#aaaaaa"),
+        ("__color_k8s_bg", "#073642"),
+        ("__color_k8s_fg", "white"),
+        ("__color_k8s_prod_bg", "#326ce5"),
+        ("__color_k8s_prod_fg", "#aaaaaa"),
+        ("__icon_k8s", "⎈"),
+        ("__gpy_segment_my_seg_id", "my-seg"),
+        ("__color_my_seg_bg", "cyan"),
+        ("__color_clock_bg", "black"),
+    ] {
+        assert_eq!(
+            values.get(name).map(String::as_str),
+            Some(expected),
+            "{name}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -1051,167 +874,6 @@ fn switch_theme_reuses_the_registry_it_was_started_with() {
     );
 
     manager.stop_watching();
-}
-
-/// Extract the value assigned to `var` in a Fish theme export, e.g.
-/// `set -g __color_clock_bg "blue"` -> `Some("blue")`.
-fn exported_value(output: &str, var: &str) -> Option<String> {
-    let line = output.lines().find(|line| line.contains(var))?;
-    let after_var = line.split_once(var)?.1.trim_start();
-    let inside = after_var.strip_prefix('"')?;
-    let end = inside.find('"')?;
-    inside.get(..end).map(ToOwned::to_owned)
-}
-
-/// `switch_theme` installs the new name, path, and content as one
-/// atomic swap, so a concurrent `export` can never emit one theme's name
-/// alongside another theme's content.
-///
-/// If name, theme, and path were guarded separately, a reader that took the
-/// theme lock just after the content write — and reached the name lock before
-/// the writer got there — would see the new theme under the old name. Several
-/// reader threads make that interleaving routine rather than exotic: `std`'s
-/// `RwLock` is reader-preferring on this platform, so every content write
-/// releases a queued burst of readers that then race the writer's remaining
-/// writes.
-///
-/// The pairing is checked on two markers rather than the whole export string:
-/// the exported theme name, and a color the two themes genuinely disagree on.
-/// Both are asserted to differ between the themes up front, so a torn pairing
-/// is detectable in either direction.
-#[test]
-#[serial]
-fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
-    use gpy_agent::config::Config;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Barrier};
-
-    const READERS: usize = 3;
-    const SWITCHES: usize = 60;
-    /// Backstop so a starved writer fails the test instead of hanging it.
-    ///
-    /// Generous on purpose: the switch loop takes ~20s alone and ~45s sharing
-    /// a machine with the rest of the suite, and overshooting this deadline is
-    /// a test failure, so it has to sit well clear of ordinary CI load.
-    const READER_DEADLINE: Duration = Duration::from_mins(5);
-
-    let temp_dir = TempDir::new().unwrap();
-    let config_home = temp_dir.path().join("gpy");
-    create_test_theme_toml(&config_home, "race_a", MINIMAL_THEME);
-    create_test_theme_toml(&config_home, "race_b", CUSTOM_THEME);
-    let empty_plugin_dir = temp_dir.path().join("no-plugins");
-    fs::create_dir_all(&empty_plugin_dir).unwrap();
-    // Point plugin discovery at an empty directory so `export` is cheap
-    // and deterministic: it runs `discover_plugins()` on every call, and
-    // the developer's real plugin tree would both slow the readers down
-    // and vary the export between machines.
-    let mut env = EnvGuard::default();
-    env.set("XDG_CONFIG_HOME", temp_dir.path());
-    env.set("GPY_BUNDLED_PLUGIN_DIR", &empty_plugin_dir);
-
-    let config = Arc::new(Config::default());
-
-    // The only two (name, clock background) pairs a consistent state can
-    // produce. Built through the same public path `switch_theme` uses.
-    let observed_pair = |export: &str| -> (String, String) {
-        (
-            exported_value(export, "__gpy_theme_name").unwrap_or_default(),
-            exported_value(export, "__color_clock_bg").unwrap_or_default(),
-        )
-    };
-    let pair_of = |name: &str| -> (String, String) {
-        observed_pair(&ThemeManager::new(name).unwrap().export(
-            Shell::Fish,
-            &config,
-            &gpy_agent::template::Palette::default(),
-        ))
-    };
-    let pair_a = pair_of("race_a");
-    let pair_b = pair_of("race_b");
-    assert_ne!(
-        pair_a.0, pair_b.0,
-        "the two themes must export different names or this test proves nothing"
-    );
-    assert_ne!(
-        pair_a.1, pair_b.1,
-        "the two themes must export different clock colors or a torn pairing would be invisible"
-    );
-    let valid_pairs = [pair_a, pair_b];
-
-    let manager = Arc::new(ThemeManager::new("race_a").unwrap());
-    // `switch_theme` tears the watcher down and builds a new one every call; a
-    // 10ms debounce keeps the loop hammering the state lock, which is what the
-    // test is actually measuring.
-    manager.start_watching(Duration::from_millis(10)).unwrap();
-    let stop = Arc::new(AtomicBool::new(false));
-    let barrier = Arc::new(Barrier::new(READERS + 1));
-
-    let mut readers = Vec::with_capacity(READERS);
-    for _ in 0_usize..READERS {
-        let reader_manager = Arc::clone(&manager);
-        let reader_stop = Arc::clone(&stop);
-        let reader_barrier = Arc::clone(&barrier);
-        let reader_config = Arc::clone(&config);
-        let reader_pairs = valid_pairs.clone();
-        readers.push(std::thread::spawn(move || {
-            reader_barrier.wait();
-            let deadline = Instant::now() + READER_DEADLINE;
-            let mut torn: Option<(String, String)> = None;
-            while !reader_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
-                let export = reader_manager.export(
-                    Shell::Fish,
-                    &reader_config,
-                    &gpy_agent::template::Palette::default(),
-                );
-                let seen = (
-                    exported_value(&export, "__gpy_theme_name").unwrap_or_default(),
-                    exported_value(&export, "__color_clock_bg").unwrap_or_default(),
-                );
-                if !reader_pairs.contains(&seen) && torn.is_none() {
-                    torn = Some(seen);
-                }
-                // Yield rather than sleep: readers should be queued on the
-                // state lock as often as possible, since the tear window opens
-                // the instant a writer releases it. The switch loop's own
-                // elapsed-time assertion below catches the opposite failure
-                // mode, a writer starved by these readers.
-                std::thread::yield_now();
-            }
-            torn
-        }));
-    }
-
-    barrier.wait();
-    let switching_started = Instant::now();
-    for index in 0_usize..SWITCHES {
-        let target = if index % 2 == 0 { "race_b" } else { "race_a" };
-        manager.switch_theme(target).unwrap();
-    }
-    let switching_took = switching_started.elapsed();
-    stop.store(true, Ordering::Relaxed);
-
-    let torn: Vec<(String, String)> = readers
-        .into_iter()
-        .filter_map(|handle| handle.join().unwrap())
-        .collect();
-
-    manager.stop_watching();
-
-    // If the readers had starved the writer, the switch loop would still be
-    // running when they gave up at their deadline, and `torn` would be empty
-    // for want of concurrency rather than because the swap is atomic. Fail on
-    // that instead of passing vacuously.
-    assert!(
-        switching_took < READER_DEADLINE,
-        "{SWITCHES} switches took {switching_took:?}, past the readers' deadline: \
-         the writer was starved, so this run never tested anything"
-    );
-
-    assert!(
-        torn.is_empty(),
-        "export observed a torn (theme name, clock bg) pairing during switch_theme; \
-         valid pairs are {valid_pairs:?}, observed {torn:?}"
-    );
 }
 
 /// The reload hook's step swaps outside the state lock, so the hook may read

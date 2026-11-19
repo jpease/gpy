@@ -187,21 +187,15 @@ async fn test_git_status_invalid_path() {
     );
 }
 
-/// Test: the socket serves real requests as soon as it accepts, without waiting
-/// on the theme-export cache warmup.
+/// Test: the socket serves real requests as soon as it accepts.
 ///
-/// The initial theme-export write was moved off `Agent::new`'s serial path into
-/// a background `spawn_blocking` task that runs *after* the server begins
-/// accepting connections. `IntegrationTestServer::new` returns as soon as the
-/// readiness ping gets its first `Ack` (the moment the socket accepts), so this
-/// test connects immediately after that and asserts a correct prompt render
-/// comes back — even though the theme-export warmup may not have finished. A
-/// first-prompt git render reads the instant cache / IPC, never the theme-export
-/// file (whose only reader is the miss-tolerant reload-flag fast-reload handler), so
-/// the response is correct regardless of warmup timing.
+/// `IntegrationTestServer::new` returns as soon as the readiness ping gets its
+/// first `Ack` (the moment the socket accepts), so this test connects
+/// immediately after that and asserts a correct prompt render comes back,
+/// whether or not the start announcement has run.
 #[tokio::test]
 #[serial_test::serial]
-async fn test_socket_serves_requests_before_theme_export_warmup() {
+async fn test_socket_serves_requests_as_soon_as_it_accepts() {
     let server = IntegrationTestServer::new()
         .await
         .expect("Server failed to start");
@@ -221,7 +215,7 @@ async fn test_socket_serves_requests_before_theme_export_warmup() {
         Response::RepositoryStatus(status) => {
             assert!(
                 !status.branch.is_empty(),
-                "Git render should carry a branch name even before theme-export warmup completes"
+                "Git render should carry a branch name as soon as the socket accepts"
             );
         }
         other => panic!("Expected RepositoryStatus, got {other:?}"),

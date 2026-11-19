@@ -133,38 +133,6 @@ fn run_with_reader_dropped_after(env: &CliTestEnv, args: &[&str], keep: usize) -
     output.status.code().unwrap_or(-1)
 }
 
-/// `theme export` is the agent binary's largest stdout writer.
-#[test]
-fn agent_theme_export_into_a_closed_pipe_does_not_panic() {
-    let env = CliTestEnv::new().expect("create isolated CLI test env");
-
-    let mut child = KillOnDrop::new(
-        Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-            .args(["theme", "export", "--shell", "fish"])
-            .env("HOME", env.root())
-            .env("XDG_CONFIG_HOME", env.xdg_config_home())
-            .env("XDG_RUNTIME_DIR", env.xdg_runtime_dir())
-            .env("XDG_CACHE_HOME", env.xdg_cache_home())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn gpy-agent"),
-    );
-    let mut stdout = child.stdout.take().expect("piped stdout");
-    let mut first = [0_u8; 1];
-    stdout.read_exact(&mut first).expect("read the first byte");
-    drop(stdout);
-    let output = child.wait_with_output().expect("wait for gpy-agent");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("PANIC"), "{stderr}");
-    let code = output.status.code().unwrap_or(-1_i32);
-    assert!(
-        code == 0_i32 || code == 1_i32,
-        "expected a clean exit, never 101, got {code}"
-    );
-}
-
 /// `completions bash` (~68 `KiB`) exceeds the 64 `KiB` pipe buffer, so the child
 /// is still writing when the reader goes away.
 #[test]
@@ -327,25 +295,6 @@ fn read_only_list_key_names_the_command_to_use() {
             "{key}: the error names `{needle}`: {result:?}"
         );
     }
-}
-
-/// `theme export` falls back to the `default` theme like the agent and
-/// `oneshot` do, instead of failing (and printing the error twice).
-#[test]
-fn agent_theme_export_with_missing_configured_theme_falls_back_to_default() {
-    let env = CliTestEnv::with_config("[ui]\ntheme = \"no-such-theme\"\n")
-        .expect("create isolated CLI test env");
-
-    let result = env
-        .run_gpy_agent(&["theme", "export", "--shell", "fish"])
-        .expect("spawn gpy-agent");
-
-    assert_eq!(result.exit_code, 0_i32, "{result:?}");
-    assert!(
-        result.stdout.contains("__enabled_segments"),
-        "the default theme is exported: {result:?}"
-    );
-    assert!(!result.stderr.contains("Error:"), "{result:?}");
 }
 
 /// Without a usable `HOME` or `XDG_*` root both binaries fail closed: a

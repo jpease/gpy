@@ -52,10 +52,8 @@ pub struct AgentContext {
     pub dispatch_guard: Arc<RepoRefreshCoordinator>,
     /// Registry shared by the repo, config, and theme watchers; `create_watcher` needs it.
     pub watch_registry: Arc<crate::watcher::WatchRegistry>,
-    /// Where reloads write the shell theme exports (the gpy cache dir in production).
-    pub theme_export_dir: PathBuf,
-    /// Held by each config or theme reload over its theme reload and export
-    /// write, so one theme change is seen as new, and rung for, by one path.
+    /// Held by each config or theme reload over its theme reload, so one
+    /// theme change is seen as new, and rung for, by one path.
     pub announce_gate: Arc<Mutex<()>>,
 }
 

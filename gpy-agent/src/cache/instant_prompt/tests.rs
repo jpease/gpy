@@ -2024,7 +2024,7 @@ fn parse_cache_file_name_rejects_other_names() {
         "repo.gitx.none.ansi",
         "repo.git_middle.none.ansi",
         "repo.git.ansi",
-        "theme-export.fish",
+        "prompt.fish",
     ] {
         assert_eq!(parse_cache_file_name(file_name), None, "{file_name}");
     }

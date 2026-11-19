@@ -1,4 +1,4 @@
-use super::{fish_enabled_segments, run_gpy_command};
+use super::{enabled_segments, run_gpy_command};
 use crate::cli_harness::CliTestEnv;
 use std::fs;
 
@@ -140,7 +140,7 @@ fn test_enable_hostname_segment() {
 #[test]
 fn test_enable_git_adds_to_enabled_segments_when_absent() {
     // Listing `[git]` alone does not render git; `gpy enable git`
-    // must list it so the export (the shells' render list) includes it.
+    // must list it in `ui.enabled_segments`.
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     fs::write(
         env.config_path(),
@@ -161,32 +161,30 @@ fn test_enable_git_adds_to_enabled_segments_when_absent() {
         .expect("Failed to run gpy enable git")
         .assert_success("gpy enable git");
 
-    let line = fish_enabled_segments(&env);
+    let enabled = enabled_segments(&env);
     assert!(
-        line.split_whitespace().any(|word| word == "git"),
-        "export must render git after `gpy enable git`: {line}"
+        enabled.iter().any(|name| name == "git"),
+        "git must be enabled after `gpy enable git`: {enabled:?}"
     );
 }
 
 #[test]
-fn test_disable_then_enable_git_restores_fish_export() {
+fn test_disable_then_enable_git_restores_enabled_segments() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
-    let before = fish_enabled_segments(&env);
+    let before = enabled_segments(&env);
 
     env.run_gpy(&["disable", "git"])
         .expect("Failed to run gpy disable git")
         .assert_success("gpy disable git");
     assert!(
-        !fish_enabled_segments(&env)
-            .split_whitespace()
-            .any(|word| word == "git"),
-        "disabled git must leave the export"
+        !enabled_segments(&env).iter().any(|name| name == "git"),
+        "disabled git must leave the enabled segments"
     );
 
     env.run_gpy(&["enable", "git"])
         .expect("Failed to run gpy enable git")
         .assert_success("gpy enable git");
-    assert_eq!(fish_enabled_segments(&env), before);
+    assert_eq!(enabled_segments(&env), before);
 }
 
 #[test]

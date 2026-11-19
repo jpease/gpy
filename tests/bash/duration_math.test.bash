@@ -7,7 +7,7 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-# Sandbox config disables the supervisor (theme export re-sets the flag).
+# Sandbox config and env flags disable the agent and its supervisor.
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-duration-math.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"

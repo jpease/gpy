@@ -34,16 +34,6 @@ fn oneshot_exit_status_renders_the_pill() {
     run(&env, &[&["oneshot", "status"][..], &tail].concat(), 2_i32);
 }
 
-#[test]
-fn theme_export_shell_selects_the_shell() {
-    let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let result = run(&env, &["theme", "export", "--shell", "bash"], 0_i32);
-
-    assert!(!result.stdout.is_empty(), "the export prints: {result:?}");
-    assert!(result.stderr.is_empty(), "silent on stderr: {result:?}");
-    run(&env, &["theme", "export", "--format", "bash"], 2_i32);
-}
-
 /// The text after the flag column of the `--socket` line in `gpy-agent <args>
 /// --help`.
 fn socket_help(env: &CliTestEnv, args: &[&str]) -> String {

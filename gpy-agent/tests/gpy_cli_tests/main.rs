@@ -40,19 +40,19 @@ fn test_gpy_version() {
     );
 }
 
-fn fish_enabled_segments(env: &CliTestEnv) -> String {
-    let export = env
-        .run_gpy_agent(&["theme", "export", "--shell", "fish"])
-        .expect("Failed to run gpy-agent theme export");
-    export.assert_success("gpy-agent theme export --shell fish");
-    let Some(line) = export
+/// The segments `gpy segments` marks enabled (`[x] <name> …`), in listed order.
+fn enabled_segments(env: &CliTestEnv) -> Vec<String> {
+    let listing = env
+        .run_gpy(&["segments"])
+        .expect("Failed to run gpy segments");
+    listing.assert_success("gpy segments");
+    listing
         .stdout
         .lines()
-        .find(|candidate| candidate.starts_with("set -g __enabled_segments"))
-    else {
-        panic!("no __enabled_segments line: {export:?}");
-    };
-    line.to_owned()
+        .filter_map(|line| line.strip_prefix("[x] "))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(str::to_owned)
+        .collect()
 }
 
 // `ThemeManager::new` falls back to the default theme for unknown names;

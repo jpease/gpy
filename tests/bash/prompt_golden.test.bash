@@ -8,7 +8,8 @@
 # deleted; they keep that contract. Covers Bash, Zsh and Fish, every builtin
 # theme plus an overlay without clock/status templates, success, failure, a
 # slow command, a repository and a plain directory, the Zsh/Fish transient
-# part, and script segments (escapes, icon, variant, own cap).
+# part, script segments (escapes, icon, variant, own cap), and the default
+# theme with `ui.show_icons = false`.
 #
 # Normalised: the sandbox root becomes <ROOT> and Fish's clock time <TIME>
 # (Bash and Zsh carry a live `\D{}`/`%D{}` token). The language segment is
@@ -29,9 +30,10 @@ mkdir -p "$XDG_CONFIG_HOME/gpy/themes" "$HOME/plain"
 printf 'extends = "default"\nunset = ["segments.clock.format", "segments.status.format"]\n' \
     >"$XDG_CONFIG_HOME/gpy/themes/pills.toml"
 
+# THEME SEGMENTS [EXTRA_UI_LINE]
 write_config() {
-    printf '[ui]\ntheme = "%s"\nenabled_segments = [%s]\n\n[agent.supervisor]\nenabled = false\n' \
-        "$1" "$2" >"$XDG_CONFIG_HOME/gpy/config.toml"
+    printf '[ui]\ntheme = "%s"\nenabled_segments = [%s]\n%s\n[agent.supervisor]\nenabled = false\n' \
+        "$1" "$2" "${3-}" >"$XDG_CONFIG_HOME/gpy/config.toml"
 }
 
 # Script segments: one plugin, styled by a theme overlay.
@@ -121,6 +123,17 @@ for theme in default text starship pills scripts; do
             golden "$theme-$where-failure" "$shell" 1 ""
             golden "$theme-$where-slow" "$shell" 0 2500
         done
+    done
+done
+
+write_config default "$SEGMENTS" 'show_icons = false'
+"$SHELL_E2E_AGENT_BIN" config reload >/dev/null 2>&1
+for where in repo plain; do
+    if [[ $where == repo ]]; then cd "$SHELL_E2E_REPO" || exit 1; else cd "$HOME/plain" || exit 1; fi
+    warm
+    for shell in bash zsh fish; do
+        golden "default-noicons-$where-success" "$shell" 0 ""
+        golden "default-noicons-$where-failure" "$shell" 1 ""
     done
 done
 

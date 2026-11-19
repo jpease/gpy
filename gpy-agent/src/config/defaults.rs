@@ -1,4 +1,4 @@
-//! Default values shared by the `Default` impls, the shell exports, and the embedded presets.
+//! Default values shared by the `Default` impls, the prompt values, and the embedded presets.
 
 /// Parse a hardcoded default literal (a color, an icon, ...).
 ///
@@ -136,8 +136,7 @@ mod tests {
     use super::DEFAULT_ENABLED_SEGMENTS;
     use std::path::Path;
 
-    /// Each shell keeps a fallback list for when no theme export has loaded;
-    /// `tests/fixtures/default_segments.txt` pins them all to the agent's default.
+    /// `tests/fixtures/default_segments.txt` pins the agent's default list.
     #[test]
     fn default_segments_fixture_matches() {
         let fixture =

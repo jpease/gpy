@@ -20,8 +20,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-hostile.XXXXXX")"
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
-# The child's XDG_CONFIG_HOME ($SANDBOX/config) disables the supervisor: the
-# theme export would re-set the env flag below from config.toml.
+# The child's XDG_CONFIG_HOME ($SANDBOX/config) and env flags disable the
+# agent and its supervisor.
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 mkdir -p "$SANDBOX/run"
 

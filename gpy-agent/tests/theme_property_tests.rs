@@ -1,14 +1,15 @@
-//! Property tests for theme color validation and theme export invariants.
+//! Property tests for theme color validation and theme value invariants.
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
 use gpy_agent::config::Config;
 use gpy_agent::config::validation::colors::{canonical_color, is_valid_color};
-use gpy_agent::shell::Shell;
 use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
+use gpy_agent::theme::export::prompt_shell_values;
 use proptest::prelude::*;
+use std::collections::HashMap;
 
 fn named_color_strategy() -> impl Strategy<Value = &'static str> {
     prop::sample::select(vec![
@@ -31,9 +32,9 @@ fn named_color_strategy() -> impl Strategy<Value = &'static str> {
     ])
 }
 
-fn default_fish_export() -> String {
+fn default_values() -> HashMap<String, String> {
     let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
-    theme_mgr.export(Shell::Fish, &Config::default(), &Palette::default())
+    prompt_shell_values(&theme_mgr.get(), &Config::default(), &Palette::default())
 }
 
 proptest! {
@@ -63,20 +64,20 @@ proptest! {
 }
 
 #[test]
-fn fish_export_sets_variables() {
-    let export = default_fish_export();
-
-    assert!(export.contains("set -gx") || export.contains("set -g"));
+fn default_values_are_not_empty() {
+    assert!(!default_values().is_empty());
 }
 
 #[test]
-fn fish_export_is_idempotent() {
-    assert_eq!(default_fish_export(), default_fish_export());
+fn default_values_are_deterministic() {
+    assert_eq!(default_values(), default_values());
 }
 
 #[test]
-fn fish_export_has_no_raw_ansi_escapes() {
-    assert!(!default_fish_export().contains('\x1b'));
+fn default_values_have_no_raw_ansi_escapes() {
+    for (name, value) in default_values() {
+        assert!(!value.contains('\x1b'), "{name}={value:?}");
+    }
 }
 
 #[test]

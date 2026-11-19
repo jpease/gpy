@@ -1,4 +1,4 @@
-//! End-to-end plugin tests: discovery, theme export, and segment token collisions.
+//! End-to-end plugin tests: discovery, theme values, and segment token collisions.
 
 #![allow(
     clippy::expect_used,
@@ -8,7 +8,6 @@
 
 use gpy_agent::config::Config;
 use gpy_agent::config::discovery::Source;
-use gpy_agent::shell::Shell;
 use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
 use std::fs;
@@ -70,7 +69,7 @@ fn install_script_plugin(xdg: &Path, id: &str, segment: &str) -> std::path::Path
 
 #[test]
 #[serial]
-fn e2e_plugin_segment_and_theme_discovery_and_export() {
+fn e2e_plugin_segment_and_theme_discovery_and_values() {
     let xdg = TempDir::new().expect("xdg tempdir");
     let plugin_dir = install_script_plugin(xdg.path(), "k8s-tools", "k8s_tools");
     fs::create_dir_all(plugin_dir.join("themes")).expect("create plugin themes dir");
@@ -105,16 +104,18 @@ icon = "⎈"
         .expect("plugin theme should be discovered");
     assert_matches!(community.source, Source::Plugin { .. });
     let manager = ThemeManager::new("community").expect("load plugin theme");
-    let mut config = Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "k8s_tools".to_owned()];
-    let fish_export = manager.export(
-        Shell::Fish,
-        &config,
+    let values = gpy_agent::theme::export::prompt_shell_values(
+        &manager.get(),
+        &Config::default(),
         &gpy_agent::template::Palette::default(),
     );
 
-    assert!(fish_export.contains("set -g __enabled_segments clock k8s_tools"));
-    assert!(fish_export.contains("set -g __gpy_segment_k8s_tools_bg_color \"#073642\""));
+    assert_eq!(
+        values
+            .get("__gpy_segment_k8s_tools_bg_color")
+            .map(String::as_str),
+        Some("#073642")
+    );
 }
 
 /// Run the real `gpy` CLI with `HOME` and the XDG roots inside `root`.

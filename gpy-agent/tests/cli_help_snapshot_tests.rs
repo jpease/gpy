@@ -261,7 +261,6 @@ fn debug_paths_json_shape() {
         "shell_registry_dir",
         "cache_root",
         "instant_prompts_dir",
-        "theme_export_file",
         "config_path",
         "config_candidates",
         "theme_dir",
@@ -356,7 +355,6 @@ fn lifecycle_help_lists_exit_codes() {
         &["status"][..],
         &["config", "reload"][..],
         &["oneshot"][..],
-        &["theme", "export"][..],
     ] {
         let help = agent_help(args);
         assert!(

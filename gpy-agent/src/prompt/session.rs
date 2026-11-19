@@ -72,12 +72,19 @@ impl Session {
             }),
             reload: first,
         };
-        if let Some(flags) = runtime.map(|root| root.join("shells").join(pid.to_string())) {
-            if take(&flags.with_extension("reregister")) {
+        if let Some(root) = runtime {
+            let flags = root.join("shells").join(pid.to_string());
+            let reregister = take(&flags.with_extension("reregister"));
+            if reregister {
                 session.state.registered = false;
                 session.state.workspace.clear();
             }
-            session.reload |= take(&flags.with_extension("reload"));
+            let reload = take(&flags.with_extension("reload"));
+            session.reload |= reload;
+            // The agent wrote the flag, so it is answering again.
+            if reregister || reload {
+                super::link::clear_late_window(&root.join("refresh-throttle"), pid);
+            }
         }
         if first && agent_enabled {
             start_agent();

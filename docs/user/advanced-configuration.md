@@ -64,9 +64,7 @@ enabled = false
 An environment variable wins over `config.toml`: `GPY_AGENT_ENABLED`,
 `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS`
 and `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` override the matching config
-keys, and the theme export never writes or exports any `GPY_*` variable (it
-sets only non-exported `__gpy_cfg_*` values the shell reads when the variable
-is unset). In Fish, set the variable before the GPY block in `config.fish`
+keys; GPY never writes or exports any `GPY_*` variable. In Fish, set the variable before the GPY block in `config.fish`
 (`gpy setup` appends that block, which sources `gpy_init.fish`), or in the
 environment the shell starts with; the flag functions read it at call time. In
 Bash and Zsh, export it before the GPY block in `.bashrc` or `.zshrc`.

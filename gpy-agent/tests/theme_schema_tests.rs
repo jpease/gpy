@@ -1,10 +1,12 @@
-//! Theme schema loading, validation errors, preset hints, and export variables.
+//! Theme schema loading, validation errors, preset hints, and prompt values.
 
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
 use gpy_agent::theme::load;
+use gpy_agent::theme::{ThemeConfig, ThemeManager};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,6 +17,21 @@ fn write_theme(root: &Path, name: &str, contents: &str) -> PathBuf {
     let path = themes_dir.join(format!("{name}.toml"));
     fs::write(&path, contents).expect("write theme");
     path
+}
+
+/// The prompt values of `theme` under the default config.
+fn values(theme: &ThemeConfig) -> HashMap<String, String> {
+    gpy_agent::theme::export::prompt_shell_values(
+        theme,
+        &gpy_agent::config::Config::default(),
+        &gpy_agent::template::Palette::default(),
+    )
+}
+
+fn value<'a>(values: &'a HashMap<String, String>, name: &str) -> &'a str {
+    values
+        .get(name)
+        .unwrap_or_else(|| panic!("no `{name}` value: {values:?}"))
 }
 
 fn write_config(root: &Path, contents: &str) {
@@ -125,12 +142,12 @@ fn plugin_segment_theme_rejects_untyped_keys() {
 }
 
 #[test]
-fn theme_export_emits_new_schema_variables() {
+fn user_theme_sets_prompt_values() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let xdg_config = temp_dir.path().join("config");
-    write_theme(
+    let path = write_theme(
         &xdg_config,
-        "export-test",
+        "values-test",
         r#"
 [ui]
 
@@ -145,30 +162,10 @@ show_seconds = true
 "#,
     );
 
-    write_config(&xdg_config, "[ui]\ntheme = \"export-test\"\n");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-        .args(["theme", "export", "--shell", "fish"])
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run gpy-agent theme export");
-
-    assert!(
-        output.status.success(),
-        "theme export should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(
-        stdout.contains("__icon_prompt"),
-        "Theme export should include prompt icon variable. Got: {stdout}"
-    );
-    assert!(
-        stdout.contains("__clock_show_seconds \"1\""),
-        "Theme export should emit clock seconds toggle. Got: {stdout}"
-    );
+    let theme = load::load_theme_from_path(&path).expect("theme loads");
+    let values = values(&theme);
+    assert_eq!(value(&values, "__icon_prompt"), ">");
+    assert_eq!(value(&values, "__clock_show_seconds"), "1");
 }
 
 #[test]
@@ -572,39 +569,16 @@ fn theme_use_default_force_restores_builtin_layout() {
 }
 
 #[test]
-fn two_line_export_follows_each_theme() {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let xdg_config = temp_dir.path().join("config");
-
-    let export = |theme: &str| -> String {
-        write_config(&xdg_config, &format!("[ui]\ntheme = \"{theme}\"\n"));
-        let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-            .args(["theme", "export", "--shell", "fish"])
-            .env("XDG_CONFIG_HOME", &xdg_config)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .expect("run gpy-agent theme export");
-        assert!(
-            output.status.success(),
-            "theme export should succeed for {theme}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).expect("utf8 stdout")
+fn two_line_value_follows_each_theme() {
+    let two_line = |theme: &str| {
+        let manager = ThemeManager::builtin(theme).expect("builtin loads");
+        value(&values(&manager.get()), "__gpy_two_line").to_owned()
     };
 
-    assert!(
-        export("starship").contains("__gpy_two_line \"1\""),
-        "starship preset should export two-line on"
-    );
-    assert!(
-        export("default").contains("__gpy_two_line \"1\""),
-        "default theme should export two-line on"
-    );
+    assert_eq!(two_line("starship"), "1", "starship preset is two-line");
+    assert_eq!(two_line("default"), "1", "default theme is two-line");
     // `text` stays single-line, proving the flag is read, not hardcoded.
-    assert!(
-        export("text").contains("__gpy_two_line \"0\""),
-        "text theme should export two-line off"
-    );
+    assert_eq!(two_line("text"), "0", "text theme is single-line");
 }
 
 #[test]
@@ -693,23 +667,22 @@ warn_bg_color = "definitely-not-a-color"
 }
 
 #[test]
-fn builtin_shell_fallback_symbol_matches_agent_character() {
+fn builtin_prompt_symbol_matches_agent_character() {
     for name in ["default", "text", "starship"] {
-        let manager = gpy_agent::theme::ThemeManager::builtin(name).expect("builtin loads");
-        let character = manager.get().segments.character.clone();
-        let export = manager.export(
-            gpy_agent::shell::Shell::Bash,
-            &gpy_agent::config::Config::default(),
-            &gpy_agent::template::Palette::default(),
-        );
+        let manager = ThemeManager::builtin(name).expect("builtin loads");
+        let theme = manager.get();
+        let character = &theme.segments.character;
+        let values = values(&theme);
 
-        assert!(
-            export.contains(&format!("__icon_prompt=\"{}\"\n", character.success_symbol)),
-            "{name}: {export}"
+        assert_eq!(
+            value(&values, "__icon_prompt"),
+            character.success_symbol,
+            "{name}"
         );
-        assert!(
-            export.contains(&format!("__prompt_color=\"{}\"\n", character.success_color)),
-            "{name}: {export}"
+        assert_eq!(
+            value(&values, "__prompt_color"),
+            character.success_color.as_str(),
+            "{name}"
         );
     }
 }

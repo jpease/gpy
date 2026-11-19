@@ -1,4 +1,4 @@
-//! `gpy-agent start`, `status`, `theme export` and `config reload` against fake
+//! `gpy-agent start`, `status` and `config reload` against fake
 //! and real agents. Socket-dependent, so Unix-only.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, reason = "test code may panic on failure")]
@@ -47,28 +47,6 @@ fn start_honors_agent_disabled_in_an_otherwise_invalid_config() {
     assert!(
         !sandbox.socket_path.exists(),
         "no daemon may bind a socket when the agent is disabled"
-    );
-}
-
-#[test]
-fn theme_export_keeps_agent_disabled_from_an_invalid_config() {
-    let sandbox = AgentSandbox::new();
-    sandbox
-        .env
-        .write_config(DISABLED_IN_INVALID_CONFIG)
-        .expect("write config");
-
-    let exported = sandbox.gpy_agent(&["theme", "export", "--shell", "bash"]);
-
-    assert_eq!(exported.exit_code, 0_i32, "{exported:?}");
-    let line = exported
-        .stdout
-        .lines()
-        .find(|line| line.contains("__gpy_cfg_agent_enabled"))
-        .unwrap_or_else(|| panic!("__gpy_cfg_agent_enabled must be exported: {exported:?}"));
-    assert!(
-        line.contains('0') && !line.contains('1'),
-        "__gpy_cfg_agent_enabled must be 0: {line}"
     );
 }
 

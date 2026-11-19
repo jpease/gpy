@@ -126,9 +126,9 @@ function __clients_are --argument-names n
     test (registered_clients) = $n
 end
 
-# Write the config and, with the agent up, have it reload synchronously and
-# wait until the theme export it publishes names the configured theme. The
-# reload is what a running agent does on its own after the watcher's
+# Write the config and, with the agent up, have it reload synchronously:
+# `gpy-agent config reload` answers once the agent has applied the config.
+# The reload is what a running agent does on its own after the watcher's
 # debounce; asking for it directly keeps the test deterministic without
 # changing what the shells then see.
 function write_config
@@ -136,11 +136,6 @@ function write_config
     printf '%s\n' '[ui]' $argv >$XDG_CONFIG_HOME/gpy/config.toml
     if test -S "$GPY_AGENT_SOCKET_PATH"
         gpy-agent config reload >/dev/null 2>&1
-        set -l theme (string match -r 'theme = "([^"]+)"' -- $argv)[2]
-        function __export_names_theme --inherit-variable theme
-            grep -q "__gpy_theme_name \"$theme\"" $XDG_CACHE_HOME/gpy/theme-export.fish 2>/dev/null
-        end
-        poll_until 10 __export_names_theme
     end
 end
 

@@ -290,8 +290,6 @@ impl Agent {
         instant_cache_inner.clear_unrefreshable_files();
         let instant_cache = Arc::new(instant_cache_inner);
 
-        // The theme-export cache is warmed in `start_background` after accept
-        // begins; its only reader falls back to `gpy-agent theme export` on miss.
         let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
         let language_cache = crate::language::DetectionCache::new();
         let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(&initial_config));
@@ -306,7 +304,6 @@ impl Agent {
             palette_cache: Arc::clone(&palette_cache),
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry,
-            theme_export_dir: crate::paths::gpy_cache_dir()?,
             announce_gate: Arc::new(Mutex::new(())),
         };
 
@@ -408,7 +405,7 @@ impl Agent {
                 )
             }));
 
-        // Theme reloads must refresh export and instant caches before the doorbell.
+        // Theme reloads must refresh instant caches before the doorbell.
         let ctx_for_theme_callback = ctx.clone();
         ctx.theme_manager
             .set_reload_callback(Arc::new(move |reload| {
@@ -501,49 +498,22 @@ impl Agent {
         #[cfg(unix)]
         let shells_foreign = Arc::new(AtomicBool::new(default_socket.is_some()));
 
-        // Once the socket accepts, warm the theme-export cache on a blocking
-        // thread (racing requests fall back to `gpy-agent theme export`) and
-        // announce the start to tracked shells: `.reload` if the export
-        // changed, `.reregister` always, one ring each. Only the daemon runs
-        // this, so each tracked shell is announced to once.
+        // Once the socket accepts, announce the start to tracked shells on a
+        // blocking thread: `.reload` and `.reregister`, one ring each. Only the
+        // daemon runs this, so each tracked shell is announced to once.
+        #[cfg(unix)]
         {
-            let theme_manager_for_export = Arc::clone(&ctx.theme_manager);
-            let config_for_export = ctx.config_manager.get();
-            let palette_for_export = ctx.palette_cache.get();
-            #[cfg(unix)]
             let socket_path = server.socket_path().to_path_buf();
-            #[cfg(unix)]
             let server_stopped_for_announce = Arc::clone(&server_stopped);
-            #[cfg(unix)]
             let shells_foreign_for_announce = Arc::clone(&shells_foreign);
             tokio::task::spawn_blocking(move || {
-                #[cfg(unix)]
-                {
-                    let foreign = startup::announce_start_when_accepting(
-                        &socket_path,
-                        default_socket.as_deref(),
-                        &server_stopped_for_announce,
-                        || {
-                            startup::announce_start_to_tracked_shells(
-                                &theme_manager_for_export,
-                                &config_for_export,
-                                &palette_for_export,
-                            );
-                        },
-                    );
-                    shells_foreign_for_announce.store(foreign, Ordering::Release);
-                }
-                #[cfg(not(unix))]
-                if let Err(e) = crate::cache::write_theme_export_cache(
-                    &theme_manager_for_export,
-                    &config_for_export,
-                    &palette_for_export,
-                ) {
-                    debug_log!(
-                        "agent",
-                        "Warning: Failed to write initial theme export cache ({e})"
-                    );
-                }
+                let foreign = startup::announce_start_when_accepting(
+                    &socket_path,
+                    default_socket.as_deref(),
+                    &server_stopped_for_announce,
+                    startup::announce_start_to_tracked_shells,
+                );
+                shells_foreign_for_announce.store(foreign, Ordering::Release);
             });
         }
 
@@ -676,6 +646,15 @@ impl Agent {
     #[must_use]
     pub fn active_palette_for_testing(&self) -> crate::template::Palette {
         self.ctx.palette_cache.get()
+    }
+
+    /// The config and theme the agent currently renders with.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn active_config_and_theme_for_testing(
+        &self,
+    ) -> (Arc<crate::config::Config>, Arc<crate::theme::ThemeConfig>) {
+        (self.ctx.config_manager.get(), self.ctx.theme_manager.get())
     }
 
     /// Register client `pid` in `repo_path` with the registry and the watcher.

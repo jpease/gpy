@@ -16,13 +16,12 @@ pub const UNRESOLVED: &str = "<unresolved>";
 pub const LIST_SEPARATOR: &str = "|";
 
 /// The ordered key set. Shell implementations emit these keys, in this order.
-pub const KEYS: [&str; 9] = [
+pub const KEYS: [&str; 8] = [
     "runtime_root",
     "socket",
     "shell_registry_dir",
     "cache_root",
     "instant_prompts_dir",
-    "theme_export_file",
     "config_path",
     "config_candidates",
     "theme_dir",
@@ -68,7 +67,6 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
         .and_then(Path::parent)
         .map(Path::to_path_buf);
 
-    let theme_export_file = crate::cache::theme_export::fish_theme_export_path().ok();
     let config_path = super::utils::active_config_path().ok();
     let config_candidates = config_candidates().join(LIST_SEPARATOR);
     let theme_dir = crate::theme::ThemeManager::user_themes_dir().ok();
@@ -79,7 +77,6 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
         ("shell_registry_dir", show(shell_registry_dir.as_deref())),
         ("cache_root", show(cache_root.as_deref())),
         ("instant_prompts_dir", show(instant_prompts_dir.as_deref())),
-        ("theme_export_file", show(theme_export_file.as_deref())),
         ("config_path", show(config_path.as_deref())),
         (
             "config_candidates",

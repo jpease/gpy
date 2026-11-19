@@ -11,7 +11,6 @@ recorded in [CHANGELOG.md](../CHANGELOG.md), not here.
 | Agent config | `src/config/` | `~/.config/gpy/config.toml`; keys in [configuration-reference.md](../docs/user/configuration-reference.md) |
 | Themes and palettes | `src/theme/model/`, `src/palette/` | builtins in `config/themes/`, `config/palettes/` |
 | Plugin manifests | `src/plugin/` | `schemas/plugin-manifest.json`, `schemas/script-segment-manifest.json` |
-| Shell contract | `src/theme/export/` | variables printed by `gpy-agent theme export` |
 | CLI | `src/bin/gpy.rs`, `src/main.rs`, `src/commands/` | [cli-reference.md](../docs/user/cli-reference.md) |
 
 ## Change classes
@@ -21,7 +20,7 @@ Every change to a contract is exactly one of these. The class is recorded in
 
 | Class | Meaning | Examples |
 |---|---|---|
-| BREAKING | Existing input, output or a shipped client stops working or changes meaning | Removing or renaming a field, op, format value or exported variable; changing a field's type; narrowing accepted values; a `PROTOCOL_VERSION` bump |
+| BREAKING | Existing input, output or a shipped client stops working or changes meaning | Removing or renaming a field, op, or format value; changing a field's type; narrowing accepted values; a `PROTOCOL_VERSION` bump |
 | MINOR | Additive; existing input loads and behaves as before | New optional field with a serde default; new IPC op; new optional request or response field; new CLI subcommand or flag |
 | PATCH | No change in shape or accepted values | Bug fix, rendering fix, documentation |
 

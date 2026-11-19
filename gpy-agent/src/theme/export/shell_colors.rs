@@ -92,8 +92,7 @@ fn palette_color_value(color: &Color) -> Option<String> {
     }
 }
 
-/// `value`, a canonical theme color, in the spelling `theme export` prints for
-/// `shell`.
+/// `value`, a canonical theme color, in the spelling `shell` draws.
 pub(crate) fn resolve_shell_color(shell: Shell, palette: &Palette, value: &str) -> String {
     ShellColors { shell, palette }.resolve(value).into_owned()
 }

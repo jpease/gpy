@@ -17,7 +17,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-lastarg.XXXXXX")"
 T="$(cd "$T" && pwd -P)"
 cleanup() { rm -rf "$T"; }
 trap cleanup EXIT
-# Child's config disables the supervisor; the theme export re-sets the env flag.
+# Child's config and env flags disable the agent and its supervisor.
 source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 
 # Scrub every GPY_* variable inherited from the developer's shell.

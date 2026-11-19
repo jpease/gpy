@@ -44,7 +44,7 @@ enum Scenario {
     /// The `character` module after a command that exited with this status.
     Character(i32),
     /// Blank-line-before and two-line layout: Starship's `starship prompt` vs the
-    /// imported theme's exported `__gpy_*` flags.
+    /// imported theme's `add_newline`/`two_line`.
     Layout,
     /// `$git_branch$git_status` in a repo with one untracked file. Rows must not use
     /// `$symbol`: GPY's branch icon lacks Starship's trailing space.
@@ -82,11 +82,7 @@ impl Scenario {
                 "--exit-code".to_owned(),
                 status.to_string(),
             ]),
-            Self::Layout => {
-                return ["theme", "export", "--shell", "fish"]
-                    .map(str::to_owned)
-                    .to_vec();
-            }
+            Self::Layout => panic!("layout rows read the imported theme"),
             Self::Git => args.extend([
                 "git".to_owned(),
                 "--cwd".to_owned(),
@@ -302,17 +298,6 @@ fn starship_layout(env: &CliTestEnv, config: &Path, cwd: &Path) -> (bool, bool) 
     (blank_before, two_line)
 }
 
-/// The layout the imported theme gives GPY's shells: the `0`/`1` value
-/// `gpy-agent theme export` assigns to `__gpy_<flag>`.
-fn gpy_flag(export: &str, flag: &str) -> bool {
-    let name = format!("__gpy_{flag}");
-    let line = export
-        .lines()
-        .find(|line| line.contains(&name))
-        .unwrap_or_else(|| panic!("`{name}` missing from theme export:\n{export}"));
-    line.contains('1')
-}
-
 /// A layout row: Starship's full prompt against the imported theme's flags.
 fn check_layout_row(name: &str, env: &CliTestEnv, config_path: &Path, config: &str, cwd: &Path) {
     let want = starship_layout(env, config_path, cwd);
@@ -332,22 +317,17 @@ fn check_layout_row(name: &str, env: &CliTestEnv, config_path: &Path, config: &s
             .expect("run gpy")
             .assert_success(&args.join(" "));
     }
-    let owned = Scenario::Layout.agent_args(cwd);
-    let args: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let result = env.run_gpy_agent(&args).expect("run gpy-agent");
-    result.assert_success(&args.join(" "));
-    let got = (
-        gpy_flag(&result.stdout, "add_newline"),
-        gpy_flag(&result.stdout, "two_line"),
-    );
+    let theme = gpy_agent::theme::load::load_theme_from_path(
+        &env.themes_dir().join(format!("{IMPORT_NAME}.toml")),
+    )
+    .expect("load the imported theme");
+    let got = (theme.ui.add_newline, theme.ui.two_line);
     assert!(
         want == got,
         "row `{name}` layout differs from starship\n\
          config:\n{config}\n\
          starship (blank line before, two lines): {want:?}\n\
-         gpy      (add_newline, two_line):        {got:?}\n\
-         theme export:\n{}",
-        result.stdout,
+         gpy      (add_newline, two_line):        {got:?}"
     );
 }
 

@@ -2,12 +2,12 @@
 # tests/zsh/e2e_doorbell_ring_during_trap.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# An agent start rings an idle shell twice in a row: `.reload` (the theme
-# changed, as on an upgrade) and then `.reregister`. Zsh drops a SIGURG that
-# arrives while TRAPURG is still running, so a re-register ring landing during
-# the repaint for the reload went unanswered: the idle shell stayed
-# unregistered, with no live repaints, until the agent's next re-nudge a
-# minute later.
+# Two rings can reach an idle shell in a row: a `.reload` (a config or theme
+# change, or an agent start from an older release, which rang once per flag)
+# and then a `.reregister`. Zsh drops a SIGURG that arrives while TRAPURG is
+# still running, so a re-register ring landing during the repaint for the
+# reload would go unanswered: the idle shell would stay unregistered, with no
+# live repaints, until the agent's next re-nudge a minute later.
 #
 # With a slow `gpy` on PATH (a wrapper that sleeps before the real binary),
 # each round writes `.reload` and rings, then writes `.reregister` and rings
