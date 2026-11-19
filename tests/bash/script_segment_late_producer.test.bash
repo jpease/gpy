@@ -4,7 +4,7 @@
 #
 # A script segment whose producer reports its process group after the
 # deadline (a producer scheduled late on a loaded host) must still get TERM,
-# the grace and KILL, and must not outlive the prompt (jpease/gpy-archive#1252).
+# the grace and KILL, and must not outlive the prompt.
 # The Bash 5 reader of gpy-agent/src/prompt/g_runner.bash learns each group
 # from the producer p record; without one by the deadline it had nothing to
 # signal, so a script that loops kept running, and its producer waited on it

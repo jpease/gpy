@@ -95,7 +95,7 @@ fn build_test_endpoint(
     TempDir,
 ) {
     // No version probe: it runs the language's own binary within the request
-    // budget, which a slow runner can miss (jpease/gpy-archive#1245). The test
+    // budget, which a slow Windows runner can miss. The test
     // is about the segment toggle, so detection alone is enough.
     let config_manager = config_manager_with(
         config_dir,
