@@ -8,10 +8,10 @@ repos:
     -   id: check-yaml
     -   id: end-of-file-fixer
         # Golden ANSI fixtures are byte-exact contracts; never append newlines.
-        exclude: ^gpy-agent/tests/golden/.*\.ansi$
+        exclude: ^(gpy-agent/tests/golden|tests/fixtures/prompt_golden)/.*\.ansi$
     -   id: trailing-whitespace
         # Golden ANSI fixtures are byte-exact contracts; never trim bytes.
-        exclude: ^gpy-agent/tests/golden/.*\.ansi$
+        exclude: ^(gpy-agent/tests/golden|tests/fixtures/prompt_golden)/.*\.ansi$
     -   id: check-added-large-files
         # Recorded feature-walkthrough GIF embedded in the README (demo/README.md).
         exclude: ^assets/demo\.gif$
