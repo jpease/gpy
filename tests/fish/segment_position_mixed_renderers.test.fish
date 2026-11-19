@@ -39,6 +39,7 @@ end
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish
+source tests/lib/shell_render_only.fish
 
 set -g __segment_delim_first F
 set -g __segment_delim_start S

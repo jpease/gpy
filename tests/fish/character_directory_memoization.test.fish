@@ -27,6 +27,7 @@ printf '%s\n' 'set -g __gpy_export_version "1"' >"$XDG_CACHE_HOME/gpy/theme-expo
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish
+source tests/lib/shell_render_only.fish
 source fish/segments/directory.fish
 
 set -g __gpy_char_call_count 0

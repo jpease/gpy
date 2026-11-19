@@ -326,13 +326,13 @@ pub(crate) fn section_with_caps(
     section(vars, paint, [bg, fg], content, place, Some(caps))
 }
 
-fn section(
-    vars: &ShellVars,
+fn section<'a>(
+    vars: &'a ShellVars,
     paint: Paint,
-    [bg, fg]: [&str; 2],
+    [bg, fg]: [&'a str; 2],
     content: &str,
     place: Place,
-    own: Option<&Caps<'_>>,
+    own: Option<&Caps<'a>>,
 ) -> String {
     let open_names = if place.is_first {
         [
@@ -347,9 +347,37 @@ fn section(
             ("__segment_delimiter_bg", ""),
         ]
     };
+    // An own cap replaces the glyph; its colours replace the theme's in Bash
+    // and Zsh, but only when non-empty in Fish (`__gpy_section_pill`).
+    let own_cap =
+        |values: [&'a str; 3], names: [(&str, &'a str); 3], back_default: Option<&'a str>| {
+            if paint.dialect != Dialect::Fish {
+                return Cap::resolve(values, bg, fg);
+            }
+            let [glyph, color, back] = values;
+            let [
+                _,
+                (color_name, color_default),
+                (back_name, back_default_value),
+            ] = names;
+            let theme_back = back_default.unwrap_or_else(|| vars.or(back_name, back_default_value));
+            Cap::resolve(
+                [
+                    glyph,
+                    if color.is_empty() {
+                        vars.or(color_name, color_default)
+                    } else {
+                        color
+                    },
+                    if back.is_empty() { theme_back } else { back },
+                ],
+                bg,
+                fg,
+            )
+        };
     let open = own.and_then(|caps| caps.open).map_or_else(
         || Cap::new(vars, open_names, bg, fg),
-        |values| Cap::resolve(values, bg, fg),
+        |values| own_cap(values, open_names, None),
     );
     let close_names = if place.is_last {
         [
@@ -364,16 +392,17 @@ fn section(
             ("__segment_delimiter_bg", ""),
         ]
     };
+    // `d`: a script pill's theme close cap sits on the default background.
+    let plugin_last = place.is_last && own.is_some();
     let close = own.and_then(|caps| caps.close).map_or_else(
         || {
             let mut cap = Cap::new(vars, close_names, bg, fg);
-            // `d`: a script pill's theme close cap sits on the default background.
-            if place.is_last && own.is_some() {
+            if plugin_last {
                 cap.back = "";
             }
             cap
         },
-        |values| Cap::resolve(values, bg, fg),
+        |values| own_cap(values, close_names, plugin_last.then_some("")),
     );
     let mut out = open.draw(paint);
     out.push_str(&sgr_pair(fg, bg, paint));
@@ -384,6 +413,38 @@ fn section(
     }
     out.push_str(&close.draw(paint));
     out.push_str(&paint.reset());
+    out
+}
+
+/// Text in foreground `color` on the default background, then a reset, as
+/// Fish's `__gpy_set_fg_color COLOR; printf …; set_color normal`:
+/// `transparent`, `match_bg`, `match_text` and empty are the default colour.
+pub(crate) fn fg_text(paint: Paint, color: &str, text: &str) -> String {
+    let shown = match color {
+        "transparent" | "match_bg" | "match_text" | "" => "normal",
+        other => other,
+    };
+    let mut out = sgr_pair(shown, "normal", paint);
+    out.push_str(text);
+    out.push_str(&paint.reset());
+    out
+}
+
+/// `text` without its `ESC[…m` sequences.
+pub(crate) fn strip_sgr(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch == ESC {
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
     out
 }
 

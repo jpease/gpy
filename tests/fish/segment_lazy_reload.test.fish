@@ -36,6 +36,7 @@ source "$repo_root/fish/core/init.fish"
 # developer's installed copy — otherwise the assertion below measures Fish's
 # *default* prompt on a clean machine.
 source "$repo_root/fish/functions/fish_prompt.fish"
+source "$repo_root/tests/lib/shell_render_only.fish"
 set -e __gpy_test_segments
 
 if functions -q segment_duration_detect

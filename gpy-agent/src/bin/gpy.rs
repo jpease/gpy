@@ -50,8 +50,9 @@ enum Commands {
 
     /// Print the Bash `PS1` or the Zsh `PROMPT` for the current directory.
     /// Used by the shell integrations on every prompt; exits 3 when an
-    /// enabled segment needs the shell's own renderer. For Zsh, the
-    /// prompt symbol alone (the transient prompt) follows after a 0x1F byte.
+    /// enabled segment needs the shell's own renderer. For Zsh the prompt
+    /// symbol alone (the transient prompt), for Fish the transient line,
+    /// follows after a 0x1F byte.
     #[cfg(unix)]
     #[command(hide = true)]
     Prompt {
@@ -581,7 +582,7 @@ fn run_prompt(
         return Ok(ExitCode::from(3));
     };
     let mut out = rendered.prompt;
-    if dialect == gpy_agent::prompt::Dialect::Zsh {
+    if dialect != gpy_agent::prompt::Dialect::Bash {
         out.push('\u{1f}');
         out.push_str(&rendered.tail);
     }

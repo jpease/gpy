@@ -76,6 +76,7 @@ source fish/core/init.fish
 # explicitly, as other prompt-rendering tests do, instead of relying on the
 # developer's installed copy.
 source fish/functions/fish_prompt.fish
+source tests/lib/shell_render_only.fish
 
 fish_prompt >/dev/null
 

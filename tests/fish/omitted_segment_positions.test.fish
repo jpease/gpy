@@ -45,6 +45,7 @@ set -g __gpy_test_segments directory git language status
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish
+source tests/lib/shell_render_only.fish
 
 function segment_directory_render --argument-names is_last is_first
     printf 'DIR[%s|%s]' "$is_last" "$is_first"

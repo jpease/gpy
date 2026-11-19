@@ -17,6 +17,7 @@ init_test_env; or exit 1
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish
+source tests/lib/shell_render_only.fish
 
 function plain
     string replace -ra '\e\[[0-9;]*m' '' -- $argv | string collect
