@@ -212,17 +212,11 @@ done
 # Assert against the archives, not the staging directory.
 RELEASE_REQUIRED=(
     install.sh
-    fish/core/init.fish
     fish/conf.d/gpy_init.fish
     fish/functions/fish_prompt.fish
-    fish/segments/git.fish
     fish/completions/gpy-dynamic.fish
     bash/gpy.bash
-    bash/core/init.bash
-    bash/segments/git.bash
     zsh/gpy.zsh
-    zsh/core/init.zsh
-    zsh/segments/git.zsh
     plugins/hostname/plugin.toml
     plugins/hostname/segments/hostname.toml
     plugins/hostname/bin/hostname.sh
@@ -242,18 +236,12 @@ done
 [[ -z "$SBOM_SRC" ]] || RELEASE_REQUIRED+=(sbom.cdx.json)
 
 SHELL_FILES_REQUIRED=(
-    fish/core/init.fish
     fish/conf.d/gpy_init.fish
     fish/functions/fish_prompt.fish
-    fish/segments/git.fish
     fish/completions/gpy-dynamic.fish
     bash/gpy.bash
-    bash/core/init.bash
-    bash/segments/git.bash
     bash/completions/gpy-dynamic.bash
     zsh/gpy.zsh
-    zsh/core/init.zsh
-    zsh/segments/git.zsh
     zsh/completions/_gpy-dynamic
     plugins/hostname/plugin.toml
     plugins/hostname/segments/hostname.toml

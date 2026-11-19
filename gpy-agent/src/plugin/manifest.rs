@@ -77,12 +77,11 @@ impl SegmentName {
         &self.0
     }
 
-    /// The token naming this segment's shell variables (`__gpy_plugin_segment_file_<token>`,
-    /// `__gpy_segment_<token>_*`): `-` becomes `_`, nothing else changes.
+    /// The token naming this segment's shell variables (`__gpy_segment_<token>_*`):
+    /// `-` becomes `_`, nothing else changes.
     ///
-    /// Fish (`__gpy_plugin_segment_file_var`) and the plugin scaffold apply the
-    /// same mapping. Distinct names can share a token (`a-b`, `a_b`); see
-    /// [`first_token_collision`].
+    /// The plugin scaffold applies the same mapping. Distinct names can share a
+    /// token (`a-b`, `a_b`); see [`first_token_collision`].
     #[must_use]
     pub fn variable_token(&self) -> String {
         self.0.replace('-', "_")
@@ -149,8 +148,10 @@ display_inner!(SegmentName);
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum EntryType {
-    /// The plugin provides `segments/<name>.fish` files sourced at prompt init (Fish only).
-    File,
+    /// The first-party built-in segments, drawn by `gpy prompt`. Never read from
+    /// a manifest.
+    #[serde(skip)]
+    Builtin,
     /// The plugin provides `segments/<name>.toml` script segment manifests, each
     /// naming a POSIX `sh` script that every shell runs.
     Script,
@@ -163,7 +164,7 @@ impl EntryType {
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::File => "file",
+            Self::Builtin => "builtin",
             Self::Script => "script",
             Self::Command => "command",
         }
@@ -172,8 +173,26 @@ impl EntryType {
     /// Whether the current runtime can load plugins with this entry type.
     #[must_use]
     pub const fn is_runtime_supported(&self) -> bool {
-        matches!(self, Self::File | Self::Script)
+        matches!(self, Self::Builtin | Self::Script)
     }
+}
+
+/// The error for a manifest declaring the removed `entry_type = "file"`
+/// (Fish `.fish` plugins), or `None` when it declares something else.
+fn removed_entry_type_error(toml_content: &str) -> Option<crate::Error> {
+    let table: toml::Table = toml::from_str(toml_content).ok()?;
+    if table.get("entry_type").and_then(toml::Value::as_str) != Some("file") {
+        return None;
+    }
+    let id = table
+        .get("id")
+        .and_then(toml::Value::as_str)
+        .unwrap_or("<unknown>");
+    Some(crate::Error::invalid(format!(
+        "plugin '{}': entry_type \"file\" (Fish .fish plugins) is no longer supported; \
+         rewrite it as a script plugin (entry_type = \"script\"), see docs/dev/plugins.md",
+        id.escape_debug()
+    )))
 }
 
 /// Supported public plugin API versions.
@@ -332,8 +351,11 @@ impl PluginManifest {
     /// # Errors
     /// Returns an error if the TOML is invalid or field validation fails.
     pub fn parse(toml_content: &str) -> crate::Result<Self> {
-        let manifest: Self = toml::from_str(toml_content)
-            .map_err(|e| crate::Error::invalid(format!("Failed to parse plugin manifest: {e}")))?;
+        let manifest: Self = toml::from_str(toml_content).map_err(|e| {
+            removed_entry_type_error(toml_content).unwrap_or_else(|| {
+                crate::Error::invalid(format!("Failed to parse plugin manifest: {e}"))
+            })
+        })?;
 
         if manifest.provided_segments.is_empty() {
             return Err(crate::Error::invalid(
@@ -475,7 +497,7 @@ mod tests {
             version = "1.0.0"
             api_version = "v1"
             provided_segments = ["k8s-ctx", "k8s_ctx"]
-            entry_type = "file"
+            entry_type = "script"
         "#;
         let err = PluginManifest::parse(toml).unwrap_err().to_string();
         assert!(
@@ -493,12 +515,12 @@ mod tests {
             api_version = "v1"
             description = "A test plugin"
             provided_segments = ["test_seg1", "test-seg2"]
-            entry_type = "file"
+            entry_type = "script"
         "#;
         let manifest = PluginManifest::parse(toml).unwrap();
         assert_eq!(manifest.id.as_str(), "my-test-plugin");
         assert_eq!(manifest.provided_segments.len(), 2);
-        assert_eq!(manifest.entry_type, EntryType::File);
+        assert_eq!(manifest.entry_type, EntryType::Script);
         assert_eq!(manifest.api_version, PluginApiVersion::V1);
         assert_eq!(manifest.version.as_str(), "1.0.0");
         assert!(manifest.compatibility_constraints.is_none());
@@ -522,7 +544,7 @@ mod tests {
             name = "My Test Plugin"
             version = "1.0.0"
             api_version = "v1"
-            entry_type = "file"
+            entry_type = "script"
             {key_line}
         "#
             );
@@ -542,7 +564,7 @@ mod tests {
             version = "1.0.0"
             api_version = "v1"
             provided_segments = []
-            entry_type = "file"
+            entry_type = "script"
         "#;
         let err = PluginManifest::parse(toml).unwrap_err();
         assert!(err.to_string().contains("provided_segments"), "{err}");
@@ -556,7 +578,7 @@ mod tests {
             version = "1.0.0"
             api_version = "v1"
             provided_segments = ["test_seg1", "test_seg1"]
-            entry_type = "file"
+            entry_type = "script"
         "#;
         assert_rejected(
             PluginManifest::parse(toml),
@@ -566,12 +588,33 @@ mod tests {
 
     #[test]
     fn entry_type_runtime_support() {
-        assert!(EntryType::File.is_runtime_supported());
+        assert!(EntryType::Builtin.is_runtime_supported());
         assert!(EntryType::Script.is_runtime_supported());
         assert!(!EntryType::Command.is_runtime_supported());
-        assert_eq!(EntryType::File.as_str(), "file");
+        assert_eq!(EntryType::Builtin.as_str(), "builtin");
         assert_eq!(EntryType::Script.as_str(), "script");
         assert_eq!(EntryType::Command.as_str(), "command");
+    }
+
+    #[test]
+    fn parse_rejects_removed_file_entry_type_with_a_pointer() {
+        let toml = r#"
+            id = "old-fish"
+            name = "Old"
+            version = "1.0.0"
+            api_version = "v1"
+            provided_segments = ["x"]
+            entry_type = "file"
+        "#;
+        assert_rejected(
+            PluginManifest::parse(toml),
+            "plugin 'old-fish': entry_type \"file\" (Fish .fish plugins) is no longer supported; \
+             rewrite it as a script plugin (entry_type = \"script\"), see docs/dev/plugins.md",
+        );
+        assert_rejected(
+            PluginManifest::parse(&toml.replace("\"file\"", "\"builtin\"")),
+            "unknown variant `builtin`",
+        );
     }
 
     fn manifest_with_min_version(min: &str) -> PluginManifest {
@@ -652,7 +695,7 @@ mod tests {
             version = "1.0.0"
             api_version = "v1"
             provided_segments = ["x"]
-            entry_type = "file"
+            entry_type = "script"
         "#;
         assert_rejected(
             PluginManifest::parse(toml),
@@ -668,7 +711,7 @@ mod tests {
             version = "1.0.0"
             api_version = "v2"
             provided_segments = ["x"]
-            entry_type = "file"
+            entry_type = "script"
         "#;
         assert_rejected(PluginManifest::parse(toml), "unknown variant `v2`");
     }

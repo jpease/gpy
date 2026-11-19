@@ -199,10 +199,11 @@ fn new_names_the_plugin_an_overlay_depends_on() {
     fs::write(
         root.join("plugin.toml"),
         "id = \"demo-tools\"\nname = \"Demo\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"demo\"]\n",
+         entry_type = \"script\"\nprovided_segments = [\"demo\"]\n",
     )
     .expect("plugin manifest");
-    fs::write(root.join("segments/demo.fish"), "# demo\n").expect("segment file");
+    fs::write(root.join("segments/demo.toml"), "command = \"run.sh\"\n").expect("segment manifest");
+    fs::write(root.join("run.sh"), "echo demo\n").expect("segment script");
     fs::write(
         root.join("themes/demo-look.toml"),
         "extends = \"starship\"\n[segments.clock]\ntime_format = \"24\"\n",

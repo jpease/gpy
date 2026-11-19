@@ -89,25 +89,25 @@ Install-time and filesystem notes: [Windows (WSL)](../INSTALL.md#windows-wsl).
 
 ## Fish-Specific Issues
 
-- **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
-- **Registration timing**: Fish registers with the agent once its first prompt has been drawn, not while the shell starts, so a live update can reach a new Fish shell only after that first paint.
-- **Agent won't start / crash loop**: Bash, Zsh and Fish restart the agent the same way, with no background supervisor process. Each shell probes the agent on the prompt, at most once per `check_interval_seconds`; when the probe fails it runs `gpy-agent start` in the background. A crashed agent is restarted on the next checked prompt, not while the shell sits idle. A silent agent (connected, no answer) costs up to `GPY_IPC_TIMEOUT_MS` (150 ms by default) on the prompt that runs the check, and counts as down. `gpy-agent start` replaces an older-protocol agent and evicts one that is wedged and honours `shutdown`; a wedged agent that ignores `gpy-agent stop` is never killed by a shell, so stop it by hand (`gpy-agent stop`, then `kill <pid>`). A supervisor loop left running by an earlier Fish version is stopped at the first Fish prompt. Relevant `config.toml` keys, in increasing order of aggressiveness:
-  - `[agent.supervisor] enabled = false` — disable only the restarts (useful while debugging a crash so it doesn't keep respawning under you). Each shell still starts the agent once at startup and registers with a running agent, so live updates keep working.
+- **Signal handling**: Fish uses one native `--on-signal SIGURG` handler that triggers a repaint; the repaint runs `gpy prompt`, which consumes any reload/re-register flag. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
+- **Registration timing**: every shell registers with the agent from its first prompt, after the prompt is drawn, so a live update can reach a new shell only after that first prompt.
+- **Agent won't start / crash loop**: Bash, Zsh and Fish restart the agent the same way, with no background supervisor process: `gpy prompt` probes the agent while drawing a prompt, at most once per `check_interval_seconds`; when the probe fails it runs `gpy-agent start` in the background. A crashed agent is restarted on the next checked prompt, not while the shell sits idle. A silent agent (connected, no answer) costs up to `GPY_IPC_TIMEOUT_MS` (150 ms by default) on the prompt that runs the check, and counts as down. `gpy-agent start` replaces an older-protocol agent and evicts one that is wedged and honours `shutdown`; a wedged agent that ignores `gpy-agent stop` is never killed by a prompt, so stop it by hand (`gpy-agent stop`, then `kill <pid>`). Relevant `config.toml` keys, in increasing order of aggressiveness:
+  - `[agent.supervisor] enabled = false` — disable only the restarts (useful while debugging a crash so it doesn't keep respawning under you). A shell's first prompt still starts the agent and registers with a running agent, so live updates keep working.
   - `[agent.supervisor] check_interval_seconds` — health-check cadence.
   - `[agent.supervisor] max_restart_attempts` — restarts a shell attempts before it gives up (a good probe resets the count).
   - `[agent] enabled = false` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process). No restart is attempted either.
 
-  An exported `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` or `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` wins over `config.toml`; unset, `config.toml` decides (the theme export never exports these names). If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` in the environment fish starts with — `gpy_init.fish` skips loading entirely when *both* are off (`0`, `false`, `no` or `off`) there.
+  An exported `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` or `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` wins over `config.toml`; unset, `config.toml` decides.
 - **Abbreviations/completions**: shell completions are installed and regenerated automatically by the standard installers ([CLI Reference § Shell Completion](cli-reference.md#shell-completion)). If `gpy <TAB>` doesn't complete, confirm the `gpy` CLI binary itself is on `PATH` — completions require it.
-- **`gpy: GPY needs Fish 3.6 or newer (this is X)` / `gpy[init]: GPY failed to load; using the fallback prompt`**: Fish below 3.6 cannot run GPY (it needs `string escape --json`), so the load stops with the first message and you get a plain fallback prompt until Fish is upgraded. The second message means a file under `~/.local/share/gpy/fish/core/` (`$XDG_DATA_HOME/gpy/fish/core/`) failed to load; Fish's own error (with the file and line) is printed just above it. Re-run `gpy setup` to restore the files, then open a new shell. In a working shell, `gpy-prompt-debug validate` checks that every file GPY needs is installed.
+- **`gpy: GPY needs Fish 3.6 or newer (this is X)`**: Fish below 3.6 cannot run GPY, so the load stops with this message and you get Fish's own prompt until Fish is upgraded. A bare `❯ ` prompt means `gpy` is not on `PATH` (or `~/.local/bin/gpy`) or failed: run `gpy doctor`, and `gpy setup` to restore the files.
 
 ---
 
 ## Zsh-Specific Issues
 
-Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract is identical across Fish, Zsh, and Bash: `directory`/`duration`/`git`/`language` are agent-rendered, and `clock`/`status` are agent-rendered when the theme sets a `format` and drawn locally by the shell otherwise or whenever the agent gives no reply. `hostname` and `username` are bundled script plugins (installed by `gpy setup` into `~/.local/share/gpy/plugins`) run by the shell, so if they are missing run `gpy setup` again.
+Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but every prompt in all three shells is drawn by the same `gpy prompt`. `hostname` and `username` are bundled script plugins (installed by `gpy setup` into `~/.local/share/gpy/plugins`), so if they are missing run `gpy setup` again.
 
-Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke and a restarted agent's re-register nudge re-registers the shell. A dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, please [report it](https://github.com/jpease/gpy/issues).
+Zsh is at parity with Fish for live updates: `TRAPURG` re-runs `gpy prompt` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke. A dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, please [report it](https://github.com/jpease/gpy/issues).
 
 ---
 
@@ -119,7 +119,7 @@ Bash differs in two ways: duration-segment precision varies by Bash version (dis
 
 ## Colors Look Wrong or Garbled
 
-GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so GPY already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`, then run `gpy-agent stop` and open a new prompt (the agent reads it once per process). The setting also applies to the pills the shells draw themselves (Bash, Zsh and Fish). See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
+GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so GPY already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`, then run `gpy-agent stop` and open a new prompt (the agent reads it once per process; `gpy prompt` reads it on every prompt). See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
 
 ## No Usable Home Directory
 
@@ -129,7 +129,7 @@ GPY never falls back to `/tmp/gpy` or a path relative to the current directory. 
 - Commands that write user files (`gpy theme new`, `gpy plugin new`, ...) exit 1 with the same error naming the config directory.
 - `gpy plugin list` prints `Bundled plugins: none (cannot locate a data directory: set XDG_DATA_HOME or HOME to an absolute path)`, and `gpy doctor` reports them missing.
 - `gpy debug paths` shows `<unresolved>`.
-- The shells keep GPY off for that session: no hooks, no agent and no oneshot mode. `GPY_DEBUG=1` prints one `gpy[init]: debug: ...` line; Fish shows its minimal fallback prompt.
+- The prompt still draws, with no agent: `gpy prompt` does the agent's work in process on every prompt, and keeps no per-shell state (script segments run on every prompt).
 
 Fix it by exporting `HOME` (or the XDG variables) as an absolute path before the shell starts.
 

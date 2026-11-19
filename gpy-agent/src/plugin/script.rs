@@ -2,8 +2,8 @@
 //!
 //! The manifest is the author-facing contract for script segments: which
 //! script runs, what it receives, when it runs and how long its output is
-//! reused. The runner is `bash/core/g_runner.bash`, which the shell adapters
-//! run; this module only declares and validates.
+//! reused. The runner is `src/prompt/g_runner.bash`, which `gpy prompt`
+//! runs; this module only declares and validates.
 
 use super::manifest::SegmentName;
 use super::newtype::{deserialize_via_new, detail, display_inner};

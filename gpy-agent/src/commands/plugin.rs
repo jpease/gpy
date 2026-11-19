@@ -9,8 +9,7 @@ use crate::plugin::{
 };
 use crate::{Error, Result, VERSION};
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Validated segment manifests of a script plugin, keyed by segment.
 type ScriptSegments = BTreeMap<SegmentName, ScriptSegmentManifest>;
@@ -18,26 +17,15 @@ type ScriptSegments = BTreeMap<SegmentName, ScriptSegmentManifest>;
 /// Cap on the script text read for the `$VAR` scan.
 const SCRIPT_READ_CAP: usize = 1_048_576;
 
-const PUBLIC_PLUGIN_HELPERS: &[&str] = &[
-    "gpy_section_start",
-    "gpy_section_append",
-    "gpy_section_end",
-    "gpy_section_standalone",
-];
-
 /// Parse the current GPY version into the typed plugin compatibility form.
 pub(crate) fn current_gpy_version() -> Result<GpyVersion> {
     GpyVersion::new(VERSION)
 }
 
-pub(super) fn plugin_segment_file(root: &Path, segment: &crate::plugin::SegmentName) -> PathBuf {
-    root.join("segments").join(format!("{segment}.fish"))
-}
-
 /// Error for a manifest whose `entry_type` this runtime cannot load.
 pub(super) fn unsupported_entry_type(entry_type: &EntryType) -> Error {
     Error::invalid(format!(
-        "unsupported entry_type '{}': only 'file' and 'script' plugins are loadable by this runtime",
+        "unsupported entry_type '{}': only 'script' plugins are loadable by this runtime",
         entry_type.as_str()
     ))
 }
@@ -46,7 +34,7 @@ pub(super) fn unsupported_entry_type(entry_type: &EntryType) -> Error {
 /// and that this GPY satisfies its `min_gpy_version`.
 fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<ScriptSegments> {
     // Fail at validation rather than at prompt init.
-    if !manifest.entry_type.is_runtime_supported() {
+    if manifest.entry_type != EntryType::Script {
         return Err(unsupported_entry_type(&manifest.entry_type));
     }
     manifest.check_min_gpy_version(&current_gpy_version()?)?;
@@ -67,30 +55,14 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<Script
         )));
     }
 
-    match manifest.entry_type {
-        EntryType::File => {
-            for segment in &manifest.provided_segments {
-                let segment_file = plugin_segment_file(root, segment);
-                if !segment_file.is_file() {
-                    return Err(Error::invalid(format!(
-                        "missing segment file for '{segment}': {}",
-                        segment_file.display()
-                    )));
-                }
-            }
+    for segment in &manifest.provided_segments {
+        let segment_manifest = script_segment_manifest_path(root, segment);
+        if !segment_manifest.is_file() {
+            return Err(Error::invalid(format!(
+                "missing script segment manifest for '{segment}': {}",
+                segment_manifest.display()
+            )));
         }
-        EntryType::Script => {
-            for segment in &manifest.provided_segments {
-                let segment_manifest = script_segment_manifest_path(root, segment);
-                if !segment_manifest.is_file() {
-                    return Err(Error::invalid(format!(
-                        "missing script segment manifest for '{segment}': {}",
-                        segment_manifest.display()
-                    )));
-                }
-            }
-        }
-        EntryType::Command => return Err(unsupported_entry_type(&manifest.entry_type)),
     }
 
     DiscoveredPlugin::load_script_segments(manifest, root)
@@ -137,25 +109,6 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, Scri
     Ok((manifest, root, script_segments))
 }
 
-/// One-line scope note printed by `gpy plugin new`, `validate` and `list`.
-///
-/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins run in every shell.
-pub(crate) const FISH_ONLY_NOTE: &str =
-    "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
-
-/// Whether `plugin` is a user v1 `.fish` plugin; built-in plugins load in every shell.
-const fn is_fish_only_plugin(plugin: &DiscoveredPlugin) -> bool {
-    !matches!(plugin.source, PluginSource::FirstParty)
-        && matches!(plugin.manifest.entry_type, EntryType::File)
-}
-
-/// Print the Fish-only note when `entry_type` is a v1 `.fish` file plugin.
-fn print_fish_only_note(entry_type: &EntryType) {
-    if matches!(entry_type, EntryType::File) {
-        output::detail(format_args!("note: {FISH_ONLY_NOTE}"));
-    }
-}
-
 /// Comma-separated segment names, or `(none)`.
 fn segment_list(segments: &[SegmentName]) -> String {
     if segments.is_empty() {
@@ -180,14 +133,7 @@ fn print_manifest_validation(manifest: &PluginManifest, root: &Path, segments: &
         "segments: {}",
         segment_list(&manifest.provided_segments)
     ));
-    if matches!(manifest.entry_type, EntryType::File) {
-        output::detail(format_args!(
-            "public helpers: {}",
-            PUBLIC_PLUGIN_HELPERS.join(", ")
-        ));
-    }
     print_min_version(manifest.compatibility_constraints.as_ref());
-    print_fish_only_note(&manifest.entry_type);
     print_script_segments(segments);
 }
 
@@ -287,7 +233,6 @@ fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin, 
         segment_list(&plugin.manifest.provided_segments)
     ));
     print_min_version(plugin.manifest.compatibility_constraints.as_ref());
-    print_fish_only_note(&plugin.manifest.entry_type);
     print_script_segments(&plugin.script_segments);
 }
 
@@ -495,9 +440,6 @@ pub fn list() {
             "Bundled plugins: none ({})",
             crate::paths::NO_DATA_DIR
         ));
-    }
-    if discovery.plugins.iter().any(is_fish_only_plugin) {
-        output::plain(FISH_ONLY_NOTE);
     }
 
     if discovery.plugins.is_empty() {

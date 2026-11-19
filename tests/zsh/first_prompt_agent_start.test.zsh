@@ -2,61 +2,58 @@
 # tests/zsh/first_prompt_agent_start.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The shell holds no protocol or version knowledge: it runs `gpy-agent start`
-# exactly once at startup even when the agent already answers (`start` keeps or
-# replaces the agent itself), never again while the agent keeps answering, and
-# still starts an unreachable agent, capped by the restart attempt limit.
+# A shell's first prompt runs `gpy-agent start` exactly once even when the
+# agent already answers (`start` keeps or replaces the agent itself), never
+# again while the agent keeps answering, and still starts an unreachable
+# agent, capped by the restart attempt limit. `gpy prompt zsh` does this; the
+# test drives it through zsh/gpy.zsh's precmd.
 
-ROOT="$(cd "$(dirname "${(%):-%x}")/../.." && pwd)"
+ROOT=${0:a:h:h:h}
 # Shared skip contract: exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 source "$ROOT/tests/lib/supervisor_off.zsh"
+test_require_command gpy
+test_require_command python3
 
-if ! command -v python3 &>/dev/null; then
-    test_skip "python3 not installed, cannot simulate a mock agent"
-fi
-if ! command -v socat &>/dev/null && ! command -v nc &>/dev/null; then
-    test_skip "neither socat nor nc installed, cannot exercise IPC send"
-fi
-
-test_tmp_dir="$(mktemp -d)"
+test_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/gpy-first-start.XXXXXX") || exit 1
+test_tmp_dir=${test_tmp_dir:A}
 cleanup() {
     shell_e2e_kill_tracked
     rm -rf "$test_tmp_dir"
 }
 trap cleanup EXIT
 
+# The binary starts the gpy-agent beside itself: a copy of gpy next to a
+# recording stub.
 calls="$test_tmp_dir/agent.calls"
-cat >"$test_tmp_dir/gpy-agent" <<EOF
+mkdir -p "$test_tmp_dir/bin"
+cp "${commands[gpy]}" "$test_tmp_dir/bin/gpy"
+cat >"$test_tmp_dir/bin/gpy-agent" <<EOF
 #!/bin/sh
 echo "\$*" >>'$calls'
 exit 0
 EOF
-chmod +x "$test_tmp_dir/gpy-agent"
-export PATH="$test_tmp_dir:$PATH"
+chmod +x "$test_tmp_dir/bin/gpy-agent"
 
 starts() {
     [[ -f "$calls" ]] || { print 0; return; }
     grep -c '^start$' "$calls"
 }
-start_recorded() { (( $(starts) >= 1 )); }
 starts_at_least() { (( $(starts) >= $1 )); }
 
-# Source gpy.zsh (whose startup is the first-prompt start) in a subshell, then
-# run $1 supervisor checks.
+# shell_session N: a fresh zsh (fresh PID, so a first prompt) draws N
+# prompts, every one past the supervisor's rate limit.
 shell_session() {
+    rm -rf "$test_tmp_dir/run"
+    mkdir -p "$test_tmp_dir/run"
     (
+        path=("$test_tmp_dir/bin" $path)
+        export XDG_RUNTIME_DIR="$test_tmp_dir/run"
         export GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1
         export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0
-        source "$ROOT/zsh/gpy.zsh" &>/dev/null
-        # The prompt-time supervisor checks, all past the rate limit.
-        local i
-        for i in {1..$1}; do
-            __gpy_supervisor_check &>/dev/null
-        done
-        # The check's start is backgrounded; give it a moment to run.
-        sleep 0.3
+        zsh -f -c 'source "$1/zsh/gpy.zsh" &>/dev/null
+            for i in {1..$2}; do __gpy_precmd; done' zsh "$ROOT" "$1" &>/dev/null
     )
 }
 
@@ -67,7 +64,7 @@ sock="$test_tmp_dir/healthy.sock"
 shell_e2e_stub_listener "$sock" reply --lifetime 30 --reply '{"status":"ok"}'
 export GPY_AGENT_SOCKET_PATH="$sock"
 shell_session 3
-shell_e2e_poll 5 start_recorded || fail "a healthy agent did not get a start at shell startup"
+shell_e2e_poll 5 starts_at_least 1 || fail "a healthy agent did not get a start on the first prompt"
 # Absence cannot be polled for: give a wrongly started process a fixed window.
 sleep 0.5
 check "a healthy agent gets exactly one start per shell" 1 "$(starts)"

@@ -81,11 +81,6 @@
       "description": "Entry type for a plugin",
       "oneOf": [
         {
-          "description": "The plugin provides `segments/<name>.fish` files sourced at prompt init (Fish only).",
-          "type": "string",
-          "const": "file"
-        },
-        {
           "description": "The plugin provides `segments/<name>.toml` script segment manifests, each\nnaming a POSIX `sh` script that every shell runs.",
           "type": "string",
           "const": "script"

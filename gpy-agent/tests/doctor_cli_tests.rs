@@ -13,7 +13,7 @@ use common::agent_sandbox::AgentSandbox;
 use common::cli_harness::{CliCommandResult, lone_gpy};
 use common::fake_agent::{Behaviour, FakeAgent};
 use common::fixtures::bind_silent_socket;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 const ALL_PASSED: &str = "ok: All checks passed.";
@@ -34,35 +34,6 @@ fn doctor_with_agent_path(
 
 fn make_executable(path: &Path) {
     std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-}
-
-/// A bin dir holding a copy of `gpy-agent` and an `nc` that prints `nc_help`.
-fn ipc_bin_dir(sandbox: &AgentSandbox, nc_help: &str) -> PathBuf {
-    let bin_dir = sandbox.env.root().join("ipc-bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_gpy-agent"), bin_dir.join("gpy-agent")).unwrap();
-    let nc = bin_dir.join("nc");
-    std::fs::write(&nc, format!("#!/bin/sh\necho '{nc_help}' >&2\nexit 1\n")).unwrap();
-    make_executable(&nc);
-    bin_dir
-}
-
-/// Install the real `shell` integration into the sandbox's HOME.
-fn install_integration(sandbox: &AgentSandbox, shell: &str) {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crate lives inside the repository");
-    let from = repository.to_string_lossy().into_owned();
-    sandbox
-        .gpy(&[
-            "setup",
-            "--shell",
-            shell,
-            "--non-interactive",
-            "--from",
-            &from,
-        ])
-        .assert_success("gpy setup");
 }
 
 #[test]
@@ -257,64 +228,6 @@ fn doctor_fails_on_an_overlong_socket_path() {
         doctor.stdout.contains("Cannot resolve the agent socket"),
         "{doctor:?}"
     );
-}
-
-#[test]
-fn doctor_warns_without_an_ipc_client() {
-    let sandbox = AgentSandbox::new();
-    install_integration(&sandbox, "bash");
-    let bin_dir = ipc_bin_dir(&sandbox, "usage: nc [-46] host port");
-
-    let doctor = doctor_with_agent_path(&sandbox, &bin_dir, "");
-    assert_eq!(doctor.exit_code, 0_i32, "{doctor:?}");
-    let line = doctor
-        .stdout
-        .lines()
-        .find(|line| line.contains("Checking IPC client"))
-        .unwrap_or_else(|| panic!("no IPC client line: {doctor:?}"));
-    assert!(line.contains("warn: No IPC client for Bash/Fish"), "{line}");
-    assert!(doctor.stdout.contains("socat"), "{doctor:?}");
-    assert!(doctor.stdout.contains(ALL_PASSED), "{doctor:?}");
-}
-
-#[test]
-fn doctor_accepts_nc_with_unix_socket_support() {
-    let sandbox = AgentSandbox::new();
-    install_integration(&sandbox, "bash");
-    let bin_dir = ipc_bin_dir(&sandbox, "usage: nc [-46] [-U] host port");
-
-    let doctor = doctor_with_agent_path(&sandbox, &bin_dir, "");
-    assert_eq!(doctor.exit_code, 0_i32, "{doctor:?}");
-    let expected = format!("ok: nc -U ({})", bin_dir.join("nc").display());
-    assert!(
-        doctor
-            .stdout
-            .lines()
-            .any(|line| line.contains("Checking IPC client") && line.contains(&expected)),
-        "{doctor:?}"
-    );
-}
-
-#[test]
-fn doctor_skips_the_ipc_check_when_the_agent_is_disabled() {
-    let sandbox = AgentSandbox::new();
-    install_integration(&sandbox, "bash");
-    let bin_dir = ipc_bin_dir(&sandbox, "usage: nc [-46] host port");
-
-    let doctor = doctor_with_agent_path(&sandbox, &bin_dir, "[agent]\nenabled = false\n");
-    assert_eq!(doctor.exit_code, 0_i32, "{doctor:?}");
-    assert!(!doctor.stdout.contains("IPC client"), "{doctor:?}");
-}
-
-#[test]
-fn doctor_skips_the_ipc_check_for_zsh_only() {
-    let sandbox = AgentSandbox::new();
-    install_integration(&sandbox, "zsh");
-    let bin_dir = ipc_bin_dir(&sandbox, "usage: nc [-46] host port");
-
-    let doctor = doctor_with_agent_path(&sandbox, &bin_dir, "");
-    assert_eq!(doctor.exit_code, 0_i32, "{doctor:?}");
-    assert!(!doctor.stdout.contains("IPC client"), "{doctor:?}");
 }
 
 #[test]

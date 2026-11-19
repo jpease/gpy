@@ -344,7 +344,7 @@ function _verify_installation
     set -l gpy_fish_dir $gpy_dev_fish_dir
     test -n "$gpy_fish_dir"; or set gpy_fish_dir (_data_root)/fish
 
-    if test -d "$gpy_fish_dir/core"
+    if test -f "$gpy_fish_dir/conf.d/gpy_init.fish"
         echo "Fish files installed"
     else
         echo "error: Fish files not found"

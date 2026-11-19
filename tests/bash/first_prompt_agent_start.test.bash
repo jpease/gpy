@@ -2,10 +2,10 @@
 # tests/bash/first_prompt_agent_start.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The shell holds no protocol or version knowledge: it runs `gpy-agent start`
-# exactly once at startup even when the agent already answers (`start` keeps or
-# replaces the agent itself), never again while the agent keeps answering, and
-# still starts an unreachable agent, capped by the restart attempt limit.
+# `gpy prompt` runs `gpy-agent start` exactly once on a shell's first prompt
+# even when the agent already answers (`start` keeps or replaces the agent
+# itself), never again while the agent keeps answering, and still starts an
+# unreachable agent, capped by the restart attempt limit.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Shared skip contract: exits 0 locally, fails under CI.
@@ -15,9 +15,6 @@ cd "$ROOT" || exit 1
 
 if ! command -v python3 &>/dev/null; then
     test_skip "python3 not installed, cannot simulate a mock agent"
-fi
-if ! command -v socat &>/dev/null && ! command -v nc &>/dev/null; then
-    test_skip "neither socat nor nc installed, cannot exercise IPC send"
 fi
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-first-start.XXXXXX")"
@@ -31,13 +28,17 @@ trap cleanup EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 
 calls="$SANDBOX/agent.calls"
-cat >"$SANDBOX/gpy-agent" <<EOF
+# gpy starts the gpy-agent beside it: a stub that records every call.
+mkdir -p "$SANDBOX/bin" "$SANDBOX/runtime"
+chmod 700 "$SANDBOX/runtime"
+cp "$ROOT/gpy-agent/target/debug/gpy" "$SANDBOX/bin/gpy" || fail "gpy is not built (cargo build --bins)"
+cat >"$SANDBOX/bin/gpy-agent" <<EOF
 #!/bin/sh
 echo "\$*" >>'$calls'
 exit 0
 EOF
-chmod +x "$SANDBOX/gpy-agent"
-export PATH="$SANDBOX:$PATH"
+chmod +x "$SANDBOX/bin/gpy-agent"
+export PATH="$SANDBOX/bin:$PATH" XDG_RUNTIME_DIR="$SANDBOX/runtime"
 
 starts() {
     [[ -f "$calls" ]] || {
@@ -51,24 +52,16 @@ start_recorded() { (($(starts) >= 1)); }
 # shellcheck disable=SC2329 # invoked through shell_e2e_poll
 starts_at_least() { (($(starts) >= $1)); }
 
-# Source gpy.bash (whose startup is the first-prompt start) in a subshell, then
-# run $1 supervisor checks.
+# A fresh Bash (its own PID, so its own first prompt) that sources gpy.bash
+# and draws $1 prompts, every one past the supervisor's rate limit.
 shell_session() {
-    (
-        # Some Bash versions run the parent's EXIT trap (the sandbox cleanup) here.
-        trap - EXIT
-        export GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1
-        export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0
-        # shellcheck source=bash/gpy.bash
-        source "$ROOT/bash/gpy.bash" &>/dev/null
-        # The prompt-time supervisor checks, all past the rate limit.
-        local _
-        for _ in $(seq 1 "$1"); do
-            __gpy_supervisor_check &>/dev/null
-        done
-        # The check `disown`s its start; give it a moment to run.
-        sleep 0.3
-    )
+    # shellcheck disable=SC2016 # expanded by the child shell
+    GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
+        GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0 \
+        "$BASH" --noprofile --norc -c '
+            source "$0/bash/gpy.bash"
+            for ((i = 0; i < $1; i++)); do __gpy_precmd; done
+        ' "$ROOT" "$1" &>/dev/null
 }
 
 # --- (a)+(b): a healthy agent is started once, and not again ---

@@ -2,12 +2,11 @@
 # tests/zsh/agent_binary_home_fallback.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The installer puts gpy-agent in ~/.local/bin, which is not always on PATH.
-# As in Fish, the shell then runs that copy for start, theme export and
-# oneshot; a gpy-agent on PATH still wins.
+# The installer puts gpy in ~/.local/bin, which is not always on PATH. The
+# prompt then runs that copy, for the prompt and for the unregister on exit; a
+# gpy on PATH still wins. With neither, the prompt is the bare `❯ `.
 
 ROOT=${0:a:h:h:h}
-# Shared skip contract: exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
@@ -16,54 +15,39 @@ tmp=${tmp:A}
 trap 'rm -rf "$tmp"' EXIT
 log="$tmp/calls"
 
-# write_stub DIR TAG: a gpy-agent that logs "TAG <argv>" and prints TAG on oneshot.
+# write_stub DIR TAG: a gpy that logs "TAG <argv>" and prints a prompt
+# "TAG> " with the transient line "t".
 write_stub() {
     mkdir -p "$1"
     print -r -- "#!/bin/sh
 echo \"$2 \$*\" >>'$log'
-[ \"\$1\" = oneshot ] && printf '%s' '$2'
-exit 0" >"$1/gpy-agent"
-    chmod +x "$1/gpy-agent"
+[ \"\$2\" = --exit ] && exit 0
+printf '%s\\037%s' '$2> ' t" >"$1/gpy"
+    chmod +x "$1/gpy"
 }
 
 write_stub "$tmp/home/.local/bin" home
 write_stub "$tmp/path" path
 
-# run PATH: resolve, oneshot and start in a fresh shell with HOME sandboxed.
+# run PATH: one prompt and an exit in a fresh shell with HOME sandboxed.
 run() {
-    env -i HOME="$tmp/home" PATH="$1" GPY_AGENT_ENABLED=1 \
-        GPY_AGENT_SOCKET_PATH="$tmp/none.sock" zsh -f -c '
-        source zsh/core/constants.zsh
-        source zsh/core/renderer.zsh
-        source zsh/core/ipc.zsh
-        source zsh/core/supervisor.zsh
-        __gpy_agent_binary_into agent; print -r -- "resolve=$? $agent"
-        print -r -- "oneshot=$(__gpy_fallback_oneshot directory / zsh-prompt)"
-        __gpy_start_agent; print -r -- "start=$?"
+    env -i HOME="$tmp/home" PATH="$1" zsh -f -c '
+        source zsh/gpy.zsh
+        __gpy_precmd
+        print -r -- "prompt=$PROMPT"
     ' 2>/dev/null
 }
 
 : >"$log"
-out=("${(@f)$(run /usr/bin:/bin)}")
-check "without gpy-agent on PATH, ~/.local/bin is used" \
-    "resolve=0 $tmp/home/.local/bin/gpy-agent" "$out[1]"
-check "oneshot runs the ~/.local/bin copy" "oneshot=home" "$out[2]"
-check "start runs the ~/.local/bin copy" "start=0" "$out[3]"
-# The start is detached: allow it a moment to log.
-for _ in {1..10}; do
-    grep -q '^home start' "$log" && break
-    sleep 0.1
-done
-check "the start reached the ~/.local/bin copy" 1 "$(grep -c '^home start' "$log")"
+check "without gpy on PATH, the ~/.local/bin copy draws the prompt" \
+    "prompt=home> " "$(run /usr/bin:/bin)"
+check "exit unregisters through the ~/.local/bin copy" 1 "$(grep -c '^home prompt zsh --exit' "$log")"
 
 : >"$log"
-out=("${(@f)$(run "$tmp/path:/usr/bin:/bin")}")
-check "a gpy-agent on PATH wins" "resolve=0 gpy-agent" "$out[1]"
-check "oneshot runs the PATH copy" "oneshot=path" "$out[2]"
+check "a gpy on PATH wins" "prompt=path> " "$(run "$tmp/path:/usr/bin:/bin")"
+check "the ~/.local/bin copy is not run" 0 "$(grep -c '^home' "$log")"
 
-rm -f "$tmp/home/.local/bin/gpy-agent"
-out=("${(@f)$(run /usr/bin:/bin)}")
-check "with neither, resolution fails" "resolve=1 " "$out[1]"
-check "with neither, start reports failure" "start=1" "$out[3]"
+rm -f "$tmp/home/.local/bin/gpy"
+check "with neither, the prompt is the bare symbol" "prompt=❯ " "$(run /usr/bin:/bin)"
 
-test_finish "gpy-agent falls back to ~/.local/bin"
+test_finish "gpy falls back to ~/.local/bin"

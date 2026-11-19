@@ -12,13 +12,13 @@
 #   git        `gpy-agent oneshot git` on the Linux filesystem and on a
 #              Windows drive (drvfs/9p)
 #   mounts     filesystem type of each, and of $HOME (info only)
-#   contract   the cross-shell contract suite, with --contract (needs fish,
-#              zsh, python3 and socat)
+#   prompts    the golden prompts (`gpy prompt` for Bash, Zsh and Fish), with
+#              --prompts
 #
-# Usage:  scripts/wsl-smoke.sh [--contract | --contract-only]
+# Usage:  scripts/wsl-smoke.sh [--prompts | --prompts-only]
 #
-# The contract suite must run as an ordinary user (as root the shells draw the
-# prompt character themselves). On drvfs without the `metadata` option an
+# The golden prompts must run as an ordinary user (as root `gpy prompt` draws
+# the root prompt character). On drvfs without the `metadata` option an
 # ordinary user cannot `git init` (chmod is refused), so CI runs the two parts
 # as different users.
 
@@ -27,11 +27,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENT="${GPY_AGENT_BIN:-$ROOT/gpy-agent/target/debug/gpy-agent}"
 GPY="$(dirname "$AGENT")/gpy"
-RUN_CONTRACT=0
+RUN_PROMPTS=0
 RUN_CHECKS=1
 case "${1:-}" in
-    --contract) RUN_CONTRACT=1 ;;
-    --contract-only) RUN_CONTRACT=1; RUN_CHECKS=0 ;;
+    --prompts) RUN_PROMPTS=1 ;;
+    --prompts-only) RUN_PROMPTS=1; RUN_CHECKS=0 ;;
 esac
 
 failures=0
@@ -128,15 +128,14 @@ run_checks() {
 
 (( RUN_CHECKS )) && run_checks
 
-if (( RUN_CONTRACT )); then
+if (( RUN_PROMPTS )); then
     if (( EUID == 0 )); then
-        # As root the shells draw the prompt character themselves.
-        fail "the contract suite must run as an ordinary user, not root"
+        fail "the golden prompts must run as an ordinary user, not root"
     fi
-    if CI="${CI:-1}" bash "$ROOT/tests/bash/shell_contract.test.bash"; then
-        pass "cross-shell contract suite"
+    if PATH="$(dirname "$AGENT"):$PATH" bash "$ROOT/tests/bash/prompt_golden.test.bash"; then
+        pass "golden prompts"
     else
-        fail "cross-shell contract suite"
+        fail "golden prompts"
     fi
 fi
 

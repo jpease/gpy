@@ -2,16 +2,13 @@
 # tests/zsh/e2e_config_reload.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# config.toml edit -> theme export rewritten -> `<pid>.reload` flag + SIGURG
-# doorbell -> Zsh repaints.
+# config.toml edit -> agent `<pid>.reload` flag + SIGURG doorbell -> Zsh
+# repaints through `gpy prompt zsh`, which reads the new config.
 #
-# `integration.test.zsh` covers the reload doorbell with `__gpy_load_theme`
-# stubbed; this drives a real Zsh client through a real config change. With a real
-# agent and a `zsh -i` on a pty, flipping `show_icons` in config.toml must:
-#   (a) rewrite $XDG_CACHE_HOME/gpy/theme-export.zsh (mtime and content),
-#   (b) repaint the idle prompt with no keystroke -- the branch glyph the
-#       git segment shows with icons on disappears,
-#   (c) leave an export that sources cleanly under `zsh -o nounset`.
+# This drives a real Zsh client through a real config change. With a real
+# agent and a `zsh -i` on a pty, flipping `show_icons` in config.toml must
+# repaint the idle prompt with no keystroke: the branch glyph the git segment
+# shows with icons on disappears.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -42,24 +39,8 @@ fi
 registered() { shell_e2e_assert_registered "$client_pid"; }
 shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
-export_file="$XDG_CACHE_HOME/gpy/theme-export.zsh"
-[ -f "$export_file" ] || fail "no theme export at $export_file"
-# The export carries show_icons=1 now (asserted next); a rewrite is the only
-# way it can come to carry show_icons=0, so the content is the evidence. No
-# mtime comparison: `stat` takes different flags on GNU and BSD.
-grep -q '__prompt_icons="nerd"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
-
 # --- the edit ----------------------------------------------------------------------
 shell_e2e_text_config '"directory", "git"'
-
-export_rewritten() {
-    grep -q '__prompt_icons="ascii"' "$export_file"
-}
-if shell_e2e_poll 10 export_rewritten; then
-    pass "the theme export was rewritten with show_icons=0"
-else
-    fail "the theme export was not rewritten within 10 s"
-fi
 
 # Repaints redraw on the same line, so split the stripped transcript on the
 # prompt character and look at the most recent render that names the branch.
@@ -73,14 +54,6 @@ if shell_e2e_poll 10 no_glyph_repaint; then
 else
     fail "no keystroke-free repaint without the glyph within 10 s"
 fi
-
-# --- the export sources cleanly under nounset ----------------------------------------
-if zsh -o nounset -c 'source "$1"' zsh "$export_file" 2>"$SHELL_E2E_ROOT/nounset.err"; then
-    pass "the export sources cleanly under zsh -o nounset"
-else
-    fail "the export fails under nounset: $(cat "$SHELL_E2E_ROOT/nounset.err")"
-fi
-
 shell_e2e_send 'exit\r'
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript

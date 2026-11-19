@@ -1,51 +1,58 @@
 #!/usr/bin/env zsh
 # tests/zsh/duration_integer_ms.test.zsh
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The command duration must be an integer number of milliseconds: the
-# agent's `duration_ms` is a u64, so a floating-point value computed from
-# $EPOCHREALTIME (`"duration_ms":1205.82...`) is rejected by every duration
-# request and by the oneshot fallback's `--duration-ms` parser.
+# The command duration is an integer number of milliseconds: the binary's
+# `--duration-ms` is a u64, so a floating-point value computed from
+# $EPOCHREALTIME would be rejected. A prompt with no command before it (empty
+# Enter) passes no duration at all.
 #
-# Asserts that __gpy_cmd_duration is an integer number of milliseconds after
-# a real preexec/precmd cycle, and that the duration request carries
-# `"duration_ms":<digits>` with no decimal point.
+# A real preexec/precmd cycle against a stub gpy that logs its argv.
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT" || exit 1
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
-source "$ROOT/tests/lib/supervisor_off.zsh"
-export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing-duration-integer.sock"
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/gpy-duration.XXXXXX") || exit 1
+trap 'rm -rf "$tmp"' EXIT
+print -r -- "#!/bin/sh
+echo \"\$*\" >'$tmp/argv'
+printf '> \\037'" >"$tmp/gpy"
+chmod +x "$tmp/gpy"
+path=("$tmp" $path)
 
 source zsh/gpy.zsh
 
-tmp=$(mktemp -d)
-failed=0
-
-# One command cycle, run inside a single function so nothing re-records the
-# start time between the steps. The start is backdated by 200 ms instead of
-# sleeping, so the elapsed time is deterministic.
+# One command cycle and then a prompt with no command, run inside a single
+# function: a zsh script runs preexec hooks before each top-level command,
+# which would re-record the start time between the steps. The start is
+# backdated by 200 ms instead of sleeping, so the elapsed time is
+# deterministic.
 simulate_command() {
     __gpy_preexec "sleep 0.2"
-    (( __gpy_cmd_start_time -= 200 ))
+    (( __gpy_cmd_start -= 200 ))
     __gpy_precmd
+    duration=$__gpy_duration
+    args=$(<"$tmp/argv")
+    __gpy_precmd
+    args_empty=$(<"$tmp/argv")
 }
 simulate_command
-if [[ $__gpy_cmd_duration == <-> ]] && (( __gpy_cmd_duration >= 150 )); then
-    print -r -- "PASS: __gpy_cmd_duration is integer milliseconds ($__gpy_cmd_duration)"
+if [[ $duration == <-> ]] && (( duration >= 150 )); then
+    pass "the duration is integer milliseconds ($duration)"
 else
-    print -r -- "FAIL: __gpy_cmd_duration is not integer milliseconds: '$__gpy_cmd_duration'"
-    failed=1
+    fail "the duration is not integer milliseconds: '$duration'"
+fi
+if [[ $args == *" --duration-ms "<->(| *) ]]; then
+    pass "the binary gets an integer --duration-ms"
+else
+    fail "the binary does not get an integer --duration-ms: $args"
 fi
 
-__gpy_send_json() { print -r -- "$1" > "$tmp/req"; }
-__gpy_request_duration "$__gpy_cmd_duration" "" "" "" >/dev/null 2>&1
-req=$(<"$tmp/req")
-if [[ "$req" == *'"duration_ms":'<->','* ]]; then
-    print -r -- "PASS: the duration request carries integer duration_ms"
+if [[ $args_empty != *--duration-ms* ]]; then
+    pass "no command, no duration"
 else
-    print -r -- "FAIL: the duration request does not carry integer duration_ms: $req"
-    failed=1
+    fail "a prompt with no command passed a duration: $args_empty"
 fi
 
-rm -rf "$tmp"
-exit "$failed"
+test_finish "the duration is integer milliseconds"

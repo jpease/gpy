@@ -162,16 +162,16 @@ fn replaceable_without_backup(target: &Path, meta: &fs::Metadata, source: &Path)
         )
 }
 
-/// A regular-file copy of GPY's own prompt: both segment-dispatch lines every
-/// GPY prompt shipped with (the rule `gpy uninstall` removes a copy by).
+/// A regular-file copy of GPY's own prompt (the rule `gpy uninstall` removes
+/// a copy by): the `gpy prompt fish` call of the current prompt, or both
+/// segment-dispatch lines every earlier prompt shipped with.
 #[cfg(unix)]
 pub(super) fn is_gpy_prompt_copy(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|text| {
-        text.lines()
-            .any(|l| l.trim_ascii() == "for segment in $__enabled_segments")
-            && text
-                .lines()
-                .any(|l| l.trim_ascii() == "if functions -q segment_{$segment}_render")
+        let has = |line: &str| text.lines().any(|l| l.trim_ascii() == line);
+        has("set -l args prompt fish --status $last_status --pid $fish_pid --shell-version $FISH_VERSION")
+            || (has("for segment in $__enabled_segments")
+                && has("if functions -q segment_{$segment}_render"))
     })
 }
 

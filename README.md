@@ -47,9 +47,7 @@ repositories takes about 3.5 ms (median, including starting `socat`).
 
 ### Requirements
 
-- Bash and Fish talk to the agent through `socat`, or an `nc` that supports
-  `-U` (`netcat-openbsd`); Zsh needs neither. Without one, every prompt starts a
-  `gpy-agent oneshot` process. `gpy doctor` reports a missing client.
+- No IPC client is needed: `gpy` talks to the agent's socket itself.
 - The default prompt uses [Nerd Font](https://www.nerdfonts.com) glyphs. `gpy
   setup` switches to ASCII icons when it finds no Nerd Font; see
   [Icons and Nerd Fonts](docs/INSTALL.md#icons-and-nerd-fonts).

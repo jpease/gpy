@@ -5,10 +5,12 @@
 # A doorbell (SIGURG) that arrives while precmd is still rendering (the agent
 # finished a refresh the render itself fired) runs TRAPURG with zle inactive,
 # so it cannot repaint. It must not be lost: TRAPURG only marks a repaint
-# pending (and leaves the agent's flags alone, so no reload lands mid-render),
-# and the zle-line-init hook then consumes the flags, re-renders and redraws.
-# A ring outside precmd with zle inactive (a command running) still consumes
-# the flags at once, as before.
+# pending (no second `gpy prompt` mid-render), and the zle-line-init hook then
+# re-renders and redraws. A ring outside precmd with zle inactive (a command
+# running) renders nothing and marks nothing.
+#
+# A stub gpy stands in for the binary: it counts its runs and, on the first,
+# rings the shell mid-render.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -17,56 +19,54 @@ cd "$ROOT" || exit 1
 SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-doorbell-precmd.XXXXXX") || exit 1
 SANDBOX=${SANDBOX:A}
 trap 'rm -rf "$SANDBOX"' EXIT
-source "$ROOT/tests/lib/supervisor_off.zsh"
-export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
+RUNS="$SANDBOX/runs"
+: >"$RUNS"
+mkdir -p "$SANDBOX/bin"
+cat >"$SANDBOX/bin/gpy" <<EOF
+#!/bin/sh
+echo x >>'$RUNS'
+if [ "\$(wc -l <'$RUNS')" -eq 1 ]; then
+    kill -URG "\$GPY_TEST_SHELL_PID"
+    printf 'RING;\037'
+else
+    printf 'AFTER;\037'
+fi
+EOF
+chmod +x "$SANDBOX/bin/gpy"
+path=("$SANDBOX/bin" $path)
+export GPY_TEST_SHELL_PID=$$
 
 source zsh/gpy.zsh
-source tests/lib/shell_render_only.zsh
-__gpy_add_newline=0 __gpy_two_line=0 __gpy_cfg_transient_prompt=0
-__gpy_shell_flag_base="$SANDBOX/flag"
-RELOADS="$SANDBOX/reloads"
-: >"$RELOADS"
-function __gpy_reload_config() { print -r -- x >>"$RELOADS"; }
 
-# A segment that, mid-render, leaves a reload flag and rings this shell.
-function __gpy_segment_ringer() {
-    : >"$__gpy_shell_flag_base.reload"
-    kill -URG $$
-    printf 'RING;'
-}
-__enabled_segments=(ringer)
+runs() { wc -l <"$RUNS" | tr -d ' '; }
 
 true
 __gpy_precmd
 check "a ring during precmd marks a repaint pending" 1 "$__gpy_repaint_pending"
-check "and leaves the reload flag for later" true \
-    "$([[ -e $__gpy_shell_flag_base.reload ]] && echo true || echo false)"
-check "and reloads nothing mid-render" "" "$(<"$RELOADS")"
+check "and renders nothing more mid-render" 1 "$(runs)"
+check "the prompt is the one precmd drew" "RING;" "$PROMPT"
 check "precmd is over" "" "$__gpy_in_precmd"
 
 # zle-line-init: zle is active there; record the redraw.
 ZLE_LOG="$SANDBOX/zle"
 : >"$ZLE_LOG"
 function zle() { print -r -- "$*" >>"$ZLE_LOG"; return 0; }
-function __gpy_segment_ringer() { printf 'AFTER;'; }
 __gpy_line_init
 check "zle-line-init clears the pending repaint" "" "$__gpy_repaint_pending"
-check "consumes the reload flag" false \
-    "$([[ -e $__gpy_shell_flag_base.reload ]] && echo true || echo false)"
-check "runs the reload once" "x" "$(<"$RELOADS")"
-check "re-renders the prompt" true "$([[ $PROMPT == *AFTER\;* ]] && echo true || echo false)"
+check "re-renders the prompt once" 2 "$(runs)"
+check "with the new prompt" "AFTER;" "$PROMPT"
 check "and redraws it" "reset-prompt" "$(<"$ZLE_LOG")"
 
 : >"$ZLE_LOG"
 __gpy_line_init
 check "without a pending repaint zle-line-init redraws nothing" "" "$(<"$ZLE_LOG")"
+check "and renders nothing" 2 "$(runs)"
 unfunction zle
 
-# Outside precmd, with zle inactive, a ring consumes the flags at once.
-: >"$RELOADS"
-: >"$__gpy_shell_flag_base.reload"
+# Outside precmd, with zle inactive (a command running), a ring renders
+# nothing and marks nothing: the next precmd draws the prompt anyway.
 TRAPURG
-check "a ring outside precmd consumes the reload flag at once" "x" "$(<"$RELOADS")"
+check "a ring outside precmd renders nothing" 2 "$(runs)"
 check "and marks no repaint pending" "" "$__gpy_repaint_pending"
 
 # A ring that interrupts a function defined under `emulate sh` (KSH_ARRAYS on,

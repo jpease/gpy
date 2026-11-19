@@ -259,7 +259,7 @@ fn install_keeps_the_owner_execute_bit() {
 }
 
 #[test]
-fn install_accepts_a_file_entry_plugin() {
+fn install_rejects_a_file_entry_plugin_with_a_pointer() {
     let source_env = CliTestEnv::new().expect("create source env");
     let dir = source_env.root().join("filesrc");
     std::fs::create_dir_all(dir.join("segments")).expect("create segments");
@@ -273,33 +273,14 @@ fn install_accepts_a_file_entry_plugin() {
     let env = CliTestEnv::new().expect("create env");
 
     let result = install(&env, &dir, &[]);
-    result.assert_success("install file plugin");
-    assert!(result.stdout.contains("gpy enable filey"), "{result:?}");
-    assert!(
-        env.plugins_dir()
-            .join("filey/segments/filey.fish")
-            .is_file()
-    );
-    let list = env.run_gpy(&["plugin", "list"]).expect("spawn gpy");
-    assert!(list.stdout.contains("filey 1.0.0"), "{list:?}");
-    assert!(list.stdout.contains("(ready)"), "{list:?}");
-}
-
-#[test]
-fn install_refuses_a_file_entry_plugin_without_its_fish_file() {
-    let source_env = CliTestEnv::new().expect("create source env");
-    let dir = source_env.root().join("filesrc");
-    std::fs::create_dir_all(&dir).expect("create dir");
-    std::fs::write(
-        dir.join("plugin.toml"),
-        "id = \"filey\"\nname = \"Filey\"\nversion = \"1.0.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"filey\"]\n",
-    )
-    .expect("write manifest");
-    let env = CliTestEnv::new().expect("create env");
-
-    let result = install(&env, &dir, &[]);
     assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(
+            "plugin 'filey': entry_type \"file\" (Fish .fish plugins) is no longer supported; \
+             rewrite it as a script plugin (entry_type = \"script\"), see docs/dev/plugins.md"
+        ),
+        "{result:?}"
+    );
     assert!(!env.plugins_dir().join("filey").exists());
 }
 
@@ -435,11 +416,13 @@ fn demo_segment_plugin(source_env: &CliTestEnv, id: &str) -> PathBuf {
         dir.join("plugin.toml"),
         format!(
             "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi_version = \"v1\"\n\
-             entry_type = \"file\"\nprovided_segments = [\"demo\"]\n"
+             entry_type = \"script\"\nprovided_segments = [\"demo\"]\n"
         ),
     )
     .expect("write manifest");
-    std::fs::write(dir.join("segments/demo.fish"), "echo hi\n").expect("write fish");
+    std::fs::write(dir.join("segments/demo.toml"), "command = \"run.sh\"\n")
+        .expect("write segment manifest");
+    std::fs::write(dir.join("run.sh"), "echo hi\n").expect("write script");
     dir
 }
 
@@ -492,10 +475,12 @@ fn install_needs_force_to_take_a_bundled_segment_over() {
     std::fs::write(
         dir.join("plugin.toml"),
         "id = \"myhost\"\nname = \"myhost\"\nversion = \"1.0.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"hostname\"]\n",
+         entry_type = \"script\"\nprovided_segments = [\"hostname\"]\n",
     )
     .expect("write manifest");
-    std::fs::write(dir.join("segments/hostname.fish"), "echo hi\n").expect("write fish");
+    std::fs::write(dir.join("segments/hostname.toml"), "command = \"run.sh\"\n")
+        .expect("write segment manifest");
+    std::fs::write(dir.join("run.sh"), "echo hi\n").expect("write script");
     let env = CliTestEnv::new().expect("create env");
     let dir_arg = dir.to_string_lossy().into_owned();
 

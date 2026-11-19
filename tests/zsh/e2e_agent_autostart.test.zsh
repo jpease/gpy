@@ -4,22 +4,21 @@
 #
 # A real interactive Zsh, a real agent, a real repository.
 #
-# The integration suite runs with the supervisor off and a socket that does
-# not exist, so it never exercises autostart, registration, the real IPC
-# transport (the zsh/net/socket builtin), first-prompt rendering or
-# __gpy_sync_workspace. This drives `zsh -i` on a pseudo-terminal
+# The unit tests here run with no agent or a stub, so they never exercise
+# autostart, registration, the binary's IPC, first-prompt rendering or the
+# workspace sync after `cd`. This drives `zsh -i` on a pseudo-terminal
 # (tests/lib/pty_session.py) through tests/lib/shell_e2e.sh and asserts on
 # what the terminal shows:
 #
-#   1. with no agent running, sourcing the integration starts one: the socket
+#   1. with no agent running, the shell's first prompt starts one: the socket
 #      appears within 3 s, the client registers as shell "zsh", and the first
 #      prompt carries colour, `~` for $HOME, and no error text;
 #   2. after `false`, the next prompt differs (exit-status colouring);
 #   3. after `cd` into the repository the prompt names the branch, and an
 #      edit to a tracked file made from outside the shell shows the dirty
 #      token on the next prompt;
-#   4. the client sent a `workspace` op for the `cd` (pins __gpy_sync_workspace);
-#   5. `exit` unregisters the client (zsh/core/signals.zsh's zshexit hook)
+#   4. the client sent a `workspace` op for the `cd` (`gpy prompt`'s sync);
+#   5. `exit` unregisters the client (gpy.zsh's zshexit hook)
 #      and produces no error output.
 #
 # Every wait is a bounded poll; the transcript tail is dumped on failure.

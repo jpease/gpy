@@ -140,7 +140,7 @@ fi
 
 # Load the full integration so __gpy_precmd runs between commands, as in a
 # real session; its per-prompt cache reset is what the cache checks rely on.
-send "source ${(q)ROOT}/zsh/gpy.zsh; source ${(q)ROOT}/tests/lib/shell_render_only.zsh; print -r -- LOADED:\$((1))"
+send "source ${(q)ROOT}/zsh/gpy.zsh; print -r -- LOADED:\$((1))"
 out=$(drain LOADED:1)
 if [[ "$out" == *"not found"* ]]; then
     echo "FAIL: sourcing zsh/gpy.zsh in the pty produced an error: $out"

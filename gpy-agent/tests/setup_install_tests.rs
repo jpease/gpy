@@ -278,7 +278,7 @@ fn zsh_startup(zsh: &Path, install: &Path, home: &Path) -> (String, bool) {
         .args([
             "-f",
             "-c",
-            "source \"$1/gpy.zsh\"; echo \"loaded=$(whence -w __gpy_g_reload)\"",
+            "source \"$1/gpy.zsh\"; echo \"loaded=$(whence -w __gpy_precmd)\"",
             "zsh",
         ])
         .arg(install)
@@ -292,7 +292,7 @@ fn zsh_startup(zsh: &Path, install: &Path, home: &Path) -> (String, bool) {
         .unwrap();
     (
         stderr(&output),
-        stdout(&output).contains("loaded=__gpy_g_reload: function"),
+        stdout(&output).contains("loaded=__gpy_precmd: function"),
     )
 }
 
@@ -505,6 +505,8 @@ fn a_successful_rerun_removes_retired_scripts_and_keeps_unrelated_files() {
     assert_ok(&fx.setup("zsh"));
     assert_ok(&fx.setup("fish"));
     let zsh = fx.zsh_dir();
+    // The renderers an older release installed, which this one dropped.
+    fs::create_dir_all(zsh.join("segments")).unwrap();
     for stale in ["segments/username.zsh", "segments/hostname.zsh"] {
         fs::write(zsh.join(stale), "retired\n").unwrap();
     }
@@ -518,11 +520,7 @@ fn a_successful_rerun_removes_retired_scripts_and_keeps_unrelated_files() {
     assert_ok(&fx.setup("zsh"));
     assert_ok(&fx.setup("fish"));
 
-    for gone in [
-        zsh.join("segments/username.zsh"),
-        zsh.join("segments/hostname.zsh"),
-        fish.join("functions/retired.fish"),
-    ] {
+    for gone in [zsh.join("segments"), fish.join("functions/retired.fish")] {
         assert!(!gone.exists(), "{gone:?} must be removed");
     }
     assert_eq!(fs::read_to_string(zsh.join("notes.txt")).unwrap(), "mine\n");
@@ -534,7 +532,7 @@ fn a_successful_rerun_removes_retired_scripts_and_keeps_unrelated_files() {
         fs::read_to_string(fish.join("fisher.json")).unwrap(),
         "{}\n"
     );
-    assert!(zsh.join("segments/git.zsh").is_file());
+    assert!(zsh.join("gpy.zsh").is_file());
     assert_no_leftovers(&fx.data());
     assert_no_leftovers(&fx.config().join("fish"));
 }
@@ -559,7 +557,7 @@ fn a_failed_copy_at_any_read_position_leaves_the_previous_zsh_install_unchanged(
     }
 
     let files = files_under(&fx.source().join("zsh"));
-    assert!(files.len() >= 10, "{files:?}");
+    assert!(files.len() >= 2, "{files:?}");
     let (middle, last) = (files.len() / 2, files.len().saturating_sub(1));
     for (position, rel) in files.iter().enumerate() {
         let victim = fx.source().join("zsh").join(rel);
@@ -615,7 +613,7 @@ fn a_failed_other_shell_install_leaves_that_shell_installed_while_setup_succeeds
     bump_tree(&fx.source().join("bash"), "# v2\n");
     bump_tree(&fx.source().join("zsh"), "# v2\n");
     let bash_before = snapshot(&fx.bash_dir());
-    let _locked = Unreadable::new(fx.source().join("bash/core/ipc.bash"));
+    let _locked = Unreadable::new(fx.source().join("bash/gpy.bash"));
 
     let output = fx.setup("zsh");
 
@@ -623,7 +621,7 @@ fn a_failed_other_shell_install_leaves_that_shell_installed_while_setup_succeeds
     let out = stdout(&output);
     assert!(out.contains("Could not install the bash files"), "{out}");
     assert!(
-        out.contains("ipc.bash"),
+        out.contains("gpy.bash"),
         "the warning names the source file: {out}"
     );
     assert_eq!(
@@ -705,7 +703,7 @@ fn a_bare_setup_after_an_installer_style_run_finds_the_data_root() {
 
     assert_ok(&fx.bare_setup("bash"));
 
-    assert!(fx.bash_dir().join("core/ipc.bash").is_file());
+    assert!(fx.bash_dir().join("gpy.bash").is_file());
     assert!(fx.bash_dir().join("completions/gpy.bash").is_file());
     assert!(fx.bash_dir().join(".gpy-version").is_file());
     assert_no_leftovers(&fx.data());

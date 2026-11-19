@@ -1,10 +1,7 @@
 //! `gpy debug paths` — dump every path GPY resolves from the environment.
 //!
-//! Rust half of the cross-shell path parity harness
-//! (`tests/fish/path_parity.test.fish`), which diffs this output against each
-//! shell's `__gpy_debug_paths`. Every value MUST come from the resolver
-//! production calls; re-deriving a precedence rule here would make the
-//! harness compare an implementation with itself.
+//! Every value MUST come from the resolver production calls, so what it
+//! prints is what the agent and `gpy prompt` use.
 
 use super::output;
 use crate::paths::SocketPath;

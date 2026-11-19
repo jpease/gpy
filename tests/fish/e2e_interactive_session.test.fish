@@ -4,11 +4,13 @@
 #
 # The product's defining behaviour is that the prompt updates with no
 # keystroke when the repository changes: watcher -> SIGURG ->
-# __gpy_doorbell_handler -> __gpy_repaint_trigger -> `commandline -f
-# force-repaint` -> fish_prompt. `commandline -f force-repaint` is a no-op
-# outside interactive mode, so every `fish -c` based test only ever counted
-# a signal. These scenarios drive a real `fish -i` on a pseudo-terminal
-# (tests/lib/pty_session.py) against a real agent and real repository and
+# __gpy_on_doorbell -> __gpy_repaint_trigger -> `commandline -f
+# force-repaint` -> fish_prompt -> `gpy prompt fish`. `commandline -f
+# force-repaint` is a no-op outside interactive mode, so every `fish -c`
+# based test only ever counted a signal. These scenarios drive a real `fish
+# -i` on a pseudo-terminal
+# (tests/lib/pty_session.py), loading fish/conf.d/gpy_init.fish and
+# fish/functions/fish_prompt.fish, against a real agent and real repository and
 # read what the terminal would show:
 #
 #   1. idle repaint: a tracked-file edit made from outside the shell yields a
@@ -62,7 +64,7 @@ function session_start --argument-names name cwd
     # environment (a checkout path may contain spaces or quotes).
     env GPY_E2E_ROOT=$__gpy_root GPY_E2E_CWD=$cwd GPY_E2E_GATE=$__gpy_test_tmp_dir/exec-gate \
         python3 $__pty start $dir -- fish --no-config -i -C '
-        source $GPY_E2E_ROOT/fish/core/init.fish
+        source $GPY_E2E_ROOT/fish/conf.d/gpy_init.fish
         source $GPY_E2E_ROOT/fish/functions/fish_prompt.fish
         cd $GPY_E2E_CWD
     '
@@ -292,9 +294,10 @@ function scenario_config_reload --argument-names repo
     end
     poll_until 5 __clients_are 1
 
-    # Theme switch + a new segment, no keypress: the agent's .reload doorbell makes
-    # the shell re-source the export and repaint, and the default theme
-    # frames segments in powerline chevrons the text theme never emits.
+    # Theme switch + a new segment, no keypress: the agent's .reload doorbell
+    # makes the shell repaint, `gpy prompt fish` reads the new config, and the
+    # default theme frames segments in powerline chevrons the text theme
+    # never emits.
     write_config 'show_icons = true' 'theme = "default"' 'enabled_segments = ["directory", "git", "duration"]'
     function __default_theme_line --inherit-variable a --inherit-variable off
         transcript_has_chevrons $a $off
@@ -380,7 +383,7 @@ function scenario_exec_survives_notifications --argument-names repo
     # handlers loaded (the split quotes keep the typed command line from
     # matching the announcement).
     set -l off_exec (session_size $a)
-    session_send $a "exec fish --no-config -i -C 'echo gate\"\"spinning; while not test -e \$GPY_E2E_GATE; sleep 0.1; end; source \$GPY_E2E_ROOT/fish/core/init.fish; source \$GPY_E2E_ROOT/fish/functions/fish_prompt.fish'\r"
+    session_send $a "exec fish --no-config -i -C 'echo gate\"\"spinning; while not test -e \$GPY_E2E_GATE; sleep 0.1; end; source \$GPY_E2E_ROOT/fish/conf.d/gpy_init.fish; source \$GPY_E2E_ROOT/fish/functions/fish_prompt.fish'\r"
     if not session_wait $a gatespinning 10 $off_exec >/dev/null
         fail "exec'd shell is waiting on the gate" "no gatespinning output within 10 s"
         return 1

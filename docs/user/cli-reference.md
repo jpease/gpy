@@ -1169,11 +1169,7 @@ Verifies:
   (clean environment, the plugin root as working directory or the current one
   when `pwd` is declared, killed after `timeout_ms`) and reports the run time,
   what it would show and why it would be hidden
-- `gpy-agent` runs, and Bash/Fish have an IPC client (`socat`, or an `nc` whose
-  help lists `-U`); without one every prompt falls back to `gpy-agent oneshot`.
-  The IPC client check runs only when a Bash or Fish integration is installed
-  and the agent is not disabled. To tell whether `nc` supports `-U`, doctor
-  runs `nc -h` (the first `nc` in `PATH`) when `socat` is absent.
+- `gpy-agent` runs
 
 **Example:**
 ```bash
@@ -1228,8 +1224,7 @@ disagree about where something lives.
 
 **Options:**
 - `--format json` (default) - one JSON object, keys in resolution order
-- `--format kv` - `key=value` lines, the same shape each shell's
-  `__gpy_debug_paths` prints; the path-parity tests diff the two
+- `--format kv` - `key=value` lines
 
 **Example:**
 ```bash
@@ -1266,7 +1261,7 @@ shell or through separate requests and are not included. Exits `1` with an
 
 ### Plugin Commands
 
-Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) run in Bash, Zsh and Fish; see [Plugin Framework](../dev/plugins.md#script-segments).
+Plugins provide script segments (`entry_type = "script"`), which run in Bash, Zsh and Fish; see [Plugin Framework](../dev/plugins.md#script-segments). Manifests with the removed `entry_type = "file"` (Fish `.fish` segment files) are rejected.
 
 #### `gpy plugin list`
 
@@ -1444,22 +1439,18 @@ commands.
 | `gpy-agent start [--socket <path>] [--quiet]` | Start the daemon in the background (idempotent; replaces an agent whose version or protocol differs, leaves a busy one alone) and print one outcome line with its PID. `--socket` overrides the socket path, mainly for tests; `--quiet` prints nothing on success. |
 | `gpy-agent stop [--socket <path>] [--quiet]` / `gpy-agent status [--socket <path>]` | Same behaviour and exit codes as the `gpy` equivalents above. |
 | `gpy-agent restart [--socket <path>] [--quiet]` | Stop the agent (a failed stop is a `warn:` line, not an abort), then start it; prints the stop line and the start line and exits with `start`'s code. |
-| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--format json\|ansi\|bash-prompt\|zsh-prompt] [--not-last] [--first]` plus one input flag per segment: `--cwd <dir>` (`git`, `lang`, `directory`), `--duration-ms <n>` (`duration`), `--exit-code <n>` (`character`, `exit-status`) | Render one segment once, with no daemon; `--cwd` is rejected by `duration`, `character` and `exit-status`. `--not-last` drops the closing cap and `--first` the opening one. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. |
-| `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
+| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--format json\|ansi\|bash-prompt\|zsh-prompt] [--not-last] [--first]` plus one input flag per segment: `--cwd <dir>` (`git`, `lang`, `directory`), `--duration-ms <n>` (`duration`), `--exit-code <n>` (`character`, `exit-status`) | Render one segment once, with no daemon; `--cwd` is rejected by `duration`, `character` and `exit-status`. `--not-last` drops the closing cap and `--first` the opening one. It is the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. |
+| `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments, for tooling. |
 | `gpy-agent config reload [--socket <path>]` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 
 ---
 
 ## Shell commands
 
-Functions the integration defines in Fish, Bash and Zsh (not executables).
-
-| Command | Effect |
-|---|---|
-| `gpy-prompt-reload` | Re-reads `config.toml` into the running shell by running `gpy-agent theme export` (never the cache file, which a stopped agent leaves stale), so it works whether the agent is running, disabled or stopped. Silent on success; on failure it prints `gpy: theme reload failed; run gpy doctor` and returns 1. An invalid `config.toml` applies the built-in defaults, shows the agent's `Warning: [Config loading] …` line and returns 0. |
-| `gpy-prompt-debug [validate\|benchmark\|cache\|vars]` | Fish only: the Fish integration's debug helper. |
-
-In every shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug commands.
+The integrations define no user commands: `gpy prompt` reads `config.toml` on
+every prompt, so an edit shows at the next prompt without a reload. In every
+shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug
+commands.
 
 ---
 

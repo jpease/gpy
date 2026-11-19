@@ -356,12 +356,19 @@ fn config_reload_follows_a_user_override_above_a_plugin_theme() {
     let env = CliTestEnv::with_config("[ui]\ntheme = \"community\"\n").expect("create env");
     let plugin = env.plugins_dir().join("acme");
     fs::create_dir_all(plugin.join("themes")).expect("create plugin dir");
+    fs::create_dir_all(plugin.join("segments")).expect("create segments dir");
     fs::write(
         plugin.join("plugin.toml"),
         "id = \"acme\"\nname = \"Acme\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"acme_seg\"]\n",
+         entry_type = \"script\"\nprovided_segments = [\"acme_seg\"]\n",
     )
     .expect("write plugin manifest");
+    fs::write(
+        plugin.join("segments/acme_seg.toml"),
+        "command = \"run.sh\"\n",
+    )
+    .expect("write segment manifest");
+    fs::write(plugin.join("run.sh"), "echo hi\n").expect("write script");
     fs::write(
         plugin.join("themes").join("community.toml"),
         "[ui]\n[segments.directory]\nformat = \"PLUGIN_THEME:$path\"\n",

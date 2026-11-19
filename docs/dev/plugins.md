@@ -23,13 +23,16 @@ Required fields:
   ASCII letters, digits, `.`, `+` and `-` (`min_gpy_version` takes the same form)
 - `api_version`
 - `entry_type`:
-  - `file`: one Fish file per segment, loaded by Fish only (see
-    [Segment Runtime Contract](#segment-runtime-contract)).
   - `script`: one POSIX `sh` script per segment, declared in
     `segments/<segment>.toml`, run by Bash, Zsh and Fish (see
     [Script Segments](#script-segments)).
   - `command` is reserved and is rejected by `gpy plugin validate` and plugin
     discovery (reported as an "unsupported entry_type" diagnostic).
+  - `file` (Fish `.fish` segment files) was removed when every prompt moved to
+    `gpy prompt`; discovery, `gpy plugin validate` and `gpy plugin install`
+    reject it with a pointer to [Script Segments](#script-segments). Rewrite each
+    `segments/<name>.fish` as a `segments/<name>.toml` manifest plus a POSIX `sh`
+    script.
 - `provided_segments` (array)
 
 Optional fields:
@@ -59,20 +62,13 @@ The following are public plugin-contract guarantees in `api_version = "v1"`:
 - manifest file name and location: `plugin.toml` under a plugin root
 - required manifest fields and validation rules documented here
 - plugin discovery precedence rules
-- the segment runtime contract:
-  - `segment_<id>_detect`
-  - `segment_<id>_render`
-- the supported shell rendering helpers:
-  - `gpy_section_start`
-  - `gpy_section_append`
-  - `gpy_section_end`
-  - `gpy_section_standalone`
+- the script segment contract (see [Script Segments](#script-segments))
 - user configuration through `ui.enabled_segments`
 - theme styling through `[segments.<segment-id>]`
 
 The following are intentionally not public plugin API guarantees:
 
-- private shell variable names used internally by GPY to source plugin files
+- private shell variable names GPY exports for plugin segments
 - internal registry implementation details beyond the documented behavior
 - undocumented theme variable naming conventions
 
@@ -118,30 +114,6 @@ renderer, IPC request or `gpy-agent oneshot` mode for either.
   `<variant>_text_color` and `<variant>_icon` (for example `ssh_icon` for the
   hostname's `ssh` variant, `root_icon` for the username's `root` variant).
   The old `format` and `user_format` keys no longer exist.
-
-## Segment Runtime Contract
-
-Plugin segments use the same Fish detect/render contract as built-ins:
-- detect: `segment_<id>_detect`
-- render: `segment_<id>_render`
-
-By convention, segment files live at:
-- `<plugin-root>/segments/<segment-id>.fish`
-
-Theme export emits `__gpy_plugin_segment_file_<segment_token>` variables, where
-`<segment_token>` is the segment name lowercased with every `-` turned into `_`
-and nothing else changed (`my--seg` → `my__seg`, `seg_` → `seg_`); names whose
-tokens collide are rejected (see Identifier normalization above).
-`fish/core/init.fish` uses these variables to source plugin segment files when a segment is enabled.
-Plugin segment files are Fish scripts sourced with your full user privileges; they are Fish-only, so these variables are exported for Fish only.
-
-That export variable naming is an implementation detail, not a plugin-author API. Plugin authors should rely on the manifest + segment-file contract, not on private shell variables.
-
-### Fish file segments (Fish only)
-
-Plugin segments written as Fish scripts (`entry_type = "file"`) define `segment_<id>_detect` and `segment_<id>_render` functions in `segments/<id>.fish`.
-They load in Fish only; Bash and Zsh prompts skip them.
-Use script plugins (`entry_type = "script"`) for cross-shell compatibility across Bash, Zsh, and Fish.
 
 ## Script Segments
 
@@ -279,9 +251,9 @@ with an earlier one's in sorted order, so no variable is assigned twice.
 - **Environment.** The script starts from a clean environment: `PATH`
   (without empty, `.` or other relative entries), `HOME`, `USER`, `LOGNAME`,
   `LANG`, every set `LC_*`, `TERM`, `TZ` and
-  `TMPDIR` (each only when set), plus each declared `env` name that is set as
-  a variable in the interactive shell (exported or not; an empty value is
-  passed, an unset name is not), plus the `GPY_*` inputs and `GPY_OPT_*`
+  `TMPDIR` (each only when set), plus each declared `env` name that is
+  exported by the interactive shell (an empty value is passed, an unset or
+  unexported name is not), plus the `GPY_*` inputs and `GPY_OPT_*`
   settings the runner sets. Nothing else is
   passed: no credentials, `SSH_AUTH_SOCK` or exported shell functions unless
   declared, and a `GPY_OPT_*` exported by the user never reaches it. `/bin/sh`
@@ -409,16 +381,15 @@ model.
 
 ### Runner
 
-There is one runner, `bash/core/g_runner.bash`. Bash runs it inside `$( )` in
-the interactive shell. Zsh and Fish each run it in one Bash child per due prompt (Fish uses the combined scan-and-batch entry point `__gpy_g_scan_batch`, so the trigger scan and the batch run share that child): the
-first Bash 4 or later on `PATH`, else `/bin/bash`, resolved once per shell.
-`gpy setup` installs it into the Fish and Zsh trees as `core/g_runner.bash`;
-from a checkout, a release staging directory or Homebrew `share/gpy` they use
-the `bash/core/g_runner.bash` beside their tree. `gpy doctor`'s trial run
-applies the same rules, and `tests/bash/script_runner_conformance.test.bash`
-holds the two to the same verdicts and environment. With no
-Bash at all, script segments are disabled (one warning, shown only with
-`GPY_DEBUG`).
+There is one runner, `gpy-agent/src/prompt/g_runner.bash`, embedded in the
+`gpy` binary. `gpy prompt` runs it for every shell in one Bash child per due
+prompt (the combined scan-and-batch entry point `__gpy_g_scan_batch`, so the
+trigger scan and the batch run share that child): the first Bash 4 or later
+on `PATH`, else `/bin/bash`, resolved once per shell. `gpy doctor`'s trial
+run applies the same rules, and
+`tests/bash/script_runner_conformance.test.bash` holds the two to the same
+verdicts and environment. With no Bash at all, script segments are disabled
+(one warning, shown only with `GPY_DEBUG`).
 
 - **Once per command.** Triggers are evaluated in this order before the
   script: `require_env` (set and non-empty, no fork), then

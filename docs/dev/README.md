@@ -15,7 +15,7 @@
 - [Create a Theme](create-theme.md) - Step-by-step guide for community theme authors.
 - [Starship Importer](starship-import.md) - CLI flags, module-by-module mapping, and style translation rules.
 
-Plugin segments from v1 `.fish` files load in Fish only; see [Plugin Framework](plugins.md#segment-runtime-contract).
+Plugin segments are POSIX `sh` scripts and run in every shell; see [Plugin Framework](plugins.md#script-segments).
 
 ## Testing
 

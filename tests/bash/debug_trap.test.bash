@@ -16,49 +16,47 @@ cd "$ROOT" || exit 1
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 
-# Hermetic XDG config disables the supervisor (theme export re-sets the flag).
-__gpy_debug_trap_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-dt-xdg.XXXXXX")
-source tests/lib/supervisor_off.bash "$__gpy_debug_trap_xdg_root"
-export GPY_AGENT_SOCKET_PATH="$__gpy_debug_trap_xdg_root/missing.sock"
+# Hermetic XDG config disables the agent and its supervisor.
+dt_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-dt-xdg.XXXXXX")
+# shellcheck source=tests/lib/supervisor_off.bash
+source tests/lib/supervisor_off.bash "$dt_xdg_root"
+export GPY_AGENT_SOCKET_PATH="$dt_xdg_root/missing.sock"
 
 echo "=== Testing DEBUG trap chains a pre-existing trap ==="
-__gpy_prior_trap_fired=0
-__gpy_prior_trap() { __gpy_prior_trap_fired=1; }
-trap '__gpy_prior_trap' DEBUG
+prior_trap_fired=0
+prior_trap() { prior_trap_fired=1; }
+trap 'prior_trap' DEBUG
 
+# shellcheck source=bash/gpy.bash
 source bash/gpy.bash
 # shellcheck disable=SC2154
 # (__gpy_debug_oneshot and __gpy_prev_debug_trap are set by gpy.bash above.)
 
-if (( BASH_VERSINFO[0] < 4 )); then
-    test_skip_part "bash $BASH_VERSION installs no gpy DEBUG trap; nothing to chain"
-else
-    # Run gpy's one-shot PROMPT_COMMAND entry at top level, as bash would.
-    # entry here, at this script's top level, the way bash would.
-    eval "$__gpy_debug_oneshot"
-    # The prior trap also fired on `source`; reset so only gpy's chain counts.
-    __gpy_prior_trap_fired=0
-    if [[ "$__gpy_prev_debug_trap" != "__gpy_prior_trap" ]]; then
-        echo "FAIL: captured DEBUG body is [$__gpy_prev_debug_trap], want [__gpy_prior_trap]"
-        exit 1
-    fi
-    BASH_COMMAND=':'
-    __gpy_debug_trap
-    if [[ "$__gpy_prior_trap_fired" -ne 1 ]]; then
-        echo "FAIL: pre-existing DEBUG trap did not fire after gpy init"
-        exit 1
-    fi
-    echo "PASS: pre-existing DEBUG trap still fires after gpy init"
-
-    captured="$__gpy_prev_debug_trap"
-    source bash/gpy.bash
-    eval "$__gpy_debug_oneshot"
-    if [[ "$__gpy_prev_debug_trap" != "$captured" ]]; then
-        echo "FAIL: re-sourcing changed the captured trap to [$__gpy_prev_debug_trap]"
-        exit 1
-    fi
-    echo "PASS: re-sourcing gpy.bash keeps the captured DEBUG trap"
+# Run gpy's one-shot PROMPT_COMMAND entry at this script's top level, the
+# way bash would.
+eval "$__gpy_debug_oneshot"
+# The prior trap also fired on `source`; reset so only gpy's chain counts.
+prior_trap_fired=0
+if [[ "$__gpy_prev_debug_trap" != "prior_trap" ]]; then
+    echo "FAIL: captured DEBUG body is [$__gpy_prev_debug_trap], want [prior_trap]"
+    exit 1
 fi
+BASH_COMMAND=':'
+__gpy_debug_trap
+if [[ "$prior_trap_fired" -ne 1 ]]; then
+    echo "FAIL: pre-existing DEBUG trap did not fire after gpy init"
+    exit 1
+fi
+echo "PASS: pre-existing DEBUG trap still fires after gpy init"
+
+captured="$__gpy_prev_debug_trap"
+source bash/gpy.bash
+eval "$__gpy_debug_oneshot"
+if [[ "$__gpy_prev_debug_trap" != "$captured" ]]; then
+    echo "FAIL: re-sourcing changed the captured trap to [$__gpy_prev_debug_trap]"
+    exit 1
+fi
+echo "PASS: re-sourcing gpy.bash keeps the captured DEBUG trap"
 
 echo "=== Testing EXIT trap containing quotes chains ==="
 for gpy_bash_bin in /bin/bash "$BASH"; do
@@ -78,8 +76,7 @@ for gpy_bash_bin in /bin/bash "$BASH"; do
             gpy_script+='source "$1/bash/gpy.bash"'$'\n'
         fi
         gpy_script+='exit 7'
-        out=$(GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_SOCKET_PATH="${TMPDIR:-/tmp}/gpy-missing-$$.sock" \
-            "$gpy_bash_bin" --noprofile --norc -c "$gpy_script" _ "$ROOT" 2>/dev/null)
+        out=$("$gpy_bash_bin" --noprofile --norc -c "$gpy_script" _ "$ROOT" 2>/dev/null)
         code=$?
         if [[ "$out" != *"status=7" || "$code" -ne 7 ]]; then
             echo "FAIL: $gpy_bash_bin load_gpy=$load_gpy: trap saw [$out], exit code $code (want status=7, 7)"
@@ -94,37 +91,31 @@ OUT_LOG="$(mktemp)"
 cleanup() { rm -f "$OUT_LOG"; }
 trap cleanup EXIT
 
-# Scrub inherited GPY_* vars: an exported GPY_AGENT_ENABLED would hide the `set -u` error.
-gpy_scrub=()
-while IFS='=' read -r __gpy_env_name _; do
-    case "$__gpy_env_name" in
-        GPY_*) gpy_scrub+=(-u "$__gpy_env_name") ;;
-    esac
-done < <(env)
+for gpy_bash_bin in /bin/bash "$BASH"; do
+    env -u COMP_LINE "$gpy_bash_bin" --noprofile --norc -c '
+        set -u
+        cd "$1" || exit 1
+        source bash/gpy.bash
+        eval "$__gpy_debug_oneshot"
+        BASH_COMMAND=":"
+        __gpy_debug_trap
+        __gpy_arm
+        BASH_COMMAND="true"
+        __gpy_debug_trap
+    ' _ "$ROOT" >"$OUT_LOG" 2>&1
+    status=$?
 
-env "${gpy_scrub[@]}" bash -c '
-    set -u
-    ROOT="'"$ROOT"'"
-    cd "$ROOT" || exit 1
-    export GPY_AGENT_SUPERVISOR_ENABLED=0
-    export GPY_AGENT_SOCKET_PATH="'"$__gpy_debug_trap_xdg_root"'/missing.sock"
-    source bash/gpy.bash
-    unset COMP_LINE
-    BASH_COMMAND=":"
-    __gpy_debug_trap
-' >"$OUT_LOG" 2>&1
-status=$?
-
-if [[ $status -ne 0 ]]; then
-    echo "FAIL: DEBUG trap errored under set -u (exit $status):"
-    cat "$OUT_LOG"
-    exit 1
-fi
-if grep -qi "unbound variable" "$OUT_LOG"; then
-    echo "FAIL: DEBUG trap referenced an unset variable under set -u:"
-    cat "$OUT_LOG"
-    exit 1
-fi
+    if [[ $status -ne 0 ]]; then
+        echo "FAIL: DEBUG trap errored under set -u with $gpy_bash_bin (exit $status):"
+        cat "$OUT_LOG"
+        exit 1
+    fi
+    if grep -qi "unbound variable" "$OUT_LOG"; then
+        echo "FAIL: DEBUG trap referenced an unset variable under set -u with $gpy_bash_bin:"
+        cat "$OUT_LOG"
+        exit 1
+    fi
+done
 echo "PASS: DEBUG trap produces zero errors under set -u"
 
 echo "=== Testing a bind -x key press keeps the preexec arm ==="
@@ -133,23 +124,23 @@ echo "=== Testing a bind -x key press keeps the preexec arm ==="
 # (and the start time it takes) must wait for the real command. The live
 # DEBUG trap is removed first, so only the explicit calls below fire it.
 trap - DEBUG
-__gpy_preexec_armed=1
-__gpy_cmd_start_time=""
+__gpy_armed=1
+__gpy_cmd_start=""
 READLINE_LINE="" READLINE_POINT=0
 BASH_COMMAND="__my_widget"
 __gpy_debug_trap
-if [[ "$__gpy_preexec_armed" != 1 || -n "$__gpy_cmd_start_time" ]]; then
+if [[ "$__gpy_armed" != 1 || -n "$__gpy_cmd_start" ]]; then
     echo "FAIL: a bind -x DEBUG firing consumed the preexec arm"
     exit 1
 fi
 unset READLINE_LINE READLINE_POINT
 BASH_COMMAND="sleep 1"
 __gpy_debug_trap
-if [[ -n "$__gpy_preexec_armed" ]]; then
+if [[ -n "$__gpy_armed" ]]; then
     echo "FAIL: the user's command did not consume the preexec arm"
     exit 1
 fi
 echo "PASS: a bind -x key press keeps the preexec arm for the real command"
 
-rm -rf "$__gpy_debug_trap_xdg_root"
+rm -rf "$dt_xdg_root"
 echo "=== All Tests Passed ==="

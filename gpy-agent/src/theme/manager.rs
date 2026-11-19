@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::config::defaults::{DEFAULT_THEME_CONTENT, STARSHIP_THEME_CONTENT, TEXT_THEME_CONTENT};
 use crate::config::discovery::{self, Discovered, Source};
 use crate::debug_log;
-use crate::plugin::{PluginDiscovery, discover_plugins};
+use crate::plugin::discover_plugins;
 use crate::shell::Shell;
 use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::Palette;
@@ -15,7 +15,7 @@ use crate::theme::poll::{PollPaths, PollSubject};
 use crate::watcher::hot_reload::{HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -616,11 +616,11 @@ impl ThemeManager {
 
     /// Export the theme for `shell` from one consistent state snapshot, with
     /// palette roles resolved through `palette`. Discovers plugins once for
-    /// the Fish segment files and the enabled script segments.
+    /// the enabled script segments.
     #[must_use]
     pub fn export(&self, shell: Shell, config: &Config, palette: &Palette) -> String {
         let state = self.state();
-        let plugins = Self::plugin_exports(matches!(shell, Shell::Fish), config);
+        let plugins = Self::plugin_exports(config);
         export::theme_to_shell(&state.theme, &state.name, config, shell, palette, &plugins)
     }
 
@@ -630,8 +630,7 @@ impl ThemeManager {
     #[must_use]
     pub fn export_all(&self, shells: &[Shell], config: &Config, palette: &Palette) -> Vec<String> {
         let state = self.state();
-        let fish = shells.iter().any(|shell| matches!(shell, Shell::Fish));
-        let plugins = Self::plugin_exports(fish, config);
+        let plugins = Self::plugin_exports(config);
         shells
             .iter()
             .map(|&shell| {
@@ -640,73 +639,11 @@ impl ThemeManager {
             .collect()
     }
 
-    /// The plugin data of an export from one discovery; the `.fish` segment
-    /// files only when `fish` (no other shell writes them).
-    fn plugin_exports(fish: bool, config: &Config) -> export::PluginExports {
-        let discovery = discover_plugins();
+    /// The plugin data of an export, from one plugin discovery.
+    fn plugin_exports(config: &Config) -> export::PluginExports {
         export::PluginExports {
-            segment_files: if fish {
-                Self::collect_plugin_segment_files(&discovery)
-            } else {
-                BTreeMap::new()
-            },
-            scripts: export::collect_script_segments(&discovery, config),
+            scripts: export::collect_script_segments(&discover_plugins(), config),
         }
-    }
-
-    /// Third-party `.fish` plugin segment files by segment name, as canonical
-    /// paths. Fish sources them, so each must pass the rule script segments
-    /// follow ([`ScriptPath::resolve`](crate::plugin::ScriptPath::resolve)):
-    /// a regular file inside the plugin root that neither it nor a directory up
-    /// to the root lets another user write, under no ancestor another user
-    /// could replace. The first plugin providing a segment claims it; a file
-    /// that fails the rule is left out with a debug log line.
-    fn collect_plugin_segment_files(discovery: &PluginDiscovery) -> BTreeMap<String, String> {
-        let mut claimed = BTreeSet::new();
-        let mut files = BTreeMap::new();
-        for plugin in &discovery.plugins {
-            if matches!(plugin.source, crate::plugin::PluginSource::FirstParty)
-                || !matches!(plugin.manifest.entry_type, crate::plugin::EntryType::File)
-            {
-                continue;
-            }
-            let Some(root) = &plugin.root else {
-                continue;
-            };
-            for provided_segment in &plugin.manifest.provided_segments {
-                let segment_name = provided_segment.to_string();
-                if !claimed.insert(segment_name.clone()) {
-                    continue;
-                }
-                match Self::trusted_segment_file(root, &segment_name) {
-                    Ok(segment_file) => {
-                        files.insert(segment_name, segment_file);
-                    }
-                    Err(e) => {
-                        debug_log!("theme", "Skipped plugin segment file {segment_name}: {e}");
-                    }
-                }
-            }
-        }
-        files
-    }
-
-    /// The canonical path of `<root>/segments/<segment_name>.fish`, when it
-    /// passes [`ScriptPath::resolve`](crate::plugin::ScriptPath::resolve).
-    ///
-    /// # Errors
-    /// Returns the rule's error, or one for a path that is not UTF-8.
-    fn trusted_segment_file(root: &Path, segment_name: &str) -> Result<String> {
-        crate::plugin::ScriptPath::new(&format!("segments/{segment_name}.fish"))?
-            .resolve(root)?
-            .into_os_string()
-            .into_string()
-            .map_err(|raw| {
-                Error::invalid(format!(
-                    "'{}' is not UTF-8",
-                    raw.to_string_lossy().escape_debug()
-                ))
-            })
     }
 
     /// List available themes with source metadata and resolved path (if file-backed).

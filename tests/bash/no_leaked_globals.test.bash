@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Loading bash/gpy.bash leaves no entry-point variable behind (the checkout
-# root, the segment loop variable) and adds no variable outside the private
+# root, the saved EXIT trap) and adds no variable outside the private
 # `__` namespace except a short, spelled-out allowlist. The shell starts under
 # `env -i`: the test harnesses export GPY_ROOT, which would hide a leak.
 
@@ -25,13 +25,13 @@ env -i HOME="$tmp/home" PATH=/usr/bin:/bin TMPDIR="$tmp" ROOT="$ROOT" \
     '
 
 # The load happened: a name the integration always adds is there.
-if grep -qx __gpy_fallback_segments "$tmp/after"; then
+if grep -qx __gpy_cmd_count "$tmp/after"; then
     pass "gpy.bash loaded in the env -i shell"
 else
     fail "gpy.bash did not load in the env -i shell"
 fi
 
-for name in segment core GPY_BASH_ROOT GPY_ROOT __gpy_bash_root __gpy_zsh_root __gpy_seg_file; do
+for name in segment core GPY_BASH_ROOT GPY_ROOT __gpy_bash_root __gpy_existing_exit; do
     if grep -qx "$name" "$tmp/after"; then
         fail "$name is still set after loading"
     else

@@ -1,42 +1,71 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# GPY for Fish. `gpy prompt fish` (called from functions/fish_prompt.fish)
+# draws the prompt and the transient line, runs the script segments and
+# keeps this shell's lifecycle (agent start, registration, supervisor). This
+# file only counts commands, keeps the duration of the one that just ran,
+# repaints when the agent rings and unregisters on exit.
 
 # Non-interactive shells (fish -c, scripts) must not load GPY.
-# core/init.fish itself is not gated: tests and ci-bench source it.
 status is-interactive; or return
 
-# A retry (re-sourcing this file after fixing the cause) starts clean.
-set -e __gpy_load_failed
+# __gpy_test_fish_version is a non-exported test hook: FISH_VERSION is
+# read-only.
+set -l gpy_fish_version (string split . -- (set -q __gpy_test_fish_version; and echo $__gpy_test_fish_version; or echo $FISH_VERSION))
+if test "$gpy_fish_version[1]" -lt 3; or test "$gpy_fish_version[1]" -eq 3 -a "$gpy_fish_version[2]" -lt 6
+    echo "gpy: GPY needs Fish 3.6 or newer (this is $FISH_VERSION); see https://fishshell.com/" >&2
+    return
+end
 
-# Disabled mode must still leave fish_prompt's globals defined (see bottom).
-set -l gpy_needs_prompt_defaults 0
+# fish_transient_prompt arrived in Fish 4.1; 4.2 fixed clearing the extra
+# lines when the final rendering is shorter than the prompt (two_line).
+set -g __gpy_fish_transient_capable 0
+if test "$gpy_fish_version[1]" -gt 4; or test "$gpy_fish_version[1]" -eq 4 -a "$gpy_fish_version[2]" -ge 2
+    set -g __gpy_fish_transient_capable 1
+end
 
-# The tree this file belongs to: conf.d sits beside core/.
-set -l gpy_install_dir (path normalize (status dirname)/..)
+set -q __gpy_cmd_count; or set -g __gpy_cmd_count 0
 
-set -l gpy_flags_loaded 0
-test -f "$gpy_install_dir/core/flags.fish"; and source "$gpy_install_dir/core/flags.fish"; and set gpy_flags_loaded 1
+# fish_postexec is emitted for a command, never for an empty Enter.
+function __gpy_on_postexec --on-event fish_postexec
+    set -g __gpy_cmd_count (math $__gpy_cmd_count + 1)
+    set -g __gpy_command_ran 1
+end
 
-if test $gpy_flags_loaded -eq 1; and not __gpy_runtime_root >/dev/null
-    # No usable XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME: the agent refuses to
-    # run, and there is no shared /tmp fallback, so GPY stays off this session.
-    test "$GPY_DEBUG" = 1; and echo "gpy[init]: debug: no runtime directory (set XDG_RUNTIME_DIR, XDG_CACHE_HOME or HOME to an absolute path) - GPY disabled" >&2
-    set -g __gpy_load_failed 1
-    set gpy_needs_prompt_defaults 1
-else if test $gpy_flags_loaded -eq 1; and not __gpy_agent_enabled; and not __gpy_supervisor_enabled
-    set gpy_needs_prompt_defaults 1
-else
-    if not test -f "$gpy_install_dir/core/init.fish"
-        echo "gpy[init]: core files not found at $gpy_install_dir - GPY disabled" >&2
-        set -g __gpy_load_failed 1
-        set gpy_needs_prompt_defaults 1
-    else if not source "$gpy_install_dir/core/init.fish"
-        echo "gpy[init]: GPY failed to load; using the fallback prompt" >&2
-        set -g __gpy_load_failed 1
-        set gpy_needs_prompt_defaults 1
+# The fish_prompt event is emitted once per new prompt (never for a
+# repaint), before fish_prompt runs. $CMD_DURATION changes only when a
+# command runs, so a prompt with no command since the last one shows none.
+function __gpy_on_prompt --on-event fish_prompt
+    # Drop the dynamic-completion caches (completions/gpy-dynamic.fish).
+    functions -q __gpy_complete_cache_clear; and __gpy_complete_cache_clear
+    if set -q __gpy_command_ran
+        set -e __gpy_command_ran
+        set -g __gpy_duration $CMD_DURATION
+    else
+        set -e __gpy_duration
     end
 end
 
-# fish_prompt.fish autoloads regardless of init, so set guarded defaults when init didn't run.
-if test $gpy_needs_prompt_defaults -eq 1; and test -f "$gpy_install_dir/core/defaults.fish"
-    source "$gpy_install_dir/core/defaults.fish"
+# The agent rings SIGURG after it wrote a `.reload` or `.reregister` flag,
+# or when a late git status landed. Fish allows `commandline -f repaint`
+# from variable handlers, not signal handlers. SIGURG's default disposition
+# is ignore, so a shell that `exec`s itself survives an early ring.
+function __gpy_on_doorbell --on-signal SIGURG
+    set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
+end
+
+function __gpy_repaint_on_variable --on-variable __gpy_repaint_trigger
+    commandline -f force-repaint 2>/dev/null
+end
+
+# Unregister on exit so a restarted agent never signals a recycled PID.
+# Self-contained: fish_prompt.fish (which defines __gpy_bin) may never have
+# autoloaded in a shell that exits before its first prompt.
+function __gpy_on_exit --on-event fish_exit
+    set -l bin (command -s gpy)
+    if test -z "$bin"; and test -n "$HOME"; and test -x "$HOME/.local/bin/gpy"
+        set bin $HOME/.local/bin/gpy
+    end
+    test -n "$bin"; or return 0
+    command $bin prompt fish --exit --pid $fish_pid >/dev/null 2>&1
 end

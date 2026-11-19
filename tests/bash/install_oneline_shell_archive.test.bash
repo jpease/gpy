@@ -182,8 +182,8 @@ for shell in fish zsh bash; do
     fi
 done
 
-for entry in fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish fish/core/init.fish \
-    fish/core/flags.fish fish/completions/gpy-dynamic.fish bash/core/g_runner.bash; do
+for entry in fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish \
+    fish/completions/gpy-dynamic.fish; do
     run_scenario "missing_$(printf '%s' "$entry" | tr '/.' '__')" fish "$entry" "" ""
     assert_not_installed "archive without $entry" fish
     if grep -qF "has no ${entry}" "$log"; then

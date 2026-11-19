@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tests/bash/segment_registry_parity.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# The CLI registry (`gpy __complete segment` in an empty sandbox), the
-# fish/bash/zsh segment files and the `gpy enable` list in
-# docs/user/cli-reference.md (minus aliases) are the same set.
+# The CLI registry (`gpy __complete segment` in an empty sandbox) plus the
+# bundled plugins and the `gpy enable` list in docs/user/cli-reference.md
+# (minus aliases) are the same set.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -61,26 +61,6 @@ EOF
     [ "$bad" -eq 0 ] && pass "$label_a == $label_b"
 }
 
-# The segment names a shell ships: <shell>/segments/<name>.<ext>.
-shipped_segments() {
-    local shell="$1" ext="$2" file
-    for file in "$ROOT/$shell/segments/"*."$ext"; do
-        [ -e "$file" ] || continue
-        basename "$file" ".$ext"
-    done | sort -u
-}
-
-for pair in fish:fish bash:bash zsh:zsh; do
-    shell="${pair%%:*}"
-    ext="${pair##*:}"
-    shipped="$(shipped_segments "$shell" "$ext")"
-    if [ -z "$shipped" ]; then
-        fail "no $shell segment files found under $shell/segments/"
-        continue
-    fi
-    compare_sets "the builtin segment registry" "$registry" "$shell/segments/*.$ext" "$shipped"
-done
-
 # The `gpy enable` "Valid Segments" bullets: "- `name` - text" or
 # "- `alias` / `name` - text". Scoped from the `gpy enable` heading to the
 # next heading so other lists of backticked names are never read.
@@ -117,4 +97,4 @@ else
     compare_sets "builtin segments plus bundled plugins" "$enableable" "docs/user/cli-reference.md (gpy enable)" "$documented"
 fi
 
-test_finish "builtin segments, shipped shell segment files and documented segments agree"
+test_finish "builtin segments and documented segments agree"

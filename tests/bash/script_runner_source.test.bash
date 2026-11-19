@@ -4,7 +4,8 @@
 # shellcheck disable=SC2015  # pass never fails, so A && pass || fail is if/else
 # shellcheck disable=SC2016  # the planted text must stay literal
 #
-# Source rules for the script (G) segment runner, bash/core/g_runner.bash:
+# Source rules for the script (G) segment runner,
+# gpy-agent/src/prompt/g_runner.bash (embedded in the binary, run by Bash):
 #   (a) no comment holds an apostrophe: Bash 3.2 mis-parses one inside a
 #       process substitution
 #   (b) no `command` and no bare `sleep`: in a Bash 3.2 timer job
@@ -17,7 +18,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
-RUNNER=bash/core/g_runner.bash
+RUNNER=gpy-agent/src/prompt/g_runner.bash
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/gpy-g-runner-src.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 

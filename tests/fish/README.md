@@ -4,11 +4,10 @@ Integration tests for the Fish prompt and GPY initialization. Every
 `*.test.fish` file here is a standalone script; the file name says what it
 covers.
 
-Behaviour that must be the same in Fish, Bash and Zsh (cold-miss and variant
-fallback, slow replies, the IPC timeout and cache TTL knobs, agent-disabled and
-supervisor-disabled starts, the clock/status/root segments) is not tested here
-in Fish alone: it is a row of `tests/fixtures/shell_scenarios/scenarios.tsv`,
-run through all three shells by `tests/bash/shell_contract.test.bash`.
+Rendered prompt output for every shell is pinned by
+`tests/bash/prompt_golden.test.bash` and the Rust `prompt::` unit tests; the
+tests here cover what the Fish wrapper itself does and end-to-end behaviour
+through a real Fish and agent.
 
 ## Running
 
@@ -44,14 +43,12 @@ never an installed `gpy-agent`.
   `test_skip "reason"`: it passes locally and fails under `CI` or `GPY_GATE_STRICT`.
 - Find the repository root from the file (`status --filename`) so the test
   runs from any directory, and exit non-zero on any failed assertion.
-- For unit-style tests set `GPY_AGENT_SUPERVISOR_ENABLED=0` and keep
-  `GPY_AGENT_ENABLED=1`; setting both to `0` takes init.fish's
-  completely-disabled early exit.
-- To render a chosen list of segments, `set -g __gpy_test_segments name ...`
-  before sourcing `fish/core/init.fish`; it replaces `__enabled_segments` after
-  the theme export loads. It is a plain (non-exported) variable. A test that
-  starts a new Fish through `env -i` passes the list in a test-only variable
-  (`GPY_T_SEGMENTS`) and sets `__gpy_test_segments` from it in the child.
+- The prompt is drawn by `gpy prompt fish`; the shell side is only
+  `fish/conf.d/gpy_init.fish` (loads in an interactive Fish only: use
+  `fish -i`) and `fish/functions/fish_prompt.fish`. Assert on what the shell
+  prints and on observable effects (the agent's `status`, runtime files), and
+  choose segments, theme and icons through `$XDG_CONFIG_HOME/gpy/config.toml`.
+  A prompt that must not start an agent runs with `GPY_AGENT_ENABLED=0`.
 - Tests that drive an interactive `fish -i` use `tests/lib/pty_session.py`
   (`start`, `send`, `wait-for`, `size`, `stop`); `wait-for` only reads the
   transcript, so it can observe repaints that arrive with no keystroke.

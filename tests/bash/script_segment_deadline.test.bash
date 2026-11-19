@@ -2,23 +2,24 @@
 # tests/bash/script_segment_deadline.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The script (G) segment deadline in every shell's real adapter: a due prompt
-# whose batch holds a hung script, one that ignores
-# TERM and keeps its stdout, and a fast one, all with timeout_ms T, never
-# draws before T (the scripts really ran), the fast segment still shows, both
-# hung ones are hidden, and no script process survives. A latency test, not a
-# benchmark: scripts/ci-bench.sh measures cost.
+# The script (G) segment deadline through the real prompt hook: a due prompt
+# (`gpy prompt bash`, which runs the embedded runner in a Bash 4+ child) whose
+# batch holds a hung script, one that ignores TERM and keeps its stdout, and
+# a fast one, all with timeout_ms T, never draws before T (the scripts really
+# ran), the fast segment still shows, both hung ones are hidden, and no
+# script process survives. A latency test, not a benchmark:
+# scripts/ci-bench.sh measures cost.
 #
-# Mixed timeouts: one runner batch (bash/core/g_runner.bash, which Zsh and
-# Fish run in a Bash child) holds a 500 ms hung script and a 100 ms script
-# that catches TERM and keeps running, in both orders. The short one must get
-# TERM by its own deadline (not the long one), then the grace (its TERM
-# handler runs) and KILL soon after. Hang-type bounds, always enforced (a miss
-# is retried, 3 attempts, because a stalled shared runner misses once in a
-# while where a serial reader misses every time): TERM
-# and KILL both before the long segment's deadline, which a reader waiting on
-# the long segment misses. Strict bounds: TERM within T + 150 ms, KILL within
-# the 50 ms grace + 100 ms of it, and 25 ms of the grace seen between the two.
+# Mixed timeouts: one runner batch (gpy-agent/src/prompt/g_runner.bash,
+# sourced straight into Bash here) holds a 500 ms hung script and a 100 ms
+# script that catches TERM and keeps running, in both orders. The short one
+# must get TERM by its own deadline (not the long one), then the grace (its
+# TERM handler runs) and KILL soon after. Hang-type bounds, always enforced (a
+# miss is retried, 3 attempts, because a stalled shared runner misses once in
+# a while where a serial reader misses every time): TERM and KILL both before
+# the long segment's deadline, which a reader waiting on the long segment
+# misses. Strict bounds: TERM within T + 150 ms, KILL within the 50 ms grace +
+# 100 ms of it, and 25 ms of the grace seen between the two.
 #
 # Two latency bounds. Strict: p99 (nearest rank over RUNS due prompts per
 # shell) within T + 50 ms grace + 30 ms, the quiet-host acceptance bound.
@@ -29,11 +30,11 @@
 # strict step of the Performance budgets job in pr-gate.yml runs this test with
 # GPY_STRICT_DEADLINE=1.
 #
-# Shells: this Bash, /bin/bash when it is another version (macOS 3.2: the
-# timer-group path), Zsh and Fish with their default runner child and, where
-# /bin/bash is Bash < 4, with /bin/bash as that child. Each child prints S
-# right before a due prompt and E after it; this Bash stamps both lines as
-# they arrive, so no clock is needed inside the child.
+# Shells: this Bash and /bin/bash when it is another version (macOS 3.2); the
+# runner child is the Bash 4+ `gpy prompt` finds on PATH. The mixed batch
+# also runs in /bin/bash when it is Bash < 4 (the timer-group path). Each
+# child prints S right before a due prompt and E after it; this Bash stamps
+# both lines as they arrive, so no clock is needed inside the child.
 #
 # GPY_TEST_G_LATENCY_RUNS (default 20) sets RUNS. Needs Bash 5 here
 # (EPOCHREALTIME).
@@ -47,6 +48,8 @@ cd "$ROOT" || exit 1
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 [[ -n "${EPOCHREALTIME:-}" ]] || test_skip "needs Bash 5 (EPOCHREALTIME) to time the prompts"
+[[ -x "$ROOT/gpy-agent/target/debug/gpy" ]] || test_skip "gpy is not built (cargo build --bins)"
+RUNNER="$ROOT/gpy-agent/src/prompt/g_runner.bash"
 
 RUNS="${GPY_TEST_G_LATENCY_RUNS:-20}"
 if [[ -n "${CI:-}" ]]; then
@@ -81,167 +84,67 @@ cleanup() {
 }
 trap cleanup EXIT
 
-while IFS='=' read -r __gpy_env_name _; do
-    case "$__gpy_env_name" in
-        GPY_*) unset "$__gpy_env_name" ;;
+while IFS='=' read -r env_name _; do
+    case "$env_name" in
+        GPY_*) unset "$env_name" ;;
     esac
 done < <(env)
+# shellcheck source=tests/lib/supervisor_off.bash
 source "$ROOT/tests/lib/supervisor_off.bash" "$T"
-export GPY_AGENT_SOCKET_PATH="$T/missing.sock"
+export GPY_AGENT_SOCKET_PATH="$T/missing.sock" GPY_NERD_FONT=none
 export HOME="$T/home" TMPDIR="$T/tmp" XDG_RUNTIME_DIR="$T/run"
-mkdir -p "$HOME" "$TMPDIR" "$XDG_RUNTIME_DIR" "$T/plug/bin" "$T/stub"
+export PATH="$ROOT/gpy-agent/target/debug:$PATH"
+PLUG="$XDG_CONFIG_HOME/gpy/plugins/lat"
+mkdir -p "$HOME" "$TMPDIR" "$XDG_RUNTIME_DIR" "$PLUG/bin" "$PLUG/segments"
 chmod 700 "$XDG_RUNTIME_DIR"
-chmod 755 "$T/plug" "$T/plug/bin"
+chmod -R go-w "$T"
 
-printf '#!/bin/sh\necho fast-ok\n' >"$T/plug/bin/fast.sh"
-printf '#!/bin/sh\necho partial\nsleep %s\n' "$MARK" >"$T/plug/bin/hung.sh"
-printf '#!/bin/sh\ntrap "" TERM\necho partial\nsleep %s\n' "$MARK" >"$T/plug/bin/ign.sh"
+printf '#!/bin/sh\necho fast-ok\n' >"$PLUG/bin/fast.sh"
+printf '#!/bin/sh\necho partial-hung\nsleep %s\n' "$MARK" >"$PLUG/bin/hung.sh"
+printf '#!/bin/sh\ntrap "" TERM\necho partial-ign\nsleep %s\n' "$MARK" >"$PLUG/bin/ign.sh"
 # Mixed-timeout case: notes its PID, then a TERM in a file, and keeps going.
 printf '#!/bin/sh\necho $$ >"%s/mix.pid"\ntrap "echo term >\\"%s/mix.term\\"" TERM\nwhile :; do sleep %s; done\n' \
-    "$T" "$T" "$MARK" >"$T/plug/bin/catch.sh"
-chmod 644 "$T"/plug/bin/*.sh
-
-# Fish loads script segments only with the agent enabled; this stub makes
-# its start (and any oneshot) fail at once instead of reaching a real agent.
-printf '#!/bin/sh\nexit 1\n' >"$T/stub/gpy-agent"
-chmod 755 "$T/stub/gpy-agent"
+    "$T" "$T" "$MARK" >"$PLUG/bin/catch.sh"
+chmod 755 "$PLUG"/bin/*.sh
 
 script_sh=/bin/sh
 [[ -x /private/var/select/sh ]] && script_sh=/bin/bash
 
-# The three segments as the theme export writes them, for shell $1.
-write_export() {
-    local kind="$1" tok name assign list
-    case "$kind" in
-        bash) assign='%s="%s"\n' list='%s=(%s)\n' ;;
-        zsh) assign='typeset -g %s="%s"\n' list='typeset -g -a %s=(%s)\n' ;;
-        fish) assign='set -g %s "%s"\n' list='set -g %s %s\n' ;;
-    esac
-    {
-        # The version sentinel must be the first line, or the shell ignores the file.
-        # shellcheck disable=SC2059
-        printf "$assign" __gpy_export_version 1
-        # shellcheck disable=SC2059
-        printf "$assign" __gpy_script_sh "$script_sh"
-        for name in lat-fast lat-hung lat-ign; do
-            tok="${name//-/_}"
-            # shellcheck disable=SC2059
-            {
-                printf "$assign" "__gpy_script_${tok}_name" "$name"
-                printf "$assign" "__gpy_script_${tok}_root" "$T/plug"
-                printf "$assign" "__gpy_script_${tok}_command" "$T/plug/bin/${name#lat-}.sh"
-                printf "$assign" "__gpy_script_${tok}_reqcommand" ""
-                printf "$assign" "__gpy_script_${tok}_ttl" 0
-                printf "$assign" "__gpy_script_${tok}_timeout" "$T_MS"
-                printf "$assign" "__gpy_script_${tok}_scope" session
-                printf "$assign" "__gpy_script_${tok}_key" "4:test5:1.0.0${#name}:$name"
-                for f in inputs env opts reqfiles reqfolders reqexts reqenv; do
-                    printf "$list" "__gpy_script_${tok}_$f" ""
-                done
-            }
-        done
-        # shellcheck disable=SC2059
-        printf "$list" __gpy_script_segments '"lat_fast" "lat_hung" "lat_ign"'
-        # shellcheck disable=SC2059  # $assign is the per-shell format
-        case "$kind" in
-            fish) printf 'set -g __enabled_segments lat-fast lat-hung lat-ign\n' ;;
-            *) printf "$assign" __enabled_segments "lat-fast lat-hung lat-ign" ;;
-        esac
-    } >"$XDG_CACHE_HOME/gpy/theme-export.$kind"
-}
-mkdir -p "$XDG_CACHE_HOME/gpy"
-write_export bash
-write_export zsh
-write_export fish
+# The three segments as a plugin, the only segments enabled.
+cat >"$PLUG/plugin.toml" <<'EOF'
+id = "lat"
+name = "Latency"
+version = "1.0.0"
+api_version = "v1"
+entry_type = "script"
+provided_segments = ["lat_fast", "lat_hung", "lat_ign"]
+description = "Script segments for the deadline test"
+EOF
+for name in fast hung ign; do
+    printf 'description = "%s"\ncommand = "bin/%s.sh"\ninputs = []\nttl_secs = 0\ntimeout_ms = %s\n' \
+        "$name" "$name" "$T_MS" >"$PLUG/segments/lat_$name.toml"
+done
+printf '\n[ui]\nenabled_segments = ["lat_fast", "lat_hung", "lat_ign"]\n' >>"$XDG_CONFIG_HOME/gpy/config.toml"
 
-# Child bodies: ROOT RUNS [RUNNER]. One untimed due prompt first (the runner
-# child is resolved there), then RUNS timed ones. Each due prompt follows a
-# theme reload, which resets the circuit breaker that two timeouts in a row
-# would trip. E carries 1/0 per segment: fast, hung, ign shown.
+# Child body: ROOT RUNS. One untimed due prompt first (the runner Bash is
+# resolved there), then RUNS timed ones. Before each, the `.reload` flag
+# (written without a fork, outside the timed window) makes the prompt due and
+# resets the circuit breaker that two timeouts in a row would trip. E carries
+# 1/0 per segment: fast, hung, ign shown.
 cat >"$T/child.bash" <<'EOF'
 source "$1/bash/gpy.bash" >/dev/null 2>&1 || exit 1
-source "$1/tests/lib/shell_render_only.bash"
-# Into $shown without a fork, which would land inside the timed window.
-shown_now() {
-    local t
-    shown=""
-    for t in lat_fast lat_hung lat_ign; do
-        if __gpy_g_visible "$t"; then shown+=1; else shown+=0; fi
-    done
-}
-__gpy_load_theme >/dev/null 2>&1
-__gpy_precmd
+flag="$XDG_RUNTIME_DIR/gpy/shells/$$.reload"
+__gpy_precmd 2>/dev/null
 for ((i = 0; i < $2; i++)); do
-    __gpy_load_theme >/dev/null 2>&1
+    : >"$flag"
     printf 'S\n'
-    __gpy_precmd
-    shown_now
+    __gpy_precmd 2>/dev/null
+    shown=""
+    for t in fast-ok partial-hung partial-ign; do
+        if [[ $PS1 == *"$t"* ]]; then shown+=1; else shown+=0; fi
+    done
     printf 'E %s\n' "$shown"
 done
-EOF
-cat >"$T/child.zsh" <<'EOF'
-source "$1/zsh/gpy.zsh" >/dev/null 2>&1 || exit 1
-source "$1/tests/lib/shell_render_only.zsh"
-# A zsh script runs preexec before each top-level line; precmd is called here.
-preexec_functions=()
-if [[ -n ${3-} ]]; then
-    __gpy_g_bash=$3 __gpy_g_bash_resolved=1
-fi
-shown_now() {
-    local t
-    shown=""
-    for t in lat_fast lat_hung lat_ign; do
-        [[ -n ${__gpy_g_text[$t]-} ]] && shown+=1 || shown+=0
-    done
-}
-integer i
-__gpy_reload_config >/dev/null 2>&1
-for f in $precmd_functions; do $f; done
-for ((i = 0; i < $2; i++)); do
-    __gpy_reload_config >/dev/null 2>&1
-    print S
-    for f in $precmd_functions; do $f; done
-    shown_now
-    print -r -- "E $shown"
-done
-EOF
-cat >"$T/child.fish" <<'EOF'
-source $argv[1]/fish/core/init.fish >/dev/null 2>&1; or exit 1
-source $argv[1]/fish/functions/fish_prompt.fish
-source $argv[1]/tests/lib/shell_render_only.fish
-if test -n "$argv[3]"
-    set -g __gpy_g_bash $argv[3]
-    set -l runner (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)
-    set -g __gpy_g_src (string collect <$runner)
-    set -g __gpy_g_runner_state ready
-end
-function shown
-    set -l v ""
-    for t in lat_fast lat_hung lat_ign
-        set -l n __gpy_g_t_{$t}_text
-        if test -n "$$n"
-            set v {$v}1
-        else
-            set v {$v}0
-        end
-    end
-    printf '%s' $v
-end
-function due
-    __gpy_apply_theme_export >/dev/null 2>&1
-    emit fish_postexec true
-    emit fish_prompt
-    fish_prompt >/dev/null 2>&1
-end
-due
-for i in (seq $argv[2])
-    __gpy_apply_theme_export >/dev/null 2>&1
-    echo S
-    emit fish_postexec true
-    emit fish_prompt
-    fish_prompt >/dev/null 2>&1
-    echo "E "(shown)
-end
 EOF
 
 load1() {
@@ -335,25 +238,10 @@ if [[ -x /bin/bash ]] && /bin/bash -c '((BASH_VERSINFO[0] < 4))' 2>/dev/null; th
     bash32=/bin/bash
 fi
 
+mkdir -p "$XDG_RUNTIME_DIR/gpy/shells"
 run_shell "Bash $BASH_VERSION" "$BASH" --noprofile --norc "$T/child.bash" "$ROOT" "$RUNS"
-if [[ -n "$bash32" && "$("$bash32" -c 'echo $BASH_VERSION')" != "$BASH_VERSION" ]]; then
-    run_shell "Bash $("$bash32" -c 'echo $BASH_VERSION')" "$bash32" --noprofile --norc "$T/child.bash" "$ROOT" "$RUNS"
-fi
-
-if command -v zsh >/dev/null 2>&1; then
-    run_shell "Zsh, default runner child" zsh -f "$T/child.zsh" "$ROOT" "$RUNS"
-    [[ -n "$bash32" ]] && run_shell "Zsh, $bash32 runner child" zsh -f "$T/child.zsh" "$ROOT" "$RUNS" "$bash32"
-else
-    test_skip_part "zsh not installed"
-fi
-
-if command -v fish >/dev/null 2>&1; then
-    fish_env=(env "PATH=$T/stub:$PATH" GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=0)
-    run_shell "Fish, default runner child" "${fish_env[@]}" fish --no-config "$T/child.fish" "$ROOT" "$RUNS"
-    [[ -n "$bash32" ]] &&
-        run_shell "Fish, $bash32 runner child" "${fish_env[@]}" fish --no-config "$T/child.fish" "$ROOT" "$RUNS" "$bash32"
-else
-    test_skip_part "fish not installed"
+if [[ -x /bin/bash && "$(/bin/bash -c 'echo $BASH_VERSION')" != "$BASH_VERSION" ]]; then
+    run_shell "Bash $(/bin/bash -c 'echo $BASH_VERSION')" /bin/bash --noprofile --norc "$T/child.bash" "$ROOT" "$RUNS"
 fi
 
 # run_mixed LABEL BASH FIRST: one runner batch in BASH with the 100 ms
@@ -368,8 +256,8 @@ exec {tick}<>"$T/tick"
 run_mixed() {
     local label="$1" bash="$2" first="$3" attempt="$4" t0 now tt="" tk="" pid="" bp out left
     local -a segs
-    local -a short=(mix_short "$MIX_SHORT_MS" "" "$T/plug/bin/catch.sh" "" 0)
-    local -a long=(mix_long "$MIX_LONG_MS" "" "$T/plug/bin/hung.sh" "" 0)
+    local -a short=(mix_short "$MIX_SHORT_MS" "" "$PLUG/bin/catch.sh" "" 0)
+    local -a long=(mix_long "$MIX_LONG_MS" "" "$PLUG/bin/hung.sh" "" 0)
     if [[ "$first" == short ]]; then
         segs=("${short[@]}" "${long[@]}")
     else
@@ -379,7 +267,7 @@ run_mixed() {
     rm -f "$T/mix.pid" "$T/mix.term" "$T/mix.out"
     t0=${EPOCHREALTIME/[.,]/}
     "$bash" --noprofile --norc -c 'source "$1" && shift && __gpy_g_batch "$@"' gpy \
-        "$ROOT/bash/core/g_runner.bash" "$script_sh" "${segs[@]}" >"$T/mix.out" 2>/dev/null &
+        "$RUNNER" "$script_sh" "${segs[@]}" >"$T/mix.out" 2>/dev/null &
     bp=$!
     while :; do
         now=${EPOCHREALTIME/[.,]/}
@@ -467,4 +355,4 @@ for first in long short; do
 done
 exec {tick}<&-
 
-test_finish "script segment deadline: no hang in every shell, p99 within T + grace + 30 ms where strict"
+test_finish "script segment deadline: no hang, p99 within T + grace + 30 ms where strict"

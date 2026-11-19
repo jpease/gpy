@@ -150,7 +150,7 @@ fn validate_warns_on_unset_paths_the_base_lacks_and_only_those() {
     assert!(!output.contains("segments.character.format'"), "{output}");
 }
 
-/// A file plugin `demo-tools` with `themes/<name>.toml` for each of `themes`.
+/// A script plugin `demo-tools` with `themes/<name>.toml` for each of `themes`.
 fn install_plugin(env: &CliTestEnv, themes: &[(&str, &str)]) -> PathBuf {
     let root = env.plugins_dir().join("demo-tools");
     fs::create_dir_all(root.join("segments")).expect("segments dir");
@@ -158,10 +158,11 @@ fn install_plugin(env: &CliTestEnv, themes: &[(&str, &str)]) -> PathBuf {
     fs::write(
         root.join("plugin.toml"),
         "id = \"demo-tools\"\nname = \"Demo\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"demo\"]\n",
+         entry_type = \"script\"\nprovided_segments = [\"demo\"]\n",
     )
     .expect("plugin manifest");
-    fs::write(root.join("segments/demo.fish"), "# demo\n").expect("segment file");
+    fs::write(root.join("segments/demo.toml"), "command = \"run.sh\"\n").expect("segment manifest");
+    fs::write(root.join("run.sh"), "echo demo\n").expect("segment script");
     for (name, text) in themes {
         fs::write(root.join("themes").join(format!("{name}.toml")), text).expect("plugin theme");
     }

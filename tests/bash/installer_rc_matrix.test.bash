@@ -215,9 +215,9 @@ check_start() {
     [ "$mode" = login ] && set -- "$@" -l
     err="$SB/start.err"
     case "$shell" in
-        fish) loaded="$("$@" -i -c 'functions -q __gpy_load_theme; and echo loaded' </dev/null 2>"$err")" ;;
-        zsh) loaded="$("$@" -d -i -c 'whence -w __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
-        bash) loaded="$("$@" -i -c 'declare -F __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
+        fish) loaded="$("$@" -i -c 'functions -q __gpy_on_postexec; and echo loaded' </dev/null 2>"$err")" ;;
+        zsh) loaded="$("$@" -d -i -c 'whence -w __gpy_precmd >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
+        bash) loaded="$("$@" -i -c 'declare -F __gpy_precmd >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
     esac
     # A tty-less interactive bash always prints these two job-control lines;
     # a user's terminal does not, so they are not errors.

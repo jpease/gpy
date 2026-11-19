@@ -25,7 +25,6 @@ fn zsh_setup_installs_files_and_wires_zshrc_once() {
 
     let dir = home.path().join(".local/share/gpy/zsh");
     assert!(dir.join("gpy.zsh").is_file());
-    assert!(dir.join("core/init.zsh").is_file());
     assert!(dir.join("completions/_gpy-dynamic").is_file());
     let structural = fs::read_to_string(dir.join("completions/_gpy")).unwrap();
     assert!(structural.contains("#compdef gpy"), "{structural}");
@@ -256,15 +255,16 @@ fn re_running_replaces_files_a_package_manager_left_read_only() {
 fn re_running_removes_scripts_a_newer_release_no_longer_ships() {
     let home = TempDir::new().unwrap();
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
-    let stale = home
-        .path()
-        .join(".local/share/gpy/zsh/segments/retired.zsh");
+    // What an older release shipped and this one no longer does.
+    let core = home.path().join(".local/share/gpy/zsh/core");
+    fs::create_dir_all(&core).unwrap();
+    let stale = core.join("init.zsh");
     fs::write(&stale, "retired\n").unwrap();
 
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 
     assert!(!stale.exists(), "a dropped script must not survive setup");
-    assert!(home.path().join(".local/share/gpy/zsh/segments").is_dir());
+    assert!(home.path().join(".local/share/gpy/zsh/gpy.zsh").is_file());
 }
 
 /// `<home>/.config/gpy/themes`, created.
@@ -472,7 +472,7 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
 
     // What an older gpy left: different scripts and its own version stamp.
     let bash_dir = home.path().join(".local/share/gpy/bash");
-    let core = bash_dir.join("core/ipc.bash");
+    let core = bash_dir.join("gpy.bash");
     fs::write(&core, "# scripts from an older gpy\n").unwrap();
     fs::write(bash_dir.join(".gpy-version"), "0.0.1\n").unwrap();
     let bashrc = fs::read_to_string(home.path().join(".bashrc")).unwrap();
@@ -488,7 +488,7 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
     assert_ok(&output);
     assert_eq!(
         fs::read_to_string(&core).unwrap(),
-        fs::read_to_string(repo_root().join("bash/core/ipc.bash")).unwrap(),
+        fs::read_to_string(repo_root().join("bash/gpy.bash")).unwrap(),
         "bash scripts refreshed"
     );
     assert_eq!(
@@ -566,12 +566,6 @@ fn fish_setup_fails_when_the_dynamic_completion_glue_is_missing() {
     let source = TempDir::new().unwrap();
     copy_dir(&repo_root().join("fish"), &source.path().join("fish"));
     fs::remove_file(source.path().join("fish/completions/gpy-dynamic.fish")).unwrap();
-    fs::create_dir_all(source.path().join("bash/core")).unwrap();
-    fs::copy(
-        repo_root().join("bash/core/g_runner.bash"),
-        source.path().join("bash/core/g_runner.bash"),
-    )
-    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["setup", "--shell", "fish", "--non-interactive", "--from"])
@@ -608,12 +602,17 @@ fn doctor_inspects_a_plugin_segment_and_ignores_comments() {
     fs::write(
         plugin.join("plugin.toml"),
         "id = \"demo-tools\"\nname = \"Demo\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"demo_status\"]\n",
+         entry_type = \"script\"\nprovided_segments = [\"demo_status\"]\n",
     )
     .unwrap();
     fs::write(
-        plugin.join("segments/demo_status.fish"),
-        "# no network here: curl, wget\nset node_count 1\n",
+        plugin.join("segments/demo_status.toml"),
+        "command = \"demo_status.sh\"\n",
+    )
+    .unwrap();
+    fs::write(
+        plugin.join("demo_status.sh"),
+        "# no network here: curl, wget\nnode_count=1\n",
     )
     .unwrap();
     fs::write(

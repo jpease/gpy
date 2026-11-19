@@ -4,14 +4,9 @@
 # shellcheck disable=SC2209  # s=exit assigns the word exit, not a command
 # g_runner.bash - Runner for script (G) segments: runs the scripts and the
 # trigger scan under deadlines (ADR-0011).
-#
-# Bash 3.2 code only. Bash sources this file and calls __gpy_g_scan and
-# __gpy_g_batch inside `$( )`, so the interactive shell keeps its `$!`, jobs,
-# traps, options and descriptors. Fish and Zsh run this file in a Bash child
-# (`bash -p -c "$src" gpy ARGS`): Zsh calls __gpy_g_batch (it scans by
-# itself), Fish calls __gpy_g_scan_batch, so a due Fish prompt starts one
-# child. `gpy setup` installs this file into their trees as
-# core/g_runner.bash.
+# Bash 3.2 code only. `gpy prompt` embeds this file and runs it in one Bash
+# child per due prompt (`bash -p -c "$src" gpy ARGS`, calling
+# __gpy_g_scan_batch), for every shell.
 # No comment in this file may hold an apostrophe: Bash 3.2 mis-parses one
 # inside a process substitution.
 #

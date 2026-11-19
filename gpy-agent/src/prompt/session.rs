@@ -1,9 +1,10 @@
-//! The per-prompt bookkeeping the shells did after each render (#1247):
-//! registering with the agent, telling it the working directory after a
-//! `cd`, and restarting an agent that died (the supervisor). Its state lives
-//! in `<runtime root>/refresh-throttle/<pid>.session`, which the shell's exit
-//! handler sweeps with every `<pid>.*` file; a shell clears it on the
-//! agent's `.reregister` flag.
+//! A shell's lifecycle, kept by `gpy prompt` so the shell keeps none
+//! (#1247): the agent's `.reload` and `.reregister` flags, starting the agent
+//! with the shell's first prompt, registering, telling the agent the working
+//! directory after a `cd`, restarting an agent that died (the supervisor),
+//! the Bash that runs script segments, and unregistering at exit. Its state
+//! lives in `<runtime root>/refresh-throttle/<pid>.session`; `gpy prompt
+//! <shell> --exit` removes it with every other `<pid>.*` file.
 
 use super::link::{Link, Reply, now_secs};
 use crate::config::Config;
@@ -12,12 +13,12 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// What a shell's bookkeeping remembers between prompts.
+/// What a shell's lifecycle remembers between prompts.
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct Session {
+struct State {
     /// The agent accepted this shell's registration.
     registered: bool,
-    /// The directory the agent last accepted (`__gpy_last_workspace`).
+    /// The directory the agent last accepted.
     workspace: String,
     /// A directory the agent refused; not sent again until `$PWD` changes.
     rejected: String,
@@ -25,6 +26,12 @@ struct Session {
     checked_at: u64,
     /// Restarts since the agent was last seen up.
     restarts: u32,
+    /// The last command's duration, for scripts' `cmd_duration` input on a
+    /// prompt that ran no command (a `cd` alone).
+    last_duration_ms: Option<u64>,
+    /// The Bash that runs script segments, once resolved; `Some("")` when
+    /// none was found.
+    bash: Option<PathBuf>,
 }
 
 /// The shell's identity in a registration.
@@ -36,50 +43,160 @@ pub(super) struct Shell<'a> {
     pub(super) version: &'a str,
 }
 
-/// Register, sync the workspace and supervise, as the shell's precmd did.
-pub(super) fn run(link: &Link, config: &Config, shell: &Shell<'_>, pwd: &str) {
-    if !link.enabled() {
-        return;
-    }
-    let Some(path) = session_path(shell.pid) else {
-        return;
-    };
-    let mut session = load(&path).unwrap_or_else(|| Session {
-        // The shell started the agent when it loaded: that counts as the
-        // first check, so the first probe runs one interval later.
-        checked_at: now_secs(),
-        ..Session::default()
-    });
-    sync(link, shell, pwd, &mut session);
-    supervise(link, config, &mut session);
-    store(&path, &session);
+/// One prompt's view of the shell's lifecycle: loaded before the render,
+/// stored after it.
+pub(super) struct Session {
+    path: Option<PathBuf>,
+    state: State,
+    /// The shell's first prompt, or the agent asked for a reload: script
+    /// segments are due and their circuit breakers reset.
+    pub(super) reload: bool,
 }
 
-/// `__gpy_register_with_agent`, then `__gpy_sync_workspace`.
-fn sync(link: &Link, shell: &Shell<'_>, pwd: &str, session: &mut Session) {
+impl Session {
+    /// Load the state and take the agent's flags for `pid`. On the shell's
+    /// first prompt, start the agent (when enabled): that counts as the
+    /// first supervisor check.
+    pub(super) fn open(pid: u32, agent_enabled: bool) -> Self {
+        let runtime = crate::paths::runtime_dir().ok();
+        let path = runtime
+            .as_deref()
+            .map(|root| root.join("refresh-throttle").join(format!("{pid}.session")));
+        let loaded = path.as_deref().and_then(load);
+        let first = loaded.is_none();
+        let mut session = Self {
+            path,
+            state: loaded.unwrap_or_else(|| State {
+                checked_at: now_secs(),
+                ..State::default()
+            }),
+            reload: first,
+        };
+        if let Some(flags) = runtime.map(|root| root.join("shells").join(pid.to_string())) {
+            if take(&flags.with_extension("reregister")) {
+                session.state.registered = false;
+                session.state.workspace.clear();
+            }
+            session.reload |= take(&flags.with_extension("reload"));
+        }
+        if first && agent_enabled {
+            start_agent();
+        }
+        session
+    }
+
+    /// The duration scripts see: this prompt's command's, else the last one's.
+    pub(super) const fn script_duration(&mut self, duration_ms: Option<u64>) -> Option<u64> {
+        if duration_ms.is_some() {
+            self.state.last_duration_ms = duration_ms;
+        }
+        self.state.last_duration_ms
+    }
+
+    /// The first Bash 4 or later on `PATH`, else `/bin/bash`; resolved once
+    /// per shell. `None` when there is no Bash at all.
+    pub(super) fn bash(&mut self) -> Option<PathBuf> {
+        let resolved = self.state.bash.get_or_insert_with(resolve_bash);
+        (!resolved.as_os_str().is_empty()).then(|| resolved.clone())
+    }
+
+    /// Register, sync the workspace and supervise, then store the state.
+    pub(super) fn finish(mut self, link: &Link, config: &Config, shell: &Shell<'_>, pwd: &str) {
+        if link.enabled() {
+            sync(link, shell, pwd, &mut self.state);
+            supervise(link, config, &mut self.state);
+        }
+        if let Some(path) = &self.path {
+            store(path, &self.state);
+        }
+    }
+}
+
+/// The shell is exiting: unregister it and remove every file kept for it.
+pub(super) fn exit(link: &Link, pid: u32) {
+    if link.enabled() && link.socket_present() {
+        let _ = link.send(&json!({"op": "unregister", "pid": pid}), None);
+    }
+    let Ok(root) = crate::paths::runtime_dir() else {
+        return;
+    };
+    let tracked = root.join("shells").join(pid.to_string());
+    for file in [
+        tracked.with_extension("reload"),
+        tracked.with_extension("reregister"),
+        tracked,
+    ] {
+        let _ = std::fs::remove_file(file);
+    }
+    let prefix = format!("{pid}.");
+    if let Ok(entries) = std::fs::read_dir(root.join("refresh-throttle")) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+/// Remove a flag file; whether it was there.
+fn take(flag: &Path) -> bool {
+    std::fs::remove_file(flag).is_ok()
+}
+
+fn resolve_bash() -> PathBuf {
+    let on_path = std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join("bash"))
+        .find(|bash| {
+            bash.is_file()
+                && Command::new(bash)
+                    .args(["-p", "-c", r#"[ "${BASH_VERSINFO[0]}" -ge 4 ]"#])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|status| status.success())
+        });
+    on_path.unwrap_or_else(|| {
+        let fallback = PathBuf::from("/bin/bash");
+        if fallback.is_file() {
+            fallback
+        } else {
+            if super::flag("GPY_DEBUG") == Some(true) {
+                eprintln!("gpy[script]: warning: No bash found - script segments disabled");
+            }
+            PathBuf::new()
+        }
+    })
+}
+
+/// Register when not registered, else tell the agent about a new `$PWD`.
+fn sync(link: &Link, shell: &Shell<'_>, pwd: &str, state: &mut State) {
     if !link.socket_present() {
         return;
     }
-    if session.registered {
-        if session.rejected == pwd || session.workspace == pwd {
+    if state.registered {
+        if state.rejected == pwd || state.workspace == pwd {
             return;
         }
-        session.rejected.clear();
+        state.rejected.clear();
         match link.send(
             &json!({"op": "workspace", "pid": shell.pid, "cwd": pwd}),
             None,
         ) {
             Reply::Text(_) => {
-                pwd.clone_into(&mut session.workspace);
+                pwd.clone_into(&mut state.workspace);
                 return;
             }
             // A refused path (e.g. /etc) keeps the registration and is not
             // sent again from here; a lost registration re-registers.
             Reply::Refused(error) if !error.contains("not registered") => {
-                pwd.clone_into(&mut session.rejected);
+                pwd.clone_into(&mut state.rejected);
                 return;
             }
-            _ => session.registered = false,
+            _ => state.registered = false,
         }
     }
     let request = json!({
@@ -92,15 +209,14 @@ fn sync(link: &Link, shell: &Shell<'_>, pwd: &str, session: &mut Session) {
     if let Reply::Text(reply) = link.send(&request, None)
         && reply.contains(r#""status":"ok""#)
     {
-        session.registered = true;
-        pwd.clone_into(&mut session.workspace);
-        session.rejected.clear();
+        state.registered = true;
+        pwd.clone_into(&mut state.workspace);
+        state.rejected.clear();
         track_shell(shell.pid);
     }
 }
 
-/// `<runtime root>/shells/<pid>`: lets a restarted agent ring this shell
-/// (`__gpy_track_shell_for_agent_recovery`).
+/// `<runtime root>/shells/<pid>`: lets a restarted agent ring this shell.
 fn track_shell(pid: u32) {
     let Ok(root) = crate::paths::runtime_dir() else {
         return;
@@ -113,9 +229,9 @@ fn track_shell(pid: u32) {
     }
 }
 
-/// `__gpy_supervisor_check`: at most once per check interval, ping the
-/// agent; when it is down, start it detached, up to the attempt cap.
-fn supervise(link: &Link, config: &Config, session: &mut Session) {
+/// At most once per check interval, ping the agent; when it is down, start
+/// it detached, up to the attempt cap.
+fn supervise(link: &Link, config: &Config, state: &mut State) {
     let enabled =
         super::flag("GPY_AGENT_SUPERVISOR_ENABLED").unwrap_or(config.agent.supervisor.enabled);
     if !enabled {
@@ -124,29 +240,31 @@ fn supervise(link: &Link, config: &Config, session: &mut Session) {
     let interval = env_count("GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS")
         .unwrap_or(config.agent.supervisor.check_interval_seconds.get());
     let now = now_secs();
-    if now.saturating_sub(session.checked_at) < interval {
+    if now.saturating_sub(state.checked_at) < interval {
         return;
     }
-    session.checked_at = now;
+    state.checked_at = now;
     if let Reply::Text(reply) = link.send(&json!({"op": "ping"}), None)
         && reply.contains(r#""status":"ok""#)
     {
-        session.restarts = 0;
+        state.restarts = 0;
         return;
     }
     let cap = env_count("GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS")
         .and_then(|n| u32::try_from(n).ok())
         .unwrap_or(config.agent.supervisor.max_restart_attempts.get());
-    if session.restarts >= cap {
+    if state.restarts >= cap {
         return;
     }
-    session.restarts = session.restarts.saturating_add(1);
-    session.registered = false;
+    state.restarts = state.restarts.saturating_add(1);
+    state.registered = false;
     start_agent();
 }
 
 /// `gpy-agent start` in its own process group, every stream closed, not
-/// waited for: the agent daemonises itself and the prompt never waits.
+/// waited for: the agent daemonises itself and the prompt never waits. It
+/// is idempotent: it keeps a healthy agent and replaces one left running
+/// across an upgrade.
 fn start_agent() {
     let mut command = Command::new(crate::commands::utils::agent_binary());
     command
@@ -166,18 +284,12 @@ fn env_count(name: &str) -> Option<u64> {
         .and_then(|v| v.parse().ok())
 }
 
-fn session_path(pid: u32) -> Option<PathBuf> {
-    crate::paths::runtime_dir()
-        .ok()
-        .map(|root| root.join("refresh-throttle").join(format!("{pid}.session")))
-}
-
-fn load(path: &Path) -> Option<Session> {
+fn load(path: &Path) -> Option<State> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
-fn store(path: &Path, session: &Session) {
-    let Ok(bytes) = serde_json::to_vec(session) else {
+fn store(path: &Path, state: &State) {
+    let Ok(bytes) = serde_json::to_vec(state) else {
         return;
     };
     if std::fs::write(path, &bytes).is_err() {

@@ -39,7 +39,8 @@ printf '%s\n' \
     'exit 0' >"$stub_dir/gpy-agent"
 chmod +x "$stub_dir/gpy-agent"
 
-mkdir -p "$home_dir/.local/share/gpy/fish/core"
+mkdir -p "$home_dir/.local/share/gpy/fish/conf.d"
+touch "$home_dir/.local/share/gpy/fish/conf.d/gpy_init.fish"
 set -l driver "$home_dir/driver.fish"
 printf '%s\n' \
     "cd '$repo_root'" \

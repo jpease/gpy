@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 # tests/bash/basic.test.bash
+# Sourcing gpy.bash picks a duration clock for this Bash and the prompt hook
+# draws a PS1 through the gpy binary.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -8,51 +10,34 @@ cd "$ROOT" || exit 1
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 basic_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-basic-xdg.XXXXXX")"
-mkdir -p "$basic_xdg_root/cache" "$basic_xdg_root/config"
-export XDG_CACHE_HOME="$basic_xdg_root/cache" XDG_CONFIG_HOME="$basic_xdg_root/config"
-unset XDG_RUNTIME_DIR GPY_AGENT_SOCKET_PATH
-trap 'shell_e2e_stop_agent_under "$basic_xdg_root/cache" "$basic_xdg_root/config"; rm -rf "$basic_xdg_root"' EXIT
+trap 'rm -rf "$basic_xdg_root"' EXIT
+# shellcheck source=tests/lib/supervisor_off.bash
+source "$ROOT/tests/lib/supervisor_off.bash" "$basic_xdg_root"
+mkdir -p "$basic_xdg_root/runtime"
+chmod 700 "$basic_xdg_root/runtime"
+export XDG_RUNTIME_DIR="$basic_xdg_root/runtime" GPY_AGENT_SOCKET_PATH="$basic_xdg_root/none.sock"
+export PATH="$ROOT/gpy-agent/target/debug:$PATH"
 
-echo "Sourcing gpy.bash from $ROOT/bash/gpy.bash"
+# shellcheck source=bash/gpy.bash
 source bash/gpy.bash
 
-echo "Checking constants..."
-if [[ -z "$__prompt_color" ]]; then
-    echo "FAIL: Constants not loaded"
-    exit 1
+case "${BASH_VERSINFO[0]}" in
+    3) want=none ;;
+    4) want="date|seconds" ;;
+    *) want=epochrealtime ;;
+esac
+# shellcheck disable=SC2154 # set by bash/gpy.bash
+if [[ "$__gpy_clock" =~ ^($want)$ ]]; then
+    pass "duration clock for Bash ${BASH_VERSINFO[0]}: $__gpy_clock"
+else
+    fail "duration clock for Bash ${BASH_VERSINFO[0]}: want $want, got '$__gpy_clock'"
 fi
 
-echo "Checking version detection..."
-echo "Bash version: ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"
-echo "Duration method: $__gpy_duration_method"
-
-if [[ -z "$__gpy_duration_method" ]]; then
-    echo "FAIL: Duration method not set"
-    exit 1
+__gpy_precmd
+if [[ -n "$PS1" && "$PS1" != '❯ ' ]]; then
+    pass "gpy prompt drew PS1"
+else
+    fail "gpy prompt drew PS1: got [$PS1]"
 fi
 
-echo "Checking render..."
-__enabled_segments="directory"
-__gpy_render_prompt 0
-echo "Prompt rendered: $PS1"
-
-if [[ -z "$PS1" ]]; then
-    echo "FAIL: PS1 is empty"
-    exit 1
-fi
-
-echo "Checking transparent clock background..."
-# Flat themes (e.g. the Starship preset) export a transparent clock bg. It must
-# map to the terminal default (SGR 49) instead of the cyan `*)` fallback.
-source bash/segments/clock.bash
-# Drop the request helper so the local (non-agent) clock path runs.
-unset -f __gpy_request_clock 2>/dev/null || true
-__clock_format=""
-__color_clock_bg="transparent" __color_clock_fg="white"
-clock_out="$(__gpy_segment_clock "" "" "true")"
-if [[ "$clock_out" != *"37;49m"* ]]; then
-    echo "FAIL: transparent clock bg should render as default (49); got: $clock_out"
-    exit 1
-fi
-
-echo "PASS"
+test_finish "basic"

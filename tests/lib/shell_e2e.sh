@@ -117,15 +117,6 @@ require_yq() {
 #                           resolve (build if needed) the debug agent, prepend
 #                           it to PATH, git-init $SHELL_E2E_REPO with one
 #                           commit, arm the teardown guard (below)
-# shell_e2e_agent_free_begin / shell_e2e_agent_free_end
-#                           source the integration without a daemon starting
-#                           under it, then put PATH back. An exported
-#                           GPY_AGENT_ENABLED=0 wins over config.toml, so
-#                           `GPY_AGENT_ENABLED=0 source ...` between the two
-#                           calls keeps the startup start away; with no
-#                           gpy-agent on PATH there is neither an export nor
-#                           an agent to start either. Then export
-#                           GPY_AGENT_ENABLED=1 for the call-time reads.
 # shell_e2e_text_config SEGS [ICONS] [supervisor-off]
 #                           write the text-theme config.toml with
 #                           `enabled_segments = [SEGS]`
@@ -397,17 +388,6 @@ shell_e2e_count_lines() {
 
 shell_e2e_has_lines() {
     [ "$(shell_e2e_count_lines "$1")" -eq "$2" ]
-}
-
-# A PATH with no gpy-agent on it (system directories only); the previous PATH
-# is kept for shell_e2e_agent_free_end.
-shell_e2e_agent_free_begin() {
-    SHELL_E2E_SAVED_PATH="$PATH"
-    PATH="/usr/bin:/bin:/usr/sbin:/sbin"
-}
-
-shell_e2e_agent_free_end() {
-    PATH="$SHELL_E2E_SAVED_PATH"
 }
 
 # Write the text-theme config.toml: `enabled_segments = [$1]` (the TOML array

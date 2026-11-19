@@ -382,7 +382,7 @@ show_help() {
 Usage: $0 [OPTION]
 
     (none)        Full gate: repo checks, shell lint and suites, Rust checks
-    --fast        Repo checks, Fish syntax, shellcheck, parity tests, Rust lint and tests
+    --fast        Repo checks, Fish syntax, shellcheck, golden prompts, Rust lint and tests
     --rust-only   fmt, clippy, tests, doc tests, audit, deny, unused dependencies, release build
     --shell-only [PARTS]
                   Fish lint, shellcheck and the Fish/Bash/Zsh suites (no Rust
@@ -435,10 +435,7 @@ case "${1:-}" in
         run_check "Fish syntax" "check_fish_syntax" || true
         run_check "Shellcheck" "check_shellcheck" || true
         run_check "Actionlint" "check_actionlint" || true
-        run_check "Bash parity tests" "$GPY_BASH tests/bash/parity.test.bash" || true
-        if command -v zsh &>/dev/null; then
-            run_check "Zsh parity tests" "zsh tests/zsh/parity.test.zsh" || true
-        fi
+        run_check "Golden prompts" "$GPY_BASH tests/bash/prompt_golden.test.bash" || true
         pushd gpy-agent >/dev/null
         run_rust_lint_and_tests ""
         popd >/dev/null

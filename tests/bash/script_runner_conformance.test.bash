@@ -4,7 +4,8 @@
 #
 # `gpy doctor` runs each enabled plugin script segment once (run_trial in
 # gpy-agent/src/commands/script_run.rs). That trial restates the rules of the
-# shell runner, bash/core/g_runner.bash. This test runs the same scripts
+# prompt's runner, gpy-agent/src/prompt/g_runner.bash (embedded in the
+# binary; `gpy prompt` runs it in Bash). This test runs the same scripts
 # through both and requires the same verdict (shown text and variant, hidden
 # for an empty text, a non-zero exit, a C1 control character or output over
 # the cap, or killed at the timeout) and the same environment, including
@@ -20,7 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 GPY_CLI="$ROOT/gpy-agent/target/debug/gpy"
 [[ -x "$GPY_CLI" ]] || test_skip "no debug gpy binary at $GPY_CLI (cargo build first)"
-RUNNER="$ROOT/bash/core/g_runner.bash"
+RUNNER="$ROOT/gpy-agent/src/prompt/g_runner.bash"
 FIXTURE="$ROOT/tests/fixtures/shell_scenarios/plugins/contract-scripts"
 SEGMENTS=(slow big strip c1 variant envdump crlf c1split)
 

@@ -40,7 +40,7 @@ end
 # --- fake curl: stubs every network download install-oneline.sh performs ---
 # Writes a trivial `#!/bin/sh\nexit 0\n` stub to whatever `-o FILE` target was
 # requested, regardless of URL. This lets install-oneline.sh run to completion
-# (binary --version check, core-file existence checks) with zero network
+# (binary --version check, installed-file existence checks) with zero network
 # access.
 #
 # A request with no `-o` is a fetch-to-stdout. For a `<asset>.sha256` URL it
@@ -350,7 +350,7 @@ else
         fail "install-oneline.sh (fish, XDG_CONFIG_HOME): config.fish missing/unmarked under \$XDG_CONFIG_HOME/fish"
     end
 
-    if test -d "$xdg_data_e/gpy/fish/core"
+    if test -f "$xdg_data_e/gpy/fish/conf.d/gpy_init.fish"
         pass "install-oneline.sh (fish, XDG_DATA_HOME): shell files under \$XDG_DATA_HOME/gpy/fish"
     else
         fail "install-oneline.sh (fish, XDG_DATA_HOME): shell files missing under \$XDG_DATA_HOME/gpy/fish"
@@ -416,7 +416,7 @@ set -l status_f $status
 if test $status_f -ne 0
     fail "install-oneline.sh (bash, XDG_CONFIG_HOME) exited $status_f: $out_f"
 else
-    if test -d "$xdg_data_f/gpy/bash/core"
+    if test -f "$xdg_data_f/gpy/bash/gpy.bash"
         pass "install-oneline.sh (bash, XDG_DATA_HOME): shell files under \$XDG_DATA_HOME/gpy/bash"
     else
         fail "install-oneline.sh (bash, XDG_DATA_HOME): shell files missing under \$XDG_DATA_HOME/gpy/bash"

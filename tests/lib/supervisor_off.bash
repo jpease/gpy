@@ -3,12 +3,11 @@
 # Sourced by bash tests that must neither start nor supervise an agent; the
 # Bash twin of tests/lib/supervisor_off.zsh. An exported GPY_AGENT_ENABLED and
 # GPY_AGENT_SUPERVISOR_ENABLED win over config.toml, so the env flags below
-# are what keep gpy.bash from starting or supervising an agent; the sandbox
-# config.toml disables both as well, for tests that unset them again.
+# are what keep `gpy prompt` from starting or supervising an agent; the
+# sandbox config.toml disables both as well, for tests that unset them again.
 # `[agent.supervisor] enabled = false` alone only stops restarts: the
-# startup start depends on `[agent] enabled`, so the agent is disabled
-# as well. A test that needs the IPC paths exports GPY_AGENT_ENABLED=1 after
-# sourcing gpy.bash.
+# first-prompt start depends on `[agent] enabled`, so the agent is disabled
+# as well.
 #
 # `source supervisor_off.bash DIR` points XDG_CONFIG_HOME and XDG_CACHE_HOME
 # at DIR/config and DIR/cache, with a DIR/config/gpy/config.toml that

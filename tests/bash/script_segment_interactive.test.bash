@@ -12,6 +12,7 @@
 #       through `\#`, older Bash through the DEBUG trap)
 #   (c) Ctrl-C during a slow script draws the prompt within the timeout,
 #       hides the segment, kills the script tree and leaves `$!` unchanged
+# The scripts run in `gpy prompt bash` (the real binary on PATH).
 
 # shellcheck disable=SC2016
 # Single quotes are load-bearing: the child shell expands them.
@@ -34,45 +35,42 @@ cleanup() {
 }
 trap cleanup EXIT
 
-while IFS='=' read -r __gpy_env_name _; do
-    case "$__gpy_env_name" in
-        GPY_*) unset "$__gpy_env_name" ;;
+while IFS='=' read -r env_name _; do
+    case "$env_name" in
+        GPY_*) unset "$env_name" ;;
     esac
 done < <(env)
+# shellcheck source=tests/lib/supervisor_off.bash
 source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 export GPY_AGENT_SOCKET_PATH="$T/missing.sock"
 export HOME="$T/home" XDG_RUNTIME_DIR="$T/run"
-mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$T/plug/bin" "$T/work"
-chmod 755 "$T/plug" "$T/plug/bin"
+PLUG="$XDG_CONFIG_HOME/gpy/plugins/inter"
+mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$PLUG/bin" "$PLUG/segments" "$T/work"
+chmod 700 "$XDG_RUNTIME_DIR"
+chmod -R go-w "$T"
 printf '#!/bin/sh\necho x >>"%s/runs"\n[ -f "%s/slow" ] && sleep %s\necho G-OK\n' \
-    "$T" "$T" "$MARK" >"$T/plug/bin/seg.sh"
+    "$T" "$T" "$MARK" >"$PLUG/bin/seg.sh"
+chmod 755 "$PLUG/bin/seg.sh"
 
-# The segment as a theme export would write it; the export itself is not
-# under test here (the theme snapshot tests cover it).
+# The script segment as a plugin, then the status segment.
+cat >"$PLUG/plugin.toml" <<'EOF'
+id = "inter"
+name = "Interactive"
+version = "1.0.0"
+api_version = "v1"
+entry_type = "script"
+provided_segments = ["seg"]
+description = "Script segment for the interactive test"
+EOF
+printf 'description = "seg"\ncommand = "bin/seg.sh"\ninputs = []\nttl_secs = 0\ntimeout_ms = 500\n' \
+    >"$PLUG/segments/seg.toml"
+printf '\n[ui]\nenabled_segments = ["seg", "status"]\n' >>"$XDG_CONFIG_HOME/gpy/config.toml"
+
 rc="$T/rc.bash"
 cat >"$rc" <<EOF
 echo "GPY_E2E_PID=\$\$"
 source "$ROOT/bash/gpy.bash"
 cd "$T/work"
-__gpy_script_sh=/bin/sh
-__gpy_script_seg_name=seg
-__gpy_script_seg_root="$T/plug"
-__gpy_script_seg_command="$T/plug/bin/seg.sh"
-__gpy_script_seg_reqcommand=""
-__gpy_script_seg_inputs=()
-__gpy_script_seg_env=()
-__gpy_script_seg_opts=()
-__gpy_script_seg_ttl=0
-__gpy_script_seg_timeout=500
-__gpy_script_seg_scope=session
-__gpy_script_seg_reqfiles=()
-__gpy_script_seg_reqfolders=()
-__gpy_script_seg_reqexts=()
-__gpy_script_seg_reqenv=()
-__gpy_script_seg_key="3:seg"
-__gpy_script_segments=(seg)
-__enabled_segments="seg status"
-__gpy_g_sync
 set +H
 EOF
 
@@ -85,7 +83,7 @@ survivors() {
 no_survivors() {
     [[ "$(survivors)" == 0 ]]
 }
-# Send TEXT and wait for the next prompt (the status icon ends every prompt).
+# Send TEXT and wait for PATTERN after it.
 step() {
     local off
     off="$(shell_e2e_size)"
@@ -108,7 +106,7 @@ for sh in "${shells[@]}"; do
     rm -f "$T/slow"
     SHELL_E2E_SESSION="$T/session-${#ver}-$RANDOM"
     python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- \
-        env PATH=/usr/bin:/bin "$sh" --noprofile --rcfile "$rc" -i
+        env PATH="$ROOT/gpy-agent/target/debug:/usr/bin:/bin" "$sh" --noprofile --rcfile "$rc" -i
     if ! shell_e2e_wait_for 'G-OK' 15 >/dev/null; then
         fail "$ver: the segment never rendered"
         shell_e2e_stop_client
@@ -142,12 +140,16 @@ for sh in "${shells[@]}"; do
     ctrl_c
     # From the echoed ^C to the next prompt, both stamped by the pty driver.
     # Uncut, the run would end at its 500 ms deadline, about 400 ms later.
-    if shell_e2e_wait_for '✖|✔' 5 "$off" >/dev/null; then
+    if shell_e2e_wait_for '❯' 5 "$off" >/dev/null; then
         c_ns="$(python3 "$SHELL_E2E_PTY" first-match-time "$SHELL_E2E_SESSION" '\^C' "$off")"
-        p_ns="$(python3 "$SHELL_E2E_PTY" first-match-time "$SHELL_E2E_SESSION" '\^C[^✖✔]*[✖✔]' "$off")"
+        p_ns="$(python3 "$SHELL_E2E_PTY" first-match-time "$SHELL_E2E_SESSION" '\^C[^❯]*❯' "$off")"
         elapsed=$(((p_ns - c_ns) / 1000000))
         ((elapsed < 250)) && pass "$ver: Ctrl-C drew the prompt in ${elapsed} ms" ||
             fail "$ver: Ctrl-C took ${elapsed} ms to draw the prompt"
+        after_c="$(shell_e2e_transcript "$off")"
+        after_c="${after_c#*^C}"
+        [[ "${after_c%%❯*}" != *G-OK* ]] && pass "$ver: the interrupted segment is hidden" ||
+            fail "$ver: the prompt after Ctrl-C still shows the interrupted segment"
     else
         fail "$ver: no prompt after Ctrl-C"
     fi
@@ -155,10 +157,10 @@ for sh in "${shells[@]}"; do
     shell_e2e_poll 2 no_survivors && pass "$ver: the interrupted script tree was killed" ||
         fail "$ver: $(survivors) script processes survived"
     off="$(shell_e2e_size)"
-    shell_e2e_send 'echo BANG=[$!] HIDDEN=[$__gpy_g_out_seg]\r'
-    if shell_e2e_wait_for 'HIDDEN=\[[^]]*\]' 10 "$off" >/dev/null; then
-        line="$(shell_e2e_transcript "$off" | grep -oE 'BANG=\[[0-9]*\] HIDDEN=\[[^]]*\]' | tail -n 1)"
-        check "$ver: \$! is unchanged and the interrupted segment hidden" "$bang HIDDEN=[]" "$line"
+    shell_e2e_send 'echo BANG=[$!]\r'
+    if shell_e2e_wait_for 'BANG=\[[0-9]*\]' 10 "$off" >/dev/null; then
+        line="$(shell_e2e_transcript "$off" | grep -oE 'BANG=\[[0-9]*\]' | tail -n 1)"
+        check "$ver: \$! is unchanged after the interrupted run" "$bang" "$line"
     else
         fail "$ver: the shell did not run the line after Ctrl-C"
     fi

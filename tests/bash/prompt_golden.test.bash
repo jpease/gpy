@@ -76,8 +76,7 @@ normalise() {
 seq_no=100
 # SHELL STATUS DURATION: one `gpy prompt`, normalised, to stdout.
 render() {
-    local -a args=(prompt "$1" --status "$2" --pid "$$" --cmd "$seq_no"
-        --runner "$ROOT/bash/core/g_runner.bash" --bash "$BASH")
+    local -a args=(prompt "$1" --status "$2" --pid "$$" --cmd "$seq_no")
     [[ -n $3 ]] && args+=(--duration-ms "$3")
     seq_no=$((seq_no + 1))
     gpy "${args[@]}" 2>/dev/null | normalise

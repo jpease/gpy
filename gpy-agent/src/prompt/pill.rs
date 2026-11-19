@@ -1,8 +1,7 @@
-//! The pills the shell integrations draw themselves (`bash/core/renderer.bash`,
-//! `zsh/core/renderer.zsh`): the clock and status fallbacks, script segment
-//! pills and the root/no-character prompt tail. Byte-for-byte ports, so
-//! `gpy prompt` and the shell path print the same prompt; the parity tests
-//! pin them against the shell functions.
+//! The pills `gpy prompt` draws itself rather than asking the agent: the
+//! clock and status fallbacks, script segment pills and the
+//! root/no-character prompt tail. `tests/bash/prompt_golden.test.bash` pins
+//! the output.
 
 use super::dialect::Dialect;
 use super::vars::ShellVars;
