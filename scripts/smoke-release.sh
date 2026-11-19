@@ -90,13 +90,6 @@ if [[ "${RUNNER_OS:-$(uname -s)}" == Windows* || "$(uname -s)" == MINGW* || "$(u
     exit 0
 fi
 
-echo "--- the documented IPC transport is present ---"
-if command -v socat >/dev/null 2>&1 || command -v nc >/dev/null 2>&1; then
-    pass "socat or nc is installed (docs/INSTALL.md, IPC transport dependencies)"
-else
-    fail "neither socat nor nc is installed; Fish and Bash would only get the degraded oneshot prompt"
-fi
-
 echo "--- extract the archive ---"
 archive="$PACKAGE_DIR/gpy-release.tar.gz"
 [[ -f "$archive" ]] || die "no gpy-release.tar.gz under $PACKAGE_DIR"

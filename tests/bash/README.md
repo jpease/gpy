@@ -55,11 +55,11 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
   `tests/lib/stub_listener.py`; never an inline Python listener. Stop it with
   `shell_e2e_stop_pids`; a test without `shell_e2e_init` calls
   `shell_e2e_kill_tracked` from its own EXIT trap.
-- Tests that must not start an agent source `tests/lib/supervisor_off.bash`,
-  write `[agent] enabled = false` into their own sandbox `config.toml`, or
-  source with no `gpy-agent` on `PATH` (`shell_e2e_agent_free_begin` /
-  `shell_e2e_agent_free_end`). An exported `GPY_AGENT_ENABLED=0` wins over
-  `config.toml`, so it is enough on its own.
+- Tests that must not start an agent source `tests/lib/supervisor_off.bash`
+  or write `[agent] enabled = false` into their own sandbox `config.toml`.
+  An exported `GPY_AGENT_ENABLED=0` wins over `config.toml`, so it is enough
+  on its own. `gpy prompt` starts the `gpy-agent` beside the `gpy` binary, so
+  a test that records agent starts copies `gpy` next to a stub `gpy-agent`.
 
 ### The live-daemon harness
 
@@ -71,24 +71,11 @@ a scratch git repo; `shell_e2e_start_agent` / `shell_e2e_stop_agent`;
 through `tests/lib/pty_session.py` (`shell_e2e_send`, `shell_e2e_wait_for`,
 `shell_e2e_transcript`).
 
-### The cross-shell contract harness: `shell_contract`
+### Rendered prompts: `prompt_golden`
 
-Behaviour that must be identical in Fish, Bash and Zsh is a row of
-`tests/fixtures/shell_scenarios/scenarios.tsv`, not a per-shell file.
-`shell_contract.test.bash` runs every row through the real integrations
-(`tests/lib/shell_scenarios/render.{fish,bash,zsh}`), each in its own sandbox,
-and fails when the normalized prompts or the side effects (agent starts,
-`gpy-agent oneshot` forks, IPC requests, registrations) differ between shells
-or miss the row's `expect` values. Side effects are observed from outside the
-shells: a recording `gpy-agent` wrapper first on `PATH` and a recording IPC
-proxy (`tests/lib/shell_scenarios/ipc_proxy.py`) in front of the real agent.
-
-To add a row, append it to `scenarios.tsv` (its header documents every column
-and flag) and run just that row:
-
-```bash
-SCN_FILTER='^my-row$' SCN_VERBOSE=1 bash tests/bash/shell_contract.test.bash
-```
-
-`SCN_VERBOSE=1` prints each shell's side effects and normalized prompt, which
-is how to pick the `expect` values. Pin the behaviour, not the whole log.
+Every prompt is drawn by `gpy prompt <shell>`, so what a prompt looks like is
+pinned once for all three shells: `prompt_golden.test.bash` compares the
+rendered output for each theme and case with
+`tests/fixtures/prompt_golden/**`. Per-shell tests cover only what the thin
+wrappers still own (hooks, `$?`, traps, durations, exit) and end-to-end
+behaviour through a real shell and agent.

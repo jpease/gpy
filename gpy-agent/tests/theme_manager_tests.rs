@@ -896,11 +896,18 @@ id = "demo"
 name = "Demo"
 version = "0.1.0"
 api_version = "v1"
-entry_type = "file"
+entry_type = "script"
 provided_segments = ["demo"]
 "#,
     )
     .unwrap();
+    fs::create_dir_all(plugin_dir.join("segments")).unwrap();
+    fs::write(
+        plugin_dir.join("segments/demo.toml"),
+        "command = \"run.sh\"\n",
+    )
+    .unwrap();
+    fs::write(plugin_dir.join("run.sh"), "echo demo\n").unwrap();
     fs::write(themes_dir.join("shared.toml"), MINIMAL_THEME).unwrap();
 
     let mut env = EnvGuard::default();
@@ -913,57 +920,6 @@ provided_segments = ["demo"]
         .find(|theme| theme.name == "shared")
         .expect("shared theme present");
     assert_eq!(shared.source, Source::User);
-}
-
-#[test]
-#[serial]
-fn test_theme_export_includes_plugin_segment_file_vars() {
-    let xdg_temp = TempDir::new().unwrap();
-    let bundled_temp = TempDir::new().unwrap();
-
-    create_test_theme_toml(&xdg_temp.path().join("gpy"), "plugin_files", MINIMAL_THEME);
-
-    let plugin_dir = bundled_temp.path().canonicalize().unwrap().join("demo");
-    let plugin_segments_dir = plugin_dir.join("segments");
-    fs::create_dir_all(&plugin_segments_dir).unwrap();
-    fs::write(
-        plugin_dir.join("plugin.toml"),
-        r#"
-id = "demo"
-name = "Demo"
-version = "0.1.0"
-api_version = "v1"
-entry_type = "file"
-provided_segments = ["k8s-tools"]
-"#,
-    )
-    .unwrap();
-    fs::write(
-        plugin_segments_dir.join("k8s-tools.fish"),
-        "function segment_k8s-tools_render; end",
-    )
-    .unwrap();
-
-    let mut env = EnvGuard::default();
-    env.set("XDG_CONFIG_HOME", xdg_temp.path());
-    env.set("GPY_BUNDLED_PLUGIN_DIR", bundled_temp.path());
-
-    let manager = ThemeManager::new("plugin_files").unwrap();
-    let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = vec!["clock".to_owned(), "k8s-tools".to_owned()];
-    let output = manager.export(
-        Shell::Fish,
-        &config,
-        &gpy_agent::template::Palette::default(),
-    );
-
-    let expected_path = plugin_segments_dir.join("k8s-tools.fish");
-    let expected_line = format!(
-        "set -g __gpy_plugin_segment_file_k8s_tools \"{}\"",
-        expected_path.display()
-    );
-    assert!(output.contains(&expected_line));
-    assert!(output.contains("set -g __enabled_segments clock k8s-tools"));
 }
 
 #[cfg(unix)]

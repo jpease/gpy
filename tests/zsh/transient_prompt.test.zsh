@@ -2,93 +2,79 @@
 # tests/zsh/transient_prompt.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# __gpy_update_prompts sets PROMPT and __gpy_transient_prompt, the prompt
-# zle-line-finish redraws when a line is submitted:
-#   - ui.transient_prompt on: the clock's live `%D{...}` time in its text
-#     color with no pill, then the prompt symbol alone (no status indicator,
-#     no other segment); root keeps `!❯!` in its color;
-#   - a symbol without a leading space still gets one after the time;
-#   - on with no clock: the symbol alone;
-#   - off with the clock: the full prompt, re-expanded at the redraw so the
-#     time is the one Enter was pressed;
-#   - off with no clock: empty, so nothing is redrawn.
-# The agent is unreachable, so the symbol is the shell-drawn fallback.
+# On Enter, zle-line-finish swaps PROMPT for the transient line `gpy prompt
+# zsh` printed after 0x1F and redraws, so that is what stays in scrollback:
+#   - ui.transient_prompt on, with the clock: the time and the symbol, no
+#     other segment;
+#   - on, no clock: the symbol alone;
+#   - off, with the clock: the full prompt again (its time is the one Enter
+#     was pressed);
+#   - off, no clock: nothing is redrawn.
+# The binary's exact transient bytes are pinned by the prompt goldens; this
+# drives a real `zsh -i` on a pty and asserts on what the terminal received
+# between Enter and the command's output. No agent.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
-cd "$ROOT" || exit 1
+test_require_command gpy
 
-SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-transient.XXXXXX")
-trap 'rm -rf "$SANDBOX"' EXIT
-source "$ROOT/tests/lib/supervisor_off.zsh" "$SANDBOX"
-export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
-# A stub that renders nothing, first on PATH, keeps the oneshot fallback from
-# reaching an installed gpy-agent.
-mkdir -p "$SANDBOX/stubs"
-printf '#!/bin/sh\nexit 1\n' >"$SANDBOX/stubs/gpy-agent"
-chmod +x "$SANDBOX/stubs/gpy-agent"
-PATH="$SANDBOX/stubs:$PATH"
+shell_e2e_init "$ROOT"
+export GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0
+workdir="$SHELL_E2E_ROOT/tdirname"
+mkdir -p "$workdir"
+cd "$workdir" || exit 1
 
-source zsh/gpy.zsh
-source tests/lib/shell_render_only.zsh
+# run_case LABEL SEGMENTS TRANSIENT: spawn a client with that config, submit
+# one command and set SUBMITTED to what was drawn from Enter to the output.
+SUBMITTED=""
+case_n=0
+run_case() {
+    local label=$1 off
+    case_n=$((case_n + 1))
+    shell_e2e_text_config "$2"
+    printf 'transient_prompt = %s\n\n[agent]\nenabled = false\n' "$3" >>"$XDG_CONFIG_HOME/gpy/config.toml"
+    shell_e2e_use_session "$case_n"
+    shell_e2e_spawn_client zsh "$ROOT" || { shell_e2e_dump_transcript; exit 1; }
+    off=$(shell_e2e_wait_for '❯' 10) || { fail "$label: no prompt"; return; }
+    shell_e2e_send "echo GPY_MARK_$case_n"
+    off=$(shell_e2e_wait_for "GPY_MARK_$case_n" 5 "$off") || { fail "$label: no echo"; return; }
+    shell_e2e_send '\r'
+    shell_e2e_wait_for "\nGPY_MARK_$case_n" 5 "$off" >/dev/null || { fail "$label: no output"; return; }
+    SUBMITTED=$(shell_e2e_transcript "$off")
+    SUBMITTED=${SUBMITTED%%$'\n'GPY_MARK_$case_n*}
+    shell_e2e_send 'exit\r'
+    shell_e2e_stop_client
+}
 
-# $1 with every `%{...%}` region (the non-printing SGR) removed: what is drawn.
-printed() { printf '%s' "$1" | sed -e 's/%{[^%]*%}//g'; }
+# A clock time as the text theme draws it.
+time_re='[0-9]{1,2}:[0-9]{2}'
 
-__segment_delim_first="<" __segment_delim_start="[" __segment_delim_end="]" __segment_delim_last=")"
-__color_clock_bg="blue" __color_clock_fg="yellow"
-__color_directory_bg="black" __color_directory_fg="white"
-__time_format=12 __clock_show_leading_zero=0 __clock_show_seconds=0
-__prompt_time_pad=" "
-__icon_prompt="❯" __prompt_color="cyan"
-__icon_root_prompt="!❯!" __root_prompt_color="red"
-__icon_status_ok="OK" __icon_status_fail="NO"
-GPY_SHOW_STATUS=1
-__gpy_two_line=1 __gpy_add_newline=0
-__gpy_is_root=0
-__gpy_char_cache_key="" __gpy_char_cache_val=""
+run_case "on, clock" '"clock", "directory"' true
+if [[ $SUBMITTED =~ $time_re && $SUBMITTED == *"❯"* && $SUBMITTED != *tdirname* ]]; then
+    pass "on, clock: the time and the symbol replace the prompt"
+else
+    fail "on, clock: unexpected redraw [$SUBMITTED]"
+fi
 
-clock_spec='%D{%-I:%M %p}'
+run_case "on, no clock" '"directory"' true
+if [[ $SUBMITTED == *"❯"* && $SUBMITTED != *tdirname* ]] && ! [[ $SUBMITTED =~ $time_re ]]; then
+    pass "on, no clock: the symbol alone replaces the prompt"
+else
+    fail "on, no clock: unexpected redraw [$SUBMITTED]"
+fi
 
-# --- on, with the clock -----------------------------------------------------
-__gpy_cfg_transient_prompt=1
-__enabled_segments=(clock directory)
-__gpy_update_prompts 1
-check "on: time, then the symbol only (no status, no segments)" \
-    " ${clock_spec} ❯ " "$(printed "$__gpy_transient_prompt")"
-[[ "$__gpy_transient_prompt" == "%{"$'\e'"[33;49m%} ${clock_spec}"* ]]
-check "on: the time keeps the clock's text color, without its background" 0 $?
-[[ "$__gpy_transient_prompt" == *"%{"$'\e'"[36;49m%}❯ "* ]]
-check "on: the symbol keeps the prompt color" 0 $?
-[[ "$PROMPT" != *$'\x1e'* && "$PROMPT" == *NO* && "$PROMPT" == *$'\n'* ]]
-check "the full prompt is unchanged (status indicator, two lines)" 0 $?
+run_case "off, clock" '"clock", "directory"' false
+if [[ $SUBMITTED =~ $time_re && $SUBMITTED == *tdirname* && $SUBMITTED == *"❯"* ]]; then
+    pass "off, clock: the full prompt is redrawn"
+else
+    fail "off, clock: unexpected redraw [$SUBMITTED]"
+fi
 
-__gpy_add_newline=1
-__gpy_update_prompts 0
-check "on: the blank line before the prompt is kept" \
-    $'\n'" ${clock_spec} ❯ " "$(printed "$__gpy_transient_prompt")"
-__gpy_add_newline=0
-
-__gpy_is_root=1
-__gpy_update_prompts 0
-check "root: the root symbol" " ${clock_spec} !❯! " "$(printed "$__gpy_transient_prompt")"
-[[ "$__gpy_transient_prompt" == *"%{"$'\e'"[31;49m%}!❯! "* ]]
-check "root: the symbol keeps the root color" 0 $?
-__gpy_is_root=0
-
-# --- on, without the clock --------------------------------------------------
-__enabled_segments=(directory)
-__gpy_update_prompts 0
-check "on, no clock: the symbol alone" "❯ " "$(printed "$__gpy_transient_prompt")"
-
-# --- off --------------------------------------------------------------------
-__gpy_cfg_transient_prompt=0
-__enabled_segments=(clock directory)
-__gpy_update_prompts 0
-check "off, with the clock: the full prompt is redrawn" "$PROMPT" "$__gpy_transient_prompt"
-
-__enabled_segments=(directory)
-__gpy_update_prompts 0
-check "off, no clock: nothing to redraw" "" "$__gpy_transient_prompt"
+run_case "off, no clock" '"directory"' false
+if [[ $SUBMITTED != *"❯"* && $SUBMITTED != *tdirname* ]]; then
+    pass "off, no clock: nothing is redrawn"
+else
+    fail "off, no clock: unexpected redraw [$SUBMITTED]"
+fi
 
 test_finish "transient prompt"

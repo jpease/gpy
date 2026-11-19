@@ -1,9 +1,10 @@
 # GPY plugin manifest template (v1)
+# Each provided segment also needs segments/<segment>.toml naming its sh script.
 id = "acme-tools"
 name = "Acme Tools"
 version = "0.1.0"
 api_version = "v1"
-entry_type = "file"
+entry_type = "script"
 provided_segments = ["acme-tools"]
 description = "Example plugin segment for Acme tooling status"
 

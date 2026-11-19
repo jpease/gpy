@@ -11,9 +11,6 @@ use std::path::PathBuf;
 mod cli_harness;
 use cli_harness::{CliCommandResult, CliTestEnv};
 
-#[path = "common/skip.rs"]
-mod skip;
-
 /// The prompt formats Fish, Bash and Zsh draw from.
 const LIVE_PROMPT_FORMATS: [&str; 3] = ["ansi", "bash-prompt", "zsh-prompt"];
 
@@ -138,8 +135,8 @@ fn theme_styling_and_newline_layout_still_render() {
     }
 }
 
-/// A theme whose directory format renders `text_color`, which the clock (a
-/// shell-drawn segment) also uses.
+/// A theme whose directory format renders `text_color`, which the clock
+/// pill `gpy prompt` draws itself also uses.
 fn color_theme(text_color: &str) -> String {
     format!(
         "[ui]\n[segments.directory]\nformat = \"[$path]($style)\"\ntext_color = \"{text_color}\"\n\
@@ -147,39 +144,18 @@ fn color_theme(text_color: &str) -> String {
     )
 }
 
-/// The value `theme export` hands the shells for `variable`.
-fn exported_value(env: &CliTestEnv, variable: &str) -> String {
+/// The Bash prompt `gpy prompt bash` draws with only the clock enabled.
+fn bash_clock_prompt(env: &CliTestEnv) -> String {
+    env.write_config("[ui]\ntheme = \"audit\"\nenabled_segments = [\"clock\"]\n")
+        .expect("write config");
     let result = env
-        .run_gpy_agent(&["theme", "export", "--shell", "bash"])
-        .expect("run theme export");
-    result.assert_success("gpy-agent theme export --shell bash");
-    let prefix = format!("{variable}=\"");
-    result
-        .stdout
-        .lines()
-        .find_map(|line| line.strip_prefix(&prefix)?.strip_suffix('"'))
-        .unwrap_or_else(|| panic!("{variable} not exported:\n{}", result.stdout))
-        .to_owned()
-}
-
-/// The SGR foreground parameter the real Bash renderer draws for `color`.
-fn bash_sgr_foreground(color: &str) -> String {
-    let renderer = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("repo root")
-        .join("bash/core/renderer.bash");
-    let output = std::process::Command::new("bash")
-        .args([
-            "-c",
-            "source \"$1\" && __gpy_sgr_param fg \"$2\" code && printf '%s' \"$code\"",
-            "bash",
-        ])
-        .arg(&renderer)
-        .arg(color)
-        .output()
-        .expect("run bash renderer");
-    assert!(output.status.success(), "bash renderer failed: {output:?}");
-    String::from_utf8(output.stdout).expect("utf-8 SGR parameter")
+        .run_gpy_with_env(
+            &["prompt", "bash", "--pid", "1"],
+            &[("GPY_AGENT_ENABLED", "0"), ("TERM", "xterm-256color")],
+        )
+        .expect("run gpy prompt bash");
+    result.assert_success("gpy prompt bash");
+    result.stdout
 }
 
 #[test]
@@ -205,40 +181,12 @@ fn parser_color_aliases_validate_and_render_bright_magenta_everywhere() {
             "'{spelling}': directory not drawn in bright magenta: {rendered:?}"
         );
 
-        let clock_fg = exported_value(&env, "__color_clock_fg");
-        assert_eq!(
-            bash_sgr_foreground(&clock_fg),
-            "95",
-            "'{spelling}' exported as '{clock_fg}', which Bash draws as another color"
+        let prompt = bash_clock_prompt(&env);
+        assert!(
+            prompt.contains("\u{1b}[95"),
+            "'{spelling}': the clock is not drawn in bright magenta: {prompt:?}"
         );
     }
-}
-
-#[test]
-fn exported_alias_color_is_a_fish_set_color_name() {
-    if !std::process::Command::new("fish")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-    {
-        skip::skip_test("fish is not installed");
-        return;
-    }
-    let env = env_with_theme(&color_theme("bright-magenta"));
-    let clock_fg = exported_value(&env, "__color_clock_fg");
-    let status = std::process::Command::new("fish")
-        .args([
-            "--no-config",
-            "-c",
-            "set_color $argv[1] >/dev/null",
-            clock_fg.as_str(),
-        ])
-        .status()
-        .expect("run fish");
-    assert!(
-        status.success(),
-        "fish set_color rejects exported color '{clock_fg}'"
-    );
 }
 
 #[test]

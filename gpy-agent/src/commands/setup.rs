@@ -345,27 +345,20 @@ const fn required_files(shell: Shell) -> &'static [&'static str] {
         Shell::Fish => &[
             "conf.d/gpy_init.fish",
             "functions/fish_prompt.fish",
-            "core/init.fish",
-            "core/flags.fish",
             "completions/gpy-dynamic.fish",
         ],
-        Shell::Zsh => &["gpy.zsh", "core/init.zsh"],
-        Shell::Bash => &["gpy.bash", "core/init.bash"],
+        Shell::Zsh => &["gpy.zsh"],
+        Shell::Bash => &["gpy.bash"],
     }
 }
-
-/// The script runner Fish and Zsh find beside their tree, relative to the root.
-const RUNNER_SIBLING: &str = "bash/core/g_runner.bash";
 
 /// The first file `root` lacks for `shell`, relative to `root`; `None` when
 /// the tree is complete.
 fn first_missing_file(root: &Path, shell: Shell) -> Option<String> {
     let shell_name = shell.as_str();
-    let own = required_files(shell)
+    required_files(shell)
         .iter()
-        .map(|file| format!("{shell_name}/{file}"));
-    let runner = matches!(shell, Shell::Fish | Shell::Zsh).then(|| RUNNER_SIBLING.to_owned());
-    own.chain(runner)
+        .map(|file| format!("{shell_name}/{file}"))
         .find(|relative| !root.join(relative).is_file())
 }
 

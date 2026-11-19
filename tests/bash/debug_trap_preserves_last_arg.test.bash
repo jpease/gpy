@@ -12,10 +12,6 @@ cd "$ROOT" || exit 1
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 
-if (( BASH_VERSINFO[0] < 4 )); then
-    test_skip "bash $BASH_VERSION installs no DEBUG trap (duration method none)"
-fi
-
 T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-lastarg.XXXXXX")"
 # Resolve symlinks (macOS /var -> /private/var) so it matches the child's $PWD.
 T="$(cd "$T" && pwd -P)"
@@ -26,9 +22,9 @@ source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 
 # Scrub every GPY_* variable inherited from the developer's shell.
 gpy_scrub=()
-while IFS='=' read -r __gpy_env_name _; do
-    case "$__gpy_env_name" in
-        GPY_*) gpy_scrub+=(-u "$__gpy_env_name") ;;
+while IFS='=' read -r env_name _; do
+    case "$env_name" in
+        GPY_*) gpy_scrub+=(-u "$env_name") ;;
     esac
 done < <(env)
 

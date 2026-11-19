@@ -1,220 +1,57 @@
 #!/usr/bin/env fish
 # tests/fish/fresh_install.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-
-# Test GPY initialization in a fresh/clean environment
-# Simulates a first-time installation with no existing config
+#
+# GPY in a fresh environment: an empty HOME with no GPY config. An interactive
+# Fish that loads the integration (conf.d/gpy_init.fish and
+# functions/fish_prompt.fish) with this checkout's `gpy` draws a prompt with
+# the default theme in a plain directory and in a new git repository, writes
+# no config file, and sets no public GPY_* variable.
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-echo "========================================="
-echo "GPY Fresh Install Test"
-echo "========================================="
-echo "Simulating first-time installation..."
-
-# Find repo root (where core/init.fish lives)
-set -l script_dir (dirname (status --filename))
-set -l repo_root (cd "$script_dir/../.." && pwd)
-cd "$repo_root"
-echo "Running from: $repo_root"
-echo ""
-
-# A fresh install starts from no GPY_* user values; Test 9 asserts GPY adds none.
-for name in (set -n | string match -r '^GPY_.*')
-    set -e $name
+set -g target_dir $__gpy_root/gpy-agent/target
+test -n "$CARGO_TARGET_DIR"; and set target_dir $CARGO_TARGET_DIR
+if not test -x $target_dir/debug/gpy
+    fail "gpy not built (cd gpy-agent && cargo build --bins)"
+    exit 1
 end
 
-# Save current environment
-set -l saved_home $HOME
-set -l saved_config_home $XDG_CONFIG_HOME
+set -g home (mktemp -d)
+test_track_dir $home
+mkdir -p $home/repo
+git -C $home/repo init -q
+set -g fish_dir (path dirname (command -s fish))
 
-# Create a temporary "home" directory
-set -l temp_home (mktemp -d)
-echo "Created temporary home: $temp_home"
-
-# Set up minimal environment
-set -gx HOME $temp_home
-set -gx XDG_CONFIG_HOME $temp_home/.config
-
-# Ensure no pre-existing GPY config
-if test -d $XDG_CONFIG_HOME/gpy
-    rm -rf $XDG_CONFIG_HOME/gpy
+# The agent stays off: a fresh install would start it, which
+# first_prompt_agent_start.test.fish covers without leaving a daemon behind.
+function fresh_prompt --argument-names dir
+    env -i HOME=$home PATH=$target_dir/debug:/usr/bin:/bin:$fish_dir TERM=xterm-256color \
+        GPY_AGENT_ENABLED=0 GPY_AGENT_SOCKET_PATH=$home/agent.sock \
+        fish --no-config -i -c '
+            source $argv[1]/fish/conf.d/gpy_init.fish
+            source $argv[1]/fish/functions/fish_prompt.fish
+            cd $argv[2]
+            fish_prompt
+            echo
+            set -l public (set -n | string match -r "^GPY_.*" | string match -vr "^GPY_AGENT_(ENABLED|SOCKET_PATH)\$")
+            echo "vars=$public"' -- $__gpy_root $dir </dev/null 2>&1 | string collect
 end
 
-echo ""
-echo "Test 1: Initialize GPY with no existing config"
-# Model a real fresh install: the agent is enabled (the default) but the
-# supervisor is off so init never spawns a persistent daemon. Do NOT set both
-# to 0 — that trips init.fish's "completely disabled" early-exit, which skips
-# icon initialization and segment loading (Tests 5 and 10 would then fail).
-set -gx GPY_AGENT_ENABLED 1
-set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
-
-# The theme export (and with it the __gpy_cfg_* mirrors Test 9 checks) comes
-# from this checkout's debug agent, never an installed one. A one-shot
-# `theme export` starts no daemon.
-set -lx PATH $repo_root/gpy-agent/target/debug $PATH
-
-# Source into the current scope, NOT through a pipe: `source ... | string match`
-# runs source in a subshell, so every function/variable it defines (icons,
-# segment functions) is discarded and the test would only pass where a local
-# gpy install happens to be autoloaded. Redirect stderr to a file and inspect
-# it separately instead.
-set -l init_errlog (mktemp)
-source fish/core/init.fish 2>$init_errlog
-# The prompt function is autoloaded from fish/functions/ on an installed
-# system; here it has to be sourced, or `fish_prompt` below is fish's own
-# default prompt and every prompt assertion in this file tests the wrong
-# program.
-source fish/functions/fish_prompt.fish
-if string match -q "*error*" -- (cat $init_errlog)
-    fail "Init failed with no existing config"
-else
-    pass "Init succeeds with no existing config"
-end
-rm -f $init_errlog
-
-echo ""
-echo "Test 2: Verify default segments are enabled"
-if set -q __enabled_segments
-    pass "Default segments defined: $__enabled_segments"
-
-    # Check that we have at least the core segments
-    set -l has_clock (contains clock $__enabled_segments; echo $status)
-    set -l has_directory (contains directory $__enabled_segments; echo $status)
-
-    if test $has_clock -eq 0
-        pass "Clock segment enabled by default"
-    else
-        fail "Clock segment missing from defaults"
-    end
-
-    if test $has_directory -eq 0
-        pass "Directory segment enabled by default"
-    else
-        fail "Directory segment missing from defaults"
-    end
-else
-    fail "No default segments defined"
+for dir in $home $home/repo
+    set -l out (fresh_prompt $dir | string collect)
+    set -l prompt (string replace -ra '\e\[[0-9;]*m' '' -- $out | string collect)
+    set -l name (path basename $dir)
+    # HOME itself is shown as ~.
+    test $dir = $home; and set name '~'
+    check "first prompt in $name ends with the prompt symbol" 1 (string match -qr '❯ \n' -- "$prompt"; and echo 1)
+    check "first prompt in $name carries the directory" 1 (string match -q "*$name*" -- "$prompt"; and echo 1)
+    check "first prompt in $name has no JSON or error" 1 (string match -qr '\{"|rror' -- "$prompt"; or echo 1)
+    check "first prompt in $name uses colour" 1 (string match -q '*'\e'[*' -- "$out"; and echo 1)
+    check "GPY sets no public GPY_* variable in $name" vars= (string match -r '(?m)^vars=.*$' -- "$out")
 end
 
-echo ""
-echo "Test 3: Verify fish_prompt works with defaults"
-set -l prompt_output (fish_prompt 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect)
-if test -n "$prompt_output"
-    pass "fish_prompt works with defaults"
-    echo "  Prompt length: "(string length "$prompt_output")" characters"
-else
-    fail "fish_prompt failed with defaults"
-end
-# Content, not presence: a fresh install's first prompt must carry
-# the prompt character and must not leak JSON.
-if string match -q "*$__icon_prompt*" -- "$prompt_output"; and not string match -q '*{"*' -- "$prompt_output"
-    pass "first prompt renders the prompt character '$__icon_prompt' with no JSON"
-else
-    fail "first prompt is wrong: $prompt_output"
-end
+set -l created (find $home -path '*/gpy/config.toml' 2>/dev/null)
+check "a fresh prompt writes no config.toml" "" "$created"
 
-echo ""
-echo "Test 4: Verify default theme variables exist"
-if set -q __prompt_theme
-    pass "Default theme set: $__prompt_theme"
-else
-    fail "No default theme set"
-end
-
-echo ""
-echo "Test 5: Verify icons are initialized"
-if set -q __icon_prompt
-    pass "Icons initialized"
-else
-    fail "Icons not initialized"
-end
-
-echo ""
-echo "Test 6: Test in non-git directory"
-cd $temp_home
-set -l prompt_in_home (fish_prompt 2>/dev/null)
-if test -n "$prompt_in_home"
-    pass "Prompt works in non-git directory"
-else
-    fail "Prompt failed in non-git directory"
-end
-
-echo ""
-echo "Test 7: Test in git repository"
-mkdir -p $temp_home/test_repo
-cd $temp_home/test_repo
-git init >/dev/null 2>&1
-git config user.email "test@example.com"
-git config user.name "Test User"
-
-set -l prompt_in_repo (fish_prompt 2>/dev/null)
-if test -n "$prompt_in_repo"
-    pass "Prompt works in git repository"
-else
-    fail "Prompt failed in git repository"
-end
-
-echo ""
-echo "Test 8: Verify no config files were created unexpectedly"
-if test -d $XDG_CONFIG_HOME/gpy
-    # It's OK if a config dir exists, but warn about it
-    echo "  Note: Config directory was created at $XDG_CONFIG_HOME/gpy"
-    # Check what's in it
-    set -l config_files (find $XDG_CONFIG_HOME/gpy -type f)
-    if test (count $config_files) -gt 0
-        echo "  Files created: $config_files"
-    end
-end
-pass "Config check completed"
-
-echo ""
-echo "Test 9: Verify environment variables"
-# GPY keeps its state in non-exported __gpy_* variables and never assigns a
-# public GPY_* name; the theme export's config mirrors are __gpy_cfg_*.
-set -l gpy_vars (set -n | string match -r '^__gpy_cfg_.*')
-if test (count $gpy_vars) -gt 0
-    pass "GPY config mirrors set: "(count $gpy_vars)" vars"
-else
-    fail "No __gpy_cfg_ config mirrors set (expected some)"
-end
-set -l user_vars (set -n | string match -r '^GPY_.*' | string match -v -r '^GPY_(AGENT_ENABLED|AGENT_SUPERVISOR_ENABLED)$')
-if test (count $user_vars) -eq 0
-    pass "GPY set no public GPY_* variables"
-else
-    fail "GPY set public variables: $user_vars"
-end
-
-echo ""
-echo "Test 10: Verify segment isolation"
-# Each segment should work independently
-for segment in clock directory duration
-    set -l detect_func "segment_$segment"_detect
-    set -l render_func "segment_$segment"_render
-
-    if functions -q $detect_func; and functions -q $render_func
-        pass "Segment $segment is self-contained"
-    else
-        fail "Segment $segment missing functions"
-    end
-end
-
-# Cleanup
-echo ""
-echo "Cleaning up temporary environment..."
-cd - >/dev/null
-rm -rf $temp_home
-
-# Restore environment
-set -gx HOME $saved_home
-if test -n "$saved_config_home"
-    set -gx XDG_CONFIG_HOME $saved_config_home
-else
-    set -e XDG_CONFIG_HOME
-end
-
-# Summary
-echo ""
-echo "========================================="
 test_finish "fresh install"

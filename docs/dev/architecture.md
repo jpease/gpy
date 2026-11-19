@@ -8,66 +8,65 @@
 
 ## What is GPY?
 
-GPY is a **two-process system** for creating fast, live-updating shell prompts across Fish, Zsh, and Bash:
+GPY is a **two-process system** for fast, live-updating shell prompts across Fish, Zsh, and Bash:
 
 ```
-┌───────────────────┐                  ┌──────────────────┐
-│  Shell Process    │ ←── IPC (JSON) ─→│   Rust Agent     │
-│  Fish/Zsh/Bash    │                  │  (heavy lifting) │
-│  (lightweight)    │                  │                  │
-└───────────────────┘                  └──────────────────┘
-       ↑                                        │
-       │                                        │
-       └─────── SIGURG doorbell ────────────────┘
-              (live updates; ADR-0007)
+┌──────────────────┐  gpy prompt <shell>  ┌───────────────┐                  ┌─────────────────┐
+│  Shell Process   │ ── one exec per ────→│  gpy (binary) │ ←── IPC (JSON) ─→│   Rust Agent    │
+│  Fish/Zsh/Bash   │       prompt         │  draws prompt │                  │ (heavy lifting) │
+│  (thin wrapper)  │ ←── prompt text ─────│               │                  │                 │
+└──────────────────┘                      └───────────────┘                  └─────────────────┘
+       ↑                                                                             │
+       └──────────────────────────── SIGURG doorbell ───────────────────────────────┘
+                                    (live updates; ADR-0007)
 ```
 
-**Design Philosophy**: Keep the shell fast by offloading work to a persistent background agent. The agent provides a shell-agnostic IPC interface, allowing Fish, Zsh, and Bash to share the same backend.
+**Design Philosophy**: The shell does as little as possible. Each prompt is one `gpy prompt <shell>` process that draws the whole prompt from the agent's rendered caches; a persistent background agent keeps those caches fresh and rings the shell when they change.
 
 ---
 
 ## Core Concepts
 
-### The Agent-Fish Split
+### The Shell, `gpy prompt` and the Agent
 
-**Fish Shell** (`fish/segments/`, `fish/core/`, `fish/functions/`):
-- Renders the prompt UI (ANSI codes, delimiters)
-- Makes IPC requests to agent for git/language data
-- Handles the agent's SIGURG doorbell to repaint, reload or re-register
-- Falls back to oneshot mode if agent unavailable
+**Shell wrappers** (`bash/gpy.bash`, `zsh/gpy.zsh`, `fish/conf.d/gpy_init.fish` with `fish/functions/fish_prompt.fish`; a few hundred lines in all):
+- Time each command and count commands (Bash: a `DEBUG` trap armed from `PROMPT_COMMAND`; Zsh: `preexec`/`precmd`; Fish: `fish_postexec` and `$CMD_DURATION`)
+- Call `gpy prompt <shell> --status N --pid $$ --cmd COUNT [--duration-ms MS] --shell-version V` and assign its output (`PS1`, `PROMPT`, or print it from `fish_prompt`)
+- Repaint on the agent's SIGURG (Zsh: `TRAPURG` + `zle reset-prompt`; Fish: a variable handler running `commandline -f force-repaint`; Bash cannot repaint an idle prompt)
+- Swap in the transient line on Enter (Zsh `zle-line-finish`; Fish 4.2+ `fish_prompt --final-rendering`)
+- Run `gpy prompt <shell> --exit --pid $$` when the shell exits
+- Show a bare `❯ ` when the binary is missing or fails
+
+**`gpy prompt`** (`gpy-agent/src/prompt/`):
+- Reads `config.toml` and the theme on every prompt, so an edit shows at the next prompt
+- Draws every built-in segment, the prompt character and the transient line in the shell's dialect (`prompt/dialect.rs`, `prompt/pill.rs`)
+- Serves git and language segments from the instant prompt cache, asking the agent over its socket on a miss (`prompt/link.rs`), and does the `gpy-agent oneshot` work in process when the agent is disabled or unreachable
+- Runs script segments (`prompt/script.rs`) through the embedded runner `prompt/g_runner.bash`, in one Bash 4+ child per due prompt
+- Keeps the shell's lifecycle (`prompt/session.rs`): starts the agent on a shell's first prompt, registers the shell, tells the agent the working directory after a `cd`, restarts a dead agent (rate-limited and capped by `[agent.supervisor]`), consumes the agent's `.reload`/`.reregister` flags, and unregisters on `--exit`. Its state lives in `<runtime root>/refresh-throttle/<pid>.*`
 
 **Rust Agent** (`gpy-agent/src/`):
-- Runs as background daemon (started via `gpy start`)
-- Serves IPC requests over Unix domain socket
-- Watches filesystem for git changes
-- Sends SIGURG to shell processes for live updates
-- Maintains caches to avoid redundant git queries
-
-**Why this split?**
-- Fish shell builtins are slow for complex operations (git status, directory traversal)
-- Persistent agent can cache results and maintain file watchers
-- IPC latency < 1ms, much faster than spawning git processes
+- Runs as a background daemon (`gpy-agent start`)
+- Serves IPC requests over a Unix domain socket
+- Watches the filesystem for git changes and keeps the instant prompt cache fresh
+- Sends SIGURG to registered shells when a rendered cache entry changed
 
 ### Request/Response Flow
 
 Git and language segments are read from the **instant prompt cache** first. IPC is only the cold-miss, variant-mismatch and background-refresh path (see [Instant prompt cache](#instant-prompt-cache)).
 
 ```
-1. segment_git_render (Fish) / __gpy_segment_git (Zsh, Bash)
-2. __gpy_read_instant_cache reads <cache dir>/instant-prompts/<key>.<variant>.<token>.<ext>
-     hit, fresh: print the file; no IPC
-     hit, stale: print the file and send a throttled background refresh (__gpy_maybe_refresh);
+1. gpy prompt reads <cache dir>/instant-prompts/<key>.<variant>.<token>.<ext>
+     hit, fresh: use the file; no IPC
+     hit, stale: use the file and send a throttled background refresh;
                  the agent repaints via SIGURG when the rendered output changed
-     miss:       steps 3-6 with the cold reply budget (GPY_IPC_COLD_TIMEOUT_MS, Fish default 500 ms)
-3. Fish:     __gpy_build_data_payload … ansi → __gpy_ipc_send
-   Zsh/Bash: __gpy_build_data_request_into … zsh-prompt|bash-prompt → __gpy_send_json
-4. {"op":"git","cwd":…,"format":"ansi"}\n over the Unix socket → gpy-agent
-5. agent reuses a fresh GitStatusCache entry, or runs git status --porcelain=v2;
+     miss:       steps 2-4 with the cold reply budget
+2. {"op":"git","cwd":…,"format":"bash-prompt"}\n over the Unix socket → gpy-agent
+3. agent reuses a fresh GitStatusCache entry, or runs git status --porcelain=v2;
    it renders with the theme in the requested format and writes the instant cache file
-6. ← one line of rendered text, which the shell prints
+4. ← one line of rendered text, which gpy prompt places in the prompt
 ```
 
-With the agent disabled, or after a refusal (`{"error"…}` reply), the shell runs `gpy-agent oneshot` instead, at most once per prompt render (`__gpy_oneshot_claim`). Other agent-rendered segments (`directory`, `duration`, `character`, `clock`, `exit_status`) have no cache file: each is one IPC request per render unless the shell's memo of the previous render still applies.
+With the agent disabled, or after a refusal (`{"error"…}` reply), `gpy prompt` does the oneshot work in process instead, at most once per prompt. Other segments (`directory`, `duration`, `character`, `clock`, `status`) are drawn in process from the theme.
 
 **Timing**: a cache hit costs one file read and no IPC. An IPC round trip measured 0.037 ms for a ping (2026-05-15, one dev machine; `ipc_roundtrip`). These are diagnostics, not budgets; the budgets are in `benchmarks/perf-budgets.json`.
 
@@ -80,193 +79,56 @@ With the agent disabled, or after a refusal (`{"error"…}` reply), the shell ru
 - `token`: the previous segment's background colour, which the rendered chevron bakes in (`none` when there is none)
 - `ext`: the dialect (`ansi`, `zsh`, `bash`)
 
-Beside a key's git or language entries the agent keeps an empty presence marker, `{key}.{git|lang}.any-entry.{ext}`. The shells' omit check (`__gpy_instant_cache_present`) tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows. The marker is written with the entries, refreshed with them, and removed with them (`remove_git`, the restart clear of language files); `prev_bg_token` never emits `-`, so no render context can name it.
+Beside a key's git or language entries the agent keeps an empty presence marker, `{key}.{git|lang}.any-entry.{ext}`. The omit check tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows. The marker is written with the entries, refreshed with them, and removed with them (`remove_git`, the restart clear of language files); `prev_bg_token` never emits `-`, so no render context can name it.
 
 Who writes and who reads:
 - The agent writes a file while handling a request, again on a background refresh, on a watcher event, and for a theme or config change before it rings the reload doorbell.
-- A shell serves any file it finds. A file older than the shell-side TTL is stale (git 5 s, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`; language 30 s, `GPY_LANGUAGE_CACHE_TTL_SECONDS`) and also triggers a refresh. A `.none` file served for a request that has a real `prev_bg` re-queries the agent, because its chevron colour is wrong.
+- `gpy prompt` serves any file it finds. A file older than the prompt-side TTL is stale (git 5 s, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`; language 30 s, `GPY_LANGUAGE_CACHE_TTL_SECONDS`) and also triggers a refresh. A `.none` file served for a request that has a real `prev_bg` re-queries the agent, because its chevron colour is wrong.
 - Files unused for 14 days are removed by an age sweep (at agent start and hourly); files the agent cannot refresh are cleared at start. The in-memory bookkeeping is bounded (`INSTANT_PROMPT_KEY_CAPACITY`, `INSTANT_PROMPT_LAST_WRITTEN_CAPACITY`).
 
-The benchmark side of this path (`prompt_render`, `prompt_render_cold`, `prompt_render_stale`, `prompt_render_degraded`) is in [benchmarking.md](performance/benchmarking.md#mechanisms-behind-the-cached-prompt-budget).
+The benchmark side of this path is in [benchmarking.md](performance/benchmarking.md#mechanisms-behind-the-cached-prompt-budget).
 
 ---
 
 ## Multi-Shell Architecture
 
-### Design Principles
+### One Prompt Path
 
-GPY supports Fish, Zsh, and Bash through a **shell-agnostic backend** with **shell-specific frontends**:
+All three shells share one renderer, `gpy prompt`. The dialect decides only the escaping and the output shape:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Shell-Agnostic Layer                     │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Rust Agent (gpy-agent)                     │   │
-│  │  • IPC Server (JSON protocol)                        │   │
-│  │  • Git Status Cache                                  │   │
-│  │  • Language Detection                                │   │
-│  │  • File Watcher                                      │   │
-│  │  • Theme Management                                  │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ JSON IPC (shell-agnostic)
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-┌───────▼──────┐    ┌───────▼──────┐    ┌──────▼───────┐
-│  Fish Shell  │    │  Zsh Shell   │    │  Bash Shell  │
-│              │    │              │    │              │
-│ fish/        │    │ zsh/         │    │ bash/        │
-│ • core/      │    │ • core/      │    │ • core/      │
-│ • segments/  │    │ • segments/  │    │ • segments/  │
-│ • functions/ │    │ • gpy.zsh    │    │ • gpy.bash   │
-└──────────────┘    └──────────────┘    └──────────────┘
-```
+| Dialect | Output | Escaping |
+|---------|--------|----------|
+| `bash` | `PS1` | SGR inside `\[ \]`; `promptvars` escaping; the clock is a live `\D{…}` |
+| `zsh` | `PROMPT`, 0x1F, the transient line | SGR inside `%{ %}`; `%%`; the clock is a live `%D{…}`; the wrapper doubles `!` under `prompt_bang` |
+| `fish` | the prompt, 0x1F, the transient line | Plain SGR; the binary draws the clock time |
 
-**Key Insight**: The agent doesn't know or care which shell it's talking to. All shell-specific rendering (ANSI codes, prompt syntax) is handled by the shell integration.
-
-### Shell Integration Layers
-
-Each shell implementation has three layers:
-
-#### Layer 1: Core IPC (`core/ipc.{fish,zsh,bash}`)
-
-**Responsibility**: JSON communication with agent over Unix socket
-
-**Shell-agnostic protocol**:
-```json
-Request:  {"op":"git","cwd":"/path","format":"json"}
-Response: {"branch":"main","staged":0,"unstaged":1,...}
-```
-
-**Shell-specific implementation**:
-- Fish: `__gpy_request` orchestrates (`fish/core/ipc.fish`): instant cache, then `__gpy_build_data_payload` and `__gpy_ipc_send`, which uses `socat` and falls back to `nc -U`; then the oneshot fallback
-- Zsh: `__gpy_request` (`zsh/core/ipc.zsh`) builds the request with `__gpy_build_data_request_into` and sends it with `__gpy_send_json`, using the `zsh/net/socket` builtin module (`zsocket`), falling back to `socat`, then `nc -U`
-- Bash: `__gpy_request` (`bash/core/ipc.bash`), `__gpy_build_data_request_into` and `__gpy_send_json`, using `socat`, falling back to `nc -U`
-
-**Common pattern**: build the request, send it, classify the reply. Fish:
-```fish
-set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
-set -l reply (__gpy_ipc_send $payload (__gpy_ipc_timeout_ms))
-set -l send_status $status
-# 0: complete reply; 1: unreachable; 2: sent, but no complete reply in time
-#    (an empty line included); 3: refused for good, a reply starting {"error"
-```
-
-#### Layer 2: Signal Handling (Fish: `core/ipc.fish`; Zsh/Bash: `core/signals.{zsh,bash}`)
-
-**Responsibility**: Receive the agent's SIGURG doorbell, act on any flag file, repaint the prompt
-
-**Shell-agnostic behavior** ([ADR-0007](adr/adr-0007-sigurg-doorbell-notifications.md)): the agent sends only SIGURG, whose default disposition is ignore, so a shell without a handler (e.g. mid-`exec`) is never killed. Meaning travels in empty flag files under `<runtime_root>/shells/`, written by the agent before the signal. One handler:
-1. `<pid>.reregister` exists → remove it, re-register with the agent
-2. `<pid>.reload` exists → remove it, reload theme/config variables
-3. Always repaint (no flag = plain repaint: git/clock update). The agent rings only when its rendered cache output changed (a watcher event, or a request that wrote new content), never for a reply that carries nothing new; with `agent.live_updates = false` requests never ring, while reload and re-register rings are still sent
-
-**Shell-specific implementation**:
-- Fish: `__gpy_doorbell_handler` (`--on-signal SIGURG`, `fish/core/ipc.fish`) → increment `$__gpy_repaint_trigger`; `__gpy_repaint_on_variable` then runs `commandline -f force-repaint`
-- Zsh: `TRAPURG()` → `__gpy_on_doorbell` → re-render `PROMPT`, `zle reset-prompt` when zle is active
-- Bash: no trap; SIGURG stays ignored. `__gpy_precmd` handles flags 1 and 2 before rendering `PS1`, so changes show at the next prompt
-
-#### Layer 3: Segment Rendering (`segments/*.{fish,zsh,bash}`)
-
-**Responsibility**: Format segment output for shell's prompt syntax
-
-**Shell-agnostic data**: the agent's rendered segment text in the shell's format (see Format Negotiation below). Only `json` replies are data objects, and those are for tooling.
-
-**Shell-specific rendering**:
-- Fish: `fish_prompt` (`fish/functions/fish_prompt.fish`) loops over `$__enabled_segments`, calling `segment_<name>_detect`, `segment_<name>_omit` and `segment_<name>_render`, which print the segment
-- Zsh: `__gpy_segment_<name>` per segment (`zsh/segments/`); `__gpy_render_prompt` joins them and `__gpy_update_prompts` assigns `PROMPT` (`zsh/core/init.zsh`)
-- Bash: `__gpy_segment_<name>` per segment (`bash/segments/`); `__gpy_precmd` joins them into `PS1` (`bash/core/init.bash`)
-
-### Format Negotiation
+The transient line is what stays in scrollback once a line is submitted: with `ui.transient_prompt` on, the clock time (when the clock is enabled) and the prompt symbol; off with the clock, the whole prompt; off without it, nothing (the shell leaves the prompt alone).
 
 Every data request names a `format` (`Format` in `gpy-agent/src/formatter/mod.rs`):
 
 | Format | Used by | Reply |
 |--------|---------|-------|
-| `ansi` | Fish | One line with ANSI SGR escapes |
-| `zsh-prompt` | Zsh | SGR escapes inside `%{ %}` |
-| `bash-prompt` | Bash | SGR escapes inside `\[ \]` |
+| `ansi` | `gpy prompt fish` | One line with ANSI SGR escapes |
+| `zsh-prompt` | `gpy prompt zsh` | SGR escapes inside `%{ %}` |
+| `bash-prompt` | `gpy prompt bash` | SGR escapes inside `\[ \]` |
 | `json` | `gpy-agent oneshot` default and tooling | A flat object per `gpy-agent/schemas/response.json` |
 
-### Segment Rendering Boundary
-
-The agent renders each segment, colors and separators included, into a
-shell-ready string in the requested format. The shell only orders segments and
-concatenates them into the prompt.
+`tests/bash/prompt_golden.test.bash` pins the output of all three dialects for every built-in theme (`tests/fixtures/prompt_golden/`).
 
 ### Shell-Specific Constraints
 
-#### Fish
-- Reference implementation
-- Fast string processing; no JSON parser: requests are built by hand (`__gpy_json_escape`) and replies are rendered text, printed as is apart from the `{"error"` prefix check
-- Signal handling through a variable-change repaint ([ADR-0006](adr/adr-0006-async-terminal-updates.md))
-
-#### Zsh
-- `TRAPURG` plus `zle reset-prompt` repaints an idle prompt
-- `PROMPT` expansion for segments
-
-**Limitations**:
-- No native JSON parsing (uses the `zsh/net/socket` builtin, `socat`, or `nc -U` for IPC)
-- Prompt escaping requires `%%` for literal `%`
-
-#### Bash
-- Same segments; live updates appear at the next prompt
-
-**Limitations**:
-- No native JSON parsing (uses `socat` or `nc -U`)
-- `PROMPT_COMMAND` runs synchronously on each prompt without Fish/Zsh repaint hooks
-- Signal handling more complex (no clean repaint primitive)
-- Code avoids associative arrays, so it runs on Bash 3.2 (macOS default)
-- Duration needs `EPOCHREALTIME` (Bash 5.0+); Bash 3.2 disables that segment
-
-See [bash-limitations.md](../user/bash-limitations.md) for details.
-
-### Cross-Shell Divergences
-
-Where the three integrations knowingly differ today. All three resolve the
-agent binary the same way (`gpy-agent` on `PATH`, else
-`$HOME/.local/bin/gpy-agent`) and give a connected-but-silent agent the same
-5 s late window (only non-path ops open it; a doorbell clears it).
-
 | Topic | Bash | Zsh | Fish |
 |-------|------|-----|------|
-| Shell options touched | `shopt -s promptvars` on every render; `failglob`, `nocasematch`, `nullglob` toggled and restored inside functions | `setopt prompt_subst prompt_percent` globally at load; functions use `emulate -L zsh` / `local_options`; `prompt_bang` left as the user set it | None |
+| Shell options touched | `shopt -s promptvars` on every prompt | `setopt prompt_subst prompt_percent` at load; hook functions use `emulate -L zsh`; `prompt_bang` left as the user set it | None |
 | Interactive guard | None: sourcing `gpy.bash` loads it | None: sourcing `gpy.zsh` loads it | `conf.d/gpy_init.fish` returns unless `status is-interactive` |
-| `TERM=dumb` | Not special-cased | Not special-cased | Not special-cased |
-| Vi mode | No mode indicator | No mode indicator | No mode indicator |
-| Refresh-throttle state | Stamp files under `<runtime>/refresh-throttle/<pid>.*` (segments run in `$(...)`), removed on exit; the late window is a `<pid>.agent-late` file there | Same stamp files; late window in shell globals | Shell globals (`__gpy_<op>_refresh_ms_*`, `__gpy_agent_late_*`); nothing on disk |
+| Duration | `EPOCHREALTIME` (Bash 5+); GNU `date +%s%N` (Bash 4); whole seconds (`$SECONDS`); none on Bash 3.2 | `EPOCHREALTIME` | `$CMD_DURATION` |
+| Idle repaint | None: readline cannot redraw an idle prompt; the next prompt shows fresh data | `TRAPURG` → re-run `gpy prompt`, `zle reset-prompt`; a ring during `precmd` repaints from `zle-line-init` | SIGURG handler bumps `$__gpy_repaint_trigger`; a variable handler runs `commandline -f force-repaint` |
+| Transient line | None | `zle-line-finish` swaps it in | `fish_prompt --final-rendering` (Fish 4.2+) |
+| Script segments | The embedded runner in one Bash 4+ child from `PATH` (else `/bin/bash`); only exported variables reach a script | Same | Same |
 
-Script (G) segments run through the same `bash/core/g_runner.bash`, but each
-shell feeds it differently:
+See [bash-limitations.md](../user/bash-limitations.md) for Bash details.
 
-| Topic | Bash | Zsh | Fish |
-|-------|------|-----|------|
-| Runner process | Sourced; scan and batch run in `$(...)` subshells | `bash -p -c` child for the batch; the trigger scan runs in Zsh; child stdin `/dev/null` | One `bash -p -c` child for scan plus batch; child stdin is the terminal, so Ctrl-C reaches it |
-| Deadline origin | No caller sets `__gpy_g_t0`: deadlines count from the runner's own start (Bash 5 `EPOCHREALTIME`; Bash 3.2-4.4 start a timer per segment) | Same, measured in the Bash child, so its start-up is not charged | Same as Zsh |
-| Failed reload | Startup/background load unsets `__gpy_script_segments` first, so a failed export leaves none; `fresh` fetches first and keeps the running set on failure | Same | Same |
-| Clock stepping back | Cache fresh only while `0 <= age < ttl`, so a backward step expires it; clock is `EPOCHSECONDS`, else `printf %(%s)T`, else `$SECONDS` (Bash 3.2-4.1) | Same rule, `EPOCHSECONDS` | Same rule, `__gpy_now_seconds` |
-| `cmd_duration` input | `__gpy_cmd_duration` measured in `PROMPT_COMMAND` (resolution depends on the duration method); empty before the first command | Last command's ms from `EPOCHREALTIME`, kept across a prompt due only to a `$PWD` change; empty before the first command | Fish's `$CMD_DURATION`; empty until `fish_postexec` first fires |
-| Base environment | Cleaned `PATH`, `HOME USER LOGNAME LANG TERM TZ TMPDIR LC_*` read from shell variables, so unexported values are forwarded too | Same list, but only exported values reach the child | Same as Zsh |
-
-### Cross-Shell Compatibility Patterns
-
-#### Pattern 1: Conditional Feature Detection
-
-```bash
-# In shell integration
-if command -v socat &>/dev/null; then
-    # Use socat for IPC (reliable)
-elif command -v nc &>/dev/null; then
-    # Fall back to nc -U (Fish/Zsh/Bash; Zsh also has the zsh/net/socket builtin)
-else
-    # Oneshot mode (no agent communication)
-fi
-```
-
-#### Pattern 2: Shell-Agnostic Config
+### Shared Configuration
 
 Theme and config files are shared across shells:
 ```
@@ -285,66 +147,9 @@ root (`$XDG_DATA_HOME/gpy`, default `~/.local/share/gpy`):
   └── plugins/           # bundled script plugins (username, hostname)
 ```
 
-The agent renders the theme and config for each shell into `<cache dir>/theme-export.{fish,zsh,bash}` (`cache/theme_export.rs`). Shells source that file, and fall back to running `gpy-agent theme export --shell <shell>` when it is missing or lacks the version sentinel. Each line sets a shell variable such as `__color_clock_bg`, `__icon_prompt` or `__gpy_cfg_transient_prompt`:
-- Fish: `set -g __color_clock_bg "black"`
-- Zsh: `typeset -g __color_clock_bg="black"`
-- Bash: `__color_clock_bg="black"`
-
-The first line is the sentinel (`set -g __gpy_export_version "1"`, `typeset -g __gpy_export_version="1"`, `__gpy_export_version="1"`). A shell sources a file only when its first line matches. An older agent's export used `set -gx GPY_*`, which the shell would read back as user input, so that format is refused.
-
-#### Pattern 3: Graceful Degradation
-
-All shells support **oneshot mode** when agent is unavailable:
-```fish
-# Fish example (fish/segments/git.fish): instant-cache miss with the agent disabled
-set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
-# runs: gpy-agent oneshot git --cwd "$root" --format ansi [--not-last] [--first]
-```
-
-**Performance impact**:
-- With agent: a git or language segment with a cache file costs a file read and no IPC; IPC happens on a cold miss, a variant mismatch or a background refresh
-- Without agent (oneshot): a `gpy-agent` process spawn plus the git and language work, on every prompt, at most one spawn per render
-
 ### Live Updates Across Shells
 
-**Challenge**: Signal handling and repaint primitives differ per shell
-
-**Solution**: Each shell installs one SIGURG handler that checks the flag files, then repaints with its own primitive
-
-```fish
-# Fish: a function declared with --on-signal SIGURG
-#   handles <pid>.reregister / <pid>.reload, then:
-set -g __gpy_repaint_trigger (math $__gpy_repaint_trigger + 1)
-# Variable change triggers prompt repaint via hook
-```
-
-```zsh
-# Zsh: TRAPURG() handles the flags, re-renders PROMPT, then
-zle reset-prompt  # Zsh-specific repaint primitive
-```
-
-```bash
-# Bash: no URG trap. The next prompt handles the flags and renders PS1.
-# Readline cannot redraw an idle prompt; the next prompt shows fresh data.
-```
-
-**Key insight**: Agent sends the same SIGURG to all shells. Each shell handles it according to its capabilities.
-
-### Testing Multi-Shell Compatibility
-
-What each shell supports is the [Shell feature matrix](../INSTALL.md#shell-feature-matrix).
-
-**Test strategy**:
-1. **Unit tests**: Agent (shell-agnostic), in Rust
-2. **Integration tests**: Each shell separately - IPC contract validation
-3. **E2E tests**: Each shell on a real pseudo-terminal against a real agent; a clean-container fresh install
-
-For reproducible shell-integration testing, see:
-- [`tests/fish/README.md`](../../tests/fish/README.md)
-- [`gpy-agent/tests/README.md`](../../gpy-agent/tests/README.md)
-- [Testing Tiers](testing.md)
-
-### Live Update Sequence
+The agent sends only SIGURG ([ADR-0007](adr/adr-0007-sigurg-doorbell-notifications.md)), whose default disposition is ignore, so a shell without a handler (e.g. mid-`exec`) is never killed. Meaning travels in empty flag files under `<runtime_root>/shells/`, written before the signal: `<pid>.reregister` (the agent restarted) and `<pid>.reload` (theme or config changed). The next `gpy prompt` run for that shell consumes them: it re-registers, and re-runs script segments with their circuit breakers reset. The agent rings only when its rendered cache output changed (a watcher event, or a request that wrote new content), never for a reply that carries nothing new; with `agent.live_updates = false` requests never ring, while reload and re-register rings are still sent.
 
 When you run `git commit` in Terminal A:
 
@@ -361,16 +166,27 @@ Agent runs git status, updates cache
       ↓
 Agent sends SIGURG to all registered shell PIDs in that repo
       ↓
-Terminal B: Receives SIGURG (no flag file → repaint)
-      ↓
-Fish SIGURG handler bumps $__gpy_repaint_trigger → commandline -f force-repaint
-      ↓
-Prompt redraws with fresh git status
+Terminal B (Zsh/Fish): the handler re-runs gpy prompt and repaints
 ```
 
 **Terminal A gets two updates**:
 1. Immediate: Prompt renders after command (shows stale cache)
 2. Async: ~200ms later, receives SIGURG and updates to fresh status
+
+### Testing Multi-Shell Compatibility
+
+What each shell supports is the [Shell feature matrix](../INSTALL.md#shell-feature-matrix).
+
+**Test strategy**:
+1. **Unit tests**: `gpy prompt` and the agent, in Rust (`cargo nextest run --lib prompt::`)
+2. **Golden prompts**: `tests/bash/prompt_golden.test.bash`, every dialect and built-in theme
+3. **Wrapper tests**: each shell's hooks (timing, `$?`, traps, transient line, repaint)
+4. **E2E tests**: each shell on a real pseudo-terminal against a real agent; a clean-container fresh install
+
+For reproducible shell-integration testing, see:
+- [`tests/fish/README.md`](../../tests/fish/README.md)
+- [`gpy-agent/tests/README.md`](../../gpy-agent/tests/README.md)
+- [Testing Tiers](testing.md)
 
 ---
 
@@ -404,11 +220,11 @@ Prompt redraws with fresh git status
                     IPC │       │doorbell
                         │       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 Fish Shell Process(es)                      │
+│            Fish / Zsh / Bash Shell Process(es)              │
 │                                                              │
-│  fish_prompt() → segments → __gpy_request → socket          │
+│  prompt hook → gpy prompt <shell> → cache files / socket     │
 │                                                              │
-│  SIGURG handler → flags → commandline -f repaint            │
+│  SIGURG handler → gpy prompt <shell> → repaint (Zsh, Fish)   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -615,14 +431,14 @@ When adding new shared state:
 ### Git Status Request
 
 ```
-Fish segment_git_render()
+gpy prompt fish: the git segment
   ↓
-__gpy_read_instant_cache → <cache dir>/instant-prompts/<key>.git….ansi
+read <cache dir>/instant-prompts/<key>.git….ansi
   ↓
-hit (fresh or stale): print the file; a stale hit also fires a throttled
-__gpy_maybe_refresh (steps below, reply discarded). Only a miss continues.
+hit (fresh or stale): use the file; a stale hit also sends a throttled
+background refresh (steps below, reply discarded). Only a miss continues.
   ↓
-__gpy_build_data_payload git "$root" ansi … → __gpy_ipc_send
+prompt/link.rs: send the request, with the cold reply budget
   ↓
 JSON: {"op":"git","cwd":"/path","format":"ansi"}
   ↓
@@ -651,7 +467,7 @@ Render response in ansi format:
   ↓
 ← ansi: "\x1b[32m main \x1b[0m  2 \x1b[33m⚡1\x1b[0m"
   ↓
-Fish: printf '%s' $synced
+gpy prompt places the text in the prompt it prints
 ```
 
 A file-event refresh instead runs one pathspec `git status --porcelain=v2 -z -- <paths>` (`get_pathspec_status`) and merges the result into the cached status.
@@ -689,11 +505,12 @@ agent::events::handle_file_event():
   - If stale: run git status, update cache
   - Ring registered clients with SIGURG only if the agent's rendered cache output changed
   ↓
-Fish processes receive SIGURG (no flag file)
+Shells receive SIGURG (no flag file)
   ↓
-SIGURG handler bumps $__gpy_repaint_trigger → commandline -f repaint
+Zsh: TRAPURG re-runs gpy prompt, zle reset-prompt
+Fish: SIGURG handler bumps $__gpy_repaint_trigger → commandline -f force-repaint
   ↓
-Prompt redraws (calls segment_git_render again)
+Prompt redraws with the fresh cache entry
 ```
 
 ### Clock Timer
@@ -727,7 +544,7 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 **Socket Location** (`paths::SocketPath`, `paths::runtime_root_for`):
 - Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`/`config reload`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
 - Default: `<runtime root>/gpy.sock`, where the runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy` and `$HOME/.cache/gpy`; relative `XDG_*` values are ignored. There is no `/tmp/gpy` fallback: with none usable, `gpy-agent start` exits 1 and `status` exits 4 (a `--socket` or `GPY_AGENT_SOCKET_PATH` still works). The config root (`$XDG_CONFIG_HOME/gpy` or `~/.config/gpy`) and data root (`$XDG_DATA_HOME/gpy` or `~/.local/share/gpy`) have no relative fallback either
-- There is no `config.toml` key. Fish, Bash and Zsh resolve the same path in `__gpy_ipc_endpoint`; `gpy debug paths` prints it
+- There is no `config.toml` key. `gpy prompt` resolves the same path as the agent; `gpy debug paths` prints it
 - Only `gpy-agent start` creates the default runtime directory (`agent::lifecycle::ensure_runtime_dir`); other commands only resolve the path
 - The path must fit the Unix socket limit (103 bytes on macOS, 107 on Linux); `gpy-agent` refuses a longer one
 
@@ -738,7 +555,7 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 - Each reply is one newline-terminated line. For the prompt formats (`ansi`, `zsh-prompt`, `bash-prompt`) it is the rendered segment text; for `json` requests and control ops it is a JSON object
 - Multiple requests can be sent over the same connection (connection pooling)
 
-**Refusals**: a request the agent refuses (bad JSON, unknown op, missing field, a denylisted or invalid path) gets a single `{"error":"Parse error: ..."}` line in every format, never an empty line. A shell treats any reply that starts `{"error"` as a permanent refusal: it never prints or memoizes it and falls back to oneshot (Fish: `__gpy_ipc_send` status 3). An empty line still means the agent is alive but late: the shell omits the segment and does not fork oneshot (`__gpy_ipc_send` status 2).
+**Refusals**: a request the agent refuses (bad JSON, unknown op, missing field, a denylisted or invalid path) gets a single `{"error":"Parse error: ..."}` line in every format, never an empty line. `gpy prompt` treats any reply that starts `{"error"` as a permanent refusal and does the oneshot work in process instead. An empty line still means the agent is alive but late: the segment is omitted and no oneshot work is done.
 
 **Security**:
 - The socket is chmod'ed to `0600` right after bind
@@ -929,19 +746,13 @@ A config file that exists but does not load keeps the last good configuration.
 
 1. **Unified Signal Path**: Repaints (git/clock) and reloads (config/theme) arrive as the same SIGURG; a reload is a SIGURG preceded by a `<pid>.reload` flag file:
    - Agent sends signal
-   - Fish increments `__gpy_repaint_trigger`
-   - Variable change handler calls `force-repaint`
-   - No direct `commandline -f` calls from signal handlers (causes timing issues)
+   - Fish increments `__gpy_repaint_trigger`; a variable change handler calls `force-repaint` (no direct `commandline -f` calls from signal handlers: they cause timing issues)
+   - Zsh re-runs `gpy prompt` from `TRAPURG` and calls `zle reset-prompt`
+   - The next `gpy prompt` consumes the flag
 
-2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like removing `git` from `ui.enabled_segments`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`__enabled_segments`) so segments can correctly determine which is last.
+2. **Agent Must Send a Reload for ALL Config Changes**: `gpy prompt` reads `config.toml` on every prompt, so a reload ring exists to repaint idle prompts and to reset script-segment circuit breakers; the agent sends it for every config change, including one that only disables a segment.
 
-3. **Theme Loading Must Use Source, Not Eval**: the agent writes the export cache file before the reload doorbell, and Fish sources it. The fallback joins the output of `gpy-agent theme export --shell fish` with newlines and pipes it to `source`:
-   ```fish
-   string join \n -- $export_text | source
-   ```
-   NOT `eval (...)` - command substitution flattens newlines, breaking multi-line scripts.
-
-4. **Avoid Fish-Side Config Detection**: Don't use `--on-event fish_prompt` to detect config file changes - it creates race conditions with the agent's file watcher. Let the agent be the single source of truth for config changes.
+3. **Avoid Shell-Side Config Detection**: Don't use `--on-event fish_prompt` (or a shell hook) to detect config file changes - it creates race conditions with the agent's file watcher. Let the agent be the single source of truth for config changes.
 
 **Common Pitfalls**:
 - Using `commandline -f execute` for repaints → creates blank prompt lines
@@ -1041,10 +852,10 @@ See [add-new-segment.md](add-new-segment.md) for the checklist.
 
 Route A, a bundled script plugin under `plugins/<id>/`, is the default and needs no Rust change. Route B, an agent-rendered segment, needs an issue and maintainer approval first.
 
-An agent-rendered segment touches all three shells, each with its own `segments/` directory:
-1. `fish/segments/<id>.fish`: `segment_<id>_detect`, `segment_<id>_omit`, `segment_<id>_render`
-2. `zsh/segments/<id>.zsh` and `bash/segments/<id>.bash`: `__gpy_segment_<id>_detect`, `__gpy_segment_<id>_omit`, `__gpy_segment_<id>`
-3. The segment must be in `ui.enabled_segments`; the shells read the resulting `__enabled_segments` from the theme export, with fallbacks in `fish/core/defaults.fish`
+An agent-rendered segment is drawn by `gpy prompt` for all three shells:
+1. Render it in the agent (`ipc/`, `formatter/`), and draw it in `gpy-agent/src/prompt/mod.rs` (`would_render`, `segment`)
+2. The segment must be in `ui.enabled_segments`
+3. Add golden cases to `tests/bash/prompt_golden.test.bash` (`GPY_UPDATE_GOLDEN=1` regenerates them; review the diff)
 4. Test with both agent and oneshot modes
 
 ### Modifying IPC Protocol
@@ -1055,8 +866,8 @@ Steps:
 1. Add the op to `Op::ALL` in `gpy-agent/src/ipc/wire.rs` (the only list of op names) and the `Message` enum in `gpy-agent/src/ipc/mod.rs`
 2. Handle it in the `into_message` dispatch (`ipc/protocol/mod.rs`) and route it in `HandlerRegistry::route` (`ipc/handlers/mod.rs`)
 3. Update the schemas in `gpy-agent/schemas/` (`message.json`, `response.json`); `gpy-agent/tests/schema_validation_tests.rs` checks them against the code
-4. Update the IPC code of all three shells: `fish/core/ipc.fish`, `zsh/core/ipc.zsh`, `bash/core/ipc.bash`
-5. Bump `PROTOCOL_VERSION` if the change is incompatible (shells compare it for equality; there is no negotiation)
+4. Update `gpy-agent/src/prompt/link.rs` if `gpy prompt` sends the op
+5. Bump `PROTOCOL_VERSION` if the change is incompatible (`gpy prompt` and the agent ship together; there is no negotiation)
 6. Coordinate shell and Rust deployment
 
 ### Debugging Cache Issues

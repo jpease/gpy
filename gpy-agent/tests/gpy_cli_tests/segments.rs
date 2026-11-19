@@ -276,14 +276,20 @@ fn segments_names_the_plugin_that_owns_a_duplicated_segment() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     for id in ["aaa", "zzz"] {
         let plugin_dir = env.plugins_dir().join(id);
-        fs::create_dir_all(&plugin_dir).expect("Failed to create plugin dir");
+        fs::create_dir_all(plugin_dir.join("segments")).expect("Failed to create plugin dir");
         fs::write(
             plugin_dir.join("plugin.toml"),
             format!(
-                "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi_version = \"v1\"\nentry_type = \"file\"\nprovided_segments = [\"demo\"]\n"
+                "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi_version = \"v1\"\nentry_type = \"script\"\nprovided_segments = [\"demo\"]\n"
             ),
         )
         .expect("Failed to write plugin manifest");
+        fs::write(
+            plugin_dir.join("segments/demo.toml"),
+            "command = \"run.sh\"\n",
+        )
+        .expect("Failed to write segment manifest");
+        fs::write(plugin_dir.join("run.sh"), "echo demo\n").expect("Failed to write script");
     }
 
     let segments = env

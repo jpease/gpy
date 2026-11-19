@@ -556,7 +556,33 @@ pub(super) fn install_files(
         }
         (Err(err), None) => return Err(err),
     }
+    if mode == InstallMode::Copy {
+        remove_retired(&source, &shell_dir);
+    }
     Ok(shell_dir)
+}
+
+/// Top-level entries of a shell tree that earlier releases installed and
+/// this one no longer ships: the in-shell renderers before `gpy prompt`
+/// drew every prompt (#1247).
+const RETIRED_ENTRIES: [&str; 2] = ["core", "segments"];
+
+/// Remove what an earlier release left in `shell_dir` once the new tree is
+/// in place: only the GPY-owned [`RETIRED_ENTRIES`] the source lacks. A
+/// failure is a warning; the new tree already works without them.
+fn remove_retired(source: &Path, shell_dir: &Path) {
+    for name in RETIRED_ENTRIES {
+        let retired = shell_dir.join(name);
+        if source.join(name).exists() || fs::symlink_metadata(&retired).is_err() {
+            continue;
+        }
+        if let Err(err) = remove_tree(&retired) {
+            output::warn(format_args!(
+                "Could not remove {} left by an earlier release: {err}",
+                retired.display()
+            ));
+        }
+    }
 }
 
 /// Replace `dst` with a copy of `src`, staged beside it first so a failed

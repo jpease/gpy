@@ -52,7 +52,7 @@ fn bash_login(home: &Path, interactive: bool) -> Output {
     command
         .args([
             "-c",
-            "declare -F __gpy_init >/dev/null && echo loaded || echo absent",
+            "declare -F __gpy_precmd >/dev/null && echo loaded || echo absent",
         ])
         .current_dir(home)
         .env_clear()

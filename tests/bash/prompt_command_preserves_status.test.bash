@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/bash/prompt_command_preserves_status.test.bash
-# __gpy_precmd must preserve `$?` for later PROMPT_COMMAND hooks. Each case runs a
+# __gpy_precmd must hand gpy the command's `$?` and preserve it for later
+# PROMPT_COMMAND hooks. Each case runs a
 # fresh interactive child bash (3.2 and current) that never starts an agent.
 
 # shellcheck disable=SC2016
@@ -12,7 +13,15 @@ cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
 # The child's config dir disables the supervisor (the theme export would re-enable it).
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
-mkdir -p "$SANDBOX/run"
+mkdir -p "$SANDBOX/run" "$SANDBOX/bin"
+# A stub gpy records the --status each prompt hands it in $GPY_STATUS_LOG.
+cat >"$SANDBOX/bin/gpy" <<'STUB'
+#!/bin/sh
+[ "$3" = --exit ] && exit 0
+[ "$3" = --status ] && echo "$4" >>"$GPY_STATUS_LOG"
+printf '> '
+STUB
+chmod +x "$SANDBOX/bin/gpy"
 
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
@@ -27,7 +36,7 @@ run_child() {
         printf '%s\n' "$3"
     } >"$rc"
     CHILD_OUT="$(printf '%s\n' "$4" | env -i \
-        PATH=/usr/bin:/bin TERM=dumb HOME="$SANDBOX" \
+        PATH="$SANDBOX/bin:/usr/bin:/bin" TERM=dumb GPY_STATUS_LOG="$SANDBOX/status.log" HOME="$SANDBOX" \
         XDG_CONFIG_HOME="$SANDBOX/config" XDG_CACHE_HOME="$SANDBOX/cache" \
         XDG_RUNTIME_DIR="$SANDBOX/run" TMPDIR="$SANDBOX" \
         GPY_AGENT_SUPERVISOR_ENABLED=0 \
@@ -94,11 +103,11 @@ exit'
 
     # An rc line after gpy that prepends a status-clobbering command (the
     # `history -a; $PROMPT_COMMAND` idiom): gpy moves its hook back to the
-    # front after the first prompt, so it records each command's status.
+    # front after the first prompt, so gpy is handed each command's status.
     run_child "$bin" '' 'PROMPT_COMMAND="true; $PROMPT_COMMAND"' 'false
-echo "LS=$__gpy_last_status"
+echo "LS=$(tail -n 1 "$GPY_STATUS_LOG")"
 (exit 42)
-echo "LS=$__gpy_last_status"
+echo "LS=$(tail -n 1 "$GPY_STATUS_LOG")"
 exit'
     expect "$label, command prepended after gpy" LS "1 42"
 
@@ -106,10 +115,10 @@ exit'
     run_child "$bin" 'PROMPT_COMMAND='"'"'echo "DS=$?"'"'" '(exit 7)' 'exit'
     expect "$label, first prompt" DS "7" 1
 
-    # __gpy_arm_preexec runs last in PROMPT_COMMAND and must pass `$?` through.
-    run_child "$bin" '' '' '(exit 5); __gpy_arm_preexec; echo "AP=$?"
+    # __gpy_arm runs last in PROMPT_COMMAND and must pass `$?` through.
+    run_child "$bin" '' '' '(exit 5); __gpy_arm; echo "AP=$?"
 exit'
-    expect "$label, __gpy_arm_preexec" AP "5" 1
+    expect "$label, __gpy_arm" AP "5" 1
 
     if array_supported "$bin"; then
         run_child "$bin" 'PROMPT_COMMAND=('"'"'echo "A1=$?"'"'"' '"'"'echo "A2=$?"'"'"')' '' 'false

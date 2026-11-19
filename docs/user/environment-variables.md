@@ -32,28 +32,28 @@ Overrides the socket path alone; the runtime root is unchanged. Every command an
 
 ---
 
-## Shell integration
+## Prompt
 
-Read by the shell scripts. Export them in `config.fish`, `.zshrc` or `.bashrc` before the GPY integration is sourced. A value that is not a non-negative integer falls back to the default.
+Read by `gpy prompt` on every prompt, in all three shells. Export them in `config.fish`, `.zshrc` or `.bashrc`. A value that is not a non-negative integer falls back to the default.
 
-| Variable | Default | Shells | Effect |
-|---|---|---|---|
-| `GPY_IPC_TIMEOUT_MS` | `150` | Fish, Zsh, Bash | How long a prompt render waits for the agent's reply, in milliseconds. A late reply omits that segment for the render. |
-| `GPY_IPC_COLD_TIMEOUT_MS` | `500` | Fish, Zsh, Bash | The same wait when the prompt has nothing to show yet for a segment. Never shorter than `GPY_IPC_TIMEOUT_MS`. |
-| `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` | `5` | Fish, Zsh, Bash | Seconds the shell treats its git instant-cache entry as fresh. See [Prompt freshness](#prompt-freshness). |
-| `GPY_LANGUAGE_CACHE_TTL_SECONDS` | `30` | Fish, Zsh, Bash | The same for the language instant-cache entry. |
-| `GPY_SHOW_STATUS` | on | Fish, Zsh, Bash | `0` hides the standalone `✔`/`✖` exit-status indicator before the prompt symbol. Read on every render. See [below](#gpy_show_status). |
-| `GPY_AGENT_ENABLED` | on | Fish, Zsh, Bash | Overrides `agent.enabled`. Off stops the shell from starting, registering with or supervising an agent. |
-| `GPY_AGENT_SUPERVISOR_ENABLED` | on | Fish, Zsh, Bash | Overrides `agent.supervisor.enabled`. |
-| `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` | from config | Fish, Zsh, Bash | Overrides `agent.supervisor.check_interval_seconds`; `0` checks on every prompt. Not range-checked. |
-| `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` | from config | Fish, Zsh, Bash | Overrides `agent.supervisor.max_restart_attempts`; `0` never restarts. Not range-checked. |
-| `GPY_DEBUG` | off | Fish, Zsh, Bash | Only `1` turns on the shell integration's own debug output, including logs of unrecognised variable values. |
+| Variable | Default | Effect |
+|---|---|---|
+| `GPY_IPC_TIMEOUT_MS` | `150` | How long a prompt waits for the agent's reply, in milliseconds. A late reply omits that segment for the prompt. |
+| `GPY_IPC_COLD_TIMEOUT_MS` | `500` | The same wait when the prompt has nothing to show yet for a segment. Never shorter than `GPY_IPC_TIMEOUT_MS`. |
+| `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` | `5` | Seconds the git instant-cache entry counts as fresh. See [Prompt freshness](#prompt-freshness). |
+| `GPY_LANGUAGE_CACHE_TTL_SECONDS` | `30` | The same for the language instant-cache entry. |
+| `GPY_SHOW_STATUS` | on | `0` hides the standalone `✔`/`✖` exit-status indicator before the prompt symbol. See [below](#gpy_show_status). |
+| `GPY_AGENT_ENABLED` | on | Overrides `agent.enabled`. Off stops `gpy prompt` from starting, registering with or supervising an agent. |
+| `GPY_AGENT_SUPERVISOR_ENABLED` | on | Overrides `agent.supervisor.enabled`. |
+| `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` | from config | Overrides `agent.supervisor.check_interval_seconds`; `0` checks on every prompt. Not range-checked. |
+| `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` | from config | Overrides `agent.supervisor.max_restart_attempts`; `0` never restarts. Not range-checked. |
+| `GPY_DEBUG` | off | Only `1` turns on debug output on stderr. |
 
 ### GPY_SHOW_STATUS
 
-The indicator is never shown while the agent renders the prompt symbol (that symbol is already coloured by the exit status), so this matters mainly when the agent is unavailable. Fish, Zsh and Bash read it alike.
+The indicator is never shown while the agent renders the prompt symbol (that symbol is already coloured by the exit status), so this matters mainly when the agent is unavailable.
 
-### Agent variables in the shells
+### Agent variables
 
 A value you export for `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` or `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` beats the matching key in `[agent]` or `[agent.supervisor]` of `config.toml`. The keys, their defaults and ranges are in the [Configuration Reference](configuration-reference.md#agent).
 
@@ -123,7 +123,7 @@ Anything else is ignored with one warning and falls through to detection. A reco
 
 ### GPY_COLOR_DEPTH
 
-The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. The pills the shells draw themselves (Bash, Zsh and Fish: clock, status and character fallbacks) honour the same values and the same automatic 256-colour downgrade; with `none` they emit no colour sequences, only their resets.
+The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. `gpy prompt` reads it on every prompt for what it draws itself (clock, status and character fallbacks, script segments), with the same automatic 256-colour downgrade.
 
 ---
 

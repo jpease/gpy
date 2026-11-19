@@ -44,7 +44,7 @@ run_child() {
         XDG_RUNTIME_DIR="$SANDBOX/run" TMPDIR="$SANDBOX" \
         GPY_AGENT_SUPERVISOR_ENABLED=0 \
         GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock" \
-        GPY_TEST_ROOT="$ROOT" \
+        GPY_TEST_ROOT="$ROOT" GPY_TEST_BIN="$ROOT/gpy-agent/target/debug" \
         "$BASH" --noprofile --rcfile "$rc" -i 2>&1)"
 }
 
@@ -57,10 +57,6 @@ run_scenario() {
 }
 
 scenario_prior_debug_trap_fires() {
-    if ((BASH_VERSINFO[0] < 4)); then
-        test_skip_part "bash ${BASH_VERSION} gets no gpy DEBUG trap; nothing to chain"
-        return
-    fi
     run_child '
 __prior_n=0
 __prior_hook() { __prior_n=$((__prior_n + 1)); }
@@ -111,9 +107,7 @@ exit'
     local ok=1
     [[ -n "$(field before_exit)" && "$(field before_exit)" == "$(field after_exit)" ]] || ok=0
     [[ "$(field before_dbg)" == "$(field after_dbg)" ]] || ok=0
-    if ((BASH_VERSINFO[0] >= 4)); then
-        [[ -n "$(field after_dbg)" ]] || ok=0
-    fi
+    [[ -n "$(field after_dbg)" ]] || ok=0
     if ((ok)); then
         pass "re-sourcing gpy.bash keeps the captured traps"
     else
@@ -136,41 +130,31 @@ exit'
 }
 
 # nounset_scenario <label> <unset-vars>: shared body for the `set -u` scenarios.
+# The real gpy is on PATH, so every prompt runs it (the agent stays off).
 nounset_scenario() {
-    local label="$1" unsets="$2" repo="$SANDBOX/nu-repo" stubs="$SANDBOX/nu-stubs"
-    mkdir -p "$repo" "$stubs"
+    local label="$1" unsets="$2" repo="$SANDBOX/nu-repo"
+    mkdir -p "$repo"
     git -C "$repo" init -q
-    printf '#!/bin/sh\nexit 1\n' >"$stubs/gpy-agent"
-    chmod +x "$stubs/gpy-agent"
     run_child "
 set -u
-PATH=\$HOME/nu-stubs:\$PATH
-unset GPY_AGENT_SOCKET_PATH $unsets" 'ep=""
-__gpy_ipc_endpoint_into ep
-echo "ep=[$ep]"
-ic=""
-__gpy_instant_cache_dir ic
-echo "ic=[$ic]"
-echo "te=[$(__gpy_theme_export_cache_path)]"
-cd "$HOME/nu-repo"
+PATH=\$GPY_TEST_BIN:\$PATH
+unset GPY_AGENT_SOCKET_PATH $unsets" 'cd "$HOME/nu-repo"
 true
 false
 cd /
 cd "$HOME/nu-repo"
+echo "bare=[$([[ $PS1 == "❯ " ]] && echo 1 || echo 0)]"
 exit'
     if [[ "$CHILD_OUT" == *"unbound variable"* ]]; then
         fail "$label: set -u produced unbound-variable errors:"
         printf '%s\n' "$CHILD_OUT" | grep 'unbound variable' | sort | uniq -c
         return
     fi
-    local f ok=1
-    for f in ep ic te; do
-        [[ "$(field "$f")" == /* ]] || ok=0
-    done
-    if ((ok)); then
-        pass "$label: no unbound-variable errors and resolvers return absolute paths"
+    if [[ "$(field bare)" == 0 ]]; then
+        pass "$label: no unbound-variable errors and gpy drew the prompt"
     else
-        fail "$label: resolvers returned ep=[$(field ep)] ic=[$(field ic)] te=[$(field te)]"
+        fail "$label: the prompt fell back to the bare symbol (bare=[$(field bare)])"
+        printf '%s\n' "$CHILD_OUT"
     fi
 }
 
@@ -217,12 +201,13 @@ exit'
 }
 
 # A printing `cd` wrapper and a CDPATH must not leak into the root gpy.bash
-# resolves for itself.
+# resolves for itself (where it finds its completions).
 scenario_cd_wrapper_keeps_root() {
     run_child 'cd() { builtin cd "$@" && echo CDNOISE; }
 CDPATH=/tmp:/' 'echo "precmd=[$(declare -F __gpy_precmd)]"
+echo "comp=[$(complete -p gpy 2>/dev/null)]"
 exit'
-    if [[ "$CHILD_OUT" == *"core files not found"* || "$(field precmd)" != __gpy_precmd ]]; then
+    if [[ "$(field precmd)" != __gpy_precmd || "$(field comp)" != *_gpy* ]]; then
         fail "a cd wrapper or CDPATH broke the gpy.bash root:"
         printf '%s\n' "$CHILD_OUT"
     else

@@ -230,10 +230,9 @@ function init_test_env
     test_guard_arm
 
     # Isolate configuration, cache, and socket path. XDG_CACHE_HOME must be
-    # isolated too: fish/core/init.fish's __gpy_load_theme fast path sources
-    # whatever theme-export cache it finds there before ever consulting
-    # XDG_CONFIG_HOME, so leaving it unset lets a live dogfooding daemon's
-    # real cache leak into the test.
+    # isolated too: the agent and `gpy prompt` keep their caches and the
+    # runtime root there, so leaving it unset lets a live dogfooding daemon's
+    # state leak into the test.
     set -gx XDG_CONFIG_HOME $__gpy_test_tmp_dir/config
     set -gx XDG_CACHE_HOME $__gpy_test_tmp_dir/cache
     set -gx GPY_AGENT_SOCKET_PATH $__gpy_test_tmp_dir/gpy.sock
@@ -437,33 +436,21 @@ function register_test_client
 
     # Spawn a Fish subprocess that registers and counts signals. The paths and
     # duration travel as $argv, never interpolated into the code string (they
-    # may contain spaces or quotes).
-    fish -c '
+    # may contain spaces or quotes). Its fish_prompt runs `gpy prompt fish`,
+    # which registers this PID with the agent.
+    fish --no-config -c '
         set -l signal_dir $argv[1]
         set -l repo_root $argv[2]
         set -l client_cwd $argv[3]
         set -l duration $argv[4]
         set -g signal_file $signal_dir/client-$fish_pid
 
-        # Define our test signal handler BEFORE GPY init
         function __test_count_signal --on-signal SIGURG
             echo SIGNAL >> $signal_file
         end
 
-        # Source GPY initialization from repo
-        source $repo_root/fish/core/init.fish >/dev/null 2>&1
-
-        # Source GPY functions
-        for f in $repo_root/fish/functions/*.fish
-            source $f
-        end
-
+        source $repo_root/fish/functions/fish_prompt.fish
         cd $client_cwd
-
-        # Trigger registration
-        __gpy_register_with_agent >/dev/null 2>&1
-
-        # Trigger fish_prompt to ensure state is initialized
         fish_prompt >/dev/null 2>&1
         touch $signal_dir/ready-$fish_pid
 
@@ -608,7 +595,11 @@ end
 # The Bash/Zsh twin lives in tests/lib/shell_e2e.sh.
 function test_skip
     echo "SKIP: $argv"
-    if begin; set -q CI; and test -n "$CI"; end; or begin; set -q GPY_GATE_STRICT; and test -n "$GPY_GATE_STRICT"; end
+    if begin
+            set -q CI; and test -n "$CI"
+        end; or begin
+            set -q GPY_GATE_STRICT; and test -n "$GPY_GATE_STRICT"
+        end
         echo "FAIL: a skipped test is a failure under CI or GPY_GATE_STRICT"
         exit 1
     end

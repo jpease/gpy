@@ -120,7 +120,7 @@ expires, and the group is still killed. The plugin-author view is in
 *What the script gets.* A clean environment, not the shell's: `PATH` without
 empty, `.` or other relative entries, `HOME`, `USER`, `LOGNAME`, `LANG`,
 `LC_*`, `TERM`, `TZ` and `TMPDIR` (each only when set), the names the manifest
-declares in `env` (when set as a variable in your shell), and the `GPY_*`
+declares in `env` (when exported in your shell), and the `GPY_*`
 inputs and `GPY_OPT_*` settings the runner sets itself. Credentials, tokens,
 `SSH_AUTH_SOCK` and exported shell functions are absent unless declared. The
 interpreter starts as `sh -c PROLOGUE SCRIPT` from an empty environment; the
@@ -134,8 +134,8 @@ since a script running as you can still read your files. stdin is
 `/dev/null`, stderr is discarded, and the working directory is the plugin root
 (or `$PWD` when `pwd` is declared).
 
-*What reaches the prompt.* Output is sanitized once, at the runner, before any
-shell variable holds it; raw output is never stored. More than 4096 bytes hides
+*What reaches the prompt.* Output is sanitized once, at the runner, before
+`gpy prompt` stores it; raw output is never stored. More than 4096 bytes hides
 the segment. C0 controls and DEL are stripped without depending on the locale
 (also under `LC_ALL=C`); output that still holds a UTF-8-encoded C1 control
 (U+0080 to U+009F) hides the segment. The remaining text is escaped for the
@@ -146,15 +146,15 @@ names (segment tokens, `env` and `require_env` names) are checked against
 such as `a[$(cmd)]` never executes; `require_files`, `require_folders` and
 `require_extensions` names with glob characters are matched literally.
 
-*No files.* The cache and the once-per-command guard live in shell variables,
+*State.* The cache and the once-per-command guard live in one file per shell,
+`<runtime root>/refresh-throttle/<pid>.scripts`, inside the user-private
+runtime directory (never `/tmp`), removed when the shell exits. Entries are
 keyed by the segment's fixed key plus the current values of its declared
 inputs and `env` names, and expire after `ttl_secs`. A non-zero exit, a
 failed `require_command` or C1 output is cached as hidden; a timeout,
 over-cap output or Ctrl-C is not cached, and a failed trigger drops the
-entry. No cache, marker or
-output file is written, nothing under `/tmp`, and no state is keyed by a PID.
-A repaint (Fish SIGURG, Zsh `reset-prompt`) reuses the cached text; the
-script runs at most once per command.
+entry. A repaint (Fish SIGURG, Zsh `reset-prompt`) reuses the cached text;
+the script runs at most once per command.
 
 *Known gaps.* A process that leaves the group (`setsid`, a daemonizing double
 fork) escapes the kill. In a container whose PID 1 does not reap, timed-out

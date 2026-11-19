@@ -27,18 +27,20 @@ itself, which is slower. Timeouts and other tuning:
 
 ## Performance
 
-Measured on pinned repositories, a single `gpy-agent oneshot` git request from
-GPY 0.4.0 was as fast as Starship 1.26.0 on small repositories and 1.3 to 2
-times faster on large ones (2026-10-17). These are `oneshot` process timings,
-not prompt latency.
+A whole prompt (clock, duration, directory and git) takes GPY 3–6 ms on macOS
+and about 1.5 ms on Linux, in Bash, Zsh and Fish alike, because git status
+comes from the agent's cache. Starship 1.27.0 takes 18–20 ms on a small
+repository and about 130 ms on kubernetes on the same Mac (2026-11-19, GPY
+0.12 code). Without the agent, one `gpy-agent oneshot` git request is about
+1.25 times faster than Starship's on small repositories and 1.35 to 2.2 times
+faster on large ones.
 
-The large-repository lead depends on git's untracked cache being present in the
-repository's index. The GPY agent adds git's untracked cache to a repository's
-index where `core.untrackedCache` is unset, and your own git commands can add
-it too; the benchmark primes it itself before timing. `gpy-agent oneshot` never
-adds it, GPY never writes your git config, and a value you set yourself is
-respected. With the daemon running, the same request on the two large
-repositories takes about 3.5 ms (median, including starting `socat`).
+The large-repository `oneshot` lead depends on git's untracked cache being
+present in the repository's index. The GPY agent adds git's untracked cache
+to a repository's index where `core.untrackedCache` is unset, and your own git
+commands can add it too; the benchmark primes it itself before timing.
+`gpy-agent oneshot` never adds it, GPY never writes your git config, and a
+value you set yourself is respected.
 [How it was measured, and how to run it yourself](docs/user/performance-vs-starship.md).
 
 ## Install
@@ -47,9 +49,7 @@ repositories takes about 3.5 ms (median, including starting `socat`).
 
 ### Requirements
 
-- Bash and Fish talk to the agent through `socat`, or an `nc` that supports
-  `-U` (`netcat-openbsd`); Zsh needs neither. Without one, every prompt starts a
-  `gpy-agent oneshot` process. `gpy doctor` reports a missing client.
+- No IPC client is needed: `gpy` talks to the agent's socket itself.
 - The default prompt uses [Nerd Font](https://www.nerdfonts.com) glyphs. `gpy
   setup` switches to ASCII icons when it finds no Nerd Font; see
   [Icons and Nerd Fonts](docs/INSTALL.md#icons-and-nerd-fonts).

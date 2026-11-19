@@ -1,130 +1,101 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# E2E Test: Agent-Down One-Shot Fallback for a Stale Git Segment
+# E2E Test: the git segment is right on a cold cache and with the agent down
 #
-# Serve-stale-first shows the last cached git segment instantly and
-# refreshes in the background. That refresh is a fire-and-forget IPC send: with
-# the agent DOWN there is nothing to recompute the status or SIGURG a repaint,
-# so a stale entry is served indefinitely -- the prompt keeps showing the OLD
-# working-tree state until the daemon returns.
-#
-# AC1: when the git segment would serve a STALE instant-cache entry AND the
-# agent socket is absent (`test -S` fails), the render must run a bounded
-# foreground `gpy-agent oneshot git` and display THAT correct-but-slower result
-# instead of the stale value. The warm/fresh path is untouched.
-#
-# This test drives segment_git_render in-process: it populates the instant cache
-# for a CLEAN repo (agent up), stops the agent, dirties the working tree, then
-# renders again with the agent down. A stale-serving render would return the
-# clean value; the oneshot fallback must return the fresh dirty value instead.
+# One Fish shell (fish/functions/fish_prompt.fish, i.e. `gpy prompt fish`)
+# draws its prompts on request in a fresh repository:
+#   1. agent up, cache cold (a never-queried repo): the very first prompt
+#      already shows the git segment, not a blank waiting for a repaint;
+#   2. agent stopped, working tree then edited: the next prompt shows the
+#      edit (the dirty marker) instead of the stale clean state cached while
+#      the agent was up (`gpy prompt` computes git itself when the socket is
+#      gone), and it does not hang on the missing agent. Every cache entry is
+#      stale (GPY_GIT_INSTANT_CACHE_TTL_SECONDS=0), so the test does not wait
+#      out the TTL.
 #
 # Expected runtime: ~8 seconds
 
 source (dirname (status -f))/../lib/test_helpers.fish
 
-# Predicate for poll_until: a git instant-cache file exists for the repo.
-function __gpy_git_cache_file_present
-    set -l f (ls $XDG_CACHE_HOME/gpy/instant-prompts/*.git.none.ansi 2>/dev/null | head -1)
-    test -n "$f"
-end
-
-# Predicate for poll_until: the agent socket file is gone (agent truly down).
-function __gpy_socket_absent
+function __socket_absent
     not test -S "$GPY_AGENT_SOCKET_PATH"
 end
 
-function test_agent_down_oneshot_fallback
-    print_test_header "E2E Test: Agent-Down One-Shot Fallback (stale git segment)"
-    init_test_env
+# Ask the shell for prompt $n and wait (bounded) for it.
+function draw --argument-names n
+    touch $__gpy_test_tmp_dir/go-$n
+    poll_until 10 test -e $__gpy_test_tmp_dir/done-$n
+    string replace -ra '\e\[[0-9;]*m' '' <$__gpy_test_tmp_dir/out-$n | string collect
+end
 
-    # Source GPY so segment_git_render and its helpers are available in-process.
-    source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
-    source $__gpy_root/fish/segments/git.fish
+function test_agent_down
+    print_test_header "E2E Test: git segment on a cold cache and with the agent down"
+    init_test_env
+    mkdir -p $XDG_CONFIG_HOME/gpy
+    printf '%s\n' '[ui]' 'show_icons = false' 'enabled_segments = ["directory", "git"]' >$XDG_CONFIG_HOME/gpy/config.toml
 
     set -l repo (create_test_repo)
-    if test -z "$repo"
-        fail "Create test repo" "Unable to create temporary git repo"
-        cleanup_test_files
-        return 1
-    end
-
-    if start_test_agent
-        pass "Agent Start"
-    else
-        fail "Agent Start" "gpy-agent failed to start"
-        cleanup_test_files
-        return 1
-    end
-
-    # Register a client so the agent watches the repo and writes its clean-state
-    # instant cache (same warm-up path as e2e_git_live_content).
-    set -l client (register_test_client 20 $repo)
-    if test -z "$client"
-        fail "Register client" "Failed to spawn test client"
-        cleanup_test_files
-        return 1
-    end
-
-    if poll_until 8 __gpy_git_cache_file_present
-        pass "Instant cache created (clean state)"
-    else
-        fail "Instant cache created (clean state)" "no git cache written after registration"
-        cleanup_test_files
-        return 1
-    end
-
-    # Render from inside the repo. Force every cache read to be STALE so the
-    # agent-down stale branch (the one the oneshot fallback guards) is
-    # exercised deterministically.
-    cd $repo
     set -gx GPY_GIT_INSTANT_CACHE_TTL_SECONDS 0
-
-    # Snapshot the stale clean value the serve-stale path returns (agent up).
-    set -l before (segment_git_render)
-    if test -z "$before"
-        fail "Stale clean render is non-empty" "segment_git_render produced no output"
-        cleanup_test_files
+    set -l branch (git -C $repo branch --show-current)
+    if test -z "$branch"
+        fail "Create test repo" "Unable to create temporary git repo"
         return 1
     end
-    pass "Stale clean render is non-empty"
 
-    # Bring the agent down; confirm the socket is actually gone so the render's
-    # cheap `test -S` agent-down probe fails (matches __gpy_ipc_send's gate).
-    stop_test_agent >/dev/null
-    if poll_until 4 __gpy_socket_absent
-        pass "Agent socket removed after stop"
+    if not start_test_agent
+        fail "Agent Start" "gpy-agent failed to start"
+        return 1
+    end
+    pass "Agent Start"
+
+    # The shell draws prompt N once go-N exists and stops after prompt 2.
+    fish --no-config -c '
+        source $argv[1]/fish/functions/fish_prompt.fish
+        cd $argv[2]
+        for n in 1 2
+            for i in (seq 200)
+                test -e $argv[3]/go-$n; and break
+                sleep 0.05
+            end
+            fish_prompt >$argv[3]/out-$n 2>&1
+            touch $argv[3]/done-$n
+        end' -- $__gpy_root $repo $__gpy_test_tmp_dir &
+    test_track_pid $last_pid
+
+    set -l first (draw 1)
+    if string match -q "*$branch*" -- "$first"
+        pass "the first prompt on a cold cache shows the git segment"
     else
-        fail "Agent socket removed after stop" "socket lingered; cannot exercise agent-down path"
-        cleanup_test_files
+        fail "the first prompt on a cold cache shows the git segment" "$first"
+    end
+    if string match -q '*✱*' -- "$first"
+        fail "the first prompt shows a clean tree" "$first"
         return 1
     end
 
-    # Dirty the working tree so a correct render MUST differ from the stale
-    # clean value (modify a tracked file -> unstaged marker + dirty color).
+    stop_test_agent >/dev/null
+    if not poll_until 4 __socket_absent
+        fail "Agent socket removed after stop" "socket lingered; cannot exercise the agent-down path"
+        return 1
+    end
     echo dirty >>$repo/README.md
 
-    # New render, agent down + stale cache present. Clear the per-render oneshot
-    # marker first (fish_prompt normally does this each prompt).
-    set -e __gpy_oneshot_used
-    set -l after (segment_git_render)
-
-    if test -z "$after"
-        fail "Agent-down render reflects new state" "segment_git_render produced no output"
-        cleanup_test_files
-        return 1
-    end
-
-    if test "$after" != "$before"
-        pass "Agent-down render reflects new state (oneshot fallback)"
+    set -l t0 (test_now_ns)
+    set -l second (draw 2)
+    set -l elapsed_ms (math --scale=0 "($(test_now_ns) - $t0) / 1000000")
+    if string match -q "*$branch*✱1*" -- "$second"
+        pass "with the agent down the prompt shows the edit"
     else
-        fail "Agent-down render reflects new state (oneshot fallback)" "render served the STALE clean value instead of the fresh dirty one"
-        cleanup_test_files
-        return 1
+        fail "with the agent down the prompt shows the edit" "$second"
     end
-
-    cleanup_test_files
+    if test $elapsed_ms -lt 5000
+        pass "the agent-down prompt does not hang ($elapsed_ms ms)"
+    else
+        fail "the agent-down prompt does not hang" "$elapsed_ms ms"
+    end
     return 0
 end
 
-test_agent_down_oneshot_fallback; or exit 1
-test_finish "agent down oneshot fallback"
+test_agent_down
+cleanup_test_files
+test_finish "agent down git segment"

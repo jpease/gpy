@@ -1,7 +1,6 @@
-//! Talking to the agent from `gpy prompt`, as `bash/core/ipc.bash` does:
-//! bounded data requests, fire-and-forget refreshes behind the shared
-//! refresh-throttle stamps, and the per-shell late window. The stamp and
-//! window files keep the shell's names, so both render paths share them.
+//! Talking to the agent from `gpy prompt`: bounded data requests,
+//! fire-and-forget refreshes behind the per-shell refresh-throttle stamps,
+//! and the per-shell late window, both in `<runtime root>/refresh-throttle/`.
 
 use crate::cache::InstantPromptCache;
 use std::io::{BufRead as _, BufReader, Write as _};

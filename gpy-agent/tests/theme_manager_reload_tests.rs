@@ -37,9 +37,16 @@ fn install_acme_theme(config_home: &Path, name: &str, content: &str) -> PathBuf 
     fs::write(
         plugin_dir.join("plugin.toml"),
         "id = \"acme\"\nname = \"Acme\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
-         entry_type = \"file\"\nprovided_segments = [\"acme_seg\"]\n",
+         entry_type = \"script\"\nprovided_segments = [\"acme_seg\"]\n",
     )
     .unwrap();
+    fs::create_dir_all(plugin_dir.join("segments")).unwrap();
+    fs::write(
+        plugin_dir.join("segments/acme_seg.toml"),
+        "command = \"run.sh\"\n",
+    )
+    .unwrap();
+    fs::write(plugin_dir.join("run.sh"), "echo hi\n").unwrap();
     plugin_dir
 }
 

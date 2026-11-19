@@ -8,16 +8,13 @@ GPY is three cooperating pieces: a shell integration written for Fish, Bash and
 Zsh; a long-running local agent (`gpy-agent`); and a Unix domain socket between
 them.
 
-**Your shell trusts the agent completely.** Every new shell runs the agent's
-theme export as shell code. All three shells source the theme-export cache
-file the agent wrote under `~/.cache/gpy/` when its first line is the version
-sentinel (`bash/core/init.bash`, `zsh/core/init.zsh`, `fish/core/init.fish`).
-When the file is missing or lacks the sentinel, Bash and Zsh fall back to
-`eval "$(gpy-agent theme export ...)"` and Fish to piping the same output into
-`source`. `gpy-prompt-reload` always asks the agent instead of the file.
-Prompt content returned over the socket reaches the prompt the same way. This
-is what a prompt generator is — something has to emit shell code — but it puts
-the agent binary on the same footing as your shell startup files.
+**Your shell trusts the `gpy` binary completely.** Every prompt is the output
+of `gpy prompt <shell>`, which the shell assigns to `PS1`/`PROMPT` (Bash and
+Zsh expand it with `promptvars`/`prompt_subst`) or prints from `fish_prompt`.
+`gpy prompt` escapes every piece of data it places there (paths, branch
+names, script output) for the shell's prompt expansion. This is what a prompt
+generator is — something has to emit prompt code — but it puts the `gpy` and
+`gpy-agent` binaries on the same footing as your shell startup files.
 
 Anyone who can replace `gpy-agent` on your
 `PATH`, or write to the theme-export cache, gets arbitrary code execution in
@@ -34,16 +31,10 @@ these three:
 - Nothing else. There is no signature check at load time and no integrity check
   on the cache file.
 
-**Plugin segment files run as you.** Third-party plugins ship Fish scripts
-(`segments/<name>.fish`) that `fish/core/init.fish` sources, with your full user
-privileges, when the segment is enabled. Only the Fish theme export carries
-their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source these
-`.fish` files. Installing a plugin means trusting its code like a shell startup
-file.
-
 **Script segments run as you, in all three shells.** Bash, Zsh and Fish
 execute script plugins (`entry_type = "script"`) as you, once per command; see
 [Script Segment Trust Model](../../SECURITY.md#script-segment-trust-model).
+Installing a plugin means trusting its code like a shell startup file.
 
 **The agent trusts whoever can open its socket.** The socket is chmod'ed to
 `0600` immediately after bind. That mode does not stop anyone who can write the
@@ -70,12 +61,11 @@ the PID is well-formed and that the process is alive via `kill(pid, 0)`; it does
 not authenticate the caller, and a local process may claim any live PID. Treat
 it as a liveness and hygiene check, not as an authentication mechanism.
 
-**The Zsh integration writes no memo files.** Zsh renders the prompt in the
-interactive shell and memoizes the directory and prompt-character renders in
-shell variables, so no file under `/tmp` or `$TMPDIR` can be pre-created by a
-local attacker and read back into `$PROMPT` (`zsh/core/init.zsh`). Script
-segments add no files either: their cache stays in
-shell variables, with no `/tmp` path and no PID-keyed state (see
+**The shells write no memo files.** The wrappers keep a command counter and
+the last duration in shell variables; `gpy prompt` keeps its per-shell state
+in `<runtime root>/refresh-throttle/<pid>.*`, under the user-private runtime
+directory, never `/tmp` or `$TMPDIR`. Script-segment state is in the same
+place (see
 [Script Segment Trust Model](../../SECURITY.md#script-segment-trust-model)).
 
 **Downloaded release artifacts are trusted only after verification.** What the

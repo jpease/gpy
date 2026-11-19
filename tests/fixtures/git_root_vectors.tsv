@@ -4,13 +4,8 @@
 # Shared vectors for Git-root discovery and the instant-cache key path built
 # on it (the directory whose cache key names a git*/lang* cache file). The
 # agent keys a repo's cache by its canonical (symlink-resolved) root, and a
-# non-Git language project by its canonical request path, so every shell must
-# find the same directory. Read by:
-#   - Bash:  __gpy_find_git_root + __gpy_instant_cache_key_path
-#            (tests/bash/git_root_vectors.test.bash)
-#   - Zsh:   same functions (tests/zsh/git_root_vectors.test.zsh)
-#   - Fish:  __gpy_find_git_root + __gpy_instant_cache_key_path
-#            (tests/fish/git_root_vectors.test.fish)
+# non-Git language project by its canonical request path. Read by the Rust test
+# gpy-agent/src/cache/instant_prompt/git_root_vectors_tests.rs.
 #
 # Format: tab-separated, first column names the row kind. Every path is
 # relative to a fresh scratch directory S the reader creates and resolves
@@ -20,25 +15,17 @@
 #   gitdir<TAB>path                 mkdir -p S/path/.git      (a repository)
 #   gitfile<TAB>path                S/path/.git as a FILE     (worktree/submodule)
 #   symlink<TAB>link<TAB>target     S/link -> S/target
-#   root<TAB>start<TAB>expected     __gpy_find_git_root S/start
+#   root<TAB>start<TAB>expected     find_project_root S/start
 #   key<TAB>suffix<TAB>start<TAB>expected
-#                                   __gpy_instant_cache_key_path SUFFIX S/start
+#                                   instant-cache key path for SUFFIX, S/start
 # `expected` is S-relative; the token \e means "none": empty output and a
 # non-zero status. Blank lines and lines starting with # are ignored; extra
 # columns MUST be ignored. Every reader MUST fail on an unknown kind, or if
 # this file is missing or yields no root/key vectors.
 #
-# Known divergences, deliberately absent (all off the prompt's path):
-#   - a FILE as `start`: Bash/Zsh realpath it and walk up (finding the repo),
-#     Fish requires a directory and finds nothing. Callers always pass a cwd.
-#   - a lang key for a NONEXISTENT start (cwd deleted under the shell):
-#     Bash/Zsh find no key (realpath fails), Fish keys by the lexically
-#     resolved path. Either way no cache file exists for it.
-#
 # Rust is the oracle for every `root` row: `git_root_shared_vectors`
-# (gpy-agent/src/cache/instant_prompt/git_root_vectors_tests.rs) lays out the
-# same scratch tree and asserts `find_project_root` (\e = no root found). A
-# `key` row tests the shells' `__gpy_instant_cache_key_path` composition, which
+# lays out the same scratch tree and asserts `find_project_root` (\e = no root
+# found). A `key` row tests the instant-cache key-path composition, which
 # has no single Rust function (git keys come from `find_project_root`, non-Git
 # language keys from the request path), so Rust skips the `key` kind.
 

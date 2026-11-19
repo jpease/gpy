@@ -16,7 +16,6 @@ AGENT_BIN="$AGENT_DIR/target/release/gpy-agent"
 . "$SCRIPT_DIR/lib/bench-common.sh"
 RESULTS_DIR="$PROJECT_ROOT/bench-results"
 FISH_FUNCS="$PROJECT_ROOT/fish/functions"
-FISH_CORE="$PROJECT_ROOT/fish/core/init.fish"
 
 # Isolated sandbox: never touch the user's cache, socket or repos.
 BENCH_TMP="$(mktemp -d "${TMPDIR:-/tmp}/gpy-ci-bench.XXXXXX")"
@@ -127,13 +126,14 @@ stop_daemon() {
   return 0
 }
 
-# Fish setup loading THIS checkout's prompt for dir $1 (not a global install).
+# Fish setup loading THIS checkout's prompt for dir $1 (not a global install):
+# fish_prompt autoloads from fish/functions and calls this checkout's gpy.
 prompt_setup() {
   local target="$1"
   # $PATH and $fish_function_path must reach Fish unexpanded.
   # shellcheck disable=SC2016
-  printf 'set -gx PATH "%s/target/release" $PATH; set -gx XDG_CACHE_HOME "%s"; set -gx fish_function_path "%s" $fish_function_path; builtin cd "%s"; source "%s" >/dev/null 2>&1' \
-    "$AGENT_DIR" "$BENCH_CACHE" "$FISH_FUNCS" "$target" "$FISH_CORE"
+  printf 'set -gx PATH "%s/target/release" $PATH; set -gx XDG_CACHE_HOME "%s"; set -gx fish_function_path "%s" $fish_function_path; builtin cd "%s"' \
+    "$AGENT_DIR" "$BENCH_CACHE" "$FISH_FUNCS" "$target"
 }
 
 prompt_command() {
@@ -387,9 +387,9 @@ scenario_memory() {
 }
 
 # --- Script ("G") segments ----------------------------------------------------
-# What plugin script segments add to a prompt, through the real adapters
-# (bash/core/g_segments.bash, zsh/core/script.zsh, fish/core/script.fish, the
-# one shared bash/core/g_runner.bash) and the agent's real theme export of a fixture plugin.
+# What plugin script segments add to a prompt, through the real wrappers
+# (bash/gpy.bash, zsh/gpy.zsh, fish/functions/fish_prompt.fish), `gpy prompt`
+# and its embedded runner, with a fixture plugin.
 # A live agent of its own (sandbox config, cache and socket; supervisor off)
 # renders the one built-in segment, `directory`, in every config, so the
 # paired differences isolate the plugin work.
@@ -508,47 +508,34 @@ EOF
   find "$G_DIR/plugins" -type f -exec chmod 644 {} +
 }
 
-# g_export VARIANT TOKENS SEGMENTS [EXTRA_TOML]: config.toml and the agent's
-# theme export for every shell under $G_DIR/v/VARIANT; TOKENS is the
+# g_export VARIANT TOKENS SEGMENTS [EXTRA_TOML]: config.toml under
+# $G_DIR/v/VARIANT, checked through the agent's theme export: TOKENS is the
 # expected __gpy_script_segments (space separated).
 g_export() {
-  local variant="$1" tokens="$2" segments="$3" extra="${4:-}" d="$G_DIR/v/$1" sh want t
+  local variant="$1" tokens="$2" segments="$3" extra="${4:-}" d="$G_DIR/v/$1" want t
   mkdir -p "$d/config/gpy" "$d/cache/gpy"
   ln -s "$G_DIR/plugins" "$d/config/gpy/plugins"
   printf '[agent]\nenabled = true\n\n[agent.supervisor]\nenabled = false\n\n[ui]\nenabled_segments = [%s]\n%s' \
     "$segments" "$extra" >"$d/config/gpy/config.toml"
-  for sh in bash zsh fish; do
-    if ! XDG_CONFIG_HOME="$d/config" XDG_CACHE_HOME="$d/cache" "$AGENT_BIN" theme export --shell "$sh" \
-        >"$d/cache/gpy/theme-export.$sh" 2>/dev/null; then
-      record_hard "script segments: theme export ($variant, $sh) failed"
-      return 1
-    fi
-  done
-  want=""
-  for t in $tokens; do want+="${want:+ }\"$t\""; done
-  if ! grep -qxF "__gpy_script_segments=($want)" "$d/cache/gpy/theme-export.bash"; then
-    record_hard "script segments: export for $variant does not list [$tokens]: $(grep '^__gpy_script_segments=' "$d/cache/gpy/theme-export.bash")"
+  if ! XDG_CONFIG_HOME="$d/config" XDG_CACHE_HOME="$d/cache" "$AGENT_BIN" theme export --shell bash \
+      >"$d/export.bash" 2>/dev/null; then
+    record_hard "script segments: theme export ($variant) failed"
     return 1
   fi
-}
-
-# The same export with another interpreter in __gpy_script_sh (every shell).
-g_export_sh() {
-  local from="$G_DIR/v/$1" to="$G_DIR/v/$2" sh_path="$3"
-  mkdir -p "$to"
-  cp -R "$from/config" "$from/cache" "$to/"
-  sed -i.bak -e "s|^__gpy_script_sh=.*|__gpy_script_sh=\"$sh_path\"|" "$to/cache/gpy/theme-export.bash"
-  sed -i.bak -e "s|^typeset -g __gpy_script_sh=.*|typeset -g __gpy_script_sh=\"$sh_path\"|" "$to/cache/gpy/theme-export.zsh"
-  sed -i.bak -e "s|^set -g __gpy_script_sh .*|set -g __gpy_script_sh \"$sh_path\"|" "$to/cache/gpy/theme-export.fish"
-  rm -f "$to"/cache/gpy/*.bak
+  want=""
+  for t in $tokens; do want+="${want:+ }\"$t\""; done
+  if ! grep -qxF "__gpy_script_segments=($want)" "$d/export.bash"; then
+    record_hard "script segments: export for $variant does not list [$tokens]: $(grep '^__gpy_script_segments=' "$d/export.bash")"
+    return 1
+  fi
 }
 
 # Sample bodies: ROOT WORK ITERS MODE. MODE `due` draws ITERS prompts after
 # a command each, `idle` ITERS prompts without one (an empty Enter; a Fish
 # repaint calls only the function part of it); a `show-` prefix prints each
 # prompt followed by a @@P@@ line.
-# Bash counts `\#` per top-level command the script reader reads, not per
-# loop pass, so its body is unrolled: one line, one command, per prompt
+# Bash counts commands in its DEBUG trap, which sees only top-level commands
+# of a script, so its body is unrolled: one line, one command, per prompt
 # (body-ITERS.bash; ITERS is 0, the preflight's or G_ITERS).
 g_write_bodies() {
   local n i
@@ -565,18 +552,16 @@ g_write_bodies() {
     'fi' \
     '__gpy_precmd' \
     '__gb_draw' \
-    '# As the first interactive prompt does (init.bash): Bash < 4.4 needs the' \
-    '# DEBUG trap to see a command once a script segment is listed.' \
-    'if __gpy_needs_debug_trap; then' \
-    '    __gpy_dbg_seen=""' \
-    '    __gpy_install_debug_trap' \
-    'fi' >"$G_DIR/body-head.bash"
+    '# As the first interactive prompt does: install the DEBUG trap that counts' \
+    '# commands.' \
+    '__gpy_dbg_seen=""' \
+    '__gpy_install_debug_trap' >"$G_DIR/body-head.bash"
   for n in 0 "$G_PREFLIGHT_ITERS" "$G_ITERS"; do
     {
       cat "$G_DIR/body-head.bash"
       for ((i = 0; i < n; i++)); do
         # shellcheck disable=SC2016
-        printf '%s\n' '__gpy_arm_preexec; true; __gpy_precmd; __gb_draw'
+        printf '%s\n' '__gpy_arm; true; __gpy_precmd; __gb_draw'
       done
       printf 'exit 0\n'
     } >"$G_DIR/body-$n.bash"
@@ -604,11 +589,13 @@ g_write_bodies() {
     '    __gz_draw' \
     'done' \
     'exit 0' >"$G_DIR/body.zsh"
+  # Non-interactive Fish skips conf.d/gpy_init.fish, so the body does what its
+  # fish_postexec and fish_prompt handlers do.
   # shellcheck disable=SC2016
   printf '%s\n' \
     'builtin cd $argv[2]; or exit 1' \
     'set -gx fish_function_path $argv[1]/fish/functions $fish_function_path' \
-    'source $argv[1]/fish/core/init.fish >/dev/null 2>&1' \
+    'set -g __gpy_cmd_count 0' \
     'set -g __gf_n $argv[3]' \
     'set -g __gf_mode (string replace -r "^show-" "" -- $argv[4])' \
     'set -g __gf_show 0' \
@@ -620,16 +607,16 @@ g_write_bodies() {
     '        fish_prompt >/dev/null' \
     '    end' \
     'end' \
-    'emit fish_prompt' \
     '__gf_draw' \
     'set -l i 0' \
     'while test $i -lt $__gf_n' \
     '    if test $__gf_mode != idle' \
-    '        emit fish_preexec true' \
     '        true' \
-    '        emit fish_postexec true' \
+    '        set -g __gpy_cmd_count (math $__gpy_cmd_count + 1)' \
+    '        set -g __gpy_duration 1' \
+    '    else' \
+    '        set -e __gpy_duration' \
     '    end' \
-    '    emit fish_prompt' \
     '    __gf_draw' \
     '    set i (math $i + 1)' \
     'end' \
@@ -785,7 +772,7 @@ g_judge() {
   fi
 }
 
-# Bash < 4.4 (no `\#`, so the DEBUG trap path): GPY_BENCH_BASH3, else
+# Bash < 4.4 (the oldest Bash the wrapper supports): GPY_BENCH_BASH3, else
 # /bin/bash when it is one (macOS 3.2). Empty when none.
 find_bench_bash3() {
   local c
@@ -810,12 +797,12 @@ scenario_script_segments() {
   G_BASH="$(find_bench_bash)"
   G_BASH3="$(find_bench_bash3)"
   local -a shells=() configs=() variants=(base hit g expiry scan)
-  local s v busybox="" cfg
+  local s v cfg
   if [[ -n "$G_BASH" ]]; then shells+=(bash); fi
   if [[ -n "$G_BASH3" ]]; then
     shells+=(bash3)
   else
-    bench_info "script segments: no Bash < 4.4 here; the DEBUG-trap path (Bash 3.2-4.3) is not measured"
+    bench_info "script segments: no Bash < 4.4 here; the wrapper on Bash 3.2-4.3 is not measured"
   fi
   command -v zsh >/dev/null 2>&1 && shells+=(zsh)
   command -v fish >/dev/null 2>&1 && shells+=(fish)
@@ -834,14 +821,7 @@ scenario_script_segments() {
   g_export expiry "bench_user bench_cwd" '"directory", "bench-user", "bench-cwd"' \
     $'\n[plugin.bench-user]\nttl_secs = 0\n' || return 1
   g_export scan "bench_scan" '"directory", "bench-scan"' || return 1
-  # Linux: /bin/sh is what the export names (dash on Debian/Ubuntu); busybox
-  # sh (Alpine's) as well when installed. Runs as argv0 sh, as the runner
-  # execs every interpreter.
-  if [[ "$(uname -s)" == Linux ]] && busybox="$(command -v busybox)"; then
-    g_export_sh g g-busybox "$busybox"
-    variants+=(g-busybox)
-  fi
-  bench_info "script segments: interpreter $(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/cache/gpy/theme-export.bash") ($(readlink -f "$(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/cache/gpy/theme-export.bash")" 2>/dev/null || echo unresolved))${busybox:+, busybox $busybox}"
+  bench_info "script segments: interpreter $(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/export.bash")"
 
   for s in "${shells[@]}"; do
     for v in "${variants[@]}"; do configs+=("$s:$v"); done

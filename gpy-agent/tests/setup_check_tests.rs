@@ -92,10 +92,9 @@ fn check_passes_for_a_complete_tree() {
 fn check_names_the_first_missing_file() {
     let home = TempDir::new().unwrap();
     let cases = [
-        ("fish", "fish/core/flags.fish"),
+        ("fish", "fish/functions/fish_prompt.fish"),
         ("fish", "fish/completions/gpy-dynamic.fish"),
-        ("fish", "bash/core/g_runner.bash"),
-        ("zsh", "zsh/core/init.zsh"),
+        ("zsh", "zsh/gpy.zsh"),
         ("bash", "bash/gpy.bash"),
     ];
     for (shell, missing) in cases {

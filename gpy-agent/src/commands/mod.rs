@@ -21,7 +21,6 @@ pub mod doctor;
 mod doctor_agent;
 mod doctor_bundled;
 mod doctor_integration;
-mod doctor_ipc;
 mod doctor_themes;
 mod doctor_tuning;
 /// Lifecycle exit codes and the `--help` text that lists them.

@@ -1,266 +1,59 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# One `gpy prompt fish` draws the prompt and, with --final-rendering (Fish
+# 4.2+), the transient line left in scrollback. Without the binary, or when
+# it fails, a bare symbol keeps the shell usable.
 
 function fish_prompt
     set -l last_status $status
-
-    # Fish 4.2+ --final-rendering stays in scrollback; runs before the resets (shares the char memo).
-    if contains -- --final-rendering $argv; and test "$__gpy_cfg_transient_prompt" != 0
-        __gpy_render_prompt_exec $last_status transient; and return
-        __gpy_transient_prompt $last_status
+    set -l bin (__gpy_bin)
+    if test -z "$bin"
+        printf '❯ '
         return
     end
-    __gpy_sync_fish_transient_prompt
-
-    # The first prompt's registration, once that prompt is drawn (core/supervisor.fish).
-    set -q __gpy_register_deferred; and __gpy_register_after_paint
-
-    # One `gpy prompt fish` draws the prompt (#1247); the rest of this
-    # function is its fallback (binary missing, declined or failed).
-    __gpy_render_prompt_exec $last_status; and return
-
-    set -g __gpy_last_status $last_status
-
-    # "black" blends the first chevron into a dark terminal.
-    set -g __gpy_last_segment_bg black
-
-    # Git-root memo is valid for one render only, so a `cd` shows on the next prompt.
-    set -e __gpy_git_root_this_render_dir
-    set -e __gpy_git_root_this_render
-
-    # One oneshot fork per render for a dead daemon; erasing is a builtin.
-    set -e __gpy_oneshot_used
-
-    # Never leak a stale clock pre-render.
-    set -e __gpy_clock_prerendered
-
-    # With the clock shown, one `date` fork per render (Fish has no builtin
-    # strftime) also gives the epoch, split on 0x1E, a byte `date` never
-    # emits. Without it the epoch costs no fork.
-    if contains clock $__enabled_segments; and functions -q __gpy_clock_date_format
-        set -l clock_format (__gpy_clock_date_format)
-        set -l sep \x1e
-        set -l combined (date "+%s$sep$clock_format" 2>/dev/null)
-        if test -n "$combined"
-            set -l parts (string split -m1 -- $sep $combined)
-            set -g __gpy_prompt_now $parts[1]
-            if test (count $parts) -ge 2
-                set -g __gpy_clock_prerendered (string trim -- $parts[2])
-            end
-        else
-            set -g __gpy_prompt_now
-        end
-    else if functions -q __gpy_now_seconds
-        set -g __gpy_prompt_now (__gpy_now_seconds)
-    else
-        # Disabled mode: util.fish is not sourced and no cache is read.
-        set -g __gpy_prompt_now
-    end
-
-    # Theme-controlled so bash/zsh match.
-    if test "$__gpy_add_newline" != 0
-        echo
-    end
-
-    set -g __gpy_segment_position first
-
-    # Positions are baked into agent ANSI before rendering, so drop segments that will print nothing.
-    set -l segments_to_render
-    for segment in $__enabled_segments
-        if functions -q segment_{$segment}_detect; and segment_{$segment}_detect
-            if functions -q segment_{$segment}_omit; and segment_{$segment}_omit
-                continue
-            end
-            set -a segments_to_render $segment
-        end
-    end
-
-    set -l segment_count (count $segments_to_render)
-    set -l current_idx 1
-    for segment in $segments_to_render
-        # Seed "": `set -l is_last` alone is an empty list, shifting $is_first into its slot.
-        set -l is_last ""
-        if test $current_idx -eq $segment_count
-            set is_last true
-        end
-
-        # Position-based, not segment identity.
-        set -l is_first ""
-        if test $current_idx -eq 1
-            set is_first true
-        end
-
-        # Keep the shell renderer's position in step for shell-rendered segments.
-        if test $current_idx -eq 1
-            set -g __gpy_segment_position first
-        else
-            set -g __gpy_segment_position middle
-        end
-
-        if functions -q segment_{$segment}_render
-            segment_{$segment}_render $is_last $is_first
-        end
-
-        set current_idx (math $current_idx + 1)
-    end
-
-    set_color normal
-    # Theme option `ui.two_line`, shared with Bash and Zsh.
-    if test "$__gpy_two_line" = 1
-        echo
-    end
-
-    __gpy_resolve_prompt_character $last_status
-
-    # Skip when the character is agent-rendered: its exit colour already shows status.
-    if test (__gpy_flag_value "$GPY_SHOW_STATUS" on) = on; and test "$__gpy_char_agent_rendered" -ne 1
-        if test $last_status -eq 0
-            __gpy_set_fg_color green
-            printf "%s " "$__icon_status_ok"
-        else
-            __gpy_set_fg_color red
-            printf "%s " "$__icon_status_fail"
-        end
-        set_color normal
-    end
-
-    __gpy_print_prompt_symbol
-    set_color normal
-end
-
-# Resolve __gpy_char_output/__gpy_char_agent_rendered, memoized on (theme, success, prev_bg).
-function __gpy_resolve_prompt_character --argument-names last_status
-    set -g __gpy_char_output ""
-    set -g __gpy_char_agent_rendered 0
-    if test "$__gpy_is_root" -ne 1
-        set -l char_success 0
-        test $last_status -eq 0; and set char_success 1
-        # Theme name in the key invalidates on theme switch even if a reload doorbell was missed.
-        set -l char_key "$__gpy_theme_name:$char_success:$__gpy_last_segment_bg"
-        if test -n "$__gpy_char_cache_key"; and test "$char_key" = "$__gpy_char_cache_key"
-            set -g __gpy_char_output $__gpy_char_cache_val
-        else if functions -q __gpy_request_character
-            # ipc.fish is not sourced in disabled mode.
-            set -g __gpy_char_output (__gpy_request_character $char_success true $__gpy_last_segment_bg | string collect)
-            # Never cache a failed render: the agent-down fallback must retry next prompt.
-            if test -n "$__gpy_char_output"
-                set -g __gpy_char_cache_key $char_key
-                set -g __gpy_char_cache_val $__gpy_char_output
-            end
-        end
-        test -n "$__gpy_char_output"; and set -g __gpy_char_agent_rendered 1
-    end
-end
-
-# set_color spelling of a theme foreground: `transparent`, `match_bg`,
-# `match_text` and empty are the terminal default (set_color rejects the
-# keywords; the agent emits no SGR for them in a foreground-only render).
-# Any other colour is drawn at the colour depth core/renderer.fish chose
-# (__gpy_set_color), or by set_color at the default depth.
-# Lives here, not in core/renderer.fish, because fish_prompt also runs when
-# GPY is disabled or failed to load and the core files are not sourced.
-function __gpy_set_fg_color --argument-names color
-    switch "$color"
-        case transparent match_bg match_text ''
-            set_color normal
-        case '*'
-            if test -n "$__gpy_color_depth"; and functions -q __gpy_set_color
-                __gpy_set_color $color
-            else
-                set_color $color
-            end
-    end
-end
-
-# Needs __gpy_resolve_prompt_character first.
-function __gpy_print_prompt_symbol
-    if test "$__gpy_is_root" -eq 1
-        __gpy_set_fg_color "$__root_prompt_color"
-        printf "%s " "$__icon_root_prompt"
-    else if test "$__gpy_char_agent_rendered" -eq 1
-        printf '%s' "$__gpy_char_output"
-    else
-        __gpy_set_fg_color "$__prompt_color"
-        printf "%s " "$__icon_prompt"
-    end
-    set_color normal
-end
-
-# Transient line: clock text without the pill, then the prompt symbol.
-function __gpy_transient_prompt --argument-names last_status
-    if test "$__gpy_add_newline" != 0
-        echo
-    end
-    __gpy_resolve_prompt_character $last_status
-    if contains clock $__enabled_segments; and functions -q __gpy_clock_date_format
-        set -l now (string trim -- (date "+"(__gpy_clock_date_format) 2>/dev/null))
-        set -q __prompt_time_pad; or set -g __prompt_time_pad " "
-        __gpy_set_fg_color "$__color_clock_fg"
-        printf '%s%s' "$__prompt_time_pad" "$now"
-        set_color normal
-        # Add a separator unless the character already opens with a space.
-        set -l symbol_text ""
-        if test "$__gpy_char_agent_rendered" -eq 1; and test "$__gpy_is_root" -ne 1
-            set symbol_text (string replace -ra '\e\[[0-9;]*m' '' -- "$__gpy_char_output" | string collect)
-        end
-        string match -qr '^ ' -- "$symbol_text"; or printf ' '
-    end
-    __gpy_print_prompt_symbol
-    set_color normal
-end
-
-# Enable Fish's fish_transient_prompt (4.2+) when needed; only erase a value GPY set.
-function __gpy_sync_fish_transient_prompt
-    test "$__gpy_fish_transient_capable" = 1; or return 0
-    if test "$__gpy_cfg_transient_prompt" != 0; or contains clock $__enabled_segments
-        if not set -q __gpy_owns_fish_transient_prompt
-            set -g fish_transient_prompt 1
-            set -g __gpy_owns_fish_transient_prompt 1
-        end
-    else if set -q __gpy_owns_fish_transient_prompt
-        set -e -g fish_transient_prompt
-        set -e -g __gpy_owns_fish_transient_prompt
-    end
-end
-
-# Print the prompt (or with `transient`, the transient line) `gpy prompt fish`
-# draws, and run the script segments in it. Status 1 when GPY's core is not
-# loaded, the binary is missing or it declines (exit 3: an enabled segment it
-# cannot draw, e.g. a `.fish` plugin segment); the shell then runs its script
-# segments itself from the next prompt. Status 2 when it failed otherwise:
-# it may have started the scripts, so the fallback draws them hidden.
-function __gpy_render_prompt_exec --argument-names last_status part
-    functions -q __gpy_g_resolve_runner; or return 1
-    set -l cli (__gpy_resolve_cli_binary); or return 1
     set -l args prompt fish --status $last_status --pid $fish_pid --shell-version $FISH_VERSION
-    if not set -q __gpy_duration_idle; and string match -qr '\A[0-9]+\z' -- "$CMD_DURATION"
-        set -a args --duration-ms $CMD_DURATION
+    set -q __gpy_cmd_count; and set -a args --cmd $__gpy_cmd_count
+    if set -q __gpy_duration; and string match -qr '\A[0-9]+\z' -- "$__gpy_duration"
+        set -a args --duration-ms $__gpy_duration
     end
-    if set -q __gpy_g_tokens[1]; and __gpy_g_resolve_runner; and test "$__gpy_g_runner_state" = ready
-        set -a args --bash $__gpy_g_bash --runner $__gpy_g_runner_file --cmd $__gpy_g_seq
-        test "$__gpy_g_reloaded" = 1; and set -a args --reload
-        if test "$__gpy_g_ran" = 1; and string match -qr '\A[0-9]+\z' -- "$CMD_DURATION"
-            set -a args --script-duration-ms $CMD_DURATION
-        end
-    end
-    set -l out (command $cli $args | string collect -N)
-    set -l rc $pipestatus[1]
-    if test "$rc" = 3
-        set -g __gpy_exec_declined 1
-        return 1
-    end
-    set -e __gpy_exec_declined
-    set -g __gpy_g_reloaded 0
-    if test "$rc" != 0; or not string match -q -- "*"\x1f"*" "$out"
-        __gpy_g_hide_all
-        return 2
+    # stderr stays the terminal: a tripped script segment says so there.
+    set -l out (command $bin $args | string collect -N)
+    if test "$pipestatus[1]" != 0; or not string match -q -- "*"\x1f"*" "$out"
+        printf '❯ '
+        return
     end
     # Each part may hold newlines: cut with `string replace`; `string
-    # collect` drops the newline `string replace` adds (neither part ends in
-    # one).
-    if test "$part" = transient
-        printf '%s' (string replace -r -- '\A[^\x1f]*\x1f' '' "$out" | string collect)
+    # collect` drops the newline `string replace` adds.
+    set -l prompt (string replace -r -- '\x1f[\s\S]*\z' '' "$out" | string collect)
+    set -l tail (string replace -r -- '\A[^\x1f]*\x1f' '' "$out" | string collect)
+    if contains -- --final-rendering $argv
+        printf '%s' "$tail"
+        return
+    end
+    # The binary leaves the transient line empty when nothing is to be
+    # swapped in: Fish's own transient prompt is then off (only a value GPY
+    # set is erased).
+    if test "$__gpy_fish_transient_capable" = 1
+        if test -n "$tail"
+            if not set -q __gpy_owns_fish_transient_prompt
+                set -g fish_transient_prompt 1
+                set -g __gpy_owns_fish_transient_prompt 1
+            end
+        else if set -q __gpy_owns_fish_transient_prompt
+            set -e -g fish_transient_prompt
+            set -e -g __gpy_owns_fish_transient_prompt
+        end
+    end
+    printf '%s' "$prompt"
+end
+
+# The `gpy` command: PATH first, then ~/.local/bin.
+function __gpy_bin
+    if command -q gpy
+        command -s gpy
+    else if test -n "$HOME"; and test -x "$HOME/.local/bin/gpy"
+        echo $HOME/.local/bin/gpy
     else
-        set -g __gpy_last_status $last_status
-        printf '%s' (string replace -r -- '\x1f[\s\S]*\z' '' "$out" | string collect)
+        return 1
     end
 end

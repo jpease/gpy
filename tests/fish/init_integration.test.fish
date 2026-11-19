@@ -1,142 +1,102 @@
 #!/usr/bin/env fish
 # tests/fish/init_integration.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-
-# Integration test for core/init.fish: it sources cleanly, the prompt renders,
-# every gpy-prompt-* command and its deprecated prompt-* wrapper runs, and
-# `gpy-prompt-debug validate` agrees with the installation on disk.
+#
+# The thin Fish integration (conf.d/gpy_init.fish + functions/fish_prompt.fish)
+# in an interactive shell:
+#   - with this checkout's `gpy`, fish_prompt prints a prompt ending in the
+#     prompt symbol and never the 0x1F separator;
+#   - fish_prompt hands `gpy prompt fish` the last status, the PID, the Fish
+#     version, the command count and, only after a command ran, its duration;
+#   - fish_exit runs `gpy prompt fish --exit --pid PID`;
+#   - `gpy` is found on PATH, else at ~/.local/bin/gpy; with none, or when it
+#     fails or prints no separator, the prompt is the bare `❯ `.
+# A stand-in `gpy` logs its arguments and prints PROMPT<US>TAIL.
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-echo "========================================="
-echo "GPY Init Integration Test"
-echo "========================================="
-
-# Find repo root (where core/init.fish lives)
-set -l script_dir (dirname (status --filename))
-set -l repo_root (cd "$script_dir/../.." && pwd)
-cd "$repo_root"
-echo "Running from: $repo_root"
-echo ""
-
-# Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache.
-set -gx XDG_CACHE_HOME (mktemp -d)
-
-# A developer's own installed GPY (loaded by their fish config) may already
-# define prompt-* functions; erase them so Test 3 sees only what this
-# checkout's init defines.
-for stale in (functions -n | string match -r '^(?:gpy-)?prompt-.*')
-    functions -e $stale
+set -l target_dir $__gpy_root/gpy-agent/target
+test -n "$CARGO_TARGET_DIR"; and set target_dir $CARGO_TARGET_DIR
+if not test -x $target_dir/debug/gpy
+    fail "gpy not built (cd gpy-agent && cargo build --bins)"
+    exit 1
 end
 
-# Test 1: Source core/init.fish without errors
-echo "Test 1: Source core/init.fish"
-if source fish/core/init.fish 2>&1 | string match -q "*error*"
-    fail "core/init.fish produced errors"
-else
-    pass "core/init.fish loaded without errors"
-end
-# The prompt function is autoloaded from fish/functions/ on an installed
-# system; here it has to be sourced, or `fish_prompt` below is fish's own
-# default prompt and Test 2 measures the wrong program.
-source fish/functions/fish_prompt.fish
+set -g tmp (mktemp -d)
+test_track_dir $tmp
+mkdir -p $tmp/home $tmp/cache $tmp/config $tmp/fake $tmp/failing $tmp/nosep $tmp/home/.local/bin
+set -g log $tmp/gpy.log
 
-# Test 2: fish_prompt renders the prompt character. The character is
-# shell-rendered and always present; agent-rendered segments are covered by
-# e2e_prompt_content.test.fish.
-echo ""
-echo "Test 2: fish_prompt renders the prompt character"
-set -l prompt_output (fish_prompt 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect)
-# An empty icon would turn the glob below into `**`, which matches anything.
-if test -n "$__icon_prompt"; and string match -q "*$__icon_prompt*" -- "$prompt_output"
-    pass "fish_prompt renders the prompt character '$__icon_prompt'"
-else
-    fail "fish_prompt output lacks the prompt character '$__icon_prompt': $prompt_output"
+printf '%s\n' '#!/bin/sh' "echo \"\$*\" >>'$log'" 'printf "FAKEPROMPT\\037FAKETAIL"' >$tmp/fake/gpy
+printf '%s\n' '#!/bin/sh' 'printf "BROKEN\\037"' 'exit 3' >$tmp/failing/gpy
+printf '%s\n' '#!/bin/sh' 'printf "NOSEPARATOR"' >$tmp/nosep/gpy
+cp $tmp/fake/gpy $tmp/home/.local/bin/gpy
+chmod +x $tmp/fake/gpy $tmp/failing/gpy $tmp/nosep/gpy $tmp/home/.local/bin/gpy
+
+# A PATH with fish and the system tools but no gpy (fish's own directory may
+# hold an installed gpy, so fish is linked into one of its own).
+mkdir -p $tmp/fishbin
+ln -s (command -s fish) $tmp/fishbin/fish
+set -g base_path /usr/bin /bin $tmp/fishbin
+for p in /usr/bin /bin
+    test -x $p/gpy; and test_skip "a gpy is installed in $p"
 end
 
-# Test 3: no gpy-prompt-* command wraps an undefined function, which exits
-# 127. All are autoloaded from fish/functions.
-echo ""
-echo "Test 3: gpy-prompt-* commands do not exit 127"
-set -l prompt_cmds (functions -n | string match -r '^gpy-prompt-.*')
-for want in gpy-prompt-debug gpy-prompt-reload
-    if contains -- $want $prompt_cmds
-        pass "init makes $want available"
-    else
-        fail "init does not make $want available"
-    end
-end
-for cmd in $prompt_cmds
-    $cmd >/dev/null 2>&1
-    set -l rc $status
-    if test $rc -ne 127
-        pass "$cmd exits $rc (not 127)"
-    else
-        fail "$cmd exits 127 (wraps an undefined function)"
-    end
+# Run $argv[2] in a fresh interactive Fish with the integration loaded and
+# PATH $argv[1] (colon-separated) and HOME $argv[3] (default: an empty home).
+function in_shell --argument-names shell_path code home
+    test -n "$home"; or set home $tmp/nohome
+    env -i HOME=$home PATH=$shell_path TERM=dumb XDG_CACHE_HOME=$tmp/cache XDG_CONFIG_HOME=$tmp/config \
+        GPY_AGENT_ENABLED=0 GPY_AGENT_SOCKET_PATH=$tmp/none.sock \
+        fish --no-config -i -c '
+            source $argv[1]/fish/conf.d/gpy_init.fish
+            source $argv[1]/fish/functions/fish_prompt.fish
+            eval $argv[2]' -- $__gpy_root $code </dev/null 2>&1
 end
 
-# Test 4: `gpy-prompt-debug validate` exits 0 on a sandboxed install whose
-# XDG_DATA_HOME differs from $HOME/.local/share, and exits 1 once a file it checks
-# is gone: a core file init.fish sources from its list (not only flags.fish),
-# the script segment runner or flags.fish. `vars` shows the active theme and
-# `benchmark` prints `name: <N>ms` lines without braces.
-echo ""
-echo "Test 4: gpy-prompt-debug in an XDG_DATA_HOME sandbox"
-set -l sandbox (mktemp -d)
-mkdir -p $sandbox/home $sandbox/xdg/fish $sandbox/data/gpy/bash/core $sandbox/run
-cp -R $repo_root/fish $sandbox/data/gpy/fish
-# `gpy setup` installs the script segment runner in the Bash tree beside the Fish tree.
-cp $repo_root/bash/core/g_runner.bash $sandbox/data/gpy/bash/core/g_runner.bash
-set -l debug_out (env -i \
-    "PATH=$repo_root/gpy-agent/target/debug:/usr/bin:/bin:"(dirname (command -s fish)) \
-    "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/xdg" "XDG_DATA_HOME=$sandbox/data" \
-    "XDG_CACHE_HOME=$sandbox/cache" "XDG_RUNTIME_DIR=$sandbox/run" \
-    "TMPDIR=$sandbox" GPY_AGENT_SUPERVISOR_ENABLED=0 \
-    fish --no-config -c 'source $XDG_DATA_HOME/gpy/fish/core/init.fish
-        set -l core $XDG_DATA_HOME/gpy/fish/core
-        gpy-prompt-debug validate >/dev/null 2>&1
-        echo "validate_rc=$status"
-        gpy-prompt-debug vars 2>&1
-        echo "theme_name=$__gpy_theme_name"
-        gpy-prompt-debug benchmark 2>&1
-        command mv $core/supervisor.fish $core/supervisor.fish.gone
-        gpy-prompt-debug validate 2>&1
-        gpy-prompt-debug validate >/dev/null 2>&1
-        echo "no_supervisor_rc=$status"
-        command mv $core/supervisor.fish.gone $core/supervisor.fish
-        command rm $XDG_DATA_HOME/gpy/bash/core/g_runner.bash
-        gpy-prompt-debug validate >/dev/null 2>&1
-        echo "no_runner_rc=$status"
-        command rm $core/flags.fish
-        gpy-prompt-debug validate >/dev/null 2>&1
-        echo "broken_validate_rc=$status"' 2>&1 | string collect)
-rm -rf $sandbox
-set -l debug_lines (string split \n -- "$debug_out")
-expect_eq "gpy-prompt-debug validate returns 0 on an intact install" \
-    (string match -rg '^validate_rc=(\d+)$' -- $debug_lines) 0
-expect_eq "gpy-prompt-debug validate returns 1 when supervisor.fish is missing" \
-    (string match -rg '^no_supervisor_rc=(\d+)$' -- $debug_lines) 1
-if string match -q '*Missing file: core/supervisor.fish*' -- "$debug_out"
-    pass "gpy-prompt-debug validate names the missing supervisor.fish"
-else
-    fail "gpy-prompt-debug validate does not name supervisor.fish: $debug_out"
+function plain
+    string replace -ra '\e\[[0-9;?]*[A-Za-z]' '' -- $argv | string collect
 end
-expect_eq "gpy-prompt-debug validate returns 1 when the runner is missing" \
-    (string match -rg '^no_runner_rc=(\d+)$' -- $debug_lines) 1
-expect_eq "gpy-prompt-debug validate returns 1 when flags.fish is missing" \
-    (string match -rg '^broken_validate_rc=(\d+)$' -- $debug_lines) 1
-set -l theme_name (string match -rg '^theme_name=(\S+)$' -- $debug_lines)
-if test -n "$theme_name"; and string match -q "*Theme: $theme_name*" -- "$debug_out"
-    pass "gpy-prompt-debug vars prints the active theme '$theme_name'"
-else
-    fail "gpy-prompt-debug vars does not print the active theme ('$theme_name'): $debug_out"
-end
-if string match -qr '^  \w+: \d+ms$' -- $debug_lines; and not string match -qr '^  \w+: \{' -- $debug_lines
-    pass "gpy-prompt-debug benchmark prints plain durations"
-else
-    fail "gpy-prompt-debug benchmark lines are not 'name: <N>ms': $debug_out"
-end
+
+set -l real_path (string join : $target_dir/debug $base_path)
+set -l fake_path (string join : $tmp/fake $base_path)
+set -l bare_path (string join : $base_path)
+
+# --- the real binary ---
+set -l out (plain (in_shell $real_path 'fish_prompt' | string collect))
+check "the real gpy draws a prompt ending in the symbol" 1 (string match -qr '❯ $' -- "$out"; and echo 1)
+check "the prompt never shows the separator" 1 (string match -q '*'\x1f'*' -- "$out"; or echo 1)
+check "the prompt shows no error" 1 (string match -qi '*error*' -- "$out"; or echo 1)
+
+# --- the arguments ---
+rm -f $log
+set out (in_shell $fake_path 'false; fish_prompt; echo; echo pid=$fish_pid; echo ver=$FISH_VERSION' | string collect)
+check "fish_prompt prints the binary's prompt part" 1 (string match -q 'FAKEPROMPT*' -- "$out"; and echo 1)
+set -l pid (string match -rg 'pid=(\d+)' -- $out)
+set -l ver (string match -rg 'ver=(\S+)' -- $out)
+check "first prompt arguments" "prompt fish --status 1 --pid $pid --shell-version $ver --cmd 0" (head -1 $log)
+
+rm -f $log
+in_shell $fake_path '
+    emit fish_preexec x; emit fish_postexec x; set -g CMD_DURATION 1234
+    emit fish_prompt; fish_prompt >/dev/null
+    emit fish_prompt; fish_prompt >/dev/null' >/dev/null
+set -l lines (string match -v -- '*--exit*' <$log)
+check "a prompt after a command passes the count and its duration" 1 (string match -qr -- '--cmd 1 --duration-ms 1234$' $lines[1]; and echo 1)
+check "a prompt with no command since passes no duration" 1 (string match -qr -- '--cmd 1$' $lines[2]; and echo 1)
+check "exit unregisters" 1 (string match -qr -- '^prompt fish --exit --pid \d+$' <$log; and echo 1)
+
+set out (in_shell $fake_path 'fish_prompt --final-rendering' | string collect)
+check "--final-rendering prints the tail" FAKETAIL "$out"
+
+# --- finding the binary, and the fallbacks ---
+set out (in_shell $bare_path 'fish_prompt' $tmp/home | string collect)
+check "~/.local/bin/gpy is used when PATH has none" FAKEPROMPT "$out"
+set out (in_shell $bare_path 'fish_prompt' | string collect)
+check "no gpy at all: the bare symbol" "❯ " "$out"
+set out (in_shell (string join : $tmp/failing $base_path) 'fish_prompt' | string collect)
+check "a failing gpy: the bare symbol" "❯ " "$out"
+set out (in_shell (string join : $tmp/nosep $base_path) 'fish_prompt' | string collect)
+check "a gpy that prints no separator: the bare symbol" "❯ " "$out"
 
 test_finish "init integration"

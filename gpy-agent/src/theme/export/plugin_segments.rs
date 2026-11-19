@@ -1,19 +1,18 @@
-//! Assignments for plugin and community segments: styles, delimiters, variant styles and file paths.
+//! Assignments for plugin and community segments: styles, delimiters and variant styles.
 //!
 //! [`plugin_segment_variables`] is the one place that names plugin segment
 //! variables; export and theme validation ([`first_plugin_variable_collision`])
 //! both read it, so validation checks exactly the names export would write.
 
-use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
+use super::shell_assignment::{ShellAssignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
 use super::theme_to_shell::builtin_export_names;
 use crate::debug_log;
 use crate::formatter::separator::Glyphs;
 use crate::plugin::{SegmentName, VariantColorPart};
-use crate::shell::Shell;
 use crate::theme::model::PluginSegmentTheme;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::BuildHasher;
 
@@ -321,30 +320,6 @@ pub(super) fn append_plugin_segment_assignments(
             variables
                 .into_iter()
                 .map(|variable| variable.into_assignment(colors, glyphs)),
-        );
-    }
-}
-
-/// Export plugin segment file paths (Fish only) so fish can source community segments.
-pub(super) fn append_plugin_segment_file_assignments(
-    output: &mut String,
-    shell: Shell,
-    plugin_segment_files: &BTreeMap<String, String>,
-) {
-    if !matches!(shell, Shell::Fish) {
-        return;
-    }
-    for (segment_name, segment_file) in plugin_segment_files {
-        let Ok(parsed_name) = SegmentName::new(segment_name) else {
-            continue;
-        };
-        append_shell_assignment(
-            output,
-            shell,
-            ShellAssignment::local(
-                format!("__gpy_plugin_segment_file_{}", parsed_name.variable_token()),
-                segment_file.as_str(),
-            ),
         );
     }
 }

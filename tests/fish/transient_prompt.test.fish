@@ -1,114 +1,83 @@
 #!/usr/bin/env fish
 # Transient prompt (ui.transient_prompt, Fish 4.2+). Fish re-runs fish_prompt
 # with --final-rendering after Enter and keeps that rendering in the
-# scrollback:
-#   - on: the clock's time, then the prompt symbol alone (no status
-#     indicator, no other segment). Colors are not asserted: set_color prints
-#     nothing without a terminal;
-#   - a symbol that opens with a space gets no second one;
-#   - off: the full prompt again, so the clock shows the time Enter was
-#     pressed.
-# __gpy_sync_fish_transient_prompt turns fish_transient_prompt on only when
-# the final rendering changes something, and only ever erases its own value.
+# scrollback; `gpy prompt fish` prints the prompt, 0x1F, then that line:
+#   - on: the clock's time, then the prompt symbol alone (no other segment);
+#   - off with the clock: the full prompt again, so the clock shows the time
+#     Enter was pressed;
+#   - off without the clock: nothing to swap in.
+# fish_prompt sets fish_transient_prompt only on a capable Fish
+# (__gpy_fish_transient_capable, 4.2+) and only while the binary gives it a
+# line to swap in, and only ever erases a value it set itself. The capability
+# comes from the __gpy_test_fish_version hook, so this runs on any Fish.
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
 init_test_env; or exit 1
+set -gx GPY_AGENT_ENABLED 0
+mkdir -p $XDG_CONFIG_HOME/gpy
 
-source fish/core/init.fish
-source fish/functions/fish_prompt.fish
-source tests/lib/shell_render_only.fish
+function config --argument-names transient segments
+    printf '%s\n' '[ui]' "transient_prompt = $transient" "enabled_segments = [$segments]" >$XDG_CONFIG_HOME/gpy/config.toml
+end
 
 function plain
     string replace -ra '\e\[[0-9;]*m' '' -- $argv | string collect
 end
-function final_after_failure
-    false
-    fish_prompt --final-rendering 2>/dev/null | string collect
+
+# Run $argv[1] in an interactive Fish with the integration loaded, faking
+# Fish $argv[2] (empty: the real version).
+function in_shell --argument-names code fish_ver
+    fish --no-config -i -c '
+        test -n "$argv[3]"; and set -g __gpy_test_fish_version $argv[3]
+        source $argv[1]/fish/conf.d/gpy_init.fish
+        source $argv[1]/fish/functions/fish_prompt.fish
+        eval $argv[2]' -- $__gpy_root $code "$fish_ver" </dev/null 2>&1
 end
 
-set -g __enabled_segments clock
-set -g __clock_format ""
-set -g __time_format 12
-set -g __clock_show_seconds 0
-set -g __color_clock_bg blue
-set -g __color_clock_fg yellow
-set -g __prompt_time_pad " "
-set -g __gpy_is_root 0
-set -g __gpy_add_newline 0
-set -g __gpy_two_line 1
-set -g __prompt_color cyan
-set -g __icon_prompt "❯"
-set -g __root_prompt_color red
-set -g __icon_root_prompt "!❯!"
-set -g __icon_status_ok STATUSOK
-set -g __icon_status_fail STATUSFAIL
-set -g GPY_SHOW_STATUS 1
-set -g __gpy_char_cache_key ""
-function __gpy_request_character
-end
+set -l time_re '[0-9]{1,2}:[0-9]{2}( [AP]M)?'
 
-# --- on ----------------------------------------------------------------------
-set -g __gpy_cfg_transient_prompt 1
-set -l out (final_after_failure)
-set -l time_re '^ [0-9]{1,2}:[0-9]{2} [AP]M '
-string match -qr -- "$time_re❯ \$" (plain $out)
-check "on: the time, then the fallback symbol only" 1 (test $status -eq 0; and echo 1)
-check "on: no status indicator" 1 (string match -q '*STATUS*' -- $out; or echo 1)
+# --- the final rendering -------------------------------------------------------
+config true '"clock", "directory"'
+set -l final (plain (in_shell 'false; fish_prompt --final-rendering' | string collect))
+check "on: the time, then the symbol alone" 1 (string match -qr -- "^\s*$time_re ❯ \$" "$final"; and echo 1)
+check "on: no other segment" 1 (string match -q -- '*gpy*' "$final"; or echo 1)
 
-set -g __gpy_is_root 1
-string match -qr -- "$time_re!❯! \$" (plain (final_after_failure))
-check "root: the root symbol" 1 (test $status -eq 0; and echo 1)
-set -g __gpy_is_root 0
+config true '"directory"'
+set final (plain (in_shell 'false; fish_prompt --final-rendering' | string collect))
+check "on, no clock: the symbol alone" 1 (string match -qr -- '^\s*❯ $' "$final"; and echo 1)
 
-# An agent character that opens with a space, as the default theme's does.
-function __gpy_request_character
-    printf ' AGENTCHAR '
-end
-set -g __gpy_char_cache_key ""
-string match -qr -- "$time_re""AGENTCHAR \$" (plain (final_after_failure))
-check "on: a symbol opening with a space gets no second one" 1 (test $status -eq 0; and echo 1)
-function __gpy_request_character
-end
-set -g __gpy_char_cache_key ""
+# The two renders can straddle a minute boundary, so the time is replaced by
+# a placeholder before comparing; each render must still carry one.
+config false '"clock", "directory"'
+set -l both (in_shell 'false; fish_prompt; printf "\n--SPLIT--\n"; false; fish_prompt --final-rendering' | string collect)
+set -l parts (string split -- \n--SPLIT--\n (plain $both | string replace -ar -- $time_re TIME | string collect))
+check "off with the clock: the final rendering is the full prompt" 1 (test "$parts[1]" = "$parts[2]"; and string match -q '*TIME*' -- $parts[1]; and echo 1)
 
-set -g __enabled_segments
-string match -q -- "❯ " (plain (final_after_failure))
-check "on, no clock: the symbol alone" 1 (test $status -eq 0; and echo 1)
-
-# --- off ---------------------------------------------------------------------
-# The two renders can straddle a minute boundary, so the time is replaced by a
-# placeholder before comparing; each render must still carry one.
-set -g __gpy_cfg_transient_prompt 0
-set -g __enabled_segments clock
-set -l clock_re '[0-9]{1,2}:[0-9]{2} [AP]M'
-set -l final (plain (final_after_failure) | string replace -r -- $clock_re TIME | string collect)
-set -l full (plain (false; fish_prompt 2>/dev/null | string collect) | string replace -r -- $clock_re TIME | string collect)
-check "off: the final rendering is the full prompt" 1 (test "$final" = "$full"; and string match -q '*TIME*STATUSFAIL*' -- $final; and echo 1)
+config false '"directory"'
+set final (in_shell 'fish_prompt --final-rendering' | string collect)
+check "off without the clock: an empty final rendering" "" "$final"
 
 # --- fish_transient_prompt ---------------------------------------------------
-set -e -g fish_transient_prompt
-set -e -g __gpy_owns_fish_transient_prompt
-set -g __gpy_fish_transient_capable 0
-set -g __gpy_cfg_transient_prompt 1
-__gpy_sync_fish_transient_prompt
-check "Fish before 4.2: left unset" 1 (set -q fish_transient_prompt; or echo 1)
+set -l report 'fish_prompt >/dev/null; set -q fish_transient_prompt; and echo "ftp=$fish_transient_prompt"; or echo ftp=unset'
 
-set -g __gpy_fish_transient_capable 1
-__gpy_sync_fish_transient_prompt
-check "on: set to 1" 1 (test "$fish_transient_prompt" = 1; and echo 1)
+config true '"clock"'
+check "Fish before 4.2: left unset" ftp=unset (in_shell $report 4.1.0)
+check "on: set to 1" ftp=1 (in_shell $report)
 
-set -g __gpy_cfg_transient_prompt 0
-__gpy_sync_fish_transient_prompt
-check "off with the clock: still 1, to refresh the time" 1 (test "$fish_transient_prompt" = 1; and echo 1)
+config false '"clock"'
+check "off with the clock: 1, to refresh the time" ftp=1 (in_shell $report)
 
-set -g __enabled_segments directory
-__gpy_sync_fish_transient_prompt
-check "off without the clock: GPY's value is erased" 1 (set -q fish_transient_prompt; or echo 1)
+config false '"directory"'
+check "off without the clock: never set" ftp=unset (in_shell $report)
+check "off without the clock: the user's own value is kept" ftp=0 (in_shell "set -g fish_transient_prompt 0; $report")
 
-set -g fish_transient_prompt 1
-__gpy_sync_fish_transient_prompt
-check "off without the clock: the user's own value is kept" 1 (test "$fish_transient_prompt" = 1; and echo 1)
+# GPY's own value is erased once the binary has nothing to swap in.
+set -l cfg $XDG_CONFIG_HOME/gpy/config.toml
+set -l toggle "fish_prompt >/dev/null; echo first=\$fish_transient_prompt; printf '%s\n' '[ui]' 'transient_prompt = false' 'enabled_segments = [\"directory\"]' >$cfg; $report"
+config true '"clock"'
+set -l out (in_shell $toggle | string collect)
+check "on: GPY sets it" 1 (string match -q '*first=1*' -- "$out"; and echo 1)
+check "then off without the clock: GPY's value is erased" 1 (string match -q '*ftp=unset*' -- "$out"; and echo 1)
 
-functions -e __gpy_request_character
 test_finish "transient prompt"

@@ -48,11 +48,11 @@ enum Commands {
     #[command(after_help = commands::exit_codes::STATUS_HELP)]
     Status,
 
-    /// Print the Bash `PS1` or the Zsh `PROMPT` for the current directory.
-    /// Used by the shell integrations on every prompt; exits 3 when an
-    /// enabled segment needs the shell's own renderer. For Zsh the prompt
-    /// symbol alone (the transient prompt), for Fish the transient line,
-    /// follows after a 0x1F byte.
+    /// Print the prompt for the current directory: Bash `PS1`, Zsh `PROMPT`
+    /// or Fish's prompt. Used by the shell integrations on every prompt. For
+    /// Zsh the prompt symbol alone (the transient prompt), for Fish the
+    /// transient line, follows after a 0x1F byte. With `--exit`, the shell
+    /// is exiting: unregister it and print nothing.
     #[cfg(unix)]
     #[command(hide = true)]
     Prompt {
@@ -60,32 +60,24 @@ enum Commands {
         #[arg(value_enum)]
         shell: gpy_agent::prompt::Dialect,
         /// Exit status of the last command
-        #[arg(long, allow_negative_numbers = true)]
+        #[arg(long, allow_negative_numbers = true, default_value_t = 0)]
         status: i32,
-        /// Duration of the last command in milliseconds (omit before the first command)
+        /// Duration of the command that just ran, in milliseconds (omit when
+        /// none ran)
         #[arg(long)]
         duration_ms: Option<u64>,
-        /// PID of the shell (names its refresh-throttle stamps)
+        /// PID of the shell (names its session and refresh-throttle stamps)
         #[arg(long)]
         pid: u32,
-        /// The Bash that runs script segments
-        #[arg(long, requires_all = ["runner", "cmd"])]
-        bash: Option<std::path::PathBuf>,
-        /// The integration's `g_runner.bash`
-        #[arg(long, requires_all = ["bash", "cmd"])]
-        runner: Option<std::path::PathBuf>,
         /// A token that changes with every command the shell ran
-        #[arg(long, requires_all = ["bash", "runner"])]
-        cmd: Option<String>,
-        /// The theme was (re)loaded since the last prompt
-        #[arg(long, requires = "cmd")]
-        reload: bool,
-        /// Zsh: the last command's duration, for scripts' `cmd_duration` input
-        #[arg(long, requires = "cmd")]
-        script_duration_ms: Option<u64>,
+        #[arg(long, default_value = "")]
+        cmd: String,
         /// The shell's version, for its registration with the agent
         #[arg(long, default_value = "")]
         shell_version: String,
+        /// The shell is exiting: unregister it and print nothing
+        #[arg(long)]
+        exit: bool,
     },
 
     /// Manage themes
@@ -435,7 +427,7 @@ enum PathsFormat {
     /// A JSON object, keys in resolution order.
     #[default]
     Json,
-    /// `key=value` lines, as each shell's `__gpy_debug_paths` emits them.
+    /// `key=value` lines.
     Kv,
 }
 
@@ -446,8 +438,6 @@ enum DebugAction {
     Prompt,
 
     /// Dump every path GPY resolves from the environment
-    ///
-    /// The same map as each shell's `__gpy_debug_paths`.
     Paths {
         /// Output format
         #[arg(long, value_enum, default_value_t = PathsFormat::Json)]
@@ -570,8 +560,7 @@ fn run_debug(action: DebugAction) -> Result<()> {
     }
 }
 
-/// `gpy prompt <shell>`: print the prompt, or exit 3 so the shell renders
-/// itself when an enabled segment needs its own renderer.
+/// `gpy prompt <shell>`: print the prompt.
 ///
 /// # Errors
 /// Propagates theme loading and stdout failures.
@@ -579,12 +568,9 @@ fn run_debug(action: DebugAction) -> Result<()> {
 fn run_prompt(
     dialect: gpy_agent::prompt::Dialect,
     args: gpy_agent::prompt::PromptArgs,
-    script: Option<&gpy_agent::prompt::ScriptArgs>,
     shell_version: &str,
 ) -> Result<ExitCode> {
-    let Some(rendered) = gpy_agent::prompt::render(dialect, args, script, shell_version)? else {
-        return Ok(ExitCode::from(3));
-    };
+    let rendered = gpy_agent::prompt::render(dialect, args, shell_version)?;
     let mut out = rendered.prompt;
     if dialect != gpy_agent::prompt::Dialect::Bash {
         out.push('\u{1f}');
@@ -711,31 +697,21 @@ fn run(command: Commands) -> Result<ExitCode> {
             status,
             duration_ms,
             pid,
-            bash,
-            runner,
             cmd,
-            reload,
-            script_duration_ms,
             shell_version,
+            exit,
         } => {
-            let script = bash
-                .zip(runner)
-                .zip(cmd)
-                .map(
-                    |((interpreter, file), token)| gpy_agent::prompt::ScriptArgs {
-                        bash: interpreter,
-                        runner: file,
-                        cmd: token,
-                        reload,
-                        duration_ms: script_duration_ms,
-                    },
-                );
+            if exit {
+                gpy_agent::prompt::exit(pid);
+                return Ok(ExitCode::SUCCESS);
+            }
             let args = gpy_agent::prompt::PromptArgs {
                 status,
                 duration_ms,
                 pid,
+                cmd,
             };
-            return run_prompt(shell, args, script.as_ref(), &shell_version);
+            return run_prompt(shell, args, &shell_version);
         }
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {

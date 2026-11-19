@@ -1,7 +1,7 @@
 name: WSL Smoke
 
 # Builds the agent in Ubuntu under WSL 2 on a Windows runner and runs
-# scripts/wsl-smoke.sh plus the cross-shell contract suite. Kept out of
+# scripts/wsl-smoke.sh plus the golden prompts. Kept out of
 # pr-gate.yml: it is slow and WSL-only behaviour changes rarely, so it runs
 # when its files change, weekly, and on demand.
 on:
@@ -48,14 +48,13 @@ jobs:
           distribution: Ubuntu-24.04
           use-cache: true
           set-as-default: true
-          # As root the shells draw the prompt character themselves, which
-          # changes what the contract suite observes; run as a normal user.
+          # As root `gpy prompt` draws the root prompt character, which the
+          # golden prompts do not expect; run as a normal user.
           wsl-shell-user: user
-          # The shell-suite prerequisites from .github/actions/install-shells,
-          # plus build tools and util-linux (findmnt).
+          # Build tools, util-linux (findmnt) and what the golden prompts use.
           additional-packages: >-
             build-essential pkg-config curl ca-certificates git util-linux
-            software-properties-common zsh socat netcat-openbsd python3 jq
+            python3 jq
 
       - name: Show the WSL environment
         shell: wsl-bash {0}
@@ -65,15 +64,6 @@ jobs:
           echo "WSL_DISTRO_NAME=$WSL_DISTRO_NAME"
           pwd
           findmnt -T "$PWD" || true
-
-      - name: Install Fish 4
-        # Ubuntu 24.04's apt has Fish 3.7; the suites need Fish 4.
-        shell: wsl-bash -u root {0}
-        run: |
-          add-apt-repository -y ppa:fish-shell/release-4
-          apt-get update
-          apt-get install -y fish
-          fish --version
 
       # Build and test from a Linux-filesystem copy (drvfs is slow); the
       # checkout itself is the Windows-drive repository the smoke exercises.
@@ -124,9 +114,9 @@ jobs:
           cd /home/user/gpy
           GPY_AGENT_BIN=/home/user/gpy/gpy-agent/target/debug/gpy-agent scripts/wsl-smoke.sh
 
-      - name: Cross-shell contract suite
+      - name: Golden prompts
         shell: wsl-bash {0}
         run: |
           . "$HOME/.cargo/env"
           cd "$HOME/gpy"
-          scripts/wsl-smoke.sh --contract-only
+          scripts/wsl-smoke.sh --prompts-only

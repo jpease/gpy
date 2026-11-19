@@ -180,8 +180,16 @@ agent_field() {
 }
 
 # `ipc JSON` -- one request line to the agent over the socket `gpy-agent
-# status` names; prints the reply.
-ipc() { printf '%s\n' "$1" | socat -t 5 - "UNIX-CONNECT:$(agent_field socket)"; }
+# status` names; prints the reply. The image carries no socket client (`gpy`
+# needs none), so python3 is the test's own.
+ipc() {
+    python3 -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+s.connect(sys.argv[1])
+s.sendall(sys.argv[2].encode() + b"\n")
+print(s.makefile().readline(), end="")' "$(agent_field socket)" "$1"
+}
 
 # `make_repo DIR` -- a git repository with one commit.
 make_repo() {

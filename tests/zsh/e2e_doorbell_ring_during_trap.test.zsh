@@ -3,15 +3,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # An agent start rings an idle shell twice in a row: `.reload` (the theme
-# export changed, as on an upgrade) and then `.reregister`. Zsh drops a SIGURG
-# that arrives while TRAPURG is still running, so a re-register ring landing
-# during the reload went unanswered: the idle shell stayed unregistered, with
-# no live repaints, until the agent's next re-nudge a minute later.
+# changed, as on an upgrade) and then `.reregister`. Zsh drops a SIGURG that
+# arrives while TRAPURG is still running, so a re-register ring landing during
+# the repaint for the reload went unanswered: the idle shell stayed
+# unregistered, with no live repaints, until the agent's next re-nudge a
+# minute later.
 #
-# With a slow theme export (it sleeps while being sourced), each round writes
-# `.reload` and rings, then writes `.reregister` and rings while the reload
-# trap is still running. No keystroke is sent, so only TRAPURG can consume
-# the flag: it must, every round, and the shell must register again.
+# With a slow `gpy` on PATH (a wrapper that sleeps before the real binary),
+# each round writes `.reload` and rings, then writes `.reregister` and rings
+# while the first repaint is still running. No keystroke is sent, so only
+# TRAPURG's repaint can consume the flag: it must, every round, and the
+# shell must register again.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -19,6 +21,14 @@ emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 shell_e2e_init "$ROOT"
 
 shell_e2e_text_config '"directory", "git"'
+test_require_command gpy
+
+# The wrapper sleeps once $slow exists, so only the rings below are slowed.
+slow="$SHELL_E2E_ROOT/slow"
+mkdir -p "$SHELL_E2E_ROOT/slow-bin"
+printf '#!/bin/sh\n[ -e "%s" ] && sleep 0.6\nexec "%s" "$@"\n' "$slow" "${commands[gpy]}" >"$SHELL_E2E_ROOT/slow-bin/gpy"
+chmod +x "$SHELL_E2E_ROOT/slow-bin/gpy"
+path=("$SHELL_E2E_ROOT/slow-bin" $path)
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -29,8 +39,8 @@ shell_e2e_wait_for 'main' 10 >/dev/null || { fail "no branch prompt within 10 s"
 registered() { shell_e2e_assert_registered "$client_pid"; }
 shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
-# Sourcing the export is what a `.reload` does; make it take 0.6 s.
-print -r -- 'sleep 0.6' >>"$XDG_CACHE_HOME/gpy/theme-export.zsh"
+# A repaint now takes 0.6 s.
+: >"$slow"
 
 shells_dir="$XDG_RUNTIME_DIR/gpy/shells"
 flag="$shells_dir/$client_pid"

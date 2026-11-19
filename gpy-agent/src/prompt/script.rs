@@ -1,9 +1,7 @@
-//! Script segments for `gpy prompt` (#1247): `bash/core/g_segments.bash`
-//! (what is due, the cache, the declared environment, the trigger checks,
-//! the circuit breaker and the pill) with its state in a per-shell session
-//! file instead of shell variables. The unchanged `g_runner.bash` runs the
-//! trigger scan and the scripts in one Bash child (`__gpy_g_scan_batch`, as
-//! Fish runs it).
+//! Script segments for `gpy prompt` (#1247): what is due, the cache, the
+//! declared environment, the trigger checks, the circuit breaker and the
+//! pill, with its state in a per-shell session file. The runner,
+//! [`RUNNER`], runs the trigger scan and the scripts in one Bash child.
 //!
 //! The declared `env` and `require_env` names are read from this process's
 //! environment, so only exported variables reach a script; the in-shell path
@@ -23,23 +21,20 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-/// What the shell passes for its script segments.
-#[derive(Debug, Clone)]
-pub struct ScriptArgs {
-    /// The Bash that runs `g_runner.bash`: the shell's own `$BASH`, or for
-    /// Zsh the first Bash 4 or later on `PATH`.
-    pub bash: PathBuf,
-    /// `bash/core/g_runner.bash` of the loaded integration.
-    pub runner: PathBuf,
+/// `g_runner.bash`: the trigger scan and the script runs, in one Bash 4 or
+/// later child per due prompt.
+const RUNNER: &str = include_str!("g_runner.bash");
+
+/// How this prompt runs its script segments.
+#[derive(Debug)]
+pub(super) struct ScriptArgs<'a> {
+    /// The Bash that runs [`RUNNER`].
+    pub(super) bash: PathBuf,
     /// A token that changes with every command the shell ran.
-    pub cmd: String,
-    /// The theme was (re)loaded since the last prompt: the run is due and
-    /// every circuit breaker is reset (`__gpy_g_sync`, `__gpy_g_reload`).
-    pub reload: bool,
-    /// Zsh: the last command's duration for the `cmd_duration` input, kept
-    /// on a prompt due only to a `cd`; `None` before the first command.
-    /// Bash scripts get [`PromptArgs::duration_ms`](super::PromptArgs).
-    pub duration_ms: Option<u64>,
+    pub(super) cmd: &'a str,
+    /// The shell's first prompt, or the agent asked for a reload: the run
+    /// is due and every circuit breaker is reset.
+    pub(super) reload: bool,
 }
 
 /// The second timeout or over-cap result in a row disables a segment.
@@ -121,7 +116,7 @@ impl Scripts {
     pub(super) fn run(
         sh: &str,
         segments: Vec<ScriptSegmentExport>,
-        args: &ScriptArgs,
+        args: &ScriptArgs<'_>,
         pid: u32,
         inputs: &Inputs<'_>,
     ) -> Self {
@@ -156,7 +151,7 @@ impl Scripts {
         if !due {
             return scripts;
         }
-        scripts.session.cmd.clone_from(&args.cmd);
+        args.cmd.clone_into(&mut scripts.session.cmd);
         inputs.pwd.clone_into(&mut scripts.session.pwd);
         // Emptied and stored first: a run cut short (Ctrl-C) leaves its
         // segments hidden and is not started again by the redraw.
@@ -178,7 +173,7 @@ impl Scripts {
 
     /// `__gpy_g_run_due`: triggers, the cache, then one runner child for
     /// the scan and every miss.
-    fn run_due(&mut self, sh: &str, args: &ScriptArgs, inputs: &Inputs<'_>) {
+    fn run_due(&mut self, sh: &str, args: &ScriptArgs<'_>, inputs: &Inputs<'_>) {
         let now = now_secs();
         let mut planned = Vec::new();
         let mut scan_words: Vec<String> = Vec::new();
@@ -247,18 +242,15 @@ impl Scripts {
     fn spawn_runner(
         &self,
         sh: &str,
-        args: &ScriptArgs,
+        args: &ScriptArgs<'_>,
         scan_words: &[String],
         misses: &[&Planned],
     ) -> String {
-        let Ok(source) = std::fs::read_to_string(&args.runner) else {
-            return String::new();
-        };
         let mut command = Command::new(&args.bash);
         command
             .arg("-p")
             .arg("-c")
-            .arg(format!("{source}\n__gpy_g_scan_batch \"$@\""))
+            .arg(format!("{RUNNER}\n__gpy_g_scan_batch \"$@\""))
             .arg("gpy")
             .arg(sh)
             .arg(scan_words.len().to_string())

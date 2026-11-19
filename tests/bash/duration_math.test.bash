@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tests/bash/duration_math.test.bash
 #
-# __gpy_epoch_diff_ms (pure-bash, no fork) matches the awk formula within +/-1ms
+# __gpy_elapsed_into (pure-bash, no fork) on the EPOCHREALTIME clock matches
+# the awk formula within +/-1ms
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -12,7 +13,10 @@ trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
+# shellcheck source=bash/gpy.bash
 source bash/gpy.bash
+# The arithmetic under test is the EPOCHREALTIME branch, on any Bash.
+__gpy_clock=epochrealtime
 
 FAILED=0
 
@@ -27,8 +31,8 @@ assert_within_tolerance() {
     local label="$1" start="$2" end="$3" tolerance="$4"
 
     local new_ms
-    if ! __gpy_epoch_diff_ms "$start" "$end" new_ms; then
-        echo "FAIL: [$label] __gpy_epoch_diff_ms rejected ($start -> $end)"
+    if ! __gpy_elapsed_into "$start" "$end" new_ms; then
+        echo "FAIL: [$label] __gpy_elapsed_into rejected ($start -> $end)"
         FAILED=1
         return
     fi
@@ -52,8 +56,8 @@ assert_exact_ms() {
     local label="$1" start="$2" end="$3" expected="$4"
 
     local new_ms
-    if ! __gpy_epoch_diff_ms "$start" "$end" new_ms; then
-        echo "FAIL: [$label] __gpy_epoch_diff_ms rejected ($start -> $end)"
+    if ! __gpy_elapsed_into "$start" "$end" new_ms; then
+        echo "FAIL: [$label] __gpy_elapsed_into rejected ($start -> $end)"
         FAILED=1
         return
     fi

@@ -46,7 +46,7 @@ It applies to the agent's formatter and to the pills the shells draw themselves.
 
 | Shell | Minimum version | What backs the floor |
 |-------|-----------------|----------------------|
-| Fish | 3.6+ | Enforced at startup (`fish/core/init.fish`); CI runs Fish 4 |
+| Fish | 3.6+ | Enforced at startup (`fish/conf.d/gpy_init.fish`); CI runs Fish 4 |
 | Zsh | 5.8+ | The 5.8 floor is untested; CI runs Zsh 5.9 |
 | Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) | The debug-trap and `PROMPT_COMMAND` status-preservation tests also run under macOS `/bin/bash` 3.2; the other suites run Bash 5 |
 
@@ -60,7 +60,6 @@ status, clock) and applies config and theme hot-reloads. The differences:
 | Live updates | Idle prompt repaints in place | Idle prompt repaints in place (`TRAPURG` + `zle reset-prompt`) | Shown at the next prompt (readline cannot repaint an idle prompt) | Same as Bash 5.x | Same as Bash 5.x |
 | Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | No trap: SIGURG stays ignored, flag files are read at the next prompt | Same as Bash 5.x | Same as Bash 5.x |
 | Re-registers after an agent restart | Immediately | Immediately | At the next prompt | At the next prompt | At the next prompt |
-| Plugin segments (v1 `.fish` files) | Loaded | Skipped (see [Plugin Framework](dev/plugins.md#segment-runtime-contract)) | Skipped | Skipped | Skipped |
 | Duration segment | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | `date +%s%N` with GNU `date`; whole seconds with BSD `date` | Disabled |
 | Transient prompt (`ui.transient_prompt`) | Fish 4.2+: a submitted prompt collapses to `<time> ❯ <command>` | Same as Fish (`zle-line-finish`) | No: the full prompt stays | Same as Bash 5.x | Same as Bash 5.x |
 | Clock time in the scrollback | When Enter was pressed (Fish 4.2+; older Fish: when drawn) | When Enter was pressed | When the prompt was drawn | Same as Bash 5.x | Same as Bash 5.x |
@@ -70,27 +69,15 @@ Bash details (version detection, `PS1` differences, known issues) are in
 
 ### IPC transport dependencies
 
-Each shell talks to the `gpy-agent` daemon over a Unix domain socket. What
-that requires varies by shell:
-
-| Shell | Required / recommended tools |
-|-------|-------------------------------|
-| Zsh | None required — the `zsh/net/socket` builtin module (`zsocket`) talks to the socket directly. Falls back to `socat`, then `nc -U`. |
-| Bash | `socat`, or `nc -U`. No built-in fallback. |
-| Fish | `socat`, or `nc -U`. No built-in fallback. |
-
-The same capability probe runs in all three shells: `socat` is used when it
-exists; otherwise `nc` is used only if `nc -h` lists `-U`. A netcat without
-`-U` (netcat-traditional, the `nc` on some minimal Debian and Ubuntu images)
-counts as no client at all, so install `socat` or `netcat-openbsd` there.
+None. `gpy prompt` talks to the `gpy-agent` daemon over its Unix domain socket
+itself, in every shell; no `socat`, `nc` or `timeout` is needed.
 
 Other tools GPY uses opportunistically, and what happens without them:
 
 | Tool | Used for | Without it |
 |------|----------|------------|
-| `timeout` (GNU coreutils) | Wraps the `nc` client in Bash, Zsh and Fish so a silent agent is abandoned after `GPY_IPC_TIMEOUT_MS` (150 ms by default). Never needed with `socat` or `zsocket`, which take the budget directly. | Not required, and stock macOS does not ship it. `nc`'s own `-w` takes whole seconds, so a connected-but-silent agent can hold the prompt for up to one second instead of 150 ms. |
-| `awk` | Only a fallback: Bash 5 computes a command's duration from `EPOCHREALTIME` in shell arithmetic and calls `awk` just when that value is malformed. The IPC paths use no `awk`; millisecond budgets are converted in shell arithmetic. | Duration falls back to unavailable for that one command. |
 | GNU `date` | Bash 4.x only: durations use `date +%s%N`. | BSD/macOS `date` has no `%N`; GPY probes for it once at startup and falls back to whole-second timing (a ~2 s command reads 1–3 s). Bash 5 uses `EPOCHREALTIME` and needs no `date`. |
+| Bash 4 or later | Runs script segments (the first on `PATH`, else `/bin/bash`). | With only Bash 3.2, script segments still run, but a Ctrl-C waits for the segment's timeout. |
 
 Unix socket paths are limited to 103 bytes on macOS (`sun_path` is 104 bytes
 including the NUL) and 107 on Linux. A long `$HOME`, `XDG_RUNTIME_DIR` or
@@ -103,17 +90,12 @@ socket directly in `/tmp` is refused.
 
 ### Degraded (oneshot) behavior
 
-When none of the above is available, or the `gpy-agent` daemon isn't
-running (nothing listens on the socket), all three shells fall back to
-forking `gpy-agent oneshot` for that prompt render. A per-render budget
-(a plain shell variable, never a file) limits this to one fork per prompt
-render, so a broken IPC path costs one extra process per prompt rather than
-one per segment. A running agent that merely answers later than
-`GPY_IPC_TIMEOUT_MS` is not treated as down: the shell has already sent it the
-request, so that segment is omitted for the render instead of being recomputed
-by a second, blocking process. The background/live-refresh path has no
-oneshot fallback: without a running daemon there is no `SIGURG` repaint, so
-the prompt stays static until the next render.
+When the `gpy-agent` daemon isn't running (nothing listens on the socket),
+`gpy prompt` does the agent's work for that prompt in process. A running
+agent that merely answers later than `GPY_IPC_TIMEOUT_MS` is not treated as
+down: it has already been sent the request, so that segment is omitted for
+the prompt instead of being recomputed. Without a running daemon there is no
+`SIGURG` repaint, so the prompt stays static until the next prompt.
 
 ## One-Line Installation (Recommended)
 

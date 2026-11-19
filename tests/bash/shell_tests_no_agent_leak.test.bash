@@ -50,8 +50,8 @@ fi
 bash_bin="$(command -v bash)"
 zsh_bin="$(command -v zsh)"
 n=0
-for test_file in tests/bash/basic.test.bash tests/bash/parity.test.bash \
-    tests/zsh/basic.test.zsh tests/zsh/parity.test.zsh; do
+for test_file in tests/bash/basic.test.bash tests/bash/hostile_env.test.bash \
+    tests/zsh/basic.test.zsh tests/zsh/hostile_env.test.zsh; do
     n=$((n + 1))
     sandbox="$scratch/$n"
     mkdir -p "$sandbox/home" "$sandbox/cache" "$sandbox/config"

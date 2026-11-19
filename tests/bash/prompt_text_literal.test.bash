@@ -3,7 +3,7 @@
 # tests/bash/prompt_text_literal.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Segment text is PS1 source; untrusted dir/branch names must display literally
-# (no `$(...)`, `$VAR`, backtick or `\x` expansion) for IPC, cache and oneshot renders.
+# (no `$(...)`, `$VAR`, backtick or `\x` expansion) in the PS1 `gpy prompt bash` draws.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -42,53 +42,26 @@ assert_shows() {
 # `\h`, not `\w`: `\w` expands to the cwd, which contains the literal name.
 names=('$(echo GPY_EXPANDED)' '100%_done' 'a\u\hb' 'x!y' 'tick`echo GPY_TICK`')
 
-__enabled_segments="directory"
 for name in "${names[@]}"; do
     dir="$SHELL_E2E_ROOT/w/$name"
     mkdir -p "$dir"
     cd "$dir" || exit 1
-    __gpy_render_prompt 0
-    assert_shows "IPC directory render" "$PS1" "$name"
+    __gpy_precmd
+    assert_shows "directory render" "$PS1" "$name"
 done
-
-dir="$SHELL_E2E_ROOT/w/\$(echo GPY_EXPANDED)"
-cd "$dir" || exit 1
-__gpy_oneshot_used=0
-oneshot_out="$(__gpy_fallback_oneshot directory "$PWD" bash-prompt true "")"
-assert_shows "oneshot directory render" "$oneshot_out" '$(echo GPY_EXPANDED)'
 
 branch='feat/$HOME-100%_x'
 cd "$SHELL_E2E_REPO" || exit 1
 git checkout -q -b "$branch"
-cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
 
-# Fresh IPC render once the agent has seen the checkout.
-ipc_git=""
-ipc_git_shows_branch() {
-    rm -f "$cache_dir"/*
-    ipc_git="$(__gpy_request git "$SHELL_E2E_REPO" bash-prompt true "" true)"
-    case "$(shown "$ipc_git")" in *"$branch"*) return 0 ;; esac
+# The agent reports the branch once it has seen the checkout.
+git_shows_branch() {
+    __gpy_precmd
+    case "$(shown "$PS1")" in *"$branch"*) return 0 ;; esac
     return 1
 }
-shell_e2e_poll 5 ipc_git_shows_branch
-assert_shows "IPC git render" "$ipc_git" "$branch"
-
-suffix=""
-__gpy_cache_variant_suffix git true true suffix
-resolved_root="$(cd "$SHELL_E2E_REPO" && pwd -P)"
-resolved_key=""
-__gpy_path_to_cache_key "$resolved_root" resolved_key
-cache_file="$cache_dir/$resolved_key.$suffix.none.bash"
-if shell_e2e_poll 3 test -f "$cache_file"; then
-    cached=""
-    __gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "" cached
-    assert_shows "instant-cache git hit" "$cached" "$branch"
-    __enabled_segments="git"
-    __gpy_render_prompt 0
-    assert_shows "cached git render" "$PS1" "$branch"
-else
-    fail "the agent did not write the bash-dialect git cache file $cache_file"
-fi
+shell_e2e_poll 5 git_shows_branch
+assert_shows "git render" "$PS1" "$branch"
 
 shell_e2e_stop_agent
 

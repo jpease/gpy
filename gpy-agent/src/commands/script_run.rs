@@ -1,6 +1,6 @@
 //! One timed trial run of a script segment, for `gpy doctor`.
 //!
-//! Applies the rules of the runner, `bash/core/g_runner.bash`, from
+//! Applies the rules of the runner, `src/prompt/g_runner.bash`, from
 //! `docs/dev/plugins.md` ("Environment and process rules"): `/bin/sh <script>`
 //! in a clean environment, stdin on `/dev/null`, stderr discarded, its own
 //! process group, the segment's `timeout_ms` (TERM, CONT, then KILL after a

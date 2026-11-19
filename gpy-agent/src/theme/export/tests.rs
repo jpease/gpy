@@ -5,7 +5,6 @@ use crate::config::Config;
 use crate::shell::Shell;
 use crate::template::Palette;
 use crate::theme::model::ThemeConfig;
-use std::collections::BTreeMap;
 use std::process::Command;
 
 /// Theme name with shell metacharacters, pinning header and `__gpy_theme_name` escaping.
@@ -148,29 +147,10 @@ pub(super) fn golden_config() -> Config {
     toml::from_str(GOLDEN_CONFIG_TOML).expect("golden config fixture should parse")
 }
 
-/// Plugin segment files: one that is not a segment name (skipped), one with a metacharacter path.
-fn golden_plugin_segment_files() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (
-            "kubernetes".to_owned(),
-            "/usr/share/gpy/segments/kubernetes.fish".to_owned(),
-        ),
-        (
-            "aws-profile".to_owned(),
-            "/usr/share/gpy/segments/aws$profile.fish".to_owned(),
-        ),
-        (
-            "aws profile".to_owned(),
-            "/skipped/invalid-name.fish".to_owned(),
-        ),
-    ])
-}
-
-/// The golden plugin data: segment files plus one script segment whose paths and
-/// setting value hold shell metacharacters.
+/// The golden plugin data: one script segment whose paths and setting value
+/// hold shell metacharacters.
 fn golden_plugins() -> PluginExports {
     PluginExports {
-        segment_files: golden_plugin_segment_files(),
         scripts: golden_scripts(),
     }
 }

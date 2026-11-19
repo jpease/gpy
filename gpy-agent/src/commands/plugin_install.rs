@@ -13,7 +13,7 @@
 
 use super::backup_stamp::backup_stamp;
 use super::output;
-use super::plugin::{plugin_segment_file, unsupported_entry_type};
+use super::plugin::unsupported_entry_type;
 use super::utils::{active_config_path, load_active_config, reload_agent_and_notify};
 use crate::config::loader::save_config;
 use crate::paths::config_root;
@@ -388,21 +388,9 @@ fn check_source(source: &Path) -> Result<PluginManifest> {
                 }
             }
         }
-        EntryType::File => {
-            for segment in &manifest.provided_segments {
-                let path = plugin_segment_file(source, segment);
-                match std::fs::symlink_metadata(&path) {
-                    Ok(meta) if meta.is_file() => {}
-                    _ => {
-                        return Err(Error::invalid(format!(
-                            "missing segment file for '{segment}': {}",
-                            path.display()
-                        )));
-                    }
-                }
-            }
+        EntryType::Builtin | EntryType::Command => {
+            return Err(unsupported_entry_type(&manifest.entry_type));
         }
-        EntryType::Command => return Err(unsupported_entry_type(&manifest.entry_type)),
     }
     Ok(manifest)
 }

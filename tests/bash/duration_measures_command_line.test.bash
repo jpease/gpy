@@ -2,7 +2,9 @@
 # tests/bash/duration_measures_command_line.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The command start time is armed once per command line (__gpy_arm_preexec), not per DEBUG-trap firing.
+# The command start time is armed once per command line (__gpy_arm), not per
+# DEBUG-trap firing. A stub `gpy` on PATH records the --duration-ms each
+# prompt receives (`-` when none) in $GPY_DUR_LOG.
 
 # shellcheck disable=SC2016
 # Single quotes are load-bearing: the child shell expands them.
@@ -24,11 +26,25 @@ source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 
 # Scrub every GPY_* variable inherited from the developer's shell.
 gpy_scrub=()
-while IFS='=' read -r __gpy_env_name _; do
-    case "$__gpy_env_name" in
-        GPY_*) gpy_scrub+=(-u "$__gpy_env_name") ;;
+while IFS='=' read -r env_name _; do
+    case "$env_name" in
+        GPY_*) gpy_scrub+=(-u "$env_name") ;;
     esac
 done < <(env)
+
+mkdir -p "$T/bin"
+cat >"$T/bin/gpy" <<'STUB'
+#!/bin/sh
+[ "$3" = --exit ] && exit 0
+dur=-
+while [ $# -gt 0 ]; do
+    [ "$1" = --duration-ms ] && dur="$2"
+    shift
+done
+echo "$dur" >>"$GPY_DUR_LOG"
+printf '> '
+STUB
+chmod +x "$T/bin/gpy"
 
 # make_rc NAME BEFORE AFTER: rc that runs BEFORE, sources gpy.bash, writes $T/NAME.pid, runs AFTER.
 make_rc() {
@@ -43,7 +59,8 @@ run_session() {
         GPY_AGENT_SOCKET_PATH="$T/missing.sock" \
         HOME="$T" XDG_CACHE_HOME="$T/cache" XDG_CONFIG_HOME="$T/config" \
         XDG_RUNTIME_DIR="$T/run" TMPDIR="$T" \
-        PATH=/usr/bin:/bin TERM=dumb GPY_TEST_ENTRY="$ROOT/bash/gpy.bash" \
+        GPY_DUR_LOG="$T/$1.dur" \
+        PATH="$T/bin:/usr/bin:/bin" TERM=dumb GPY_TEST_ENTRY="$ROOT/bash/gpy.bash" \
         "$BASH" --noprofile --rcfile "$T/$1.rc" -i 2>&1
 }
 
@@ -75,7 +92,7 @@ expect_below() {
 echo "=== another PROMPT_COMMAND entry does not reset the start time ==="
 make_rc preset "PROMPT_COMMAND='true'" ""
 feed_preset() {
-    printf '%s\n' 'sleep 1.2' 'echo "D_sleep=$__gpy_cmd_duration"' 'exit'
+    printf '%s\n' 'sleep 1.2' 'echo "D_sleep=$(tail -n 1 "$GPY_DUR_LOG")"' 'exit'
 }
 out="$(run_session preset feed_preset)"
 expect_at_least "$out" D_sleep 1100 "sleep 1.2 with PROMPT_COMMAND='true' preset"
@@ -83,8 +100,8 @@ expect_at_least "$out" D_sleep 1100 "sleep 1.2 with PROMPT_COMMAND='true' preset
 echo "=== a list and a loop count from their first command ==="
 make_rc plain "" ""
 feed_lists() {
-    printf '%s\n' 'sleep 1.2; true' 'echo "D_list=$__gpy_cmd_duration"' \
-        'for i in 1 2 3; do sleep 0.4; done' 'echo "D_loop=$__gpy_cmd_duration"' 'exit'
+    printf '%s\n' 'sleep 1.2; true' 'echo "D_list=$(tail -n 1 "$GPY_DUR_LOG")"' \
+        'for i in 1 2 3; do sleep 0.4; done' 'echo "D_loop=$(tail -n 1 "$GPY_DUR_LOG")"' 'exit'
 }
 out="$(run_session plain feed_lists)"
 expect_at_least "$out" D_list 1100 "sleep 1.2; true"
@@ -99,7 +116,7 @@ feed_urg() {
     sleep 0.5
     kill -URG "$(cat "$T/plain.pid")"
     sleep 1.5
-    printf '%s\n' 'echo "D_urg=$__gpy_cmd_duration"' 'exit'
+    printf '%s\n' 'echo "D_urg=$(tail -n 1 "$GPY_DUR_LOG")"' 'exit'
 }
 rm -f "$T/plain.pid"
 out="$(run_session plain feed_urg)"
@@ -110,7 +127,7 @@ feed_idle() {
     printf '%s\n' 'true'
     # Idle at the prompt for 1.5 s; none of it may be counted.
     sleep 1.5
-    printf '%s\n' 'true' 'echo "D_idle=$__gpy_cmd_duration"' 'exit'
+    printf '%s\n' 'true' 'echo "D_idle=$(tail -n 1 "$GPY_DUR_LOG")"' 'exit'
 }
 out="$(run_session plain feed_idle)"
 expect_below "$out" D_idle 200 "true after 1.5 s idle"
@@ -122,7 +139,7 @@ expect_below "$out" D_idle 200 "true after 1.5 s idle, '; :' appended to PROMPT_
 echo "=== re-sourcing adds no second arming hook ==="
 feed_resource() {
     printf '%s\n' 'source "$GPY_TEST_ENTRY"' 'source "$GPY_TEST_ENTRY"' \
-        '__c="${PROMPT_COMMAND[*]}"; __n=0; while [[ "$__c" == *__gpy_arm_preexec* ]]; do __c="${__c#*__gpy_arm_preexec}"; __n=$((__n + 1)); done; echo "HOOKS=$__n"' \
+        '__c="${PROMPT_COMMAND[*]}"; __n=0; while [[ "$__c" == *__gpy_arm* ]]; do __c="${__c#*__gpy_arm}"; __n=$((__n + 1)); done; echo "HOOKS=$__n"' \
         'exit'
 }
 out="$(run_session plain feed_resource)"

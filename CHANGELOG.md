@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Every Bash, Zsh and Fish prompt is drawn by one `gpy prompt <shell>` process, and the shell integrations are thin wrappers (a few hundred lines in all) that only time and count commands, repaint when the agent rings, and swap in the transient line. `gpy prompt` also starts the agent on a shell's first prompt, registers the shell, tells the agent the working directory after a `cd`, restarts a dead agent, runs script segments and unregisters the shell on exit. Bash prompts are faster (9.3 → 5.5 ms on macOS); Zsh costs about 1.5 ms more per prompt (one process instead of none) and Fish breaks even.
+- `config.toml` and the theme are read on every prompt, so an edit shows at the next prompt without a reload.
+- No IPC client is needed any more: `socat` and `nc` are no longer used, and `gpy doctor` no longer checks for them.
+- Script segments see a declared `env` name only when it is exported (Bash used to forward unexported shell variables too). Their cache lives in `<runtime root>/refresh-throttle/<pid>.scripts` instead of shell variables, and their runner is built into `gpy`.
+- Bash shows the duration pill only after a command ran, as Zsh and Fish do; an empty Enter used to show the previous command's duration again.
+- An enabled segment that is neither built in nor a script segment is skipped.
+- `gpy setup` removes the `core/` and `segments/` directories an earlier release installed in the shell trees.
+
+### Removed
+- Fish `.fish` file plugins (`entry_type = "file"`): such a manifest is now rejected at discovery and install with a pointer to script segments ([docs/dev/plugins.md](docs/dev/plugins.md)).
+- The `gpy-prompt-reload` shell function in all three shells, and Fish's `gpy-prompt-debug`: no shell state is left to reload or inspect. Use `gpy doctor`, `gpy debug prompt` and `gpy debug paths`.
+
 ### Fixed
 - A prompt render no longer slows down as the instant-prompt cache grows: the shells' check for a cached git or language segment globbed the whole cache directory on every render (about 215 ms in Fish and 1.2 s in Zsh at 29,000 files). The agent now keeps an `{key}.{git|lang}.any-entry.{ext}` marker beside each repository's entries, and the shells test that single file. A cache written by an older agent gains its markers on the next refresh; until then a repository's language segment can be missing for one prompt.
 - `gpy` starts about 2 ms faster on macOS (3.6 → 1.9 ms for `gpy --version`), which every CLI call and tab completion pays: shipped binaries are linked with `-dead_strip_dylibs` and fat LTO, so dyld no longer loads system frameworks the CLI never calls. `gpy-agent` keeps the frameworks its file watcher uses.

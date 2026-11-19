@@ -7,7 +7,7 @@
 # repository, strips the SGR colour escapes, and asserts the exact tokens the
 # git, language and directory segments must carry -- branch, ahead count,
 # dirty/untracked/stash/detached/rebase markers, language names and versions,
-# every directory display mode -- plus the prompt frame (icons, root) and the
+# every directory display mode -- plus the prompt frame (icons) and the
 # "no JSON leaks" guarantee.
 #
 # Glyphs are the crate defaults from gpy-agent/src/config/defaults.rs and
@@ -16,10 +16,11 @@
 # U+E0A0 branch), rendered by the shipped `default` theme so what is asserted
 # is what a default install shows.
 #
-# Timing model: a render is a fresh non-interactive `fish` whose git/language
-# segments read the agent's instant-prompt cache; a cold miss is a bounded
-# synchronous query, a hit is served as-is (stale entries refresh in the
-# background and repaint later). The agent itself learns about a git change
+# Timing model: a render is a fresh non-interactive `fish` whose fish_prompt
+# runs `gpy prompt fish`, which reads the agent's instant-prompt cache; a cold
+# miss is a bounded synchronous query, a hit is served as-is (stale entries
+# refresh in the background and repaint later). The agent itself learns about
+# a git change
 # through its watcher, within a debounce window. So every assertion polls
 # renders with the instant cache cleared (each render is a fresh query) until
 # the expected tokens appear, bounded by poll_until's timeout -- never a fixed
@@ -47,36 +48,23 @@ function strip_sgr
 end
 
 # Render one prompt from a fresh non-interactive fish in $cwd, SGR-stripped,
-# as one string. A fresh process per render: no memo cache carries a stale
-# segment between cases.
+# as one string. A fresh process per render: a new shell PID, so nothing
+# `gpy prompt` keeps per shell carries a stale segment between cases.
 #
-# The language segment answers a cache miss by sending the agent a
-# disowned background request and printing nothing; an interactive shell
-# lives on and the reply lands in the cache for its next prompt. This
-# one-shot fish would exit before that request is even sent, so it lingers
-# briefly after the render, standing in for the shell staying open. This is
-# not a synchronisation sleep: assertions still poll renders until the cache
-# has what they expect.
+# The language segment answers a cache miss by asking the agent for a
+# background refresh and printing nothing; an interactive shell lives on and
+# the reply lands in the cache for its next prompt. This one-shot fish
+# lingers briefly after the render, standing in for the shell staying open.
+# This is not a synchronisation sleep: assertions still poll renders until
+# the cache has what they expect.
 function render_prompt --argument-names cwd
-    fish --no-config -c '
-        source $argv[1]/fish/core/init.fish
-        source $argv[1]/fish/functions/fish_prompt.fish
-        __gpy_register_with_agent >/dev/null 2>&1
-        cd $argv[2]
-        fish_prompt
-        sleep 0.2
-    ' -- $__gpy_root $cwd 2>/dev/null | strip_sgr | string collect
+    render_prompt_raw $cwd | strip_sgr | string collect
 end
 
-# Render just the directory segment via its entry point, trimmed.
+# The directory segment alone (the config lists only it): the first
+# non-blank line of the render, trimmed.
 function render_directory --argument-names cwd
-    fish --no-config -c '
-        source $argv[1]/fish/core/init.fish
-        source $argv[1]/fish/functions/fish_prompt.fish
-        __gpy_register_with_agent >/dev/null 2>&1
-        cd $argv[2]
-        segment_directory_render true true
-    ' -- $__gpy_root $cwd 2>/dev/null | strip_sgr | string collect | string trim
+    render_prompt $cwd | string split \n | string match -rv '^\s*$' | head -1 | string trim
 end
 
 # Does $text contain every `|`-separated token of $wanted and none of $unwanted?
@@ -266,8 +254,8 @@ function test_language_content
     printf 'home = /nonexistent\nversion = 3.99.7\n' >$py/.venv/pyvenv.cfg
     assert_render "language: python with the version read from the project venv" $py "python 3.99.7" ""
 
-    # A language segment that is not listed in `ui.enabled_segments` reaches the
-    # shell through the theme export (__enabled_segments) and is not drawn.
+    # A language segment that is not listed in `ui.enabled_segments` is not
+    # drawn.
     set -g __segments '["directory", "git"]'
     write_config '[language]' 'display = "text"' 'show_versions = true'
     assert_render "language: unlisting the segment hides it" $py "❯" "python|3.99.7"
@@ -282,6 +270,7 @@ function test_directory_content --argument-names repo
 
     set -l deep $repo/a/b/c
     mkdir -p $deep
+    set -g __segments '["directory"]'
 
     # `full` is the whole path with the home directory shown as `~`.
     set -l cases \
@@ -315,6 +304,7 @@ function test_directory_content --argument-names repo
     else
         fail "directory: max_length = 6 keeps an ellipsis plus the tail" "got '$__render_last'"
     end
+    set -g __segments '["directory", "git", "language"]'
 end
 
 # ---- 3b. show_icons = false: no powerline caps --------------------------------
@@ -322,9 +312,7 @@ end
 # (U+E0B0..U+E0BF) stay, because their absence is the assertion.
 function render_prompt_raw --argument-names cwd
     fish --no-config -c '
-        source $argv[1]/fish/core/init.fish
         source $argv[1]/fish/functions/fish_prompt.fish
-        __gpy_register_with_agent >/dev/null 2>&1
         cd $argv[2]
         fish_prompt
         # Linger for the language segment background request, as in render_prompt.
@@ -367,45 +355,39 @@ function test_icons_off_draws_no_powerline_caps --argument-names repo
     end
 end
 
-# ---- 4. prompt frame (no agent: socket pointed at nothing) ---------------------------
+# ---- 4. prompt frame (no agent) ------------------------------------------------
+# show_icons picks the icon set: nerd glyphs, or plain ASCII words.
 function frame_render
-    # $argv[1] and $argv[2] are code snippets run before/after sourcing the
-    # integration; they travel as arguments to `eval`, like the repo root.
-    fish --no-config -c '
-        set -gx GPY_AGENT_SOCKET_PATH /nonexistent/gpy.sock
-        set -gx GPY_AGENT_ENABLED 0
-        set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
-        eval $argv[2]
-        source $argv[1]/fish/core/init.fish
+    set -l saved $__show_icons
+    set -g __show_icons $argv[1]
+    write_config
+    set -g __show_icons $saved
+    env GPY_AGENT_ENABLED=0 GPY_AGENT_SOCKET_PATH=/nonexistent/gpy.sock fish --no-config -c '
         source $argv[1]/fish/functions/fish_prompt.fish
-        eval $argv[3]
         fish_prompt
-    ' -- $__gpy_root "$argv[1]" "$argv[2]" 2>/dev/null | strip_sgr | string collect
+    ' -- $__gpy_root 2>/dev/null | strip_sgr | string collect
 end
 
 function test_prompt_frame
-    print_test_header "Prompt frame: icon mode and root prompt"
+    print_test_header "Prompt frame: icon mode"
 
-    set -l nerd (frame_render 'set -g __prompt_icons nerd' '')
-    if text_matches "$nerd" "❯|✔" ""
-        pass "frame: nerd icons render ✔ and ❯"
+    set -l saved_segments $__segments
+    set -g __segments '["directory", "status"]'
+    set -l nerd (frame_render true)
+    if text_matches "$nerd" "❯" ok
+        pass "frame: nerd icons render ❯ and no ASCII status word"
     else
-        fail "frame: nerd icons render ✔ and ❯" "$nerd"
+        fail "frame: nerd icons render ❯ and no ASCII status word" "$nerd"
     end
 
-    set -l ascii (frame_render 'set -g __prompt_icons ascii' '')
-    if text_matches "$ascii" "ok |> " "❯|✔"
-        pass "frame: ascii icons render ok and >"
+    set -l ascii (frame_render false)
+    if text_matches "$ascii" " ok" "✔"
+        pass "frame: ascii icons render the ok status word"
     else
-        fail "frame: ascii icons render ok and >" "$ascii"
+        fail "frame: ascii icons render the ok status word" "$ascii"
     end
-
-    set -l root (frame_render '' 'set -g __gpy_is_root 1; function __gpy_request_character; echo CHARACTER-REQUESTED; end')
-    if text_matches "$root" '!❯!' CHARACTER-REQUESTED
-        pass "frame: root prompt renders !❯! without asking the agent for a character"
-    else
-        fail "frame: root prompt renders !❯! without asking the agent for a character" "$root"
-    end
+    set -g __segments $saved_segments
+    write_config
 end
 
 init_test_env

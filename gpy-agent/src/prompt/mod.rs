@@ -1,10 +1,8 @@
-//! `gpy prompt`: the whole Bash or Zsh prompt from one process, so the shell
-//! hook is one `PS1=$(gpy prompt ...)` instead of a fork per segment (#1247).
-//! It follows the shells' `__gpy_render_prompt` (`bash/core/init.bash`,
-//! `zsh/core/init.zsh`) step for step and reads the same theme-export
-//! values, cache files and refresh-throttle stamps, so the two render paths
-//! print the same prompt and can run side by side. Script segments run
-//! through [`script`].
+//! `gpy prompt`: the whole Bash, Zsh or Fish prompt from one process, so
+//! the shell hook is one `gpy prompt <shell>` call and the shell keeps no
+//! prompt state (#1247). Script segments run through [`script`]; the
+//! shell's lifecycle (agent start, registration, supervisor, exit) lives in
+//! [`session`].
 
 mod dialect;
 mod link;
@@ -14,7 +12,6 @@ mod session;
 mod vars;
 
 pub use dialect::Dialect;
-pub use script::ScriptArgs;
 
 use crate::Result;
 use crate::agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request};
@@ -25,27 +22,33 @@ use crate::formatter::{
 };
 use crate::ipc::Response;
 use crate::template::{Palette, parse_color};
-use crate::theme::export::{ScriptSegmentExport, ScriptSegmentExports, collect_script_segments};
+use crate::theme::export::{ScriptSegmentExports, collect_script_segments};
 use crate::theme::{ThemeConfig, load::load_theme};
 use link::{Link, Reply};
 use pill::{Depth, Paint, Place};
-use script::{Inputs, Scripts};
+use script::{Inputs, ScriptArgs, Scripts};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use vars::ShellVars;
 
 /// What the shell knows about the command that just finished.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PromptArgs {
     /// Exit status of the last command.
     pub status: i32,
-    /// Its duration in milliseconds; `None` before the first command.
+    /// Its duration in milliseconds; `None` when this prompt follows no
+    /// command (the first prompt, an empty Enter).
     pub duration_ms: Option<u64>,
-    /// The shell's PID: names its refresh-throttle stamps and late window.
+    /// The shell's PID: names its session, refresh-throttle stamps and
+    /// late window.
     pub pid: u32,
+    /// A token that changes with every command the shell ran: script
+    /// segments run again when it does.
+    pub cmd: String,
 }
 
-/// The built-in segments `gpy prompt` draws.
+/// The built-in segments `gpy prompt` draws; any other enabled name is a
+/// script segment, or skipped.
 const BUILTIN_SEGMENTS: [&str; 6] = [
     "clock",
     "duration",
@@ -55,41 +58,28 @@ const BUILTIN_SEGMENTS: [&str; 6] = [
     "status",
 ];
 
-/// Whether `gpy prompt` can draw every enabled segment of `config`, given
-/// the exported script segments: false while any other plugin segment is
-/// enabled.
-fn covers(config: &Config, scripts: &[ScriptSegmentExport]) -> bool {
-    config.effective_segments().all(|segment| {
-        BUILTIN_SEGMENTS.contains(&segment)
-            || scripts
-                .iter()
-                .any(|script| script.name.eq_ignore_ascii_case(segment))
-    })
-}
-
 /// A rendered prompt.
 #[derive(Debug)]
 pub struct Rendered {
-    /// `PS1` or `PROMPT`.
+    /// `PS1`, `PROMPT` or Fish's prompt.
     pub prompt: String,
     /// Zsh: the prompt symbol alone, without the status icon (the
-    /// transient prompt, `__gpy_render_tail`). Fish: the whole transient
-    /// line (`__gpy_transient_prompt`). Empty for Bash.
+    /// transient prompt). Fish: the whole transient line. Empty for Bash.
     pub tail: String,
 }
 
-/// Render the prompt for the current directory (`$PWD`); `None` when an
-/// enabled segment needs the shell's own renderer, or when a script segment
-/// is enabled and the shell passed no `script` arguments.
+/// The shell is exiting: unregister it from the agent and remove the files
+/// kept for it.
+pub fn exit(pid: u32) {
+    let config = load_config().unwrap_or_default();
+    session::exit(&Link::new(agent_enabled(&config), pid), pid);
+}
+
+/// Render the prompt for the current directory (`$PWD`).
 ///
 /// # Errors
 /// Returns an error if neither the configured nor the `default` theme loads.
-pub fn render(
-    dialect: Dialect,
-    args: PromptArgs,
-    script: Option<&ScriptArgs>,
-    shell_version: &str,
-) -> Result<Option<Rendered>> {
+pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result<Rendered> {
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
         Config::default()
@@ -103,9 +93,9 @@ pub fn render(
     } else {
         collect_script_segments(&crate::plugin::discover_plugins(), &config)
     };
-    if !covers(&config, &exports.segments) || (!exports.segments.is_empty() && script.is_none()) {
-        return Ok(None);
-    }
+    let enabled = agent_enabled(&config);
+    let mut session = session::Session::open(args.pid, enabled);
+    let script_duration = session.script_duration(args.duration_ms);
     let theme = load_theme(config.ui.theme.as_str()).or_else(|_| load_theme("default"))?;
     let palette = crate::palette::active_palette(&config);
     let vars = ShellVars::new(crate::theme::export::prompt_shell_values(
@@ -115,29 +105,29 @@ pub fn render(
         &palette,
     ));
     let pwd = logical_pwd();
-    let scripts = script
-        .filter(|_| !exports.segments.is_empty())
-        .map(|given| {
+    let scripts = if exports.segments.is_empty() {
+        None
+    } else {
+        session.bash().map(|bash| {
             Scripts::run(
                 &exports.sh,
                 exports.segments,
-                given,
+                &ScriptArgs {
+                    bash,
+                    cmd: &args.cmd,
+                    reload: session.reload,
+                },
                 args.pid,
                 &Inputs {
                     pwd: &pwd.to_string_lossy(),
-                    // Bash hands scripts its last duration; Zsh and Fish the
-                    // last command's, kept across a prompt due to a `cd` alone.
-                    duration_ms: match dialect {
-                        Dialect::Bash => args.duration_ms,
-                        Dialect::Zsh | Dialect::Fish => given.duration_ms,
-                    },
+                    duration_ms: script_duration,
                     prompt_icons: vars.or("__prompt_icons", ""),
                 },
             )
-        });
+        })
+    };
     let canonical = std::fs::canonicalize(&pwd).ok();
     let git_root = canonical.as_deref().and_then(find_git_root);
-    let enabled = agent_enabled(&config);
     let mut render = Render {
         dialect,
         paint: Paint {
@@ -162,17 +152,17 @@ pub fn render(
     };
     let rendered = render.prompt();
     // After the render, so a cold start never delays this prompt.
-    session::run(
+    session.finish(
         &render.link,
         &config,
         &session::Shell {
-            pid: args.pid,
+            pid: render.args.pid,
             name: dialect.request_shell(),
             version: shell_version,
         },
         &render.pwd.to_string_lossy(),
     );
-    Ok(Some(rendered))
+    Ok(rendered)
 }
 
 /// `$PWD` when it names the working directory, else the physical one.
@@ -315,36 +305,44 @@ impl Render<'_> {
             (character.clone(), character)
         };
         out.push_str(&symbol);
+        let has_clock = self
+            .config
+            .effective_segments()
+            .any(|segment| segment == "clock");
+        // What stays in scrollback once the line is submitted: transient on,
+        // the clock time and the symbol; off with the clock, the whole prompt
+        // (the time it was submitted); off without it, nothing to swap in.
         let tail = match self.dialect {
-            Dialect::Bash => String::new(),
-            Dialect::Zsh => symbol_alone,
-            Dialect::Fish => self.fish_transient(&symbol_alone),
+            Dialect::Zsh | Dialect::Fish if self.config.ui.transient_prompt => {
+                self.transient_line(&symbol_alone, has_clock)
+            }
+            Dialect::Zsh | Dialect::Fish if has_clock => out.clone(),
+            Dialect::Bash | Dialect::Zsh | Dialect::Fish => String::new(),
         };
         Rendered { prompt: out, tail }
     }
 
-    /// `__gpy_transient_prompt`: the line Fish leaves in scrollback, the
-    /// clock time (when the clock is enabled) and the prompt symbol.
-    fn fish_transient(&self, symbol: &str) -> String {
+    /// The transient line: the clock time (when the clock is enabled) and
+    /// the prompt symbol.
+    fn transient_line(&self, symbol: &str, has_clock: bool) -> String {
         let mut line = String::new();
         if self.vars.or_nonempty("__gpy_add_newline", "1") != "0" {
             line.push('\n');
         }
-        if self
-            .config
-            .effective_segments()
-            .any(|segment| segment == "clock")
-        {
+        if has_clock {
             line.push_str(&pill::fg_text(
                 self.paint,
                 self.vars.or("__color_clock_fg", ""),
                 &format!(
                     "{}{}",
-                    self.vars.or("__prompt_time_pad", " "),
+                    self.dialect.escape(self.vars.or("__prompt_time_pad", " ")),
                     self.dialect.clock_token(&pill::clock_time_spec(&self.vars))
                 ),
             ));
-            if !pill::strip_sgr(symbol).starts_with(' ') {
+            // Themes whose symbol has no leading space (starship) still need
+            // one between the time and the symbol.
+            let shown = pill::strip_sgr(symbol).replace("%{", "").replace("%}", "");
+            if !shown.starts_with(' ') {
                 line.push(' ');
             }
         }

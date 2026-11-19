@@ -198,7 +198,7 @@ static FIRST_PARTY: LazyLock<DiscoveredPlugin> = LazyLock::new(|| {
             .iter()
             .map(|builtin| SegmentName::new(builtin.as_str()).expect("builtin name is valid"))
             .collect(),
-        entry_type: EntryType::File,
+        entry_type: EntryType::Builtin,
         compatibility_constraints: None,
     };
     DiscoveredPlugin {
@@ -256,7 +256,7 @@ fn register_discovered_plugin(
             plugin_dir,
             source,
             message: format!(
-                "Unsupported entry_type '{}' for plugin '{}': only 'file' and 'script' plugins are loadable by this runtime",
+                "Unsupported entry_type '{}' for plugin '{}': only 'script' plugins are loadable by this runtime",
                 manifest.entry_type.as_str(),
                 manifest.id
             ),
@@ -496,7 +496,7 @@ name = "{id}"
 version = "0.1.0"
 api_version = "v1"
 provided_segments = ["{id}"]
-entry_type = "file"
+entry_type = "script"
 "#
         )
     }
@@ -514,10 +514,26 @@ entry_type = "command"
         )
     }
 
+    /// Write `plugin.toml` and, for a parseable script manifest, a minimal
+    /// `segments/<name>.toml` plus `run.sh` per provided segment.
     fn write_plugin(root: &Path, dir_name: &str, manifest: &str) {
         let plugin_dir = root.join(dir_name);
-        fs::create_dir_all(&plugin_dir).expect("create plugin dir");
+        fs::create_dir_all(plugin_dir.join("segments")).expect("create plugin dir");
         fs::write(plugin_dir.join("plugin.toml"), manifest).expect("write manifest");
+        let Ok(parsed) = PluginManifest::parse(manifest) else {
+            return;
+        };
+        if parsed.entry_type != EntryType::Script {
+            return;
+        }
+        fs::write(plugin_dir.join("run.sh"), "echo hi\n").expect("write script");
+        for segment in &parsed.provided_segments {
+            fs::write(
+                plugin_dir.join("segments").join(format!("{segment}.toml")),
+                "command = \"run.sh\"\n",
+            )
+            .expect("write segment manifest");
+        }
     }
 
     #[test]
@@ -571,6 +587,31 @@ entry_type = "command"
                 .message
                 .contains("Unsupported entry_type 'command'")),
             "expected an unsupported-entry-type diagnostic"
+        );
+    }
+
+    #[test]
+    fn discover_plugins_rejects_removed_file_entry_type_with_a_pointer() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("gpy").join("plugins");
+        let manifest = valid_manifest("old-fish").replace("\"script\"", "\"file\"");
+        write_plugin(&root, "old-fish", &manifest);
+
+        let discovery = discover_plugins_in_roots(&[(PluginSource::User, root)]);
+
+        assert!(
+            !discovery
+                .plugins
+                .iter()
+                .any(|plugin| plugin.manifest.id.as_str() == "old-fish")
+        );
+        assert!(
+            discovery.diagnostics.iter().any(|diagnostic| diagnostic.message.contains(
+                "plugin 'old-fish': entry_type \"file\" (Fish .fish plugins) is no longer supported; \
+                 rewrite it as a script plugin (entry_type = \"script\"), see docs/dev/plugins.md"
+            )),
+            "{:?}",
+            discovery.diagnostics
         );
     }
 
@@ -632,14 +673,7 @@ entry_type = "command"
         let temp = TempDir::new().expect("tempdir");
         let root = temp.path().join("gpy").join("plugins");
         for id in ["good", "bad"] {
-            write_plugin(
-                &root,
-                id,
-                &valid_manifest(id).replace("entry_type = \"file\"", "entry_type = \"script\""),
-            );
-            let dir = root.join(id);
-            fs::create_dir_all(dir.join("segments")).expect("segments");
-            fs::write(dir.join("run.sh"), "echo hi\n").expect("script");
+            write_plugin(&root, id, &valid_manifest(id));
         }
         fs::write(
             root.join("good/segments/good.toml"),
@@ -689,14 +723,8 @@ entry_type = "command"
 
         let temp = TempDir::new().expect("tempdir");
         let root = temp.path().join("gpy").join("plugins");
-        write_plugin(
-            &root,
-            "demo",
-            &valid_manifest("demo").replace("entry_type = \"file\"", "entry_type = \"script\""),
-        );
+        write_plugin(&root, "demo", &valid_manifest("demo"));
         let dir = root.join("demo");
-        fs::create_dir_all(dir.join("segments")).expect("segments");
-        fs::write(dir.join("run.sh"), "echo hi\n").expect("script");
         fs::write(dir.join("segments/demo.toml"), "command = \"run.sh\"\n").expect("manifest");
         let set_mode = |relative: &str, mode: u32| {
             fs::set_permissions(dir.join(relative), fs::Permissions::from_mode(mode))
@@ -892,15 +920,9 @@ entry_type = "command"
         let user_temp = TempDir::new().expect("tempdir");
         let bundled_temp = TempDir::new().expect("tempdir");
 
-        let user_root = user_temp.path().join("gpy").join("plugins").join("demo");
-        let bundled_root = bundled_temp.path().join("demo");
-        fs::create_dir_all(&user_root).expect("create user plugin");
-        fs::create_dir_all(&bundled_root).expect("create bundled plugin");
-
-        fs::write(user_root.join("plugin.toml"), valid_manifest("demo"))
-            .expect("write user plugin");
-        fs::write(bundled_root.join("plugin.toml"), valid_manifest("demo"))
-            .expect("write bundled plugin");
+        let user_plugins = user_temp.path().join("gpy").join("plugins");
+        write_plugin(&user_plugins, "demo", &valid_manifest("demo"));
+        write_plugin(bundled_temp.path(), "demo", &valid_manifest("demo"));
 
         let roots = vec![
             (PluginSource::Bundled, bundled_temp.path().to_path_buf()),

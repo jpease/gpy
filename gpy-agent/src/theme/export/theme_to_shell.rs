@@ -1,8 +1,6 @@
 //! [`theme_to_shell`]: the export entry point, its header, segment list and Bash/Zsh helper function.
 
-use super::plugin_segments::{
-    append_plugin_segment_assignments, append_plugin_segment_file_assignments,
-};
+use super::plugin_segments::append_plugin_segment_assignments;
 use super::script_segments::{ScriptSegmentExports, append_script_segment_assignments};
 use super::segments::{
     append_builtin_segment_assignments, append_delimiter_assignments,
@@ -16,7 +14,7 @@ use crate::formatter::separator::Glyphs;
 use crate::shell::Shell;
 use crate::template::Palette;
 use crate::theme::model::ThemeConfig;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Emit the provenance header. `theme_name` is raw: it sits in a `#` comment, never expanded.
@@ -147,8 +145,6 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
 /// discovery by the caller, so [`theme_to_shell`] stays a pure function.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PluginExports {
-    /// `.fish` segment files of `file` plugins by segment name (Fish only).
-    pub segment_files: BTreeMap<String, String>,
     /// Enabled script segments, written for every shell.
     pub scripts: ScriptSegmentExports,
 }
@@ -291,8 +287,6 @@ pub(crate) fn theme_to_shell(
     append_builtin_assignments(&mut output, theme, theme_name, config, colors, glyphs);
 
     append_plugin_segment_assignments(&mut output, colors, glyphs, &theme.segments.plugin);
-
-    append_plugin_segment_file_assignments(&mut output, shell, &plugins.segment_files);
     append_script_segment_assignments(&mut output, shell, &plugins.scripts);
     append_enabled_segments(&mut output, shell, config);
     append_lang_marker_files(&mut output, shell);

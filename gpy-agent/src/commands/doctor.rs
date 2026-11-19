@@ -3,7 +3,6 @@
 use super::doctor_agent::check_answering_agent;
 use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
 use super::doctor_integration::{check_path_agent, check_shell_integrations};
-use super::doctor_ipc::check_ipc_client;
 use super::doctor_themes::check_theme_overrides;
 use super::doctor_tuning::print_agent_tuning;
 use super::utils::agent_binary;
@@ -58,7 +57,6 @@ pub fn run() -> Result<()> {
 
     all_ok &= check_binaries();
     let installed = super::setup::installed_integrations();
-    check_ipc_client(&installed, loaded_config.as_ref().ok());
     all_ok &= check_shell_integrations(&installed);
 
     output::blank();
@@ -399,9 +397,8 @@ fn plugin_segment_index(
     segment_index
 }
 
-/// The file whose contents `segment` runs: the `.fish` file of a `file`
-/// plugin, or the script a `script` plugin's segment manifest names.
-fn plugin_segment_file(
+/// The script a plugin segment's manifest names.
+fn plugin_segment_script(
     segment: &str,
     plugin: &crate::plugin::DiscoveredPlugin,
 ) -> std::result::Result<std::path::PathBuf, String> {
@@ -409,23 +406,15 @@ fn plugin_segment_file(
         .root
         .as_deref()
         .ok_or_else(|| "built-in segments have no file".to_owned())?;
-    match plugin.manifest.entry_type {
-        crate::plugin::EntryType::File => Ok(root.join("segments").join(format!("{segment}.fish"))),
-        crate::plugin::EntryType::Script => {
-            let manifest = plugin
-                .script_segments
-                .iter()
-                .find_map(|(name, manifest)| (name.as_str() == segment).then_some(manifest))
-                .ok_or_else(|| format!("no segment manifest for '{segment}'"))?;
-            manifest
-                .command
-                .resolve(root)
-                .map_err(|err| err.to_string())
-        }
-        crate::plugin::EntryType::Command => {
-            Err("command plugins have no inspectable script".to_owned())
-        }
-    }
+    let manifest = plugin
+        .script_segments
+        .iter()
+        .find_map(|(name, manifest)| (name.as_str() == segment).then_some(manifest))
+        .ok_or_else(|| format!("no segment manifest for '{segment}'"))?;
+    manifest
+        .command
+        .resolve(root)
+        .map_err(|err| err.to_string())
 }
 
 fn print_plugin_performance_hint(
@@ -433,7 +422,7 @@ fn print_plugin_performance_hint(
     plugin: &crate::plugin::DiscoveredPlugin,
     cfg: &config::Config,
 ) {
-    let segment_path = match plugin_segment_file(segment, plugin) {
+    let segment_path = match plugin_segment_script(segment, plugin) {
         Ok(path) => path,
         Err(reason) => {
             output::detail_at(
@@ -465,9 +454,7 @@ fn print_plugin_performance_hint(
             );
         }
     }
-    if matches!(plugin.manifest.entry_type, crate::plugin::EntryType::Script) {
-        print_script_trial(segment, plugin, &segment_path, cfg);
-    }
+    print_script_trial(segment, plugin, &segment_path, cfg);
 }
 
 /// Run a script segment once with the runner's rules and report the time.

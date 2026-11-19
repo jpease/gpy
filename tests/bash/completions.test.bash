@@ -299,11 +299,10 @@ echo "Checking the next prompt refreshes the cache and keeps the exit status..."
     export HOME="$sandbox" GPY_AGENT_ENABLED=0
     export XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data"
     export XDG_STATE_HOME="$sandbox/state" XDG_CACHE_HOME="$sandbox/cache"
+    export XDG_RUNTIME_DIR="$sandbox/runtime" GPY_AGENT_SOCKET_PATH="$sandbox/missing.sock"
     unset PROMPT_COMMAND
     # shellcheck source=/dev/null
     source "$ROOT/bash/gpy.bash"
-    # shellcheck source=tests/lib/shell_render_only.bash
-    source "$ROOT/tests/lib/shell_render_only.bash"
     unset __gpy_complete_cache_theme __gpy_complete_cache_palette __gpy_complete_cache_segment
 
     : >"$gpy_calls_file"

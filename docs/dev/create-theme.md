@@ -81,7 +81,7 @@ That means community themes do not need a separate mechanism for plugin segments
 Useful built-in references:
 
 - [`config/themes/default.toml`](../../config/themes/default.toml)
-- [`fish/segments/directory.fish`](../../fish/segments/directory.fish)
+- [`gpy-agent/src/prompt/mod.rs`](../../gpy-agent/src/prompt/mod.rs) (how `gpy prompt` draws each segment)
 
 ## Git Segment: State, Stash, Detached HEAD & `git_style`
 

@@ -76,14 +76,11 @@ expect_entry() {
 
 for entry in \
     install.sh \
-    fish/core/init.fish \
     fish/conf.d/gpy_init.fish \
     fish/functions/fish_prompt.fish \
     fish/completions/gpy-dynamic.fish \
     bash/gpy.bash \
-    bash/core/init.bash \
     zsh/gpy.zsh \
-    zsh/core/init.zsh \
     config/config.example.toml \
     docs/README.md \
     docs/LICENSE \
@@ -184,10 +181,10 @@ sh -n "$OUT/install-oneline.sh" || fail "the stamped install-oneline.sh does not
 # top level, matching the repo.
 shell_listing="$(tar -tzf "$OUT/gpy-shell-files.tar.gz" 2>/dev/null || true)"
 for entry in \
-    fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish fish/core/init.fish \
-    fish/segments/git.fish fish/completions/gpy-dynamic.fish \
-    zsh/gpy.zsh zsh/core/init.zsh zsh/segments/git.zsh zsh/completions/_gpy-dynamic \
-    bash/gpy.bash bash/core/init.bash bash/segments/git.bash bash/completions/gpy-dynamic.bash \
+    fish/conf.d/gpy_init.fish fish/functions/fish_prompt.fish \
+    fish/completions/gpy-dynamic.fish \
+    zsh/gpy.zsh zsh/completions/_gpy-dynamic \
+    bash/gpy.bash bash/completions/gpy-dynamic.bash \
     plugins/hostname/plugin.toml plugins/username/plugin.toml; do
     expect_entry "$shell_listing" "gpy-shell-files.tar.gz" "$entry"
 done
