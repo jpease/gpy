@@ -23,7 +23,7 @@ take longer and must be communicated separately.
 
 - Close heavy background workloads (IDE indexing, large downloads).
 - Run on AC power, not on battery saver.
-- Ensure `socat`, `jq`, and `hyperfine` are installed (for shell and CI benchmarks).
+- Ensure `jq` and `hyperfine` are installed (for shell and CI benchmarks).
 - If your configured compiler cache (`rustc-wrapper`) causes errors, disable it for benchmarks with:
   - `RUSTC_WRAPPER=`
 
@@ -201,10 +201,10 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 
 ### Measurement safeguards
 
-- The prompt scenarios load the actual project init path (`fish/core/init.fish`)
-  and call the real `fish_prompt`, with the checkout's `fish/functions` forced to
-  the front of `fish_function_path` so a globally installed GPY can never be
-  measured by mistake.
+- The prompt scenarios call the real `fish_prompt`, `__gpy_precmd` and Zsh
+  `precmd`, with the checkout's `fish/functions` forced to the front of
+  `fish_function_path` and its `gpy` first on `PATH`, so a globally installed
+  GPY can never be measured by mistake.
 - Latency is reported as the **amortized per-render** cost: an in-process loop of
   renders is timed and divided by the render count, isolating render work from
   one-time Fish startup and GPY init. (macOS `date` has no `%N`, so amortization
@@ -221,14 +221,14 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 ### Script segments
 
 The scenario renders a fixture plugin (`gpy-bench`, written into the sandbox)
-through the agent's real theme export and each shell's real adapter:
-`bash/core/g_segments.bash`, `zsh/core/script.zsh`, `fish/core/script.fish` and
-the one shared `bash/core/g_runner.bash`. Its segments are `bench-user`, a username-like
-segment cached for the session (`ttl_secs = 3600`); `bench-cwd`, which runs on
-every command (`ttl_secs = 0`, input `pwd`); and `bench-scan`, whose
-`require_files` never matches. A sandboxed agent of its own renders the only
-built-in segment, `directory`, in every config. Each variant is paired with
-`base`, the same prompt without plugin segments:
+through each shell's real wrapper and `gpy prompt`, which runs the scripts
+through its embedded runner (`gpy-agent/src/prompt/g_runner.bash`). Its
+segments are `bench-user`, a username-like segment cached for the session
+(`ttl_secs = 3600`); `bench-cwd`, which runs on every command
+(`ttl_secs = 0`, input `pwd`); and `bench-scan`, whose `require_files` never
+matches. A sandboxed agent of its own renders the only built-in segment,
+`directory`, in every config. Each variant is paired with `base`, the same
+prompt without plugin segments:
 
 | Variant | Enabled after `directory` | What a due prompt pays | Budget key |
 |---|---|---|---|
@@ -237,16 +237,14 @@ built-in segment, `directory`, in every config. Each variant is paired with
 | `idle` (Zsh, Fish) | as `g`, no command | an empty Enter: nothing runs (a Fish repaint calls only the `fish_prompt` function, a subset of this) | per shell |
 | `expiry` | as `g`, `[plugin.bench-user] ttl_secs = 0` | every plugin segment due at once: two runs in one batch | `script_segments_shared` |
 | `scan` | `bench-scan` | one scan child that misses, no run | `script_segment_scan` |
-| `g-busybox` (Linux, when `busybox` is installed) | as `g`, `__gpy_script_sh` set to busybox | as `g`, under Alpine's `sh` | per shell |
 
 `g` against `hit` is also reported, without a budget: that is the cost of one
 uncached run. Shells: the first Bash 4.4 or later (`find_bench_bash`), `bash3`
 (`/bin/bash` when it is older than 4.4, i.e. macOS 3.2, or
-`GPY_BENCH_BASH3`), Zsh and Fish. The `bash3` rows go through the DEBUG trap
-that Bash 3.2 to 4.3 installs once a script segment is listed, so its cost is
-part of what they measure; the trap's own +5.94 µs per user command is the
-spike's number (see below). Linux CI has no Bash older than 4.4, so `bash3`
-runs on macOS only.
+`GPY_BENCH_BASH3`), Zsh and Fish. Every shell runs the scripts in the same
+Bash 4+ child from `gpy prompt`; the `bash3` rows measure the wrapper (its
+DEBUG trap counts commands) on the oldest Bash GPY supports. Linux CI has no
+Bash older than 4.4, so `bash3` runs on macOS only.
 
 Method, after the spike #1006 harness `bench`:
 
@@ -258,8 +256,9 @@ Method, after the spike #1006 harness `bench`:
   the integration, draws the first prompt, then draws `GPY_BENCH_G_ITERS`
   more (default 20), each after a simulated command. Per prompt =
   (median of those samples − median of 0-prompt samples) / ITERS, so startup
-  and the first prompt cancel out. Bash counts `\#` per top-level command,
-  so its body is unrolled one line per prompt.
+  and the first prompt cancel out. Bash counts commands in its DEBUG trap,
+  which sees only a script's top-level commands, so its body is unrolled one
+  line per prompt.
 - A variant's result is the median, and IQR, over the rounds of its
   difference to `base` in the same round. The budget check uses that median
   (plus `measurement_variance_percent`).
@@ -294,36 +293,36 @@ cannot fail the gate. Locally, on a quiet machine,
 
 Numbers and their sources:
 
-- **Re-measured here** (`ci-bench.sh` defaults, 2026-10-26, macOS 27.0
-  arm64 M4 Max, load1 median 4.8, not a quiet machine). Values are ms per due
-  prompt, the median paired difference (IQR):
+- **Re-measured here** (`ci-bench.sh` defaults, 2026-11-19, the 0.12 code,
+  macOS 27.2 arm64 M4 Max, load1 median 2.3). Values are ms per due prompt,
+  the median paired difference (IQR):
 
   | | Bash 5.3 | Bash 3.2 | Zsh 5.9 | Fish 4.9 |
   |---|---|---|---|---|
-  | `hit` | +1.77 (1.77–1.81) | +1.81 (1.81–2.16) | +0.90 (0.88–1.00) | +0.63 (0.57–0.72) |
-  | `g` | +10.16 (10.12–10.27) | +11.69 (11.57–11.72) | +15.26 (14.88–16.31) | +13.90 (13.73–13.97) |
-  | `g` vs `hit` (one uncached run) | +8.39 | +9.66 | +14.39 | +13.19 |
-  | `expiry` | +10.96 | +12.17 | +16.34 | +14.24 |
-  | `scan` | +1.81 | +2.36 | +0.77 | +7.81 |
-  | `idle` | – | – | +1.65 | +0.27 |
+  | `hit` | +1.01 (0.96–1.01) | +0.93 (0.89–0.95) | +0.99 (0.91–1.02) | +0.96 (0.92–0.99) |
+  | `g` | +12.38 (12.38–12.43) | +12.40 (12.37–12.46) | +12.50 (12.44–12.63) | +12.45 (12.39–12.47) |
+  | `g` vs `hit` (one uncached run) | +11.42 | +11.48 | +11.47 | +11.48 |
+  | `expiry` | +13.38 | +13.34 | +13.49 | +13.22 |
+  | `scan` | +7.92 | +7.90 | +7.91 | +7.88 |
+  | `idle` | – | – | +0.84 | +0.75 |
 
-  Interpreter: `/bin/bash` (the export's macOS choice). Zsh and Fish pay one
-  Bash child per run, about 5 ms on this host, and Fish pays another for the
-  scan.
+  Interpreter: `/bin/bash` (the macOS choice). Every shell now pays the same
+  cost: `gpy prompt` runs the scan and the scripts in one Bash child per due
+  prompt, about 5 ms on this host. The same run's built-in prompt renders:
+  Fish 4.74 ms, Bash 6.08 ms, Zsh 6.77 ms per prompt.
 - **Reused from the PoC and spike #1006, not re-run:** the PoC built-in
   renders (35.88 / 13.13 / 20.67 ms) and the PoC G hit (1.5 to 2.8 ms) and
   one-process run (5.8 to 8.7 ms). Also: the runner's cost over
   `$(/bin/sh script)` (+0.67 to +2.41 ms on macOS, +0.4 to +0.9 ms on Linux),
   the clean environment (+0.07 to +0.30 ms), the scan child on Linux (+0.6 to
   +0.9 ms), and the Bash 3.2 DEBUG trap (+5.94 µs per command, P4). The
-  benchmark measures the whole adapter path, not the runner against a bare
-  `$( )`, so those figures are not re-derived here.
+  benchmark measures the whole path, not the runner against a bare `$( )`,
+  so those figures are not re-derived here.
 - **Linux and WSL:** not measured locally. The Linux figures come from CI:
   `release.yml`'s `perf` job (ubuntu-latest; `/bin/sh` is dash) runs
-  `just bench-ci`, and with it this scenario. Busybox rows appear only where
-  `busybox` is installed, which `.github/actions/install-shells` does not do
-  today. No workflow runs `ci-bench.sh` under WSL (`wsl-smoke.yml` runs the
-  smoke and contract suites only), so there are no WSL figures yet.
+  `just bench-ci`, and with it this scenario. No workflow runs `ci-bench.sh`
+  under WSL (`wsl-smoke.yml` runs the smoke checks and the golden prompts
+  only), so there are no WSL figures yet.
 
 The budgets are set from the macOS run: `target_ms` ≈ the measured value,
 `max_ms` ≈ 2.5× the target. That leaves room for shared runners, yet a
