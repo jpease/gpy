@@ -28,6 +28,11 @@ registered() { shell_e2e_assert_registered "$client_pid"; }
 shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
 reload_flag="$XDG_RUNTIME_DIR/gpy/shells/$client_pid.reload"
+# The agent announces its start (`.reload` + `.reregister`) to every tracked
+# shell once its socket accepts; on a fast host that can catch this shell's
+# PID file. That announcement has run by the time the client registered, so
+# drop its flag: only the setting change below may raise one.
+rm -f "$reload_flag"
 agent_down() { ! shell_e2e_agent_responding; }
 
 if ! gpy config set agent.supervisor.enabled false >"$SHELL_E2E_ROOT/config-set.log" 2>&1; then

@@ -33,7 +33,10 @@ registered() { shell_e2e_assert_registered "$client_pid"; }
 shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
 reload_flag="$XDG_RUNTIME_DIR/gpy/shells/$client_pid.reload"
-[ -e "$reload_flag" ] && fail "a .reload flag is pending before the edit"
+# The agent's start announcement (`.reload` + `.reregister`) can catch this
+# shell's PID file on a fast host; it has run by the time the client
+# registered, so drop its flag and let only the edit raise one.
+rm -f "$reload_flag"
 
 shell_e2e_text_config '"directory", "git"'
 

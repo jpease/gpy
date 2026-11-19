@@ -50,7 +50,7 @@ shell_e2e_start_agent || { fail "agent did not restart"; shell_e2e_dump_transcri
 # restarted agent writes its own, which then outlives the re-registration.
 announced() {
     tail -n "+$((log_lines_before_restart + 1))" "$GPY_DEBUG_LOG" |
-        grep -q "Announcing agent start to tracked shell $client_pid "
+        grep -q "Announcing agent start to tracked shell $client_pid\$"
 }
 # The log line precedes the flag write, so poll both.
 flag_written() { announced && [ -e "$shells_dir/$client_pid.reregister" ]; }
