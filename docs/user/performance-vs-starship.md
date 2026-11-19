@@ -14,50 +14,99 @@ status), through each tool's real integration: GPY's `bash/gpy.bash`,
 milliseconds per prompt (min-max of the round medians); lower is better.
 
 `steady` draws every prompt in the repository root; `cd` changes directory
-before each prompt.
+before each prompt; `edit` modifies a tracked file before every other prompt
+and restores it before the next, so git status changes between prompts.
 
 macOS (Apple M4 Max, macOS 27.2.0; Bash 5.3, Zsh 5.9, Fish 4.9):
 
 | Repository | Shell | Scenario | GPY | Starship |
 |---|---|---|---:|---:|
-| tiny-express | Bash | steady | 4.16 [4.12-4.19] | 19.48 [19.41-19.67] |
-| tiny-express | Bash | cd | 4.26 [4.21-4.30] | 19.44 [19.28-19.69] |
-| tiny-express | Zsh | steady | 3.72 [3.66-3.82] | 18.48 [18.34-18.61] |
-| tiny-express | Zsh | cd | 3.83 [3.80-3.92] | 18.61 [18.54-18.71] |
-| tiny-express | Fish | steady | 3.22 [3.18-3.25] | 17.75 [17.68-17.82] |
-| tiny-express | Fish | cd | 3.33 [3.31-3.35] | 17.87 [17.60-18.08] |
-| medium-kubernetes | Bash | steady | 5.23 [4.31-5.28] | 130.81 [130.38-132.67] |
-| medium-kubernetes | Bash | cd | 5.59 [4.93-6.00] | 131.02 [130.77-132.77] |
-| medium-kubernetes | Zsh | steady | 3.87 [3.82-5.00] | 130.12 [129.76-131.94] |
-| medium-kubernetes | Zsh | cd | 4.93 [3.85-5.37] | 130.37 [129.59-130.92] |
-| medium-kubernetes | Fish | steady | 3.42 [3.42-3.46] | 129.62 [129.36-130.90] |
-| medium-kubernetes | Fish | cd | 3.63 [3.58-3.75] | 129.49 [129.22-131.71] |
+| tiny-express | Bash | steady | 4.16 [4.14-4.17] | 19.50 [19.35-19.67] |
+| tiny-express | Bash | cd | 4.25 [4.19-4.33] | 19.48 [19.30-19.81] |
+| tiny-express | Bash | edit | 4.24 [4.21-4.44] | 19.62 [19.14-19.80] |
+| tiny-express | Zsh | steady | 3.73 [3.66-3.85] | 18.49 [18.17-18.82] |
+| tiny-express | Zsh | cd | 3.84 [3.76-4.00] | 18.58 [18.36-18.75] |
+| tiny-express | Zsh | edit | 3.79 [3.75-3.89] | 18.73 [18.63-18.90] |
+| tiny-express | Fish | steady | 3.18 [3.16-3.24] | 17.87 [17.57-17.98] |
+| tiny-express | Fish | cd | 3.33 [3.25-3.38] | 17.94 [17.51-18.11] |
+| tiny-express | Fish | edit | 3.26 [3.22-3.36] | 17.98 [17.83-18.22] |
+| medium-kubernetes | Bash | steady | 4.26 [4.20-5.09] | 129.31 [126.79-130.12] |
+| medium-kubernetes | Bash | cd | 5.56 [5.26-6.23] | 129.48 [128.38-129.84] |
+| medium-kubernetes | Bash | edit | 4.29 [4.24-4.47] | 130.37 [128.24-132.52] |
+| medium-kubernetes | Zsh | steady | 3.80 [3.74-3.81] | 128.52 [126.62-128.95] |
+| medium-kubernetes | Zsh | cd | 4.22 [3.81-5.27] | 128.65 [126.64-131.07] |
+| medium-kubernetes | Zsh | edit | 3.91 [3.85-4.01] | 128.79 [127.85-129.44] |
+| medium-kubernetes | Fish | steady | 3.42 [3.36-3.55] | 127.98 [126.15-130.81] |
+| medium-kubernetes | Fish | cd | 3.50 [3.42-3.55] | 128.16 [127.40-129.16] |
+| medium-kubernetes | Fish | edit | 3.50 [3.47-3.73] | 130.26 [127.67-143.81] |
 
 Linux (Debian 13 in Docker Desktop's VM on the same machine, 8 CPUs; Bash
 5.2, Zsh 5.9, Fish 4.0):
 
 | Repository | Shell | Scenario | GPY | Starship |
 |---|---|---|---:|---:|
-| tiny-express | Bash | steady | 1.13 [1.09-1.14] | 3.88 [3.75-3.98] |
-| tiny-express | Bash | cd | 1.26 [1.23-1.27] | 3.89 [3.76-4.02] |
-| tiny-express | Zsh | steady | 1.27 [1.25-1.47] | 3.64 [3.62-3.82] |
-| tiny-express | Zsh | cd | 1.39 [1.37-1.41] | 3.66 [3.62-3.84] |
-| tiny-express | Fish | steady | 1.29 [1.27-1.29] | 3.71 [3.60-3.74] |
-| tiny-express | Fish | cd | 1.45 [1.44-1.46] | 3.83 [3.79-3.92] |
-| medium-kubernetes | Bash | steady | 1.17 [1.15-1.30] | 56.32 [43.46-56.75] |
-| medium-kubernetes | Bash | cd | 1.25 [1.23-1.31] | 56.32 [43.70-57.17] |
-| medium-kubernetes | Zsh | steady | 1.27 [1.24-1.35] | 49.85 [43.15-57.09] |
-| medium-kubernetes | Zsh | cd | 1.42 [1.33-1.74] | 47.61 [43.34-56.66] |
-| medium-kubernetes | Fish | steady | 1.45 [1.29-1.52] | 56.57 [56.25-57.32] |
-| medium-kubernetes | Fish | cd | 1.43 [1.42-1.66] | 56.62 [56.33-56.72] |
+| tiny-express | Bash | steady | 1.14 [1.13-1.16] | 3.91 [3.89-3.97] |
+| tiny-express | Bash | cd | 1.28 [1.26-1.28] | 3.94 [3.88-3.97] |
+| tiny-express | Bash | edit | 1.18 [1.18-1.22] | 3.91 [3.83-4.00] |
+| tiny-express | Zsh | steady | 1.29 [1.28-1.30] | 3.70 [3.53-3.78] |
+| tiny-express | Zsh | cd | 1.42 [1.38-1.45] | 3.73 [3.70-3.86] |
+| tiny-express | Zsh | edit | 1.33 [1.32-1.36] | 3.76 [3.69-3.81] |
+| tiny-express | Fish | steady | 1.31 [1.29-1.34] | 3.83 [3.73-3.88] |
+| tiny-express | Fish | cd | 1.47 [1.45-1.50] | 3.91 [3.87-3.94] |
+| tiny-express | Fish | edit | 1.37 [1.34-1.38] | 3.89 [3.84-3.94] |
+| medium-kubernetes | Bash | steady | 1.18 [1.12-1.20] | 57.72 [44.72-60.23] |
+| medium-kubernetes | Bash | cd | 1.28 [1.27-1.71] | 57.53 [45.00-58.25] |
+| medium-kubernetes | Bash | edit | 1.19 [1.17-1.45] | 51.52 [45.05-58.37] |
+| medium-kubernetes | Zsh | steady | 1.31 [1.27-1.77] | 44.97 [44.55-57.72] |
+| medium-kubernetes | Zsh | cd | 1.43 [1.34-1.95] | 44.72 [44.47-57.90] |
+| medium-kubernetes | Zsh | edit | 1.39 [1.25-1.56] | 44.78 [44.61-45.03] |
+| medium-kubernetes | Fish | steady | 1.52 [1.49-1.56] | 57.71 [57.54-57.91] |
+| medium-kubernetes | Fish | cd | 1.45 [1.41-1.47] | 57.62 [45.04-58.05] |
+| medium-kubernetes | Fish | edit | 1.36 [1.34-1.37] | 58.18 [57.77-58.56] |
 
 In short: a GPY prompt costs 3–6 ms on macOS and about 1.5 ms on Linux in
-every shell, whatever the repository size, because git status comes from the
-agent's cache; Starship's prompt costs 3–5.5 times that on a small repository
-and 25–45 times on a large one, where it runs git status on every prompt.
-Process start-up is much cheaper on Linux than on macOS, which is most of the
-platform difference. Both are the 0.12 code (commit `58adc132`,
+every shell, whatever the repository size and whether files changed, because
+git status comes from the agent's cache; Starship's prompt costs 3–5.5 times
+that on a small repository and 25–45 times on a large one, where it runs git
+status on every prompt. Both are the 0.12 code (commit `58adc132`,
 `release-dist`) against the Starship v1.27.0 release binary, on 2026-11-19.
+
+### How fresh is a GPY prompt?
+
+Starship computes git status while it draws, so its prompt is always current
+and pays for it in the tables above. GPY draws from the agent's cache: after
+a file is saved, the agent's watcher waits 100 ms for related changes, rescans
+the changed paths and rewrites the cache, and idle Zsh and Fish prompts
+repaint then (Bash shows it at its next prompt). Milliseconds from writing a
+tracked file until `gpy prompt` shows the change, and from restoring it until
+the clean prompt is back (median / p90 / max of 20 edits):
+
+| Platform | Repository | Edit shown | Restore shown |
+|---|---|---:|---:|
+| macOS | tiny-express | 136 / 141 / 145 | 138 / 142 / 144 |
+| macOS | medium-kubernetes | 140 / 144 / 146 | 143 / 149 / 150 |
+| Linux | tiny-express | 107 / 108 / 109 | 107 / 108 / 109 |
+| Linux | medium-kubernetes | 112 / 114 / 115 | 111 / 114 / 114 |
+
+A prompt drawn inside that window shows the previous state, then repaints.
+
+### Why Linux is faster
+
+Both platforms ran on the same M4 Max. Starting a process and walking a file
+tree both cost several times more on macOS:
+
+| | macOS | Linux VM |
+|---|---:|---:|
+| `/usr/bin/true` | 0.72 ms | 0.16 ms |
+| `gpy --version` | 1.65 ms | 0.40 ms |
+| `git status`, medium-kubernetes, no untracked cache | 145 ms | 37 ms |
+| Starship git-only prompt, same repository | 117 ms | 44 ms |
+
+A GPY prompt is mostly process start-up, so it follows the first two rows;
+Starship on a large repository is mostly the tree walk, so it follows the
+last two.
+
+### Method
 
 Method (`benchmarks/compare-starship/prompts.sh`): a sample is one fresh
 shell that loads the integration, draws one prompt, then 20 more; per prompt

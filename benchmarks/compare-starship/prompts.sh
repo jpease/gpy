@@ -18,15 +18,25 @@
 # sandbox and warm before timing.
 #
 # Scenarios: `steady` draws every prompt in the repository root; `cd`
-# alternates between the root and a subdirectory, as a `cd` before each prompt.
+# alternates between the root and a subdirectory, as a `cd` before each prompt;
+# `edit` modifies a tracked file before every other prompt and restores it
+# before the next (shell builtins only, so the edit costs no process), so the
+# git status changes between prompts.
+#
+# Freshness: for GPY, also the time from such an edit until `gpy prompt`
+# shows it (the agent's watcher, debounce and rescan), and back. Starship
+# reads git status while it draws, so its prompt is always current.
 #
 # Usage: prompts.sh --gpy-dir DIR [--starship BIN] [--repos LIST]
-#                   [--shells LIST] [--rounds N] [--runs N] [--iters N]
+#                   [--shells LIST] [--scenarios LIST] [--rounds N] [--runs N]
+#                   [--iters N] [--fresh-trials N]
 #   --gpy-dir DIR   directory holding `gpy` and `gpy-agent` (a release-dist build)
 #   --starship BIN  Starship binary (default: `starship` on PATH)
 #   --repos LIST    fixture names under ~/.cache/gpy-bench/repos (run.sh fixtures)
 #                   (default: tiny-express,medium-kubernetes)
 #   --shells LIST   default bash,zsh,fish
+#   --scenarios LIST  default steady,cd,edit
+#   --fresh-trials N  edits timed per repository for freshness (default 20; 0 skips)
 # Results: bench-results/compare-starship/prompts-<timestamp>/{samples.tsv,report.md}
 
 set -euo pipefail
@@ -35,14 +45,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 
 GPY_DIR="" STARSHIP_BIN="$(command -v starship || true)"
-REPOS="tiny-express,medium-kubernetes" SHELLS="bash,zsh,fish"
-ROUNDS=6 RUNS=5 ITERS=20
+REPOS="tiny-express,medium-kubernetes" SHELLS="bash,zsh,fish" SCENARIOS="steady,cd,edit"
+ROUNDS=6 RUNS=5 ITERS=20 FRESH_TRIALS=20
 while (($#)); do
     case "$1" in
         --gpy-dir) GPY_DIR="$2"; shift 2 ;;
         --starship) STARSHIP_BIN="$2"; shift 2 ;;
         --repos) REPOS="$2"; shift 2 ;;
         --shells) SHELLS="$2"; shift 2 ;;
+        --scenarios) SCENARIOS="$2"; shift 2 ;;
+        --fresh-trials) FRESH_TRIALS="$2"; shift 2 ;;
         --rounds) ROUNDS="$2"; shift 2 ;;
         --runs) RUNS="$2"; shift 2 ;;
         --iters) ITERS="$2"; shift 2 ;;
@@ -124,6 +136,10 @@ for repo in "${REPO_LIST[@]}"; do
     "${ENV_ARGS[@]}" GIT_OPTIONAL_LOCKS=1 git -C "$SB/repos/$repo" status --porcelain >/dev/null
     sub="$(cd "$SB/repos/$repo" && find . -mindepth 1 -maxdepth 1 -type d ! -name '.*' | sort | head -n 1)"
     printf '%s\n' "${sub#./}" >"$SB/repos/$repo.sub"
+    # A tracked file at the top level, for the `edit` scenario.
+    file="$(git -C "$SB/repos/$repo" ls-files -- ':(glob)*' | head -n 1)"
+    [[ -n "$file" ]] || { echo "no top-level tracked file in $repo" >&2; exit 2; }
+    printf '%s\n' "$SB/repos/$repo/$file" >"$SB/repos/$repo.file"
 done
 
 "${ENV_ARGS[@]}" "$GPY_DIR/gpy-agent" start >/dev/null
@@ -136,8 +152,9 @@ done
 body() {
     local tool="$1" shell="$2" repo="$3" scenario="$4" n="$5" root="$SB/repos/$3" sub
     sub="$root/$(cat "$SB/repos/$repo.sub")"
-    local q_root q_sub
+    local q_root q_sub q_file
     q_root="$(printf '%q' "$root")" q_sub="$(printf '%q' "$sub")"
+    q_file="$(printf '%q' "$(cat "$SB/repos/$repo.file")")"
     case "$shell" in
         bash)
             local init draw
@@ -150,6 +167,10 @@ body() {
             fi
             local step="$draw"
             [[ $scenario == cd ]] && step="if ((i % 2)); then builtin cd $q_root; else builtin cd $q_sub; fi; $draw"
+            if [[ $scenario == edit ]]; then
+                init+=" && { IFS= read -r -d '' __o < $q_file || :; } && __m=\"\${__o}#gpy-bench\"\$'\\n'"
+                step="if ((i % 2)); then printf '%s' \"\$__o\" > $q_file; else printf '%s' \"\$__m\" > $q_file; fi; $draw"
+            fi
             printf '%s' "builtin cd $q_root && $init && $draw && for ((i = 0; i < $n; i++)); do $step; done"
             ;;
         zsh)
@@ -162,6 +183,10 @@ body() {
             local draw='for f in $precmd_functions; do $f; done; print -rP -- "$PROMPT" >/dev/null'
             local step="$draw"
             [[ $scenario == cd ]] && step="if (( i % 2 )); then builtin cd $q_root; else builtin cd $q_sub; fi; $draw"
+            if [[ $scenario == edit ]]; then
+                init+=" && zmodload zsh/mapfile && __o=\$mapfile[$q_file] && __m=\"\${__o}#gpy-bench\"\$'\\n'"
+                step="if (( i % 2 )); then print -rn -- \"\$__o\" > $q_file; else print -rn -- \"\$__m\" > $q_file; fi; $draw"
+            fi
             printf '%s' "builtin cd $q_root && $init && { $draw }; for ((i = 0; i < $n; i++)); do $step; done"
             ;;
         fish)
@@ -174,6 +199,10 @@ body() {
             local draw='fish_prompt >/dev/null'
             local step="$draw"
             [[ $scenario == cd ]] && step="if test (math \$i % 2) -eq 1; builtin cd $q_root; else; builtin cd $q_sub; end; $draw"
+            if [[ $scenario == edit ]]; then
+                init+="; and set -g __o (string collect -N < $q_file); and set -g __m \"\$__o#gpy-bench\"\\n"
+                step="if test (math \$i % 2) -eq 1; printf '%s' \$__o > $q_file; else; printf '%s' \$__m > $q_file; end; $draw"
+            fi
             # A counted loop: BSD `seq 1 0` counts down and prints two lines.
             printf '%s' "builtin cd $q_root; and $init; and $draw; set -l i 0; while test \$i -lt $n; $step; set i (math \$i + 1); end"
             ;;
@@ -196,11 +225,12 @@ command_for() {
 }
 
 IFS=, read -r -a SHELL_LIST <<<"$SHELLS"
+IFS=, read -r -a SCENARIO_LIST <<<"$SCENARIOS"
 CONFIGS=()
 for repo in "${REPO_LIST[@]}"; do
     for shell in "${SHELL_LIST[@]}"; do
         shell_bin "$shell" >/dev/null || { echo "no usable $shell" >&2; exit 2; }
-        for scenario in steady cd; do
+        for scenario in "${SCENARIO_LIST[@]}"; do
             for tool in gpy starship; do CONFIGS+=("$tool:$shell:$repo:$scenario"); done
         done
     done
@@ -272,7 +302,7 @@ median_of() {
     echo "|---|---|---|---:|---:|---:|"
     for repo in "${REPO_LIST[@]}"; do
         for shell in "${SHELL_LIST[@]}"; do
-            for scenario in steady cd; do
+            for scenario in "${SCENARIO_LIST[@]}"; do
                 read -r gm glo ghi <<<"$(median_of "gpy:$shell:$repo:$scenario")"
                 read -r sm slo shi <<<"$(median_of "starship:$shell:$repo:$scenario")"
                 ratio="$(awk -v g="$gm" -v s="$sm" 'BEGIN { printf "%.2f", g / s }')"
@@ -295,4 +325,60 @@ median_of() {
     echo "- Method: $ROUNDS rounds (+1 warmup) x $RUNS samples x $ITERS prompts per sample; per prompt = (t[1+$ITERS prompts] - t[1 prompt]) / $ITERS."
     echo "- Load1 per round: $(awk -F'\t' 'NR > 1 { l[$1] = $4 } END { for (r in l) printf "%s ", l[r] }' "$TSV")"
 } >"$OUT/report.md"
+
+# Freshness: edit a tracked file (as in `edit`), then time until `gpy prompt
+# bash` prints something other than the clean prompt; restore it and time the
+# way back. Polled every 2 ms; each poll is a full `gpy prompt`, as a key
+# press would draw. 500 ms between trials lets the watcher settle.
+if ((FRESH_TRIALS > 0)); then
+    cat >"$SB/fresh.bash" <<'EOF'
+f="$1" trials="$2"
+IFS= read -r -d '' clean_text <"$f" || :
+dirty_text="${clean_text}#gpy-bench"$'\n'
+# This shell's own PID: the agent registers (and so watches the repository
+# for) live shells only, as it would for a real one.
+draw() { gpy prompt bash --pid $$ --cmd 0 --status 0; }
+ms_since() { local e=$EPOCHREALTIME; printf '%.1f' "$(( (10#${e%[.,]*} - 10#${1%[.,]*}) * 1000000 + 10#${e#*[.,]} - 10#${1#*[.,]} ))e-3"; }
+wait_until() { # want: same|diff ; prints ms, or "timeout"
+    local want="$1" start="$2" out
+    while :; do
+        out="$(draw)"
+        if [[ $want == diff && $out != "$clean" || $want == same && $out == "$clean" ]]; then
+            ms_since "$start"; return
+        fi
+        (( ${EPOCHREALTIME%[.,]*} - ${start%[.,]*} > 5 )) && { echo timeout; return; }
+        sleep 0.002
+    done
+}
+clean="$(draw)"
+sleep 1
+clean="$(draw)"
+for ((t = 0; t < trials; t++)); do
+    printf '%s' "$dirty_text" >"$f"; s=$EPOCHREALTIME
+    printf 'dirty\t%s\n' "$(wait_until diff "$s")"
+    sleep 0.5
+    printf '%s' "$clean_text" >"$f"; s=$EPOCHREALTIME
+    printf 'clean\t%s\n' "$(wait_until same "$s")"
+    sleep 0.5
+done
+EOF
+    stats() { # median p90 max of stdin, or "-" if any timeout
+        sort -g | awk '/timeout/ { to = 1 } { a[++n] = $1 }
+            END { if (to || !n) { print "timeout"; exit } printf "%.0f / %.0f / %.0f", a[int((n + 1) / 2)], a[int(n * 0.9 + 0.5)], a[n] }'
+    }
+    {
+        echo
+        echo "## Freshness (GPY)"
+        echo
+        echo "Milliseconds from writing a tracked file until \`gpy prompt\` shows the change (median / p90 / max over $FRESH_TRIALS edits), and from restoring it until the clean prompt is back. Starship reads git status while drawing, so its prompt is current at once and costs the Scenario table's time instead."
+        echo
+        echo "| Repository | Edit shown | Restore shown |"
+        echo "|---|---:|---:|"
+        for repo in "${REPO_LIST[@]}"; do
+            res="$(cd "$SB/repos/$repo" && "${ENV_ARGS[@]}" "$(shell_bin bash)" --noprofile --norc "$SB/fresh.bash" "$(cat "$SB/repos/$repo.file")" "$FRESH_TRIALS")"
+            printf '%s\n' "$res" >"$OUT/fresh-$repo.tsv"
+            echo "| $repo | $(awk -F'\t' '$1 == "dirty" { print $2 }' <<<"$res" | stats) | $(awk -F'\t' '$1 == "clean" { print $2 }' <<<"$res" | stats) |"
+        done
+    } >>"$OUT/report.md"
+fi
 cat "$OUT/report.md"
