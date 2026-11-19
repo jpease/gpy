@@ -1447,8 +1447,8 @@ commands.
 
 ## Shell commands
 
-The integrations define no user commands: `gpy prompt` reads `config.toml` on
-every prompt, so an edit shows at the next prompt without a reload. In every
+The integrations define no user commands: every prompt reads `config.toml`,
+so an edit shows at the next prompt without a reload. In every
 shell, `gpy doctor`, `gpy debug prompt` and `gpy debug paths` are the debug
 commands.
 

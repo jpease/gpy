@@ -21,20 +21,28 @@ use tempfile::TempDir;
 /// The first-party metadata plugin every discovery includes.
 const FIRST_PARTY_PLUGINS: usize = 1;
 
-/// Write `count` minimal file plugins under `root`.
+/// Write `count` minimal script plugins under `root`, each with one segment.
 fn write_plugins(root: &Path, count: usize) {
     for i in 0..count {
         let id = format!("demo-{i:02}");
         let plugin_dir = root.join(&id);
         fs::create_dir_all(plugin_dir.join("segments")).expect("create plugin dir");
+        fs::create_dir_all(plugin_dir.join("bin")).expect("create bin dir");
         fs::write(
             plugin_dir.join("plugin.toml"),
             format!(
                 "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
-                 entry_type = \"file\"\nprovided_segments = [\"seg_{i}\"]\n"
+                 entry_type = \"script\"\nprovided_segments = [\"seg_{i}\"]\n"
             ),
         )
         .expect("write manifest");
+        fs::write(
+            plugin_dir.join("segments").join(format!("seg_{i}.toml")),
+            "command = \"bin/seg.sh\"\n",
+        )
+        .expect("write segment manifest");
+        fs::write(plugin_dir.join("bin").join("seg.sh"), "#!/bin/sh\necho x\n")
+            .expect("write script");
     }
 }
 
