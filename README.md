@@ -31,9 +31,11 @@ A whole prompt (clock, duration, directory and git) takes GPY 3–6 ms on macOS
 and about 1.5 ms on Linux, in Bash, Zsh and Fish alike, because git status
 comes from the agent's cache. Starship 1.27.0 takes 18–20 ms on a small
 repository and about 130 ms on kubernetes on the same Mac (2026-11-19, GPY
-0.12 code). Without the agent, one `gpy-agent oneshot` git request is about
-1.25 times faster than Starship's on small repositories and 1.35 to 2.2 times
-faster on large ones.
+0.12 code). The cache stays current: a saved change shows in the prompt about
+140 ms later on macOS and 110 ms on Linux, and idle Zsh and Fish prompts
+repaint on their own. Without the agent, one `gpy-agent oneshot` git request
+is about 1.25 times faster than Starship's on small repositories and 1.35 to
+2.2 times faster on large ones.
 
 The large-repository `oneshot` lead depends on git's untracked cache being
 present in the repository's index. The GPY agent adds git's untracked cache
