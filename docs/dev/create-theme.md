@@ -93,7 +93,7 @@ top-level `bg_color`/`text_color`:
 
 ```toml
 [segments.git]
-format = "[](fg:prev_bg bg:$bg)[ $symbol $branch]($style)([ $state]($style))([ $ahead_behind]($style))([ $status]($style))([ $stash]($style))([$sep_close](fg:$bg bg:default))"
+format = "[](fg:prev_bg bg:$bg)[ ($symbol )$branch]($style)([ $state]($style))([ $ahead_behind]($style))([ $status]($style))([ $stash]($style))([$sep_close](fg:$bg bg:default))"
 bg_color = "white"
 text_color = "black"
 
