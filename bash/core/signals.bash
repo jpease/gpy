@@ -69,9 +69,9 @@ __gpy_replay_status() {
 }
 __gpy_handle_exit() {
     local status=$?
-    if [[ -n "$__gpy_registered" ]]; then
-        __gpy_send_json "{\"op\":\"unregister\",\"pid\":$$}" &>/dev/null || true
-    fi
+    # `gpy prompt` registers this shell, so __gpy_registered may be unset
+    # while the agent lists it: always unregister.
+    __gpy_send_json "{\"op\":\"unregister\",\"pid\":$$}" &>/dev/null || true
     __gpy_untrack_shell_for_agent_recovery
     if [[ -n "$__gpy_prev_exit_trap" ]]; then
         __gpy_replay_status "$status"

@@ -79,6 +79,7 @@ function test_new_shell_after_offline_edit
         set -l plain_dir $argv[3]
 
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+        source $__gpy_root/tests/lib/shell_render_only.fish
         cd $plain_dir
 
         if test "$__gpy_theme_name" != default

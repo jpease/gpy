@@ -73,6 +73,9 @@ function __gpy_supervisor_on_prompt --on-event fish_prompt --description 'Start 
         set -g __gpy_supervisor_last_check_time (__gpy_now_seconds)
         __gpy_start_agent_detached
         __gpy_defer_registration_past_paint
+    else if not set -q __gpy_exec_declined; and __gpy_resolve_cli_binary >/dev/null
+        # `gpy prompt` registers, syncs the workspace and supervises.
+        return 0
     else
         __gpy_supervisor_check
     end
@@ -113,11 +116,8 @@ function __gpy_register_after_paint --description 'Register once the first promp
 end
 
 function __gpy_unregister_on_exit --on-event fish_exit
-    # Unregistering untracks; a shell that lost its registration is still
-    # tracked for the agent's re-nudge, so untrack it here.
-    if set -q __gpy_registered
-        __gpy_unregister_from_agent
-    else
-        __gpy_untrack_shell_for_agent_recovery
-    end
+    # `gpy prompt` registers this shell, so __gpy_registered may be unset
+    # while the agent lists it: always unregister (it untracks too).
+    set -g __gpy_registered 1
+    __gpy_unregister_from_agent
 end

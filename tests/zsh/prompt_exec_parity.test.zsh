@@ -170,6 +170,12 @@ done
 
 # Once per command: a repaint runs nothing; a command (preexec) runs the
 # script again.
+# `gpy prompt` registered this shell, so the theme loop's `config reload`
+# rings it; a late ring marks a reload, which makes the scripts due. Let it
+# land and be drawn before counting.
+sleep 1
+__gpy_consume_shell_flags
+__gpy_render_prompt_exec 0
 before=$(runs)
 __gpy_render_prompt_exec 0
 check "script: a repaint runs nothing" "$before" "$(runs)"

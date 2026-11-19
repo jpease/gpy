@@ -50,6 +50,15 @@ impl Dialect {
         }
     }
 
+    /// The `shell` of a registration.
+    pub(crate) const fn request_shell(self) -> &'static str {
+        match self {
+            Self::Bash => "bash",
+            Self::Zsh => "zsh",
+            Self::Fish => "fish",
+        }
+    }
+
     /// `sequence` marked zero-width: `\[…\]`, `%{…%}`, or as is in Fish,
     /// which measures escape sequences itself.
     pub(crate) fn invisible(self, sequence: &str) -> String {

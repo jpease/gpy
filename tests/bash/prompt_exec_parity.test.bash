@@ -177,6 +177,22 @@ exec_prompt 42 >/dev/null
 check "script: a cd runs it again" $((before + 3)) "$(runs)"
 cd "$SHELL_E2E_REPO" || exit 1
 
+# Bookkeeping: `gpy prompt` registers this shell with the agent (which then
+# accepts its workspace updates) and records the directory it last sent.
+session_file="$XDG_RUNTIME_DIR/gpy/refresh-throttle/$$.session"
+rm -f "$session_file"
+cd "$SHELL_E2E_REPO" || exit 1
+exec_prompt 60 >/dev/null
+reply=""
+__gpy_send_json "{\"op\":\"workspace\",\"pid\":$$,\"cwd\":\"$SHELL_E2E_REPO\"}" "" reply
+check "bookkeeping: the agent lists the shell gpy prompt registered" yes \
+    "$([[ $reply != *error* && -n $reply ]] && echo yes || echo "no ($reply)")"
+cd "$PLAIN_DIR" || exit 1
+exec_prompt 60 >/dev/null
+check "bookkeeping: a cd sends the new workspace" yes \
+    "$(grep -q "\"workspace\":\"$PLAIN_DIR\"" "$session_file" && echo yes || echo "no ($(cat "$session_file"))")"
+cd "$SHELL_E2E_REPO" || exit 1
+
 # Circuit breaker: the second timeout in a row disables the segment, with
 # one line on stderr, until the next theme load.
 write_config scripts '"pslow", "directory"'
@@ -207,5 +223,18 @@ check "script segment without script arguments: exit 3" 3 \
 write_config default '"directory", "username"'
 check "unknown segment: the binary declines with exit 3" 3 \
     "$(gpy prompt bash --status 0 --pid $$ >/dev/null 2>&1; echo $?)"
+
+# Supervisor: with the agent stopped, a prompt past the check interval
+# starts it again (the gpy-agent beside gpy).
+write_config default '"directory"'
+shell_e2e_stop_agent
+agent_up() { [[ -S "$GPY_AGENT_SOCKET_PATH" ]]; }
+GPY_AGENT_SUPERVISOR_ENABLED=1 GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0 \
+    gpy prompt bash --status 0 --pid $$ >/dev/null 2>&1
+if shell_e2e_poll 10 agent_up; then
+    pass "supervisor: a prompt restarted the stopped agent"
+else
+    fail "supervisor: the agent did not come back after a prompt"
+fi
 
 test_finish "gpy prompt bash matches the shell renderer"

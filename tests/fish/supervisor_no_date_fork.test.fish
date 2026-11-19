@@ -13,6 +13,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 source "$repo_root/fish/core/supervisor.fish"
+source "$repo_root/tests/lib/shell_render_only.fish"
 
 print_test_header "Rate-limited supervisor prompts fork no date"
 

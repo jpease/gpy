@@ -231,7 +231,7 @@ end
 function __gpy_render_prompt_exec --argument-names last_status part
     functions -q __gpy_g_resolve_runner; or return 1
     set -l cli (__gpy_resolve_cli_binary); or return 1
-    set -l args prompt fish --status $last_status --pid $fish_pid
+    set -l args prompt fish --status $last_status --pid $fish_pid --shell-version $FISH_VERSION
     if not set -q __gpy_duration_idle; and string match -qr '\A[0-9]+\z' -- "$CMD_DURATION"
         set -a args --duration-ms $CMD_DURATION
     end

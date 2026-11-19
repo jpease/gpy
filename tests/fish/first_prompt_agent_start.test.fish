@@ -17,6 +17,7 @@ source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/flags.fish"
 source "$repo_root/fish/core/ipc.fish"
 source "$repo_root/fish/core/supervisor.fish"
+source "$repo_root/tests/lib/shell_render_only.fish"
 
 print_test_header "The first prompt starts the agent once"
 

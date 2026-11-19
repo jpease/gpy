@@ -198,11 +198,13 @@ __gpy_precmd() {
     # Before rendering, so a reload shows in this prompt.
     __gpy_consume_shell_flags
 
-    # One `gpy prompt` draws PS1 and runs the script segments. When it
-    # declines (1), the shell runs them and renders; when it failed (2), it
-    # may have started them, so the shell renders without.
-    __gpy_render_prompt_exec "$__gpy_pc_status"
-    case $? in
+    # One `gpy prompt` draws PS1, runs the script segments, registers, syncs
+    # the workspace and supervises the agent. When it declines (1), the shell
+    # does all of that; when it failed (2), it may have started the scripts,
+    # so the shell renders without them.
+    local __gpy_pc_exec=0
+    __gpy_render_prompt_exec "$__gpy_pc_status" || __gpy_pc_exec=$?
+    case $__gpy_pc_exec in
         0) ;;
         2)
             __gpy_g_hide
@@ -216,16 +218,16 @@ __gpy_precmd() {
             ;;
     esac
 
-    # Retry until registered (agent started late or restarted); one `test -S`
-    # when nothing listens.
-    if [[ -z "$__gpy_registered" ]]; then
-        __gpy_register_with_agent &>/dev/null
+    if ((__gpy_pc_exec != 0)); then
+        # Retry until registered (agent started late or restarted); one
+        # `test -S` when nothing listens.
+        if [[ -z "$__gpy_registered" ]]; then
+            __gpy_register_with_agent &>/dev/null
+        fi
+        __gpy_sync_workspace
+        # After the render, so the oneshot fallback still serves this prompt.
+        __gpy_supervisor_check
     fi
-
-    __gpy_sync_workspace
-
-    # After the render, so the oneshot fallback still serves this prompt.
-    __gpy_supervisor_check
 
     __gpy_cmd_start_time=""
     __gpy_keep_precmd_first
@@ -351,7 +353,7 @@ __gpy_cli_binary_into() {
 __gpy_render_prompt_exec() {
     local __gpy_rpe_cli __gpy_rpe_out __gpy_rpe_cmd __gpy_rpe_rc
     __gpy_cli_binary_into __gpy_rpe_cli || return 1
-    local -a __gpy_rpe_args=(prompt bash --status "$1" --pid "$$")
+    local -a __gpy_rpe_args=(prompt bash --status "$1" --pid "$$" --shell-version "$BASH_VERSION")
     [[ -n "$__gpy_cmd_duration" ]] && __gpy_rpe_args+=(--duration-ms "$__gpy_cmd_duration")
     # shellcheck disable=SC2154  # set by g_segments.bash
     if ((${#__gpy_g_toks[@]})) && [[ $BASH == /* ]]; then
@@ -517,6 +519,9 @@ __gpy_register_with_agent() {
 # The agent restarted, possibly with another config, so its renders are
 # dropped too, and a late window the old agent opened no longer applies.
 __gpy_reregister_with_agent() {
+    # `gpy prompt` registers this shell; forget its registration too.
+    [[ -n "$__gpy_shell_flag_base" ]] &&
+        rm -f "${__gpy_shell_flag_base%/shells/*}/refresh-throttle/$$.session" 2>/dev/null
     __gpy_registered=""
     __gpy_last_workspace=""
     __gpy_clear_render_memos
