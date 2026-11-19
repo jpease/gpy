@@ -28,12 +28,17 @@ if [ -z "$run" ]; then
 fi
 
 echo "watching run $run (PR $pr)"
-if gh run watch "$run" -R "$repo" --exit-status --interval 60 >/dev/null 2>&1; then
+# Poll the run itself: `gh run watch` can exit non-zero while jobs still run.
+while [ "$(gh run view "$run" -R "$repo" --json status -q .status)" != completed ]; do
+    sleep 60
+done
+conclusion="$(gh run view "$run" -R "$repo" --json conclusion -q .conclusion)"
+if [ "$conclusion" = success ]; then
     echo "run $run succeeded"
     exit 0
 fi
 
-echo "run $run did not succeed:"
+echo "run $run concluded $conclusion:"
 gh api "repos/$repo/actions/runs/$run/jobs" --paginate \
     -q '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")
         | "\(.id)\t\(.conclusion)\t\(.name)\trunner=\(.runner_name // "")"' |
