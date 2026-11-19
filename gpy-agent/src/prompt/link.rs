@@ -20,7 +20,7 @@ pub(crate) enum Reply {
     /// Connected, but nothing usable in time: omit, never recompute.
     Late,
     /// An `{"error"` reply: permanent, take the local fallback.
-    Refused,
+    Refused(String),
 }
 
 /// Minimum gap between two refreshes of one bucket.
@@ -144,7 +144,7 @@ impl Link {
         if text.is_empty() {
             Reply::Late
         } else if text.starts_with(r#"{"error""#) {
-            Reply::Refused
+            Reply::Refused(text.to_owned())
         } else {
             Reply::Text(text.to_owned())
         }

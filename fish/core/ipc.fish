@@ -705,6 +705,8 @@ function __gpy_refresh_registration_after_restart --description 'Forget this she
     # Forget the stale registration; on failure the agent's re-nudge retries.
     # The agent may have restarted with another config: drop its renders too.
     set -e __gpy_registered
+    # `gpy prompt` registers this shell; forget its registration too.
+    set -l root (__gpy_runtime_root); and rm -f $root/refresh-throttle/$fish_pid.session 2>/dev/null
     set -e __gpy_last_workspace
     __gpy_clear_render_memos
     __gpy_log_debug ipc "Re-registration requested by agent for PID $fish_pid"

@@ -191,7 +191,10 @@ function __gpy_shell_registry_file() {
 
 # The agent only nudges PIDs listed here. Caches the flag base so TRAPURG
 # needs no fork.
+# Known from load: `gpy prompt` registers this shell, so the flags can come
+# before this shell ever registers itself.
 typeset -g __gpy_shell_flag_base=""
+__gpy_runtime_root __gpy_shell_flag_base && __gpy_shell_flag_base+="/shells/$$"
 function __gpy_track_shell_for_agent_recovery() {
     local dir
     dir=$(__gpy_shell_registry_dir) || return 0

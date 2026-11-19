@@ -133,6 +133,7 @@ function test_failed_starts_client_recovers_via_git_segment
         set -l go_marker $argv[4]
         set -l result_file $argv[5]
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+        source $__gpy_root/tests/lib/shell_render_only.fish
         # After the source: the theme export sets these.
         set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS 0
         set -gx GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS 1
@@ -283,6 +284,7 @@ function test_failed_restart_registration_retries_on_next_nudge
         set -l result_file $argv[3]
 
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+        source $__gpy_root/tests/lib/shell_render_only.fish
 
         cd $repo
 
@@ -400,6 +402,7 @@ function test_restart_drops_memoized_directory_render
         set -l after_file $argv[5]
 
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+        source $__gpy_root/tests/lib/shell_render_only.fish
         cd $repo
         __gpy_register_with_agent >/dev/null 2>&1
         __gpy_shell_registry_file >$before_file.registry

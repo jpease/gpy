@@ -83,6 +83,9 @@ enum Commands {
         /// Zsh: the last command's duration, for scripts' `cmd_duration` input
         #[arg(long, requires = "cmd")]
         script_duration_ms: Option<u64>,
+        /// The shell's version, for its registration with the agent
+        #[arg(long, default_value = "")]
+        shell_version: String,
     },
 
     /// Manage themes
@@ -577,8 +580,9 @@ fn run_prompt(
     dialect: gpy_agent::prompt::Dialect,
     args: gpy_agent::prompt::PromptArgs,
     script: Option<&gpy_agent::prompt::ScriptArgs>,
+    shell_version: &str,
 ) -> Result<ExitCode> {
-    let Some(rendered) = gpy_agent::prompt::render(dialect, args, script)? else {
+    let Some(rendered) = gpy_agent::prompt::render(dialect, args, script, shell_version)? else {
         return Ok(ExitCode::from(3));
     };
     let mut out = rendered.prompt;
@@ -712,6 +716,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             cmd,
             reload,
             script_duration_ms,
+            shell_version,
         } => {
             let script = bash
                 .zip(runner)
@@ -730,7 +735,7 @@ fn run(command: Commands) -> Result<ExitCode> {
                 duration_ms,
                 pid,
             };
-            return run_prompt(shell, args, script.as_ref());
+            return run_prompt(shell, args, script.as_ref(), &shell_version);
         }
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {

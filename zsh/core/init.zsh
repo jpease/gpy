@@ -113,6 +113,9 @@ function __gpy_register_with_agent() {
 # Called from TRAPURG after an agent restart. The agent may have restarted
 # with another config, so its renders are dropped too.
 function __gpy_reregister_with_agent() {
+    # `gpy prompt` registers this shell; forget its registration too.
+    [[ -n $__gpy_shell_flag_base ]] &&
+        rm -f "${__gpy_shell_flag_base%/shells/*}/refresh-throttle/$$.session" 2>/dev/null
     __gpy_registered=""
     __gpy_last_workspace=""
     __gpy_clear_render_memos
@@ -235,17 +238,21 @@ function __gpy_precmd() {
             ;;
     esac
 
+    # The render path, read before __gpy_update_prompts clears it.
+    local __gpy_pc_from=${__gpy_render_from-}
     __gpy_update_prompts $__gpy_pc_ret
 
-    # Retry until registered (agent started late or restarted), after the
-    # render so a cold start never delays this prompt.
-    if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
-        __gpy_register_with_agent &>/dev/null
+    # `gpy prompt` registers, syncs the workspace and supervises; the shell
+    # does when it drew the prompt itself. Retry until registered (agent
+    # started late or restarted), after the render so a cold start never
+    # delays this prompt.
+    if [[ $__gpy_pc_from != exec ]]; then
+        if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
+            __gpy_register_with_agent &>/dev/null
+        fi
+        __gpy_sync_workspace
+        __gpy_supervisor_check
     fi
-
-    __gpy_sync_workspace
-
-    __gpy_supervisor_check
     __gpy_in_precmd=""
 }
 
@@ -431,7 +438,8 @@ function __gpy_render_prompt_exec() {
     setopt local_options local_traps
     TRAPINT() { return 0 }
     __gpy_cli_binary_into __gpy_rpe_cli || return 1
-    local -a __gpy_rpe_args=(prompt zsh --status "$1" --pid $$ --duration-ms $__gpy_cmd_duration)
+    local -a __gpy_rpe_args=(prompt zsh --status "$1" --pid $$ --duration-ms $__gpy_cmd_duration
+        --shell-version "$ZSH_VERSION")
     if (( ${#__gpy_g_toks} )) && [[ $__gpy_g_bash == /* && -r $__gpy_g_runner_file ]]; then
         __gpy_rpe_args+=(--bash "$__gpy_g_bash" --runner "$__gpy_g_runner_file" --cmd $__gpy_g_seq)
         [[ -n $__gpy_g_reloaded ]] && __gpy_rpe_args+=(--reload)

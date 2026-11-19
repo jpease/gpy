@@ -10,6 +10,7 @@ mod dialect;
 mod link;
 mod pill;
 mod script;
+mod session;
 mod vars;
 
 pub use dialect::Dialect;
@@ -87,6 +88,7 @@ pub fn render(
     dialect: Dialect,
     args: PromptArgs,
     script: Option<&ScriptArgs>,
+    shell_version: &str,
 ) -> Result<Option<Rendered>> {
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
@@ -158,7 +160,19 @@ pub fn render(
         scripts,
         oneshot_used: false,
     };
-    Ok(Some(render.prompt()))
+    let rendered = render.prompt();
+    // After the render, so a cold start never delays this prompt.
+    session::run(
+        &render.link,
+        &config,
+        &session::Shell {
+            pid: args.pid,
+            name: dialect.request_shell(),
+            version: shell_version,
+        },
+        &render.pwd.to_string_lossy(),
+    );
+    Ok(Some(rendered))
 }
 
 /// `$PWD` when it names the working directory, else the physical one.
@@ -503,10 +517,10 @@ impl Render<'_> {
                 Reply::Text(text) => return Drawn::plain(text),
                 // Refused for good (a denied cwd), so a refresh would be too:
                 // Zsh omits git, Fish draws it agent-free.
-                Reply::Refused if self.dialect == Dialect::Zsh => {
+                Reply::Refused(_) if self.dialect == Dialect::Zsh => {
                     return Drawn::plain(String::new());
                 }
-                Reply::Refused if self.dialect == Dialect::Fish => {
+                Reply::Refused(_) if self.dialect == Dialect::Fish => {
                     return self.oneshot_git(place);
                 }
                 _ => {}
