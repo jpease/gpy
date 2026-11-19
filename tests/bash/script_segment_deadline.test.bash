@@ -207,6 +207,8 @@ done
 EOF
 cat >"$T/child.fish" <<'EOF'
 source $argv[1]/fish/core/init.fish >/dev/null 2>&1; or exit 1
+source $argv[1]/fish/functions/fish_prompt.fish
+source $argv[1]/tests/lib/shell_render_only.fish
 if test -n "$argv[3]"
     set -g __gpy_g_bash $argv[3]
     set -l runner (path normalize $__gpy_core_dir/../../bash/core/g_runner.bash)

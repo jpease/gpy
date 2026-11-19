@@ -13,6 +13,7 @@
 cd (test -n "$SCN_CWD"; and echo $SCN_CWD; or echo $GPY_ROOT)
 source $GPY_ROOT/fish/core/init.fish
 source $GPY_ROOT/fish/functions/fish_prompt.fish
+source $GPY_ROOT/tests/lib/shell_render_only.fish
 
 # An interactive Fish starts the agent, runs the supervisor and registers from
 # its fish_prompt event handler (the twin of Bash/Zsh's startup __gpy_init), so

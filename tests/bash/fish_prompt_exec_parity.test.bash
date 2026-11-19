@@ -144,6 +144,7 @@ for theme in scripts starship; do
     write_config "$theme" '"pseg", "directory", "pvar", "git"'
     "$SHELL_E2E_AGENT_BIN" config reload >/dev/null 2>&1
     compare "$theme, script segments" "$SHELL_E2E_REPO" 0 0 1
+    # shellcheck disable=SC2016,SC1003  # the script's literal output
     grep -q 'in repo $HOME `x` 50% \\' "$OUT/exec.prompt" || fail "$theme: script text missing"
     grep -q 'v1' "$OUT/exec.prompt" || fail "$theme: variant segment missing"
 done
