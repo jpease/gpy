@@ -53,10 +53,6 @@ skip = [
     # 2.x (crossterm, notify, nix, ratatui)
     { name = "bitflags" },
 
-    # windows-sys 0.60.2 (notify) against windows-sys 0.61.2 (rustix, mio,
-    # socket2, clap's anstream/anstyle-wincon, ignore/walkdir's winapi-util)
-    { name = "windows-sys" },
-
     # getrandom 0.3.4 and 0.4.3, both dev-only: 0.3.4 under rand_core 0.9.5
     # (proptest), 0.4.3 under tempfile (insta, proptest, rusty-fork)
     { name = "getrandom" },
