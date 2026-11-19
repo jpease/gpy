@@ -28,7 +28,7 @@ cp "$ROOT/benchmarks/perf-budgets.json" "$TMP/tree/benchmarks/"
 touch "$TMP/tree/gpy-agent/target/release/gpy-agent"
 
 # Logs its arguments. `bench -- --list` prints only the IDs in STUB_BENCH_LIST
-# (default: the nine budgeted ones, each once) and exits 0. Any other `bench`
+# (default: the eight budgeted ones, each once) and exits 0. Any other `bench`
 # prints every budgeted benchmark at 1 ns (ipc_roundtrip: STUB_IPC_TIME) and
 # exits with the status the test asks for.
 cat >"$TMP/bin/cargo" <<'EOF'
@@ -36,7 +36,7 @@ cat >"$TMP/bin/cargo" <<'EOF'
 echo "$*" >>"$STUB_CARGO_LOG"
 [[ "$1" == bench ]] || exit 0
 budgeted="ipc_roundtrip git_status_cold cache_write_new_entry cache_read_hit config_load_from_file
-    theme_manager_load theme_export_write version_command_spawn lang_detect_5k"
+    theme_manager_load version_command_spawn lang_detect_5k"
 if [[ " $* " == *" --list "* ]]; then
     for name in ${STUB_BENCH_LIST:-$budgeted}; do
         printf '%s: benchmark\n' "$name"
@@ -196,8 +196,8 @@ expect_config_error() {
 expect_config_error "a missing budget file" "budget file not found: /nonexistent" \
     PATH="$TMP/bin:$PATH" PERF_BUDGETS_FILE=/nonexistent
 
-jq 'del(.budgets.theme_export_write)' "$ROOT/benchmarks/perf-budgets.json" >"$TMP/no-key.json"
-expect_config_error "a missing budget key" ".budgets.theme_export_write.max_ms is missing or not a number" \
+jq 'del(.budgets.theme_manager_load)' "$ROOT/benchmarks/perf-budgets.json" >"$TMP/no-key.json"
+expect_config_error "a missing budget key" ".budgets.theme_manager_load.max_ms is missing or not a number" \
     PATH="$TMP/bin:$PATH" PERF_BUDGETS_FILE="$TMP/no-key.json"
 
 jq '.budgets.ipc_latency.max_ms = "fast"' "$ROOT/benchmarks/perf-budgets.json" >"$TMP/bad-type.json"

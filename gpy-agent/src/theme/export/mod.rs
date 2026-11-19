@@ -1,29 +1,27 @@
-//! Shell-export serialization: [`ThemeConfig`](crate::theme::model::ThemeConfig) → Fish/Bash/Zsh variable assignments.
+//! Theme values for the prompt renderer: [`ThemeConfig`](crate::theme::model::ThemeConfig)
+//! and config as the named values `gpy prompt` reads, plus the enabled script
+//! segments it runs.
 
 mod plugin_segments;
+#[cfg(unix)]
 mod script_segments;
 mod segments;
-mod shell_assignment;
 mod shell_colors;
-mod theme_to_shell;
+mod values;
 
 pub use plugin_segments::{PluginVariableCollision, first_plugin_variable_collision};
-pub(crate) use script_segments::collect_script_segments;
 #[cfg(unix)]
-pub(crate) use script_segments::{ScriptSegmentExport, ScriptSegmentExports};
+pub(crate) use script_segments::{
+    ScriptSegmentExport, ScriptSegmentExports, collect_script_segments,
+};
 pub(crate) use shell_colors::resolve_shell_color;
-#[cfg(unix)]
-pub(crate) use theme_to_shell::prompt_shell_values;
-pub(crate) use theme_to_shell::{PluginExports, theme_to_shell};
+pub use values::prompt_shell_values;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod export_names_tests;
-
-#[cfg(test)]
-mod cfg_mirror_tests;
 
 #[cfg(test)]
 mod prompt_tests;

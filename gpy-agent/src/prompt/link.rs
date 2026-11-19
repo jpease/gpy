@@ -25,6 +25,10 @@ pub(crate) enum Reply {
 /// Minimum gap between two refreshes of one bucket.
 const REFRESH_GAP_MS: u128 = 500;
 
+/// Seconds a connected-but-silent agent is left alone
+/// (`__gpy_agent_late_secs`).
+const LATE_SECS: u64 = 5;
+
 /// `GPY_IPC_TIMEOUT_MS`, default 150.
 fn warm_timeout_ms() -> u64 {
     env_ms("GPY_IPC_TIMEOUT_MS").unwrap_or(150)
@@ -95,8 +99,7 @@ impl Link {
         let (Some(dir), Some(socket)) = (&self.throttle_dir, &self.socket) else {
             return false;
         };
-        let Ok(stamp) = std::fs::read_to_string(dir.join(format!("{}.agent-late", self.pid)))
-        else {
+        let Ok(stamp) = std::fs::read_to_string(late_window_file(dir, self.pid)) else {
             return false;
         };
         let Some((until_secs, stamped_socket)) = stamp.split_once(' ') else {
@@ -108,9 +111,36 @@ impl Link {
                 .is_ok_and(|until| now_secs() < until)
     }
 
+    /// `__gpy_agent_late_mark`: open the late window for `socket` after
+    /// `request` went unanswered. A path op (git, lang, directory) can be
+    /// slow for its path alone, so only the others, which the agent answers
+    /// from memory, count as a wedge.
+    fn mark_late(&self, request: &serde_json::Value, socket: &Path) {
+        let path_op = matches!(
+            request.get("op").and_then(serde_json::Value::as_str),
+            Some("git" | "lang" | "directory")
+        );
+        let Some(dir) = self.throttle_dir.as_deref().filter(|_| !path_op) else {
+            return;
+        };
+        let file = late_window_file(dir, self.pid);
+        let stamp = format!(
+            "{} {}",
+            now_secs().saturating_add(LATE_SECS),
+            socket.to_string_lossy()
+        );
+        if std::fs::write(&file, &stamp).is_err() {
+            let _ = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, &stamp));
+        }
+    }
+
     /// A bounded request (`__gpy_send_json`): `request` is one JSON object.
-    /// Only path ops are sent from here, so a late reply never opens the
-    /// late window (`__gpy_agent_late_mark` skips git/lang/directory).
+    /// Segments send their path ops through it, and the session its
+    /// `register`, `workspace`, `ping` and `unregister`. While a late window
+    /// is open every request is [`Reply::Late`] at once, so a wedged agent
+    /// costs one budget per window rather than one per request; a
+    /// connection left without a reply line opens the window, and a reply
+    /// in time closes it.
     pub(crate) fn send(&self, request: &serde_json::Value, timeout_ms: Option<u64>) -> Reply {
         if !self.socket_present() {
             return Reply::Unreachable;
@@ -135,8 +165,15 @@ impl Link {
         }
         let mut reply = String::new();
         match BufReader::new(stream).read_line(&mut reply) {
-            Ok(_) if reply.ends_with('\n') => {}
-            _ => return Reply::Late,
+            Ok(_) if reply.ends_with('\n') => {
+                if let Some(dir) = &self.throttle_dir {
+                    clear_late_window(dir, self.pid);
+                }
+            }
+            _ => {
+                self.mark_late(request, socket);
+                return Reply::Late;
+            }
         }
         let decoded = reply.replace('\u{1e}', "\n");
         let text = decoded.trim_end_matches('\n');
@@ -207,6 +244,18 @@ impl Link {
             let _ = stream.shutdown(std::net::Shutdown::Write);
         }
     }
+}
+
+/// `<refresh-throttle>/<pid>.agent-late`: the late window's stamp,
+/// `<until epoch seconds> <socket>`.
+fn late_window_file(throttle_dir: &Path, pid: u32) -> PathBuf {
+    throttle_dir.join(format!("{pid}.agent-late"))
+}
+
+/// `__gpy_agent_late_clear`: close shell `pid`'s late window; the agent is
+/// known to be answering again.
+pub(crate) fn clear_late_window(throttle_dir: &Path, pid: u32) {
+    let _ = std::fs::remove_file(late_window_file(throttle_dir, pid));
 }
 
 /// `__gpy_refresh_stamp_name`: `<pid>.<bucket>`, or `<pid>.#<fnv1a32>` past

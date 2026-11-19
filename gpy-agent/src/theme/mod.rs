@@ -1,4 +1,4 @@
-//! Theme loading, shell export, and hot-reload behind an `Arc<RwLock<Arc<ThemeState>>>`.
+//! Theme loading, prompt values, and hot-reload behind an `Arc<RwLock<Arc<ThemeState>>>`.
 
 pub mod export;
 pub mod load;

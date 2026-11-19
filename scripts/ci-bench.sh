@@ -503,31 +503,31 @@ fi
 EOF
   # shellcheck disable=SC2016  # $ expands in the generated script, not here
   printf '#!/bin/sh\n%s\nprintf '\''%%s gbc%%s\\n'\'' "${GPY_PWD##*/}" "$$"\n' "$delay" >"$p/bin/cwd.sh"
-  # Export drops a plugin whose files are group- or world-writable.
+  # Discovery drops a plugin whose files are group- or world-writable.
   find "$G_DIR/plugins" -type d -exec chmod 755 {} +
   find "$G_DIR/plugins" -type f -exec chmod 644 {} +
 }
 
-# g_export VARIANT TOKENS SEGMENTS [EXTRA_TOML]: config.toml under
-# $G_DIR/v/VARIANT, checked through the agent's theme export: TOKENS is the
-# expected __gpy_script_segments (space separated).
-g_export() {
-  local variant="$1" tokens="$2" segments="$3" extra="${4:-}" d="$G_DIR/v/$1" want t
+# g_config VARIANT NAMES SEGMENTS [EXTRA_TOML]: config.toml under
+# $G_DIR/v/VARIANT, checked with `gpy segments`: NAMES (space separated) are
+# the plugin segments it must list as enabled.
+g_config() {
+  local variant="$1" names="$2" segments="$3" extra="${4:-}" d="$G_DIR/v/$1" listing n
   mkdir -p "$d/config/gpy" "$d/cache/gpy"
   ln -s "$G_DIR/plugins" "$d/config/gpy/plugins"
   printf '[agent]\nenabled = true\n\n[agent.supervisor]\nenabled = false\n\n[ui]\nenabled_segments = [%s]\n%s' \
     "$segments" "$extra" >"$d/config/gpy/config.toml"
-  if ! XDG_CONFIG_HOME="$d/config" XDG_CACHE_HOME="$d/cache" "$AGENT_BIN" theme export --shell bash \
-      >"$d/export.bash" 2>/dev/null; then
-    record_hard "script segments: theme export ($variant) failed"
+  if ! listing="$(HOME="$G_DIR/home" XDG_CONFIG_HOME="$d/config" XDG_CACHE_HOME="$d/cache" \
+      "$AGENT_DIR/target/release/gpy" segments 2>/dev/null)"; then
+    record_hard "script segments: gpy segments ($variant) failed"
     return 1
   fi
-  want=""
-  for t in $tokens; do want+="${want:+ }\"$t\""; done
-  if ! grep -qxF "__gpy_script_segments=($want)" "$d/export.bash"; then
-    record_hard "script segments: export for $variant does not list [$tokens]: $(grep '^__gpy_script_segments=' "$d/export.bash")"
-    return 1
-  fi
+  for n in $names; do
+    if ! grep -qE "^\[x\] ${n}[[:space:]]" <<<"$listing"; then
+      record_hard "script segments: $variant does not enable $n: $listing"
+      return 1
+    fi
+  done
 }
 
 # Sample bodies: ROOT WORK ITERS MODE. MODE `due` draws ITERS prompts after
@@ -815,13 +815,12 @@ scenario_script_segments() {
   mkdir -p "$G_DIR"
   g_write_plugin
   g_write_bodies
-  g_export base "" '"directory"' || return 1
-  g_export hit "bench_user" '"directory", "bench-user"' || return 1
-  g_export g "bench_user bench_cwd" '"directory", "bench-user", "bench-cwd"' || return 1
-  g_export expiry "bench_user bench_cwd" '"directory", "bench-user", "bench-cwd"' \
+  g_config base "" '"directory"' || return 1
+  g_config hit "bench-user" '"directory", "bench-user"' || return 1
+  g_config g "bench-user bench-cwd" '"directory", "bench-user", "bench-cwd"' || return 1
+  g_config expiry "bench-user bench-cwd" '"directory", "bench-user", "bench-cwd"' \
     $'\n[plugin.bench-user]\nttl_secs = 0\n' || return 1
-  g_export scan "bench_scan" '"directory", "bench-scan"' || return 1
-  bench_info "script segments: interpreter $(sed -n 's/^__gpy_script_sh="\(.*\)"$/\1/p' "$G_DIR/v/g/export.bash")"
+  g_config scan "bench-scan" '"directory", "bench-scan"' || return 1
 
   for s in "${shells[@]}"; do
     for v in "${variants[@]}"; do configs+=("$s:$v"); done

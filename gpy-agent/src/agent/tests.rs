@@ -437,7 +437,6 @@ mod clock_tick_tests {
             palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial)),
             dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
             watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
-            theme_export_dir: tempfile::tempdir().expect("export dir").keep(),
             announce_gate: Arc::new(Mutex::new(())),
         };
         (ctx, rings)

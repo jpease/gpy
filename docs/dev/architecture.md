@@ -235,11 +235,11 @@ error.rs (foundation)
   ↑
   ├── config/ (TOML loading, validation)
   │
-  ├── theme/ (theme loading, shell export)
+  ├── theme/ (theme loading, prompt values)
   │
   ├── security.rs (path validation)
   │
-  ├── cache/ (bounded.rs, policy.rs, ttl_map.rs, instant_prompt/, theme_export.rs)
+  ├── cache/ (bounded.rs, policy.rs, ttl_map.rs, instant_prompt/)
   │
   ├── git/
   │   ├── cache.rs (Git status caching)
@@ -323,7 +323,7 @@ This table documents which modules own which pieces of state and how state is sh
 | **Client Registry** | `ipc::registry::ClientDirectory` | `HashMap<u32, ClientInfo>` | `Arc<ClientDirectory>` | • Owner: Provides `register()`, `unregister()`, `notify_*()` methods<br>• Consumers: Register clients, send signals<br>• Thread-safe: Internal `Mutex` (all access serialized) | Allowed: `registry.register(pid, cwd)` in IPC<br>Allowed: `registry.notify_repaint()` in agent<br>Not allowed: Direct PID manipulation |
 | **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | Allowed: `watcher.register(repo)` via agent<br>Allowed: Agent creates the watcher (`create_watcher` in `agent/events/reload.rs`)<br>Not allowed: Creating watcher outside agent module |
 | **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get()` (an `Arc<Config>` snapshot) and `reload_now()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | Allowed: `config_mgr.get()` in handlers<br>Allowed: `config_mgr.reload_now()` to force a reload<br>Not allowed: Storing `Config` directly (stale data risk) |
-| **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates shell exports<br>• Consumers: Call `export(shell, &config, &palette)` for a shell's export, `get()` for the theme<br>• Hot-reload: Theme can change, always call methods | Allowed: `theme_mgr.export(shell, &config, &palette)` in agent<br>Allowed: `let theme = theme_mgr.get()` for a shared snapshot<br>Not allowed: Caching theme colors locally |
+| **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes<br>• Consumers: Call `get()` for the theme<br>• Hot-reload: Theme can change, always call methods | Allowed: `let theme = theme_mgr.get()` for a shared snapshot<br>Not allowed: Caching theme colors locally |
 | **Language Version Cache** | `language::version` module | Global `VERSION_MEMO` in `gpy-agent/src/language/version.rs` | `ProbeMemo<String>` (`language/probe_memo.rs`): successful probes and recent failures, each capped at `VERSION_CACHE_CAPACITY` | • Owner: `language::version` module manages global cache<br>• Consumers: Callers use `lookup_version_at(detector, cwd, policy)`; the IPC request path passes `ProbePolicy::CachedOnly` and leaves a cold version to a background probe job ([ADR-0009](adr/adr-0009-deferred-language-version-probes.md))<br>• TTL: successes expire after `language.cache_ttl_hours` (default 24); a failed probe is remembered for 1 minute (`FAILURE_TTL`)<br>• Thread-safe: `ProbeMemo` is internally synchronized | Allowed: Call `lookup_version_at()`, cache automatic<br>Allowed: Cache shared globally, TTL handles staleness<br>Not allowed: Creating separate per-request version caches<br>Not allowed: Probing a version on the IPC request path |
 | **IPC Server State** | `ipc::server::EndpointHandle` | Socket listener | Owned by `Agent` | • Owner: Agent creates and holds server<br>• Lifecycle: Lives until agent shutdown<br>• Thread-safe: Tokio runtime handles connections | Allowed: Agent creates in `Agent::new()`<br>Allowed: Server runs in `Agent::start_background()`<br>Not allowed: Multiple server instances |
 
@@ -750,7 +750,7 @@ A config file that exists but does not load keeps the last good configuration.
    - Zsh re-runs `gpy prompt` from `TRAPURG` and calls `zle reset-prompt`
    - The next `gpy prompt` consumes the flag
 
-2. **Agent Must Send a Reload for ALL Config Changes**: `gpy prompt` reads `config.toml` on every prompt, so a reload ring exists to repaint idle prompts and to reset script-segment circuit breakers; the agent sends it for every config change, including one that only disables a segment.
+2. **Agent Must Send a Reload for Every Rendering Config Change**: `gpy prompt` reads `config.toml` on every prompt, so a reload ring exists to repaint idle prompts and to reset script-segment circuit breakers; the agent sends it for every config change that affects rendering, including one that only disables a segment. Settings that render nothing (`agent.timeout_seconds`, `agent.supervisor`) ring nothing.
 
 3. **Avoid Shell-Side Config Detection**: Don't use `--on-event fish_prompt` (or a shell hook) to detect config file changes - it creates race conditions with the agent's file watcher. Let the agent be the single source of truth for config changes.
 
@@ -758,7 +758,6 @@ A config file that exists but does not load keeps the last good configuration.
 - Using `commandline -f execute` for repaints → creates blank prompt lines
 - Multiple signal handlers → causes double-repaints
 - Forgetting the reload notification in disabled-feature paths → Fish keeps stale segment list
-- Using `eval` instead of `source` → theme variables don't get set
 
 **Test Coverage**:
 
@@ -769,18 +768,8 @@ Hot-reload tests:
    - Reload notification sent when enabling git
    - Edge case with multiple feature toggles
 
-2. **Theme Export Updates** (`config_hot_reload_tests.rs`, `theme_manager_tests.rs`):
-   - `test_theme_export_updates_enabled_segments_when_git_disabled` - Removes git from `__enabled_segments`
-   - `test_theme_export_includes_git_when_enabled` - Includes git in `__enabled_segments`
-   - `test_theme_export_updates_enabled_segments_when_language_disabled` - Language toggle
-   - `test_theme_export_updates_enabled_segments_when_both_disabled` - Multiple features
-
-3. **Config Watcher** (`config_hot_reload_tests.rs`):
+2. **Config Watcher** (`config_hot_reload_tests.rs`):
    - `test_config_watcher_triggers_reload_on_git_toggle` - File watcher detects changes
-
-4. **CLI Integration** (`cli_integration_tests.rs`):
-   - `test_theme_export_delimiter_selection_after_git_disabled` - Verifies delimiter selection
-   - `test_config_hot_reload_git_toggle_full_scenario` - End-to-end config toggle
 
 These tests cover the bug where unlisting `git` from `ui.enabled_segments` sent no reload notification, so Fish kept stale segment lists and wrong delimiters.
 
@@ -805,7 +794,7 @@ These tests cover the bug where unlisting `git` from `ui.enabled_segments` sent 
 **Rust** (gpy-agent/tests/):
 - `e2e_ipc_tests.rs`: Full request/response cycles with real agent
 - `agent_daemon_tests.rs`: Agent lifecycle, signal handling
-- `config_hot_reload_tests.rs`: Reload notification delivery, theme export updates, config watcher
+- `config_hot_reload_tests.rs`: Reload notification delivery, config watcher
 - `git_status_tests.rs`: Git detection, caching, error cases
 - `language_tests.rs`: Language detection, versioning
 - `watcher_tests.rs`: Debouncing, multi-repo coordination

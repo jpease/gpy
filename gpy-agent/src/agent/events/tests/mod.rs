@@ -43,11 +43,6 @@ fn make_instant_cache() -> Arc<InstantPromptCache> {
     Arc::new(InstantPromptCache::new_for_test())
 }
 
-/// A fresh directory for theme exports, so reloads never touch the user's cache.
-fn temp_export_dir() -> PathBuf {
-    tempdir().expect("theme export dir").keep()
-}
-
 fn make_agent_context() -> AgentContext {
     let config_manager = make_config_manager();
     let initial_config = config_manager.get();
@@ -61,7 +56,6 @@ fn make_agent_context() -> AgentContext {
         palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial_config)),
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
-        theme_export_dir: temp_export_dir(),
         announce_gate: Arc::new(Mutex::new(())),
     }
 }
@@ -229,7 +223,6 @@ fn make_hermetic_ctx(cache_dir: &Path) -> AgentContext {
         palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial_config)),
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
-        theme_export_dir: temp_export_dir(),
         announce_gate: Arc::new(Mutex::new(())),
     }
 }

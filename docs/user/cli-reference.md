@@ -6,7 +6,7 @@ Complete reference for the `gpy` command-line tool.
 
 `gpy` is the user-facing command-line interface for managing the GPY prompt for Bash, Fish and Zsh. It controls the agent, themes, segments and configuration.
 
-A second binary, `gpy-agent`, is the daemon itself. It also carries the few subcommands the shell integrations call (`oneshot`, `theme export`, `config reload`); they are listed under [The `gpy-agent` binary](#the-gpy-agent-binary) below.
+A second binary, `gpy-agent`, is the daemon itself. It also carries the few subcommands the shell integrations call (`oneshot`, `config reload`); they are listed under [The `gpy-agent` binary](#the-gpy-agent-binary) below.
 
 Checks and validations mark each result with a colored ✓, ✗ or ! on a terminal, and with `ok:`, `FAIL:` or `warn:` when output is not a terminal, `NO_COLOR` is set, `TERM=dumb`, or `ui.show_icons = false`. Other commands print plain text.
 
@@ -1218,7 +1218,7 @@ performance findings) are advice and never change the exit code.
 
 Dump every path GPY resolves from the environment: the runtime root, the
 socket, the shell registry directory, the cache root, the instant-prompt
-cache directory, the theme export file, the config path and its candidate
+cache directory, the config path and its candidate
 list, and the theme directory. Use it when a shell and the agent seem to
 disagree about where something lives.
 
@@ -1440,7 +1440,6 @@ commands.
 | `gpy-agent stop [--socket <path>] [--quiet]` / `gpy-agent status [--socket <path>]` | Same behaviour and exit codes as the `gpy` equivalents above. |
 | `gpy-agent restart [--socket <path>] [--quiet]` | Stop the agent (a failed stop is a `warn:` line, not an abort), then start it; prints the stop line and the start line and exits with `start`'s code. |
 | `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|exit-status> [--format json\|ansi\|bash-prompt\|zsh-prompt] [--not-last] [--first]` plus one input flag per segment: `--cwd <dir>` (`git`, `lang`, `directory`), `--duration-ms <n>` (`duration`), `--exit-code <n>` (`character`, `exit-status`) | Render one segment once, with no daemon; `--cwd` is rejected by `duration`, `character` and `exit-status`. `--not-last` drops the closing cap and `--first` the opening one. It is the quickest way to see what a segment produces for a directory. A failure prints one `Error:` line on stderr and exits `1`. |
-| `gpy-agent theme export --shell fish\|zsh\|bash` | Print the active theme as shell variable assignments, for tooling. |
 | `gpy-agent config reload [--socket <path>]` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 
 ---
@@ -1466,7 +1465,7 @@ commands.
 | `gpy doctor` | no failed check (warnings allowed) | a check failed | usage error | – | – | – | – |
 | `gpy setup` | set up (including `--check` and `--redetect-icons`) | failure: one line starting with `Error:` on stderr | usage error | – | – | everything is installed, but the rc file holds an incomplete GPY block, so the shell does not load GPY (a warning on stderr names the file) | – |
 | `gpy uninstall` | uninstalled | not confirmed (no terminal and no `--yes`, or the answer was not `y`), the agent could not be stopped (nothing is removed), or a path or rc file could not be handled | usage error | – | – | – | – |
-| `gpy-agent oneshot`, `gpy-agent theme export`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – | – |
+| `gpy-agent oneshot`, every other `gpy` command | success | failure: one line starting with `Error:` on stderr | usage error | – | – | – | – |
 
 `stop` never exits `6`: a disabled agent that is not running is already in the
 requested state, and one that is still running must be stoppable. `2` is the

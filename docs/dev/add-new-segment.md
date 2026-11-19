@@ -68,7 +68,7 @@ enabled_segments = ["clock", "duration", "language", "directory", "<id>", "git"]
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Segment not appearing | Script exited non-zero or empty, or name not in `ui.enabled_segments` | Test script directly and check `ui.enabled_segments` |
-| Wrong colors | Theme not loaded | `gpy-agent theme export --shell fish \| source` |
+| Wrong colors | Theme not loaded | Check `ui.theme` and the theme's `[segments.<name>]` section |
 | Slow prompt | Expensive detection | Cache with `ttl_secs` or move work into daemon |
 
 ## Related

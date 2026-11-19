@@ -1,5 +1,5 @@
 //! Cold-start benches. `Agent::new(socket)` binds a socket and registers watchers, so
-//! its dominant sub-steps (config load, theme load, theme export) and the
+//! its dominant sub-steps (config load, theme load) and the
 //! version-command spawn path are benched individually.
 //!
 //! Run with: cargo bench --bench `agent_startup_bench`
@@ -7,11 +7,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use gpy_agent::cache::theme_export::write_theme_export_to_dir;
-use gpy_agent::config::Config;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::language::version::{VersionSource, execute_version_command};
-use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
 use std::fs;
 use std::hint::black_box;
@@ -111,28 +108,6 @@ fn bench_theme_manager_load(c: &mut Criterion) {
     });
 }
 
-/// `write_theme_export_cache` via the tempdir seam; after the first iteration
-/// the export is unchanged, so this measures render + compare, no write.
-fn bench_theme_export(c: &mut Criterion) {
-    let theme_manager = ThemeManager::new("default").expect("load theme");
-    let config = Config::default();
-    let palette = Palette::default();
-    let dir = TempDir::new().expect("create temp dir");
-    let cache_dir = dir.path().join("gpy");
-
-    c.bench_function("theme_export_write", |b| {
-        b.iter(|| {
-            write_theme_export_to_dir(
-                black_box(&cache_dir),
-                black_box(&theme_manager),
-                black_box(&config),
-                black_box(&palette),
-            )
-            .expect("write theme export");
-        });
-    });
-}
-
 /// Near-instant no-op command, so only our spawn/parse overhead is measured.
 struct FastStubDetector;
 
@@ -183,7 +158,6 @@ criterion_group!(
     benches,
     bench_config_load,
     bench_theme_manager_load,
-    bench_theme_export,
     bench_version_command_spawn
 );
 criterion_main!(benches);

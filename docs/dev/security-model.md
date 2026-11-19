@@ -16,8 +16,8 @@ names, script output) for the shell's prompt expansion. This is what a prompt
 generator is — something has to emit prompt code — but it puts the `gpy` and
 `gpy-agent` binaries on the same footing as your shell startup files.
 
-Anyone who can replace `gpy-agent` on your
-`PATH`, or write to the theme-export cache, gets arbitrary code execution in
+Anyone who can replace `gpy` or `gpy-agent` on your
+`PATH` gets arbitrary code execution in
 every shell you open from then on. Three things stand in the way, and only
 these three:
 
@@ -74,8 +74,8 @@ installers enforce, and how to check a download by hand, is in
 
 ## Script segment mechanism
 
-*Which file runs (containment and ownership).* `gpy theme export` re-resolves
-`command` and `require_command` on every export (`ScriptPath::resolve` and
+*Which file runs (containment and ownership).* `gpy prompt` re-resolves
+`command` and `require_command` on every prompt (`ScriptPath::resolve` and
 `check_owned_and_not_shared` in `gpy-agent/src/plugin/script.rs`). Each must be
 a relative path without `..`, canonicalize (all symlinks resolved) to a regular
 file inside the canonical plugin root, and sit at a UTF-8 path without control

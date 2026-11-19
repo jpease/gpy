@@ -403,9 +403,9 @@ shell_e2e_text_config() {
 }
 
 # Append a truncated directory display whose prefix is $1, e.g. "OLD/". The
-# truncation symbol is not in the theme export, so changing only it across an
-# agent restart raises no `.reload`: the prompt shows the new prefix only if
-# the shell drops its memoized directory render when it re-registers.
+# `.reload` an agent restart raises only re-runs script segments, so changing
+# only it across a restart shows the new prefix only if the shell drops its
+# memoized directory render when it re-registers.
 shell_e2e_truncated_directory_config() {
     printf '\n[ui.directory]\ndisplay = "truncated"\ntruncation_length = 1\ntruncation_symbol = "%s"\n' "$1" \
         >>"$XDG_CONFIG_HOME/gpy/config.toml"

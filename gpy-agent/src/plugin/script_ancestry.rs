@@ -2,9 +2,9 @@
 //!
 //! Renaming or replacing a directory needs write permission on its *parent*,
 //! not on the directory itself, so a plugin root that passes the ownership
-//! check can still be swapped out after export when any ancestor is writable by
-//! another user. Every ancestor of the canonical root is therefore checked once
-//! at export, keeping the shells free of per-prompt `stat` calls.
+//! check can still be swapped out after it is resolved when any ancestor is
+//! writable by another user. Every ancestor of the canonical root is therefore
+//! checked when the segment is resolved.
 
 #[cfg(unix)]
 use crate::Error;

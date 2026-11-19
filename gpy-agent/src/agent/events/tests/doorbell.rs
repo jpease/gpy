@@ -1,11 +1,11 @@
 use super::*;
 
-/// Supervisor settings render nothing (no refresh) but change the theme
-/// export, so each rings the reload doorbell; an unchanged reload rings nothing.
+/// Supervisor settings render nothing and `gpy prompt` reads them from the
+/// config, so neither they nor an unchanged reload ring the doorbell.
 #[cfg(unix)]
 #[test]
 #[serial_test::serial(global_ttl)]
-fn supervisor_only_changes_ring_the_reload_doorbell() {
+fn supervisor_only_changes_do_not_ring_the_reload_doorbell() {
     use crate::config::types::{SupervisorCheckInterval, SupervisorMaxRestartAttempts};
 
     let original = Config::default();
@@ -28,7 +28,6 @@ fn supervisor_only_changes_ring_the_reload_doorbell() {
         rung(&counted) > before
     };
 
-    rings(&original, &original); // Writes the first export.
     assert!(!rings(&original, &original), "an unchanged reload rang");
 
     let mut disabled = original.clone();
@@ -48,12 +47,12 @@ fn supervisor_only_changes_ring_the_reload_doorbell() {
             !config_refresh_required(old, new),
             "agent.supervisor.{field} must not force a re-render"
         );
-        assert!(rings(old, new), "agent.supervisor.{field} must ring");
+        assert!(!rings(old, new), "agent.supervisor.{field} must not ring");
     }
 }
 
-/// A theme reload and a config reload racing on one stale export ring once
-/// between them: the gate makes the later one see the earlier one's export.
+/// A theme reload and a config reload racing on one theme change ring once
+/// between them: the gate makes the later one see the earlier one's swap.
 #[cfg(unix)]
 #[test]
 #[serial_test::serial(global_ttl)]
@@ -64,8 +63,8 @@ fn racing_theme_and_config_reloads_ring_once() {
     // Resolved the way `reload` re-resolves it, so re-reading it changes nothing.
     ctx.theme_manager = Arc::new(ThemeManager::new(config.ui.theme.as_str()).expect("theme"));
     let racer = Mutex::new(None);
-    // Stands in for a swap that left the (empty) export stale; the config
-    // reload starts mid-swap and, ungated, would write that export and ring.
+    // Stands in for a theme swap; the config reload starts mid-swap and
+    // waits on the gate until the theme reload has rung.
     let swap = || {
         let (thread_ctx, thread_config) = (ctx.clone(), config.clone());
         let (done_tx, done_rx) = std::sync::mpsc::channel();

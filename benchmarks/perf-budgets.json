@@ -102,11 +102,6 @@
       "max_ms": 20.0,
       "description": "ThemeManager::new load budget (Agent::new cold-start sub-step)"
     },
-    "theme_export_write": {
-      "target_ms": 10.0,
-      "max_ms": 30.0,
-      "description": "write_theme_export_cache atomic write budget (Agent::new cold-start sub-step)"
-    },
     "version_command_spawn": {
       "target_ms": 10.0,
       "max_ms": 50.0,

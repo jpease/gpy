@@ -22,8 +22,8 @@ pub fn validate_theme_config(theme: &ThemeConfig, source: &str) -> Result<(), Va
 ///
 /// # Errors
 /// Returns an error if a section name is not a segment name, two sections share
-/// a shell variable token, two fields would export the same shell variable, a
-/// field would overwrite a built-in theme export, or a variant colour is invalid.
+/// a variable token, two fields would set the same prompt variable, a field
+/// would overwrite a built-in theme variable, or a variant colour is invalid.
 fn validate_plugin_segment_themes(
     plugins: &std::collections::HashMap<String, crate::theme::PluginSegmentTheme>,
     source: &str,
@@ -44,7 +44,7 @@ fn validate_plugin_segment_themes(
 }
 
 /// Every `[segments.<name>]` plugin section must name a segment, and no two may
-/// export to the same shell variables (`Foo`/`foo`, `a-b`/`a_b`).
+/// set the same prompt variables (`Foo`/`foo`, `a-b`/`a_b`).
 ///
 /// # Errors
 /// Returns the first invalid or colliding section name, in sorted order.

@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # E2E Test: Git.show_upstream Hot-Reload
 #
-# This test verifies that git.show_upstream config changes hot-reload across:
-#   1. CLI oneshot git command (parses JSON to verify ahead/behind behavior)
-#   2. Fish prompt rendering (the theme export carries no GPY_GIT_SHOW_UPSTREAM)
+# This test verifies that git.show_upstream config changes hot-reload in the
+# CLI oneshot git command (parses JSON to verify ahead/behind behavior).
 #
 # Test setup:
 #   - Creates bare repo as "origin"
@@ -125,17 +124,6 @@ function test_git_show_upstream_reload
         return 1
     end
 
-    # Verify theme export does not export GPY_GIT_SHOW_UPSTREAM (config values are not environment mirrors)
-    set -l theme1 (gpy-agent theme export --shell fish 2>/dev/null)
-
-    if not echo "$theme1" | grep -q GPY_GIT_SHOW_UPSTREAM
-        pass "Theme export does not export GPY_GIT_SHOW_UPSTREAM"
-    else
-        fail "Theme export does not export GPY_GIT_SHOW_UPSTREAM" "Variable present in the export"
-        cleanup_test_files
-        return 1
-    end
-
     # Change config to show_upstream = false
     printf "[ui]\ntheme = \"default\"\nshow_icons = false\n\n[git]\nshow_upstream = false\n" >"$config_path"
 
@@ -160,17 +148,6 @@ function test_git_show_upstream_reload
     else
         fail "Oneshot shows ahead=0,behind=0 with show_upstream=false" "Expected 0,0 got: $ahead2,$behind2"
         echo "Full JSON: $output2"
-        cleanup_test_files
-        return 1
-    end
-
-    # Verify the theme export still does not export GPY_GIT_SHOW_UPSTREAM
-    set -l theme2 (gpy-agent theme export --shell fish 2>/dev/null)
-
-    if not echo "$theme2" | grep -q GPY_GIT_SHOW_UPSTREAM
-        pass "Theme export does not export GPY_GIT_SHOW_UPSTREAM"
-    else
-        fail "Theme export does not export GPY_GIT_SHOW_UPSTREAM" "Variable present in the export"
         cleanup_test_files
         return 1
     end

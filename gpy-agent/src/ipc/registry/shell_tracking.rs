@@ -7,16 +7,15 @@
 //!   same path). The file outlives the agent, so a restarted agent finds
 //!   every shell that was running.
 //! - **Flag file.** The agent writes `<shell_dir>/<pid>.<suffix>` (a
-//!   [`ShellFlag`]) to say what it wants: `reload` re-reads the theme and
-//!   config, `reregister` forgets the current registration and registers
-//!   again. The shell removes the flag after acting on it.
+//!   [`ShellFlag`]) to say what it wants: `reload` runs the script
+//!   segments again, `reregister` forgets the current registration and
+//!   registers again. The shell removes the flag after acting on it.
 //! - **Doorbell.** The agent then sends `SIGURG` ([`DOORBELL`]) to the PID.
 //!   The flag is written first, so a shell woken by the signal always finds
 //!   it. `SIGURG` is ignored by default, so a shell with no handler survives.
 //! - **Announcing a start.** Once its socket accepts, a started agent
-//!   ([`announce_start_in`]) raises `reregister` (and `reload` when the theme
-//!   export changed) for every alive tracked shell and rings each shell once
-//!   for both flags.
+//!   ([`announce_start_in`]) raises `reload` and `reregister` for every alive
+//!   tracked shell and rings each shell once for both flags.
 //! - **Re-nudging.** Every pruning tick the agent
 //!   ([`renudge_unregistered_shells`]) raises `reregister` again for tracked
 //!   shells that are alive but not registered, at most
@@ -56,7 +55,7 @@ const DOORBELL: Signal = Signal::SIGURG;
 /// Per-shell message: the file `<shell_dir>/<pid>.<suffix>`, followed by a [`DOORBELL`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShellFlag {
-    /// Reload theme/config.
+    /// Run the script segments again: the config may have changed.
     Reload,
     /// Forget the current registration and register again.
     Reregister,
@@ -409,37 +408,24 @@ fn raise_shell_flag(shell_dir: &Path, pid: u32, flag: ShellFlag) {
 }
 
 /// Announce a started agent to every alive tracked shell in `shell_dir`,
-/// pruning dead ones: `write_export` warms the theme-export cache and says
-/// whether the export changed (config edited while no agent ran), which
-/// raises `.reload`; `.reregister` is raised always, and each shell is rung
-/// once. One ring for both flags matters because Zsh drops a ring that lands
-/// while its trap for the previous one runs, and a shell from an older
-/// release has no backstop for that. Call once the socket accepts.
+/// pruning dead ones: `.reload` and `.reregister` are raised for each, and
+/// each shell is rung once. `.reload` makes the next prompt run the script
+/// segments again and reset their circuit breakers: the config may have
+/// changed while no agent ran. One ring for both flags matters because Zsh
+/// drops a ring that lands while its trap for the previous one runs. Call
+/// once the socket accepts.
 ///
 /// Reuses [`ShellRenudger::pids_to_nudge`] with `is_registered = false` (the
 /// announcement goes to everyone) and a fresh renudger, so
 /// [`MAX_RENUDGE_ATTEMPTS`] never suppresses it.
 #[cfg(unix)]
-pub(crate) fn announce_start_in(
-    shell_dir: &Path,
-    write_export: impl FnOnce() -> crate::Result<bool>,
-) {
-    let reload = write_export().unwrap_or_else(|e| {
-        debug_log!(
-            "agent",
-            "Warning: Failed to write initial theme export cache ({e})"
-        );
-        false
-    });
+pub(crate) fn announce_start_in(shell_dir: &Path) {
     let mut renudger = ShellRenudger::default();
     let pids = renudger.pids_to_nudge(shell_dir, |_| false, tracked_shell_liveness());
 
     for pid in pids {
-        debug_log!(
-            "agent",
-            "Announcing agent start to tracked shell {pid} (reload: {reload})"
-        );
-        if reload && let Err(e) = write_shell_flag(shell_dir, pid, ShellFlag::Reload) {
+        debug_log!("agent", "Announcing agent start to tracked shell {pid}");
+        if let Err(e) = write_shell_flag(shell_dir, pid, ShellFlag::Reload) {
             debug_log!("agent", "Failed to write reload flag for {pid}: {e}");
         }
         // Writes `.reregister`, then rings once for both flags.

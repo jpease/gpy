@@ -52,7 +52,7 @@ struct Plan {
 }
 
 /// Install the plugin in `source` as a user plugin, then ask a running agent
-/// to reload so shells pick up the new export.
+/// to reload so shells pick up the new plugin.
 ///
 /// # Errors
 /// Returns an error when the source is not a valid plugin tree, the plugin is

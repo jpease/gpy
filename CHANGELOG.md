@@ -15,10 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bash shows the duration pill only after a command ran, as Zsh and Fish do; an empty Enter used to show the previous command's duration again.
 - An enabled segment that is neither built in nor a script segment is skipped.
 - `gpy setup` removes the `core/` and `segments/` directories an earlier release installed in the shell trees.
+- Supervisor-only and `agent.timeout_seconds` changes no longer ring the shells' reload doorbell: `gpy prompt` reads them from the config on every prompt.
 
 ### Removed
 - Fish `.fish` file plugins (`entry_type = "file"`): such a manifest is now rejected at discovery and install with a pointer to script segments ([docs/dev/plugins.md](docs/dev/plugins.md)).
 - The `gpy-prompt-reload` shell function in all three shells, and Fish's `gpy-prompt-debug`: no shell state is left to reload or inspect. Use `gpy doctor`, `gpy debug prompt` and `gpy debug paths`.
+- `gpy-agent theme export` and the `theme-export.{fish,zsh,bash}` files the agent wrote to the cache directory: no shell reads them since `gpy prompt` draws every prompt. `gpy debug paths` no longer lists a theme export file.
 
 ### Fixed
 - A prompt render no longer slows down as the instant-prompt cache grows: the shells' check for a cached git or language segment globbed the whole cache directory on every render (about 215 ms in Fish and 1.2 s in Zsh at 29,000 files). The agent now keeps an `{key}.{git|lang}.any-entry.{ext}` marker beside each repository's entries, and the shells test that single file. A cache written by an older agent gains its markers on the next refresh; until then a repository's language segment can be missing for one prompt.

@@ -69,7 +69,6 @@ if [[ " $* " == *" --ci "* ]]; then
     BUDGET_CACHE_READ=.budgets.cache_read.max_ms*1000000 \
     BUDGET_CONFIG_LOAD=.budgets.config_load.max_ms*1000000 \
     BUDGET_THEME_LOAD=.budgets.theme_manager_load.max_ms*1000000 \
-    BUDGET_THEME_EXPORT=.budgets.theme_export_write.max_ms*1000000 \
     BUDGET_VERSION_SPAWN=.budgets.version_command_spawn.max_ms*1000000 \
     BUDGET_LANG_DETECT=.budgets.language_detection.max_ms*1000000 \
     TOLERANCE_PCT=.regression_thresholds.measurement_variance_percent*1
@@ -121,7 +120,6 @@ if [[ " $* " == *" --ci "* ]]; then
   # Cold-start canaries (gpy-agent/benches/agent_startup_bench.rs).
   check_budget "$BENCH_OUTPUT" "config_load_from_file" "$BUDGET_CONFIG_LOAD" "Config Load" || FAILURES=$((FAILURES + 1))
   check_budget "$BENCH_OUTPUT" "theme_manager_load" "$BUDGET_THEME_LOAD" "Theme Manager Load" || FAILURES=$((FAILURES + 1))
-  check_budget "$BENCH_OUTPUT" "theme_export_write" "$BUDGET_THEME_EXPORT" "Theme Export Write" || FAILURES=$((FAILURES + 1))
   check_budget "$BENCH_OUTPUT" "version_command_spawn" "$BUDGET_VERSION_SPAWN" "Version Command Spawn" || FAILURES=$((FAILURES + 1))
 
   # 5k-file corpus (gpy-agent/benches/language_bench.rs).
@@ -143,7 +141,6 @@ if [[ " $* " == *" --ci "* ]]; then
     "cache_read_ns": $BUDGET_CACHE_READ,
     "config_load_ns": $BUDGET_CONFIG_LOAD,
     "theme_manager_load_ns": $BUDGET_THEME_LOAD,
-    "theme_export_write_ns": $BUDGET_THEME_EXPORT,
     "version_command_spawn_ns": $BUDGET_VERSION_SPAWN,
     "language_detection_ns": $BUDGET_LANG_DETECT
   },

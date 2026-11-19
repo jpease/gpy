@@ -365,7 +365,7 @@ fn discover_plugins_in_roots(roots: &[(PluginSource, PathBuf)]) -> PluginDiscove
 /// plugin owns: a user plugin owns it over a bundled one; within one source
 /// the lexically smaller id owns it. Each drop is a diagnostic.
 ///
-/// Every consumer (`gpy segments`, `doctor`, the theme export) then sees one
+/// Every consumer (`gpy segments`, `doctor`, `gpy prompt`) then sees one
 /// provider per name instead of each picking its own.
 fn reject_duplicate_segment_names(
     plugins: Vec<DiscoveredPlugin>,

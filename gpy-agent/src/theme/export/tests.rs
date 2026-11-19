@@ -1,17 +1,15 @@
-use super::script_segments::tests::golden_scripts;
-use super::shell_assignment::escape_shell_value;
-use super::theme_to_shell::{PluginExports, SEGMENT_BG_VARS, theme_to_shell};
+use super::prompt_shell_values;
+use super::resolve_shell_color;
 use crate::config::Config;
+use crate::config::types::ColorSpec;
 use crate::shell::Shell;
-use crate::template::Palette;
+use crate::template::{Color, Palette};
 use crate::theme::model::ThemeConfig;
+use std::collections::HashMap;
 use std::process::Command;
 
-/// Theme name with shell metacharacters, pinning header and `__gpy_theme_name` escaping.
-pub(super) const GOLDEN_THEME_NAME: &str = "night$owl\"";
-
-/// A theme populating every export phase; values embed `$`, backticks, quotes,
-/// and a trailing backslash so the goldens pin escaping.
+/// A theme populating every value; values embed `$`, backticks, quotes and a
+/// trailing backslash, which reach the prompt verbatim.
 const GOLDEN_THEME_TOML: &str = r##"
 [ui]
 root_prompt_icon = "#`r`"
@@ -110,33 +108,11 @@ icon_color = "black"
 bg_color = "white"
 "##;
 
-/// A config moving every exported setting off its default; leaves `language`
-/// unlisted but keeps `git`, pinning both arms of the enabled-segment list.
+/// A config moving the settings the values read off their defaults.
 const GOLDEN_CONFIG_TOML: &str = r#"
-[agent]
-enabled = false
-live_updates = false
-timeout_seconds = 7
-
-[agent.supervisor]
-enabled = false
-check_interval_seconds = 45
-max_restart_attempts = 9
-
-[git]
-show_upstream = false
-max_branch_length = 17
-
-[language]
-show_versions = false
-
 [ui]
 show_icons = false
 enabled_segments = ["clock", "username", "hostname", "directory", "git", "duration", "status"]
-
-[ui.directory]
-display = "truncated"
-max_length = 42
 "#;
 
 pub(super) fn golden_theme() -> ThemeConfig {
@@ -147,237 +123,124 @@ pub(super) fn golden_config() -> Config {
     toml::from_str(GOLDEN_CONFIG_TOML).expect("golden config fixture should parse")
 }
 
-/// The golden plugin data: one script segment whose paths and setting value
-/// hold shell metacharacters.
-fn golden_plugins() -> PluginExports {
-    PluginExports {
-        scripts: golden_scripts(),
-    }
-}
-
-fn golden_export(shell: Shell) -> String {
-    theme_to_shell(
-        &golden_theme(),
-        GOLDEN_THEME_NAME,
-        &golden_config(),
-        shell,
-        &Palette::default(),
-        &golden_plugins(),
-    )
-}
-
-/// The exported marker list is exactly `marker_file_names()`, sorted.
-#[test]
-fn export_lists_exactly_the_sorted_marker_file_names() {
-    let mut expected: Vec<&str> = crate::language::metadata::marker_file_names()
+/// `values` as sorted `name="value"` lines; the quotes keep a trailing space
+/// visible (and safe from whitespace-trimming hooks).
+fn sorted_lines(values: &HashMap<String, String>) -> String {
+    let mut lines: Vec<String> = values
         .iter()
-        .copied()
+        .map(|(name, value)| format!("{name}={value:?}"))
         .collect();
-    expected.sort_unstable();
-    for shell in [Shell::Fish, Shell::Zsh, Shell::Bash] {
-        let export = golden_export(shell);
-        let line = export
-            .lines()
-            .find(|l| l.contains("__gpy_lang_marker_files"))
-            .expect("marker export line");
-        let body = match shell {
-            Shell::Fish => line.strip_prefix("set -g __gpy_lang_marker_files "),
-            Shell::Zsh => line
-                .strip_prefix("typeset -g -a __gpy_lang_marker_files=(")
-                .and_then(|r| r.strip_suffix(')')),
-            Shell::Bash => line
-                .strip_prefix("__gpy_lang_marker_files=(")
-                .and_then(|r| r.strip_suffix(')')),
-        }
-        .expect("marker line shape");
-        let got: Vec<&str> = body.split(' ').collect();
-        assert_eq!(got, expected, "{shell}");
-    }
+    lines.sort_unstable();
+    lines.join("\n")
 }
 
-/// `ui.show_icons = false` exports delimiter glyphs empty; plain-text delimiters survive.
+fn values_with(theme: &ThemeConfig, show_icons: bool) -> HashMap<String, String> {
+    let mut config = Config::default();
+    config.ui.show_icons = show_icons;
+    prompt_shell_values(theme, &config, &Palette::default())
+}
+
+fn value<'a>(values: &'a HashMap<String, String>, name: &str) -> &'a str {
+    values
+        .get(name)
+        .unwrap_or_else(|| panic!("no `{name}` value"))
+}
+
+fn has_private_use(text: &str) -> bool {
+    text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c))
+}
+
 #[test]
-fn export_drops_private_use_delimiters_when_icons_are_off() {
-    const DELIMITER_VARS: [&str; 6] = [
+fn golden_theme_values_match_snapshot() {
+    let values = prompt_shell_values(&golden_theme(), &golden_config(), &Palette::default());
+    insta::assert_snapshot!("golden_values", sorted_lines(&values));
+}
+
+/// Companion snapshot for the unset/absent arms the populated fixture misses.
+#[test]
+fn default_theme_values_match_snapshot() {
+    let values = prompt_shell_values(
+        &ThemeConfig::default(),
+        &Config::default(),
+        &Palette::default(),
+    );
+    insta::assert_snapshot!("default_theme_values", sorted_lines(&values));
+}
+
+/// `ui.show_icons = false` empties Nerd Font delimiter glyphs; plain-text delimiters survive.
+#[test]
+fn icons_off_drops_private_use_delimiters() {
+    let on = values_with(&golden_theme(), true);
+    let off = values_with(&golden_theme(), false);
+    for name in [
         "__segment_delim_start",
         "__segment_delim_end",
         "__icon_powerline_segment_start",
         "__icon_powerline_segment_end",
-        "__segment_delim_first",
-        "__segment_delim_last",
-    ];
-    let has_private_use = |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
-    let mut icons_off = golden_config();
-    icons_off.ui.show_icons = false;
-    let mut icons_on = golden_config();
-    icons_on.ui.show_icons = true;
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        let export = |config: &Config| {
-            theme_to_shell(
-                &golden_theme(),
-                GOLDEN_THEME_NAME,
-                config,
-                shell,
-                &Palette::default(),
-                &golden_plugins(),
-            )
-        };
-        let line_of = |script: &str, name: &str| {
-            script
-                .lines()
-                .find(|l| l.contains(&format!("{name} ")) || l.contains(&format!("{name}=")))
-                .unwrap_or_else(|| panic!("{shell}: no `{name}` line in export"))
-                .to_owned()
-        };
-        let on = export(&icons_on);
-        let off = export(&icons_off);
-        for name in DELIMITER_VARS {
-            assert!(
-                !has_private_use(&line_of(&off, name)),
-                "{shell}: show_icons=false still exports a private-use glyph in {name}"
-            );
-        }
-        for name in [
-            "__segment_delim_start",
-            "__segment_delim_end",
-            "__icon_powerline_segment_start",
-            "__icon_powerline_segment_end",
-        ] {
-            assert!(
-                has_private_use(&line_of(&on, name)),
-                "{shell}: show_icons=true control: {name} must keep its glyph"
-            );
-        }
-        // The plain-text delimiters of the fixture are untouched.
-        for (name, text) in [
-            ("__segment_delim_first", "["),
-            ("__segment_delim_last", "]"),
-        ] {
-            assert!(
-                line_of(&off, name).contains(text),
-                "{shell}: {name} lost {text:?}"
-            );
-        }
+    ] {
+        assert!(has_private_use(value(&on, name)), "icons on keep {name}");
+        assert_eq!(value(&off, name), "", "icons off empty {name}");
     }
+    assert_eq!(value(&off, "__segment_delim_first"), "[");
+    assert_eq!(value(&off, "__segment_delim_last"), "]");
 }
 
-/// `ui.show_icons = false` erases the default theme's Nerd Font status icons so
-/// the shells draw their ASCII fallback; with icons on they are exported.
+/// `ui.show_icons = false` unsets the default theme's Nerd Font status icons so
+/// the renderer draws its ASCII fallback; with icons on they are set.
 #[test]
-fn export_erases_private_use_status_icons_when_icons_are_off() {
-    let has_private_use = |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+fn icons_off_unsets_private_use_status_icons() {
     let theme = crate::theme::ThemeManager::builtin("default")
         .expect("default theme should always load")
         .get();
-    let export = |show_icons: bool, shell: Shell| {
-        let mut config = Config::default();
-        config.ui.show_icons = show_icons;
-        theme_to_shell(
-            &theme,
-            "default",
-            &config,
-            shell,
-            &Palette::default(),
-            &PluginExports::default(),
-        )
-    };
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        let on = export(true, shell);
-        let off = export(false, shell);
-        for name in ["__icon_status_ok", "__icon_status_fail"] {
-            let line_of = |script: &str| {
-                script
-                    .lines()
-                    .find(|l| l.split([' ', '=']).any(|word| word == name))
-                    .unwrap_or_else(|| panic!("{shell}: no `{name}` line in export"))
-                    .to_owned()
-            };
-            assert!(
-                has_private_use(&line_of(&on)),
-                "{shell}: show_icons=true control: {name} must keep its glyph"
-            );
-            let off_line = line_of(&off);
-            assert!(
-                off_line.trim_end().ends_with(name) && !has_private_use(&off_line),
-                "{shell}: show_icons=false must erase {name}, got {off_line:?}"
-            );
-        }
+    let on = values_with(&theme, true);
+    let off = values_with(&theme, false);
+    for name in ["__icon_status_ok", "__icon_status_fail"] {
+        assert!(has_private_use(value(&on, name)), "icons on keep {name}");
+        assert!(!off.contains_key(name), "icons off unset {name}");
     }
 }
 
-/// `ui.show_icons = false` exports a Nerd Font plugin segment icon, a variant
-/// icon and open/close cap icons empty, which the shells read as "no icon";
-/// with icons on they are exported as written.
+/// `ui.show_icons = false` empties a Nerd Font plugin segment icon, a variant
+/// icon and open/close cap icons, which the renderer reads as "no icon".
 #[test]
-fn export_empties_private_use_plugin_segment_icons_when_icons_are_off() {
-    let has_private_use = |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+fn icons_off_empties_private_use_plugin_segment_icons() {
     let theme: ThemeConfig = toml::from_str(
         "[segments.hostname]\nssh_icon = \"\u{f108}\"\n[segments.username]\nicon = \"\u{f007}\"\n[segments.username.open]\nicon = \"\u{e0b6}\"\n[segments.username.close]\nicon = \"\u{e0b4}\"\n",
     )
     .expect("theme parses");
-    let export = |show_icons: bool, shell: Shell| {
-        let mut config = Config::default();
-        config.ui.show_icons = show_icons;
-        theme_to_shell(
-            &theme,
-            "nerd",
-            &config,
-            shell,
-            &Palette::default(),
-            &PluginExports::default(),
-        )
-    };
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        let on = export(true, shell);
-        let off = export(false, shell);
-        for name in [
-            "__icon_hostname_ssh",
-            "__gpy_segment_hostname_variant_ssh_icon",
-            "__icon_username",
-            "__gpy_segment_username_icon",
-            "__gpy_segment_username_open_icon",
-            "__gpy_segment_username_close_icon",
-        ] {
-            let line_of = |script: &str| {
-                script
-                    .lines()
-                    .find(|l| l.split([' ', '=']).any(|word| word == name))
-                    .unwrap_or_else(|| panic!("{shell}: no `{name}` line in export"))
-                    .to_owned()
-            };
-            assert!(
-                has_private_use(&line_of(&on)),
-                "{shell}: show_icons=true control: {name} must keep its glyph"
-            );
-            let off_line = line_of(&off);
-            assert!(
-                off_line.trim_end().ends_with("\"\"") && !has_private_use(&off_line),
-                "{shell}: show_icons=false must export {name} empty, got {off_line:?}"
-            );
-        }
+    let on = values_with(&theme, true);
+    let off = values_with(&theme, false);
+    for name in [
+        "__icon_hostname_ssh",
+        "__gpy_segment_hostname_variant_ssh_icon",
+        "__icon_username",
+        "__gpy_segment_username_icon",
+        "__gpy_segment_username_open_icon",
+        "__gpy_segment_username_close_icon",
+    ] {
+        assert!(has_private_use(value(&on, name)), "icons on keep {name}");
+        assert_eq!(value(&off, name), "", "icons off empty {name}");
     }
 }
 
+/// `two_line` and `add_newline` are `1`/`0` flags.
 #[test]
-fn fish_export_matches_golden() {
-    insta::assert_snapshot!("fish_export", golden_export(Shell::Fish));
-}
-
-#[test]
-fn bash_export_matches_golden() {
-    insta::assert_snapshot!("bash_export", golden_export(Shell::Bash));
-}
-
-#[test]
-fn zsh_export_matches_golden() {
-    insta::assert_snapshot!("zsh_export", golden_export(Shell::Zsh));
+fn layout_flags_follow_the_theme() {
+    let mut theme = ThemeConfig::default();
+    theme.ui.two_line = true;
+    theme.ui.add_newline = false;
+    let values = values_with(&theme, true);
+    assert_eq!(value(&values, "__gpy_two_line"), "1");
+    assert_eq!(value(&values, "__gpy_add_newline"), "0");
+    theme.ui.two_line = false;
+    assert_eq!(value(&values_with(&theme, true), "__gpy_two_line"), "0");
 }
 
 /// Variant `open` keeps off the `open` delimiter's colour (`_variant_` namespace);
 /// a section whose names collide with an earlier one's (segment `a` against
-/// `a_b`, `a_open`, `a_variant`, `a_variant_x`) is skipped, so each name is set once.
+/// `a_b`, `a_open`, `a_variant`, `a_variant_x`) is skipped whole.
 #[test]
-fn plugin_segment_variables_are_assigned_once_when_sections_collide() {
+fn plugin_segment_sections_that_collide_are_skipped() {
     let theme: ThemeConfig = toml::from_str(
         r#"
 [segments.a]
@@ -404,415 +267,26 @@ ok_bg_color = "blue"
 "#,
     )
     .expect("collision fixture should parse");
-    let script = theme_to_shell(
-        &theme,
-        "collisions",
-        &Config::default(),
-        Shell::Bash,
-        &Palette::default(),
-        &PluginExports::default(),
-    );
-    let names: Vec<&str> = script
-        .lines()
-        .filter_map(|line| line.split_once('=').map(|(name, _)| name))
-        .filter(|name| name.starts_with("__gpy_segment_") || name.starts_with("__color_"))
-        .collect();
-    for name in &names {
-        assert_eq!(
-            names.iter().filter(|other| *other == name).count(),
-            1,
-            "`{name}` is assigned more than once:\n{script}"
-        );
-    }
-    for expected in [
-        "__gpy_segment_a_open_bg_color=\"black\"",
-        "__gpy_segment_a_variant_open_bg_color=\"red\"",
-        "__gpy_segment_a_variant_b_c_bg_color=\"green\"",
-        "__gpy_segment_k8s_variant_ok_bg_color=\"blue\"",
+    let values = values_with(&theme, true);
+    for (name, expected) in [
+        ("__gpy_segment_a_open_bg_color", "black"),
+        ("__gpy_segment_a_variant_open_bg_color", "red"),
+        ("__gpy_segment_a_variant_b_c_bg_color", "green"),
+        ("__gpy_segment_k8s_variant_ok_bg_color", "blue"),
     ] {
-        assert!(
-            script.lines().any(|line| line == expected),
-            "missing `{expected}`:\n{script}"
-        );
+        assert_eq!(value(&values, name), expected, "{name}");
     }
     for skipped in ["a_b", "a_open", "a_variant", "a_variant_x"] {
-        let id = format!("__gpy_segment_{skipped}_id=");
         assert!(
-            !script.contains(&id),
-            "`{skipped}` must be skipped:\n{script}"
+            !values.contains_key(&format!("__gpy_segment_{skipped}_id")),
+            "`{skipped}` must be skipped"
         );
     }
 }
 
-/// Bash/Zsh exports carry a generated `__gpy_segment_bg`; Fish gets none.
+/// An ANSI index keeps the terminal's palette; a palette role takes its value.
 #[test]
-fn bash_and_zsh_export_include_segment_bg_function_for_every_builtin_segment() {
-    for shell in [Shell::Bash, Shell::Zsh] {
-        let export = golden_export(shell);
-        assert!(
-            export.contains("__gpy_segment_bg()"),
-            "{shell:?} export must define __gpy_segment_bg(), got:\n{export}"
-        );
-        for (segment, var) in SEGMENT_BG_VARS {
-            let arm = format!("{segment}) __gpy_sbg=");
-            assert!(
-                export.contains(&arm),
-                "{shell:?} export's __gpy_segment_bg must have a case arm for \
-                     segment '{segment}', got:\n{export}"
-            );
-            let var_ref = format!("${{{var}:-}}");
-            assert!(
-                export.contains(&var_ref),
-                "{shell:?} export's __gpy_segment_bg case arm for '{segment}' must \
-                     reference {var_ref}, got:\n{export}"
-            );
-        }
-    }
-}
-
-/// The `status` arm reads `__gpy_last_status`, falling back to `green`/`red`.
-#[test]
-fn bash_and_zsh_segment_bg_function_has_a_status_arm_keyed_on_last_status() {
-    for shell in [Shell::Bash, Shell::Zsh] {
-        let export = golden_export(shell);
-        for needle in [
-            "status)",
-            "${__gpy_last_status:-0}",
-            "${__color_status_ok_bg:-green}",
-            "${__color_status_fail_bg:-red}",
-        ] {
-            assert!(
-                export.contains(needle),
-                "{shell:?} export's __gpy_segment_bg must carry {needle:?}, got:\n{export}"
-            );
-        }
-    }
-}
-
-#[test]
-fn fish_export_has_no_segment_bg_function() {
-    let export = golden_export(Shell::Fish);
-    assert!(
-        !export.contains("__gpy_segment_bg"),
-        "Fish export must be untouched by the Bash/Zsh __gpy_segment_bg addition, got:\n{export}"
-    );
-}
-
-/// Companion golden for the unset/absent arms the populated fixture misses.
-#[test]
-fn default_theme_export_matches_golden() {
-    let export = theme_to_shell(
-        &ThemeConfig::default(),
-        "default",
-        &Config::default(),
-        Shell::Fish,
-        &Palette::default(),
-        &PluginExports::default(),
-    );
-    insta::assert_snapshot!("default_theme_fish_export", export);
-}
-
-pub(super) fn shell_bin(shell: Shell) -> &'static str {
-    match shell {
-        Shell::Fish => "fish",
-        Shell::Bash => "bash",
-        Shell::Zsh => "zsh",
-    }
-}
-
-/// Skip guard for hosts missing a shell. Checks exit status, not just spawn: a
-/// broken `bash.exe` on Windows CI otherwise passes. Diagnostics show on failure.
-pub(super) fn shell_available(shell: Shell) -> bool {
-    let bin = shell_bin(shell);
-    match Command::new(bin).arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let banner = String::from_utf8_lossy(&output.stdout);
-            let first_line = banner.lines().next().unwrap_or("(no version banner)");
-            eprintln!("using {shell:?}: `{bin} --version` -> {first_line}");
-            true
-        }
-        Ok(output) => {
-            eprintln!(
-                "skipping {shell:?}: `{bin} --version` spawned but exited {}",
-                output.status
-            );
-            false
-        }
-        Err(error) => {
-            eprintln!("skipping {shell:?}: cannot run `{bin}`: {error}");
-            false
-        }
-    }
-}
-
-/// Skip a missing shell locally; fail under `CI` or `GPY_GATE_STRICT` unless
-/// `GPY_CI_NO_SHELLS=1`.
-pub(super) fn skip_shell_or_fail_under_ci(shell: Shell) {
-    eprintln!("SKIP: {shell:?} is not available");
-    let ci = ["CI", "GPY_GATE_STRICT"]
-        .iter()
-        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()));
-    let no_shells_declared = std::env::var_os("GPY_CI_NO_SHELLS").is_some();
-    assert!(
-        !ci || no_shells_declared,
-        "{shell:?} is not available under CI; install it or set GPY_CI_NO_SHELLS=1"
-    );
-}
-
-/// A collision-free marker path a successful injection would `touch`.
-pub(super) fn unique_marker(tag: &str) -> std::path::PathBuf {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |d| d.as_nanos());
-    std::env::temp_dir().join(format!(
-        "gpy_test_pwned_{tag}_{}_{nanos}",
-        std::process::id()
-    ))
-}
-
-/// Build the exact double-quoted assignment the exporter emits for `raw`,
-/// source it in the real shell, and echo the resulting variable back.
-/// Returns `(sourcing_succeeded, echoed_value)`.
-fn source_value(shell: Shell, raw: &str) -> (bool, String) {
-    let syntax = shell.variable_syntax();
-    let escaped = escape_shell_value(raw, shell);
-    let assignment = syntax.format("__gpy_injection_probe", &escaped);
-    let script = format!("{assignment}\nprintf '%s' \"$__gpy_injection_probe\"\n");
-    let output = Command::new(shell_bin(shell))
-        .arg("-c")
-        .arg(&script)
-        .output()
-        .expect("spawning shell should succeed");
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-    )
-}
-
-#[test]
-fn escape_shell_value_neutralizes_metacharacters() {
-    // `$(…)` command substitution is neutralized for all shells.
-    assert_eq!(escape_shell_value("$(x)", Shell::Fish), "\\$(x)");
-    assert_eq!(escape_shell_value("$(x)", Shell::Bash), "\\$(x)");
-    assert_eq!(escape_shell_value("$(x)", Shell::Zsh), "\\$(x)");
-    // Backslash is doubled (so a trailing backslash cannot escape the quote).
-    assert_eq!(escape_shell_value("a\\", Shell::Fish), "a\\\\");
-    // Double quote is escaped last (preserves historical behavior).
-    assert_eq!(escape_shell_value("a\"b", Shell::Fish), "a\\\"b");
-    // Backtick: escaped for bash/zsh, literal for fish (no backtick substitution).
-    assert_eq!(escape_shell_value("`x`", Shell::Bash), "\\`x\\`");
-    assert_eq!(escape_shell_value("`x`", Shell::Zsh), "\\`x\\`");
-    assert_eq!(escape_shell_value("`x`", Shell::Fish), "`x`");
-    // Backslash doubled before `$` is escaped, so the inserted `\` isn't re-doubled.
-    assert_eq!(escape_shell_value("\\$", Shell::Fish), "\\\\\\$");
-}
-
-#[test]
-fn theme_values_do_not_execute_command_substitution_when_sourced() {
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        if !shell_available(shell) {
-            skip_shell_or_fail_under_ci(shell);
-            continue;
-        }
-        let marker = unique_marker("cmdsub");
-        let _ = std::fs::remove_file(&marker);
-        assert!(!marker.exists(), "marker must not pre-exist");
-        let payload = format!("$(touch {})", marker.display());
-
-        let (ok, echoed) = source_value(shell, &payload);
-
-        assert!(ok, "{shell:?}: sourcing the escaped assignment errored");
-        assert!(
-            !marker.exists(),
-            "{shell:?}: command substitution EXECUTED — marker was created"
-        );
-        assert_eq!(
-            echoed, payload,
-            "{shell:?}: value should round-trip as inert literal text"
-        );
-        let _ = std::fs::remove_file(&marker);
-    }
-}
-
-#[test]
-fn theme_values_do_not_execute_backtick_substitution_when_sourced() {
-    // Fish has no backtick command substitution, so this vector is bash/zsh.
-    for shell in [Shell::Bash, Shell::Zsh] {
-        if !shell_available(shell) {
-            skip_shell_or_fail_under_ci(shell);
-            continue;
-        }
-        let marker = unique_marker("backtick");
-        let _ = std::fs::remove_file(&marker);
-        assert!(!marker.exists(), "marker must not pre-exist");
-        let payload = format!("`touch {}`", marker.display());
-
-        let (ok, echoed) = source_value(shell, &payload);
-
-        assert!(ok, "{shell:?}: sourcing the escaped assignment errored");
-        assert!(
-            !marker.exists(),
-            "{shell:?}: backtick substitution EXECUTED — marker was created"
-        );
-        assert_eq!(
-            echoed, payload,
-            "{shell:?}: value should round-trip as inert literal text"
-        );
-        let _ = std::fs::remove_file(&marker);
-    }
-}
-
-#[test]
-fn theme_values_with_shell_metacharacters_source_cleanly() {
-    let values = [
-        "back\\slash",
-        "dollar$var",
-        "tick`cmd`",
-        "quote\"end",
-        "line1\nline2",
-        "mix $(x) `y` \"z\" \\ end",
-    ];
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        if !shell_available(shell) {
-            skip_shell_or_fail_under_ci(shell);
-            continue;
-        }
-        for raw in values {
-            let (ok, echoed) = source_value(shell, raw);
-            assert!(ok, "{shell:?}: sourcing value {raw:?} errored");
-            assert_eq!(
-                echoed, raw,
-                "{shell:?}: value {raw:?} did not round-trip losslessly"
-            );
-        }
-    }
-}
-
-#[test]
-fn trailing_backslash_value_does_not_break_sourcing() {
-    // A trailing backslash must not escape the closing quote.
-    let raw = "icon\\";
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        if !shell_available(shell) {
-            skip_shell_or_fail_under_ci(shell);
-            continue;
-        }
-        let (ok, echoed) = source_value(shell, raw);
-        assert!(
-            ok,
-            "{shell:?}: trailing-backslash value broke sourcing (unterminated string)"
-        );
-        assert_eq!(
-            echoed, raw,
-            "{shell:?}: trailing backslash did not round-trip"
-        );
-    }
-}
-
-/// Shell script body printing every `__*` variable as `name=value` lines.
-const fn dump_script(shell: Shell) -> &'static str {
-    match shell {
-        Shell::Fish => "for v in (set -n | string match '__*'); echo $v=$$v; end",
-        Shell::Bash => r#"for v in $(compgen -v __); do printf '%s=%s\n' "$v" "${!v}"; done"#,
-        Shell::Zsh => r#"for v in ${(k)parameters[(I)__*]}; do print -r -- "$v=${(P)v}"; done"#,
-    }
-}
-
-/// Source `files` in order in a clean shell and return the sorted dump.
-fn sourced_vars(shell: Shell, files: &[&std::path::Path]) -> Vec<String> {
-    let mut script = String::new();
-    for index in 1..=files.len() {
-        let line = match shell {
-            Shell::Fish => format!("source $argv[{index}]\n"),
-            Shell::Bash | Shell::Zsh => format!("source \"${index}\"\n"),
-        };
-        script.push_str(&line);
-    }
-    script.push_str(dump_script(shell));
-    let mut cmd = Command::new(shell_bin(shell));
-    cmd.env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
-    match shell {
-        Shell::Fish => cmd.args(["--no-config", "-c", &script, "--"]),
-        Shell::Bash => cmd.args(["--noprofile", "--norc", "-c", &script, "bash"]),
-        Shell::Zsh => cmd.args(["-f", "-c", &script, "zsh"]),
-    };
-    let output = cmd.args(files).output().expect("spawning shell");
-    assert!(
-        output.status.success(),
-        "{shell:?}: sourcing failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    lines.sort();
-    lines
-}
-
-/// Hot-reload invariant: sourcing B over A equals sourcing only B (no `__*` leaks).
-#[test]
-fn optional_shell_vars_reset_on_resource() {
-    use crate::config::types::Icon;
-
-    let mut theme_a = ThemeConfig::default();
-    theme_a.segments.clock.time_format = Some("24".to_owned());
-    theme_a.segments.status.ok_icon = Some(Icon::new("OK").expect("valid icon"));
-    theme_a.segments.status.fail_icon = Some(Icon::new("NO").expect("valid icon"));
-    let theme_b = ThemeConfig::default();
-    let config = Config::default();
-    let dir = tempfile::tempdir().expect("tempdir");
-
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        if !shell_available(shell) {
-            skip_shell_or_fail_under_ci(shell);
-            continue;
-        }
-        let export = |theme: &ThemeConfig| {
-            theme_to_shell(
-                theme,
-                "t",
-                &config,
-                shell,
-                &Palette::default(),
-                &PluginExports::default(),
-            )
-        };
-        let path_a = dir
-            .path()
-            .join(format!("a.{shell_bin}", shell_bin = shell_bin(shell)));
-        let path_b = dir
-            .path()
-            .join(format!("b.{shell_bin}", shell_bin = shell_bin(shell)));
-        std::fs::write(&path_a, export(&theme_a)).expect("write a");
-        std::fs::write(&path_b, export(&theme_b)).expect("write b");
-
-        let only_a = sourced_vars(shell, &[&path_a]);
-        assert!(
-            only_a.contains(&"__time_format=24".to_owned()),
-            "{shell:?}: export A must set the 24h clock, got {only_a:?}"
-        );
-        let fresh = sourced_vars(shell, &[&path_b]);
-        let reloaded = sourced_vars(shell, &[&path_a, &path_b]);
-        assert_eq!(reloaded, fresh, "{shell:?}: A-then-B must equal fresh B");
-        assert!(
-            reloaded.contains(&"__time_format=12".to_owned()),
-            "{shell:?}: B must reset the clock to 12h, got {reloaded:?}"
-        );
-    }
-}
-
-/// Fish's `set_color` rejects bare ANSI indices and palette roles, so the Fish
-/// export carries names/hex for them; Bash/Zsh keep the index their renderers
-/// draw as a 256-color SGR, and get the role's palette value.
-#[test]
-fn exported_index_and_role_colors_reach_real_set_color() {
-    use crate::config::types::ColorSpec;
-    use crate::template::Color;
-    use std::collections::HashMap;
-
+fn index_and_role_colors_resolve_through_the_palette() {
     let mut theme = ThemeConfig::default();
     theme.segments.clock.bg_color = ColorSpec::new("42").expect("index color");
     theme.segments.clock.text_color = ColorSpec::new("3").expect("index color");
@@ -825,77 +299,16 @@ fn exported_index_and_role_colors_reach_real_set_color() {
             b: 0x87,
         },
     )]));
-    let export = |shell| {
-        theme_to_shell(
-            &theme,
-            "t",
-            &Config::default(),
-            shell,
-            &palette,
-            &PluginExports::default(),
-        )
-    };
-    let dir = tempfile::tempdir().expect("tempdir");
-
-    if shell_available(Shell::Fish) {
-        let path = dir.path().join("export.fish");
-        std::fs::write(&path, export(Shell::Fish)).expect("write fish export");
-        let output = Command::new("fish")
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .args([
-                "--no-config",
-                "-c",
-                "source $argv[1]; set -g fish_term24bit 1
-                 set_color $__color_clock_bg; set_color $__color_clock_fg
-                 set_color -b $__color_status_ok_bg",
-                "--",
-            ])
-            .arg(&path)
-            .output()
-            .expect("spawning fish");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
-            "",
-            "set_color must accept every exported color"
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            "\x1b[38;2;0;215;135m\x1b[33m\x1b[48;2;250;179;135m",
-            "42 is xterm #00d787, 3 is yellow, orange is the palette's #fab387"
-        );
-    } else {
-        skip_shell_or_fail_under_ci(Shell::Fish);
-    }
-
-    if shell_available(Shell::Bash) {
-        let path = dir.path().join("export.bash");
-        std::fs::write(&path, export(Shell::Bash)).expect("write bash export");
-        let vars = sourced_vars(Shell::Bash, &[&path]);
-        for expected in [
-            "__color_clock_bg=42",
-            "__color_clock_fg=3",
-            "__color_status_ok_bg=#fab387",
-        ] {
-            assert!(
-                vars.contains(&expected.to_owned()),
-                "bash export lacks {expected}"
-            );
-        }
-    } else {
-        skip_shell_or_fail_under_ci(Shell::Bash);
-    }
+    let values = prompt_shell_values(&theme, &Config::default(), &palette);
+    assert_eq!(value(&values, "__color_clock_bg"), "42");
+    assert_eq!(value(&values, "__color_clock_fg"), "3");
+    assert_eq!(value(&values, "__color_status_ok_bg"), "#fab387");
 }
 
-/// A palette entry shadows an ANSI name for shell-drawn colors, including its
-/// alias spellings, as it does in the agent's renderer; an ANSI index still
-/// names the terminal's own color. Checked on what each shell actually reads.
+/// A palette entry shadows an ANSI name, including its alias spellings, as it
+/// does in the agent's renderer; an ANSI index still names the terminal's own color.
 #[test]
-fn exported_ansi_names_follow_the_palette_and_indices_do_not() {
-    use crate::config::types::ColorSpec;
-    use crate::template::Color;
-    use std::collections::HashMap;
-
+fn ansi_names_follow_the_palette_and_indices_do_not() {
     let mut theme = ThemeConfig::default();
     theme.segments.clock.bg_color = ColorSpec::new("red").expect("named color");
     theme.segments.clock.text_color = ColorSpec::new("1").expect("index color");
@@ -919,62 +332,55 @@ fn exported_ansi_names_follow_the_palette_and_indices_do_not() {
             },
         ),
     ]));
-    let export = |shell| {
-        theme_to_shell(
-            &theme,
-            "t",
-            &Config::default(),
-            shell,
-            &palette,
-            &PluginExports::default(),
-        )
-    };
-    let dir = tempfile::tempdir().expect("tempdir");
+    let values = prompt_shell_values(&theme, &Config::default(), &palette);
+    assert_eq!(value(&values, "__color_clock_bg"), "#f38ba8");
+    assert_eq!(value(&values, "__color_clock_fg"), "1");
+    assert_eq!(value(&values, "__color_status_ok_bg"), "#cba6f7");
+}
 
-    if shell_available(Shell::Fish) {
-        let path = dir.path().join("export.fish");
-        std::fs::write(&path, export(Shell::Fish)).expect("write fish export");
-        let output = Command::new("fish")
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .args([
-                "--no-config",
-                "-c",
-                "source $argv[1]; set -g fish_term24bit 1
-                 set_color -b $__color_clock_bg; set_color $__color_clock_fg
-                 set_color -b $__color_status_ok_bg",
-                "--",
-            ])
-            .arg(&path)
-            .output()
-            .expect("spawning fish");
-        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            "\x1b[48;2;243;139;168m\x1b[31m\x1b[48;2;203;166;247m",
-            "red and magenta take the palette's hex, index 1 stays the terminal's red"
+/// Fish's `set_color` rejects bare ANSI indices and palette roles, so
+/// [`resolve_shell_color`] gives Fish names/hex for them; checked against a
+/// real `set_color` when Fish is installed.
+#[test]
+fn fish_colors_reach_real_set_color() {
+    let palette = Palette::new(HashMap::from([(
+        "orange".to_owned(),
+        Color::Rgb {
+            r: 0xfa,
+            g: 0xb3,
+            b: 0x87,
+        },
+    )]));
+    let colors =
+        ["42", "3", "orange"].map(|color| resolve_shell_color(Shell::Fish, &palette, color));
+    assert_eq!(colors, ["#00d787", "yellow", "#fab387"]);
+
+    let fish = Command::new("fish")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args([
+            "--no-config",
+            "-c",
+            "set -g fish_term24bit 1; set_color $argv[1]; set_color $argv[2]; set_color -b $argv[3]",
+            "--",
+        ])
+        .args(&colors)
+        .output();
+    let Ok(output) = fish else {
+        eprintln!("SKIP: fish is not available");
+        let ci = ["CI", "GPY_GATE_STRICT"]
+            .iter()
+            .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()));
+        assert!(
+            !ci || std::env::var_os("GPY_CI_NO_SHELLS").is_some(),
+            "fish is not available under CI; install it or set GPY_CI_NO_SHELLS=1"
         );
-    } else {
-        skip_shell_or_fail_under_ci(Shell::Fish);
-    }
-
-    for shell in [Shell::Bash, Shell::Zsh] {
-        if !shell_available(shell) {
-            skip_shell_or_fail_under_ci(shell);
-            continue;
-        }
-        let path = dir.path().join(format!("export.{shell:?}"));
-        std::fs::write(&path, export(shell)).expect("write export");
-        let vars = sourced_vars(shell, &[&path]);
-        for expected in [
-            "__color_clock_bg=#f38ba8",
-            "__color_clock_fg=1",
-            "__color_status_ok_bg=#cba6f7",
-        ] {
-            assert!(
-                vars.contains(&expected.to_owned()),
-                "{shell:?} export lacks {expected}"
-            );
-        }
-    }
+        return;
+    };
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "\x1b[38;2;0;215;135m\x1b[33m\x1b[48;2;250;179;135m",
+        "42 is xterm #00d787, 3 is yellow, orange is the palette's #fab387"
+    );
 }

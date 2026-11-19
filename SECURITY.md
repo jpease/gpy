@@ -54,8 +54,8 @@ GPY is three cooperating pieces: a shell integration for Fish, Bash and Zsh; a
 long-running local agent (`gpy-agent`); and a Unix domain socket between them.
 The full detail is in [the security model](docs/dev/security-model.md).
 
-- Your shell evaluates the agent's theme export at every start, so whoever can
-  replace `gpy-agent` or the export cache runs code in every shell you open.
+- Your shell evaluates the prompt `gpy prompt` prints, so whoever can replace
+  `gpy` or `gpy-agent` runs code in every shell you open.
 - Fish `.fish` plugin segments are sourced into your shell, as you, with full
   privileges; Bash and Zsh never source them.
 - Script segments run as you in all three shells (see below).
@@ -195,8 +195,8 @@ not controls and pass. A script run in `$PWD` may run repository-local tools
   `GOTOOLCHAIN=local`, `MISE_AUTO_INSTALL=0`, `MISE_EXEC_AUTO_INSTALL=0` and
   `MISE_NOT_FOUND_AUTO_INSTALL=0` set so a repository cannot trigger a
   download.
-- **GPY writes to its own paths only**: the instant-prompt and theme-export
-  caches under `~/.cache/gpy/`, its runtime directory, and `config.toml` plus
+- **GPY writes to its own paths only**: the instant-prompt
+  cache under `~/.cache/gpy/`, its runtime directory, and `config.toml` plus
   theme and palette files under `~/.config/gpy/` (touched by `gpy theme`,
   `gpy palette`, `gpy plugin` and config edits). A debug log is appended to only
   when debug logging is switched on.
@@ -326,8 +326,8 @@ ship checksummed in `gpy-shell-files.tar.gz`.
 2. **Install from the release assets**, and let the installer do the checksum
    verification. If you install by hand, verify the download yourself first.
 3. **Guard `gpy-agent` the way you guard your shell startup files.** Whatever
-   can overwrite the binary on your `PATH`, or the theme-export cache under
-   `~/.cache/gpy/`, can run code in every shell you open.
+   can overwrite the binary on your `PATH` can run code in every shell you
+   open.
 
 ## Security Audits
 

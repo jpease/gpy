@@ -1,5 +1,5 @@
 //! `gpy-agent`: the GPY background daemon plus the commands the shell
-//! integrations call (`oneshot`, `theme export`, `config reload`).
+//! integrations call (`oneshot`, `config reload`).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -10,7 +10,6 @@ use gpy_agent::{
     Result, VERSION,
     agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request},
     commands::{agent_report, exit_codes},
-    shell::Shell,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -67,12 +66,6 @@ enum Commands {
         #[arg(long, value_name = "PATH", help = SOCKET_HELP)]
         socket: Option<PathBuf>,
     },
-    /// Export the active theme for the shell integrations.
-    #[command(after_help = exit_codes::GENERIC_HELP)]
-    Theme {
-        #[command(subcommand)]
-        command: ThemeCommands,
-    },
     /// Render one segment without the daemon (the shells' fallback).
     #[command(after_help = exit_codes::GENERIC_HELP)]
     Oneshot {
@@ -84,17 +77,6 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum ThemeCommands {
-    /// Print the active theme as shell variable assignments to source.
-    #[command(after_help = exit_codes::GENERIC_HELP)]
-    Export {
-        /// Shell to export for ('fish', 'zsh', or 'bash'; case-insensitive).
-        #[arg(long, value_name = "SHELL", ignore_case = true, default_value_t = Shell::Fish)]
-        shell: Shell,
     },
 }
 
@@ -305,45 +287,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             return agent_report::restart(socket.as_deref(), quiet);
         }
         Commands::Status { socket } => return Ok(agent_report::status(socket.as_deref())),
-        Commands::Theme {
-            command: ThemeCommands::Export { shell },
-        } => export_theme(shell)?,
         Commands::Oneshot { command } => handle_oneshot_command(command)?,
         Commands::Config {
             command: ConfigCommands::Reload { socket },
         } => reload_config(socket.as_deref())?,
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// Print the active theme as shell variable assignments.
-///
-/// # Errors
-/// Returns an error if neither the configured nor the `default` theme loads.
-fn export_theme(shell: Shell) -> Result<()> {
-    // An invalid or half-written config must still export a usable prompt.
-    let config = gpy_agent::config::loader::load_config().unwrap_or_else(|e| {
-        gpy_agent::debug::warn_fallback("Config loading", "using defaults", &e);
-        // Only the agent kill switch survives a broken file.
-        let mut config = gpy_agent::config::Config::default();
-        config.agent.enabled = gpy_agent::config::loader::agent_enabled();
-        config
-    });
-    let theme_name = &config.ui.theme;
-
-    // Same fallback as the agent and `oneshot`; a failure here is reported once, by `main`.
-    let manager = gpy_agent::theme::ThemeManager::new(theme_name.as_str()).or_else(|e| {
-        gpy_agent::debug::warn_fallback(
-            &format!("Theme '{theme_name}' loading"),
-            "using default",
-            &e,
-        );
-        gpy_agent::theme::ThemeManager::new("default")
-    })?;
-
-    let palette = gpy_agent::palette::active_palette(&config);
-    let output = manager.export(shell, &config, &palette);
-    print!("{output}");
-
-    Ok(())
 }

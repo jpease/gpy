@@ -1,12 +1,12 @@
-//! Assignments for plugin and community segments: styles, delimiters and variant styles.
+//! Values for plugin and community segments: styles, delimiters and variant styles.
 //!
 //! [`plugin_segment_variables`] is the one place that names plugin segment
-//! variables; export and theme validation ([`first_plugin_variable_collision`])
-//! both read it, so validation checks exactly the names export would write.
+//! variables; [`insert_plugin_segment_values`] and theme validation
+//! ([`first_plugin_variable_collision`]) both read it, so validation checks
+//! exactly the names the prompt values use.
 
-use super::shell_assignment::{ShellAssignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
-use super::theme_to_shell::builtin_export_names;
+use super::values::{Assignments, builtin_value_names, set};
 use crate::debug_log;
 use crate::formatter::separator::Glyphs;
 use crate::plugin::{SegmentName, VariantColorPart};
@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::BuildHasher;
 
-/// A plugin segment variable's value: verbatim, a theme colour resolved per shell,
-/// or an icon drawn with the export's glyph set.
+/// A plugin segment variable's value: verbatim, a resolved theme colour, or an
+/// icon drawn with the configured glyph set.
 #[derive(Clone, Copy)]
 enum PluginValue<'a> {
     Literal(&'a str),
@@ -25,7 +25,7 @@ enum PluginValue<'a> {
     Icon(&'a str),
 }
 
-/// One shell variable a plugin segment theme exports, and the theme field it comes from.
+/// One variable a plugin segment theme sets, and the theme field it comes from.
 struct PluginVariable<'a> {
     name: String,
     /// Key under `[segments.<name>]`; empty for the section itself (`_id`).
@@ -34,18 +34,18 @@ struct PluginVariable<'a> {
 }
 
 impl PluginVariable<'_> {
-    /// [`Glyphs::Plain`] exports a private-use icon empty, which the shells read as "no icon".
-    fn into_assignment(self, colors: ShellColors<'_>, glyphs: Glyphs) -> ShellAssignment {
+    /// [`Glyphs::Plain`] empties a private-use icon, which the renderer reads as "no icon".
+    fn insert(self, assignments: &mut Assignments, colors: ShellColors<'_>, glyphs: Glyphs) {
         let value = match self.value {
             PluginValue::Literal(value) => Cow::Borrowed(value),
             PluginValue::Color(color) => colors.resolve(color),
             PluginValue::Icon(icon) => Cow::Borrowed(glyphs.icon(icon).unwrap_or("")),
         };
-        ShellAssignment::local(self.name, value)
+        set(assignments, self.name, value);
     }
 }
 
-/// Every variable one plugin segment section exports, in export order: the
+/// Every variable one plugin segment section sets: the
 /// namespaced `__gpy_segment_<token>_*` contract plus the flat `__color_<token>_*`
 /// and `__icon_<token>` aliases built-ins use.
 ///
@@ -181,14 +181,14 @@ fn push_variant_variables<'a>(
     }
 }
 
-/// Two theme fields that would export the same shell variable, or a plugin
-/// field that would overwrite a built-in theme export.
+/// Two theme fields that would set the same prompt variable, or a plugin
+/// field that would overwrite a built-in theme variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginVariableCollision {
-    /// The shared shell variable name.
+    /// The shared variable name.
     pub variable: String,
     /// The theme field that claimed `variable` first, e.g. `segments.a.open.icon`;
-    /// `None` when `variable` is a built-in theme export.
+    /// `None` when `variable` is a built-in theme variable.
     pub first: Option<String>,
     /// The later (plugin) theme field, e.g. `segments.a_open.icon`.
     pub second: String,
@@ -203,12 +203,12 @@ impl fmt::Display for PluginVariableCollision {
         match &self.first {
             Some(first) => write!(
                 f,
-                "{first:?} and {:?} both export shell variable {:?}; rename one of the segments or variants",
+                "{first:?} and {:?} both set prompt variable {:?}; rename one of the segments or variants",
                 self.second, self.variable
             ),
             None => write!(
                 f,
-                "{:?} exports shell variable {:?}, which is a built-in theme export; rename the segment or variant",
+                "{:?} sets prompt variable {:?}, which is a built-in theme variable; rename the segment or variant",
                 self.second, self.variable
             ),
         }
@@ -224,7 +224,7 @@ fn field_path(section: &str, field: &str) -> String {
     }
 }
 
-/// Exported variable names claimed so far, with the section and field that claimed each.
+/// Variable names claimed so far, with the section and field that claimed each.
 #[derive(Default)]
 struct Claims<'a> {
     owners: HashMap<String, (&'a str, Cow<'static, str>)>,
@@ -240,7 +240,7 @@ impl<'a> Claims<'a> {
     ) -> Result<(), PluginVariableCollision> {
         if let Some(variable) = variables
             .iter()
-            .find(|variable| builtin_export_names().contains(&variable.name))
+            .find(|variable| builtin_value_names().contains(&variable.name))
         {
             return Err(PluginVariableCollision {
                 variable: variable.name.clone(),
@@ -267,7 +267,7 @@ impl<'a> Claims<'a> {
 }
 
 /// Plugin segment sections in sorted key order, with their parsed names. Theme
-/// validation rejects keys that are not segment names; export skips them.
+/// validation rejects keys that are not segment names; the prompt values skip them.
 fn sorted_sections<S>(
     plugins: &HashMap<String, PluginSegmentTheme, S>,
 ) -> Vec<(&str, SegmentName, &PluginSegmentTheme)> {
@@ -284,7 +284,7 @@ fn sorted_sections<S>(
 }
 
 /// The first pair of plugin segment theme fields, in sorted section order, that
-/// would export the same shell variable.
+/// would set the same prompt variable.
 #[must_use]
 pub fn first_plugin_variable_collision<S: BuildHasher>(
     plugins: &HashMap<String, PluginSegmentTheme, S>,
@@ -298,11 +298,11 @@ pub fn first_plugin_variable_collision<S: BuildHasher>(
         })
 }
 
-/// Plugin/community segment style exports, in sorted segment-name order. A
+/// Plugin/community segment style values, in sorted segment-name order. A
 /// section whose variables collide with an earlier section's is skipped whole, so
-/// every name is assigned once; theme validation already rejects such themes.
-pub(super) fn append_plugin_segment_assignments(
-    output: &mut String,
+/// every name is set once; theme validation already rejects such themes.
+pub(super) fn insert_plugin_segment_values(
+    assignments: &mut Assignments,
     colors: ShellColors<'_>,
     glyphs: Glyphs,
     plugins: &HashMap<String, PluginSegmentTheme>,
@@ -314,12 +314,8 @@ pub(super) fn append_plugin_segment_assignments(
             debug_log!("theme", "Skipped plugin segment {raw_name:?}: {collision}");
             continue;
         }
-        append_shell_assignments(
-            output,
-            colors.shell,
-            variables
-                .into_iter()
-                .map(|variable| variable.into_assignment(colors, glyphs)),
-        );
+        for variable in variables {
+            variable.insert(assignments, colors, glyphs);
+        }
     }
 }

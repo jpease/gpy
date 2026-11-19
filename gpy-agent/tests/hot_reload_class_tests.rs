@@ -1,10 +1,9 @@
 //! Hot-reload consistency tests.
 //!
 //! Invariant: for every way config/theme/palette can change on disk while the
-//! agent runs, once the reload settles, what the agent exported
-//! (`theme-export.{fish,bash,zsh}`) equals what a FRESH load from disk would
-//! produce. The fresh side is computed independently with the public loaders
-//! plus the export generator; it never reads back the agent's own state.
+//! agent runs, once the reload settles, what the agent renders with (config,
+//! theme values and palette) equals what a FRESH load from disk would produce.
+//! The fresh side is computed independently with the public loaders.
 //!
 //! One `const` row per change mechanism, all driven through one
 //! harness (`Agent::new(socket)` against temp `XDG_*` dirs, the production wiring).
@@ -25,22 +24,23 @@ mod wait;
 
 use env_guard::EnvGuard;
 use gpy_agent::agent::Agent;
-use gpy_agent::cache::theme_export::write_theme_export_to_dir;
 use gpy_agent::config::Config;
 use gpy_agent::config::defaults::DEFAULT_THEME_CONTENT;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::palette::active_palette;
 use gpy_agent::paths::SocketPath;
-use gpy_agent::theme::ThemeManager;
+use gpy_agent::template::Palette;
+use gpy_agent::theme::export::prompt_shell_values;
+use gpy_agent::theme::{ThemeConfig, ThemeManager};
 use serial_test::serial;
 use sigurg::SigurgCounter;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use wait::wait_until;
 
-const SHELL_EXPORTS: [&str; 3] = ["theme-export.fish", "theme-export.bash", "theme-export.zsh"];
 /// Generous headroom over the 1 s watcher debounce under load.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(25);
 /// Absence window after settling: a late stale overwrite would land by then.
@@ -138,25 +138,25 @@ const DELETE_CONFIG_WITH_LOCAL_GPY_TOML: Mechanism = Mechanism {
     doorbells: None,
 };
 
-// Supervisor settings render nothing; shells learn them only from the export,
-// so changing just one must still ring the reload doorbell exactly once.
+// Supervisor settings render nothing and `gpy prompt` reads them from the
+// config, so changing just one must apply without ringing the doorbell.
 const DISABLE_SUPERVISOR: Mechanism = Mechanism {
     name: "disable the supervisor in config.toml",
     setup: None,
     apply: disable_supervisor,
-    doorbells: Some(1),
+    doorbells: Some(0),
 };
 const CHANGE_SUPERVISOR_INTERVAL: Mechanism = Mechanism {
     name: "change the supervisor check interval in config.toml",
     setup: None,
     apply: change_supervisor_interval,
-    doorbells: Some(1),
+    doorbells: Some(0),
 };
 const CHANGE_SUPERVISOR_ATTEMPTS: Mechanism = Mechanism {
     name: "change the supervisor restart-attempt limit in config.toml",
     setup: None,
     apply: change_supervisor_attempts,
-    doorbells: Some(1),
+    doorbells: Some(0),
 };
 
 fn disable_supervisor(h: &Harness) {
@@ -262,7 +262,6 @@ struct Harness {
     _temp: TempDir,
     home: PathBuf,
     config_home: PathBuf,
-    cache_home: PathBuf,
     _env: EnvGuard,
     prev_cwd: PathBuf,
     doorbells: SigurgCounter,
@@ -293,7 +292,6 @@ impl Harness {
             _temp: temp,
             home: root,
             config_home,
-            cache_home,
             _env: env,
             prev_cwd: std::env::current_dir().expect("current dir"),
             doorbells,
@@ -325,7 +323,7 @@ impl Harness {
     }
 
     /// A full theme whose only distinguishing field is the clock text colour,
-    /// which `theme export` emits as `__color_clock_fg`.
+    /// which the prompt values carry as `__color_clock_fg`.
     fn write_theme(&self, name: &str, clock_text_color: &str) {
         let content = DEFAULT_THEME_CONTENT.replacen(
             "text_color = \"white\"\nbg_color = \"black\"\ntime_format",
@@ -407,33 +405,24 @@ impl Harness {
             .and_then(|path| load_config_from_file(&path).ok())
             .unwrap_or_default()
     }
+}
 
-    /// What a load of `config` exports, computed with the public loaders.
-    fn fresh_exports(config: &Config) -> Vec<String> {
-        let theme_manager = ThemeManager::new(config.ui.theme.as_str()).expect("fresh theme load");
-        let scratch = TempDir::new().expect("scratch dir");
-        write_theme_export_to_dir(
-            scratch.path(),
-            &theme_manager,
-            config,
-            &active_palette(config),
-        )
-        .expect("fresh export");
-        SHELL_EXPORTS
-            .iter()
-            .map(|file| fs::read_to_string(scratch.path().join(file)).expect("read fresh export"))
-            .collect()
-    }
+/// What the prompt renders from: the theme values, the config (as JSON:
+/// `Config` has no `PartialEq`) and the palette.
+type RenderState = (HashMap<String, String>, String, Palette);
 
-    /// What the agent has exported to its cache dir (empty string if absent).
-    fn agent_exports(&self) -> Vec<String> {
-        SHELL_EXPORTS
-            .iter()
-            .map(|file| {
-                fs::read_to_string(self.cache_home.join("gpy").join(file)).unwrap_or_default()
-            })
-            .collect()
-    }
+fn render_state(config: &Config, theme: &ThemeConfig, palette: Palette) -> RenderState {
+    (
+        prompt_shell_values(theme, config, &palette),
+        serde_json::to_string(config).expect("config as JSON"),
+        palette,
+    )
+}
+
+/// What a load of `config` renders from, computed with the public loaders.
+fn fresh_state(config: &Config) -> RenderState {
+    let theme_manager = ThemeManager::new(config.ui.theme.as_str()).expect("fresh theme load");
+    render_state(config, &theme_manager.get(), active_palette(config))
 }
 
 impl Drop for Harness {
@@ -448,16 +437,7 @@ fn run_mechanism(mechanism: &Mechanism) {
         setup(&harness);
     }
     let startup_config = harness.startup_config();
-    let before = (
-        Harness::fresh_exports(&startup_config),
-        active_palette(&startup_config),
-    );
-    // `Agent::start_background` warms the export at startup; the harness only
-    // runs `Agent::new`, so warm it here, or the first reload would create it
-    // and ring for that alone.
-    for (file, content) in SHELL_EXPORTS.iter().zip(&before.0) {
-        fs::write(harness.cache_home.join("gpy").join(file), content).expect("warm export");
-    }
+    let before = fresh_state(&startup_config);
 
     // `Agent::new` arms every watcher before it returns.
     let agent = Agent::new(SocketPath::resolve(None).expect("socket path")).expect("agent starts");
@@ -467,36 +447,34 @@ fn run_mechanism(mechanism: &Mechanism) {
     (mechanism.apply)(&harness);
     let applied_at = Instant::now();
     let expected_config = harness.fresh_config();
-    let expected = (
-        Harness::fresh_exports(&expected_config),
-        active_palette(&expected_config),
-    );
+    let expected = fresh_state(&expected_config);
     assert_ne!(
         before, expected,
-        "[{}] the change must alter the fresh export or the row is vacuous",
+        "[{}] the change must alter a fresh load or the row is vacuous",
         mechanism.name
     );
 
-    let agent_state = || (harness.agent_exports(), agent.active_palette_for_testing());
+    let agent_state = || {
+        let (config, theme) = agent.active_config_and_theme_for_testing();
+        render_state(&config, &theme, agent.active_palette_for_testing())
+    };
     let settled = wait_until(SETTLE_DEADLINE, Duration::from_millis(50), || {
         agent_state() == expected
     });
     assert!(
         settled,
-        "[{}] exports/palette never matched a fresh load from disk.\nagent fish export:\n{}\nfresh fish export:\n{}\nagent palette: {:?}\nfresh palette: {:?}",
+        "[{}] the agent never matched a fresh load from disk.\nagent: {:?}\nfresh: {:?}",
         mechanism.name,
-        harness.agent_exports().first().cloned().unwrap_or_default(),
-        expected.0.first().cloned().unwrap_or_default(),
-        agent.active_palette_for_testing(),
-        expected.1
+        agent_state(),
+        expected
     );
 
-    // A late reload from a second watcher must not move the exports back.
+    // A late reload from a second watcher must not move the state back.
     std::thread::sleep(QUIET_PERIOD);
     assert_eq!(
         agent_state(),
         expected,
-        "[{}] exports drifted from a fresh load after settling",
+        "[{}] the agent drifted from a fresh load after settling",
         mechanism.name
     );
 

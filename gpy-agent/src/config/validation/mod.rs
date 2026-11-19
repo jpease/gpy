@@ -70,9 +70,9 @@ pub enum ValidationErrorKind {
         /// The colliding names.
         collision: crate::plugin::SegmentTokenCollision,
     },
-    /// Two plugin segment theme fields would export the same shell variable
+    /// Two plugin segment theme fields would set the same prompt variable
     /// (segment `a` with an `open` cap and segment `a_open` with an icon), or a
-    /// plugin segment field would overwrite a built-in theme export (segment
+    /// plugin segment field would overwrite a built-in theme variable (segment
     /// `git_clean` with a `bg_color`).
     PluginVariableCollision {
         /// The colliding fields and the shared variable.

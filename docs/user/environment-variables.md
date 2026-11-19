@@ -16,7 +16,7 @@ Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`
 |---|---|---|
 | `GPY_CONFIG_PATH` | unset | The only `config.toml` GPY reads and creates, even if the file does not exist yet and a global config does. A relative value is made absolute against the launch directory. An empty value is ignored. |
 | `XDG_CONFIG_HOME` | `~/.config` | Config root `$XDG_CONFIG_HOME/gpy`, also where user themes, palettes and plugins live. Only an absolute value counts. |
-| `XDG_CACHE_HOME` | `~/.cache` | Cache root `$XDG_CACHE_HOME/gpy`: theme exports, instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
+| `XDG_CACHE_HOME` | `~/.cache` | Cache root `$XDG_CACHE_HOME/gpy`: instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
 | `XDG_DATA_HOME` | `~/.local/share` | Data root `$XDG_DATA_HOME/gpy`: the installed `fish/`, `zsh/`, `bash/` trees and bundled `plugins/`. Only an absolute value counts. |
 | `XDG_RUNTIME_DIR` | unset | Runtime root `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
 | `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. With no usable home there is no `/tmp/gpy` or relative fallback: GPY fails closed (see [Troubleshooting](troubleshooting.md#no-usable-home-directory)). |

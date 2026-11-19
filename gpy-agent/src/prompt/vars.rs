@@ -1,15 +1,16 @@
-//! The theme-export variables the Bash renderer reads, with its two default
-//! forms: `${name-default}` ([`ShellVars::or`]) and `${name:-default}`
-//! ([`ShellVars::or_nonempty`]).
+//! The theme values the renderer reads
+//! ([`prompt_shell_values`](crate::theme::export::prompt_shell_values)), with
+//! two default forms: `${name-default}` ([`ShellVars::or`]) and
+//! `${name:-default}` ([`ShellVars::or_nonempty`]).
 
 use std::collections::HashMap;
 
-/// Variable name to value, as the shell holds them after sourcing the export.
+/// Variable name to value; a name without an entry is unset.
 #[derive(Debug, Default)]
 pub(crate) struct ShellVars(HashMap<String, String>);
 
 impl ShellVars {
-    /// Wrap the export's values.
+    /// Wrap the theme values.
     pub(crate) const fn new(values: HashMap<String, String>) -> Self {
         Self(values)
     }

@@ -1,4 +1,4 @@
-//! Shell identification and syntax templates
+//! Shell identification
 
 use clap::{ValueEnum, builder::PossibleValue};
 use serde::{Deserialize, Serialize};
@@ -23,31 +23,6 @@ impl Shell {
             Self::Fish => "fish",
             Self::Zsh => "zsh",
             Self::Bash => "bash",
-        }
-    }
-
-    /// Get the variable assignment syntax for this shell.
-    #[must_use]
-    pub const fn variable_syntax(self) -> VariableSyntax {
-        match self {
-            Self::Fish => VariableSyntax {
-                prefix: "set -g ",
-                unset_prefix: "set -e ",
-                separator: " ",
-                quote: "\"",
-            },
-            Self::Zsh => VariableSyntax {
-                prefix: "typeset -g ",
-                unset_prefix: "unset ",
-                separator: "=",
-                quote: "\"",
-            },
-            Self::Bash => VariableSyntax {
-                prefix: "",
-                unset_prefix: "unset ",
-                separator: "=",
-                quote: "\"",
-            },
         }
     }
 }
@@ -90,35 +65,5 @@ impl std::str::FromStr for Shell {
             "bash" => Ok(Self::Bash),
             other => Err(ParseShellError(other.to_owned())),
         }
-    }
-}
-
-/// Variable assignment syntax template.
-#[derive(Debug, Clone, Copy)]
-pub struct VariableSyntax {
-    /// Assignment command with its trailing space, e.g. `set -g `; empty for a plain Bash assignment.
-    pub prefix: &'static str,
-    /// Erase command with its trailing space, e.g. `unset `.
-    pub unset_prefix: &'static str,
-    /// Name/value separator.
-    pub separator: &'static str,
-    /// Value quote character.
-    pub quote: &'static str,
-}
-
-impl VariableSyntax {
-    /// Format a global variable assignment.
-    #[must_use]
-    pub fn format(self, name: &str, value: &str) -> String {
-        format!(
-            "{}{}{}{}{}{}",
-            self.prefix, name, self.separator, self.quote, value, self.quote
-        )
-    }
-
-    /// Format a statement erasing a variable; harmless when unset.
-    #[must_use]
-    pub fn format_unset(self, name: &str) -> String {
-        format!("{}{}", self.unset_prefix, name)
     }
 }

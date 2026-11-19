@@ -264,7 +264,7 @@ pub(in crate::agent) fn handle_config_reload(
     };
     let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config, &check)?;
 
-    let (theme_changed, palette_changed, export_changed) = {
+    let (theme_changed, palette_changed) = {
         let _announcing = ctx.announce_gate.lock_or_recover();
         let theme_changed =
             theme_switched || reload_active_theme(&ctx.theme_manager, new_config, &check);
@@ -272,12 +272,7 @@ pub(in crate::agent) fn handle_config_reload(
         // unchanged theme can reject it here, with nothing applied yet.
         let palette = palette_rendering_active_theme(ctx, old_config, new_config, candidate)?;
         let palette_changed = palette.is_some_and(|loaded| ctx.palette_cache.replace(loaded));
-        // Theme export must be on disk before the reload doorbell.
-        (
-            theme_changed,
-            palette_changed,
-            write_theme_export(ctx, new_config),
-        )
+        (theme_changed, palette_changed)
     };
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
@@ -291,12 +286,8 @@ pub(in crate::agent) fn handle_config_reload(
     if refresh_required {
         regenerate_instant_caches_for_theme_change(ctx, new_config);
     }
-    // Shells re-read a changed export only on the doorbell, including settings
-    // that render nothing (e.g. `agent.supervisor`), so it rings for those too.
-    let reload_required = refresh_required || export_changed;
-
     if disable_watcher {
-        if reload_required {
+        if refresh_required {
             ctx.registry.notify_reload();
         }
         return Ok(());
@@ -307,30 +298,15 @@ pub(in crate::agent) fn handle_config_reload(
         ctx,
         watcher_config,
         new_config,
-        reload_required,
+        refresh_required,
     );
     Ok(())
-}
-
-/// Write the shell theme exports; returns whether any changed. A failure is
-/// logged and reported as unchanged.
-fn write_theme_export(ctx: &AgentContext, config: &Config) -> bool {
-    crate::cache::theme_export::write_theme_export_to_dir(
-        &ctx.theme_export_dir,
-        &ctx.theme_manager,
-        config,
-        &ctx.palette_cache.get(),
-    )
-    .unwrap_or_else(|e| {
-        debug_log!("agent", "Failed to write theme export cache: {}", e);
-        false
-    })
 }
 
 /// Run a theme watcher or poll reload: `reload` swaps in the active theme and
 /// reports whether it changed. Under [`AgentContext::announce_gate`], so a
 /// change a concurrent config reload already applied, and rang for, reads as
-/// unchanged here; otherwise refresh the export and caches, then ring.
+/// unchanged here; otherwise refresh the caches, then ring.
 pub(in crate::agent) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool) {
     let _announcing = ctx.announce_gate.lock_or_recover();
     if !reload() {
@@ -338,7 +314,6 @@ pub(in crate::agent) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn(
     }
     let config = ctx.config_manager.get();
     adopt_disk_palette(ctx, &config);
-    write_theme_export(ctx, &config);
     regenerate_instant_caches_for_theme_change(ctx, &config);
     ctx.registry.notify_reload();
 }
@@ -394,7 +369,7 @@ fn adopt_disk_palette(ctx: &AgentContext, config: &Config) {
 pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
     let theme = ctx.theme_manager.get();
     let palette = ctx.palette_cache.get();
-    // prev_bg for git under the new theme; mirrors `ThemeManager::export`.
+    // prev_bg for git under the new theme: the directory segment drawn before it.
     let git_prev_bg = theme.segments.directory.bg_color.as_str();
     // Repos `config` includes again may publish git caches once more.
     ctx.instant_cache
