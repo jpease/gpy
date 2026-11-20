@@ -671,18 +671,27 @@ g_pids() {
     pid == "" && match($0, tag "[0-9]+") { pid = substr($0, RSTART + length(tag), RLENGTH - length(tag)) }'
 }
 
-# Fails unless every prompt matches MODE (see g_expect).
+# Fails unless every prompt matches MODE (see g_expect). `same` accepts one
+# leading "-": the shell's first run of a script on a cold runner can overrun
+# the segment timeout, and a timeout is not cached, so the next prompt runs it
+# again and every later prompt hits that run. The warm-up render cannot spare
+# the checked shell this, because the script cache is per shell PID.
 g_check_runs() {
-  local label="$1" pids="$2" mode="$3" n distinct
+  local label="$1" pids="$2" mode="$3" n distinct rest
   n="$(printf '%s\n' "$pids" | grep -c .)"
   if [[ "$n" -ne $((G_PREFLIGHT_ITERS + 1)) ]]; then
     record_hard "$label: expected $((G_PREFLIGHT_ITERS + 1)) prompts, saw $n"
     return 1
   fi
   distinct="$(printf '%s\n' "$pids" | sort -u | grep -c .)"
+  rest="$pids"
+  if [[ "$mode" == same && "$(printf '%s\n' "$pids" | head -1)" == "-" ]]; then
+    rest="$(printf '%s\n' "$pids" | tail -n +2)"
+    bench_info "$label: the first prompt's run timed out (cold start); checking the rest"
+  fi
   case "$mode" in
     none) [[ "$distinct" -eq 1 && "$(printf '%s\n' "$pids" | head -1)" == "-" ]] ;;
-    same) [[ "$distinct" -eq 1 && "$(printf '%s\n' "$pids" | head -1)" != "-" ]] ;;
+    same) [[ "$(printf '%s\n' "$rest" | sort -u | grep -c .)" -eq 1 && "$(printf '%s\n' "$rest" | head -1)" != "-" ]] ;;
     each) [[ "$distinct" -eq "$n" ]] && ! printf '%s\n' "$pids" | grep -qx -- - ;;
   esac || {
     record_hard "$label: expected '$mode' across the prompts, got PIDs [$(printf '%s\n' "$pids" | tr '\n' ' ')]"

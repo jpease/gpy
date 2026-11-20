@@ -56,12 +56,15 @@
 # waits for that grace on a timeout: with Bash 3.2-4.4 the timer group sends
 # the KILL; with a clock a detached killer, started at the first TERM, sends
 # each group its KILL 50 ms after its deadline (after its TERM when that came
-# first), so a group the reader reaches late gets KILL sooner. After a
-# normal exit, members left in the group get TERM and CONT, then KILL within
-# the grace. Records travel in-band ("RS TOKEN kind RS"); TOKEN is random
-# per batch, so script output cannot forge one. Bash 5 reads against a
-# clock; Bash 3.2-4.4 start one timer group per segment (absolute sleep
-# path: a PATH search stats the working directory first, which can hang).
+# first), so a group the reader reaches late gets KILL sooner. A producer
+# whose group record misses the deadline (scheduled late on a loaded host)
+# gets TERM from the reader instead, and gives its group the TERM, CONT and
+# KILL after the grace itself. After a normal exit, members left in the
+# group get TERM and CONT, then KILL within the grace. Records travel
+# in-band ("RS TOKEN kind RS"); TOKEN is random per batch, so script output
+# cannot forge one. Bash 5 reads against a clock; Bash 3.2-4.4 start one
+# timer group per segment (absolute sleep path: a PATH search stats the
+# working directory first, which can hang).
 
 __gpy_g_cap=4096
 __gpy_g_grace=0.05
@@ -126,8 +129,16 @@ __gpy_g_base() {
 # writer the script never reaps would stay a zombie in the group, and Linux
 # counts zombies in kill -0 -PGID, so every normal exit would wait out the
 # leftover grace. Fd 3 feeds CMD, fd 4 feeds REQ.
+# A clock reader that reached the deadline before the p record (a producer
+# scheduled late on a loaded host) has no group to signal, so it sends this
+# producer TERM instead. The trap acts wherever the TERM lands: it gives the
+# group TERM, CONT and KILL after the grace, or only notes it (g) while the
+# group does not exist yet, which the check after the fork then picks up.
+# TERM before the trap kills the producer before the group starts, so no
+# script runs at all.
 __gpy_g_prod() {
-    local c w= i s
+    local c= w= i s g= d=
+    trap __gpy_g_prod_late TERM
     for ((i = 3; i < 3 + $1; i++)); do
         eval "exec $i<&-"
     done
@@ -136,6 +147,7 @@ __gpy_g_prod() {
     set -m
     {
         set +m
+        trap - TERM
         # builtin and no CDPATH: a cd wrapper of the user (this runs in the
         # interactive shell under Bash) must not run, nor print into a record.
         if [[ -n $cwd && $cwd != "$PWD" ]]; then
@@ -152,10 +164,12 @@ __gpy_g_prod() {
         exec -c -a sh "$sh" -c "$__gpy_g_pro" "$cmd" 4<&-
     } </dev/null 2>/dev/null &
     c=$!
+    [[ -n $g ]] && __gpy_g_prod_late
     if [[ -z $__gpy_g_clock ]]; then
         {
             set +m
             trap '' INT PIPE
+            trap - TERM
             "$__gpy_g_sleep" "$t"
             kill -TERM -"$c"
             kill -CONT -"$c"
@@ -167,9 +181,18 @@ __gpy_g_prod() {
     fi
     set +m
     trap 'printf "\036%s i\036" "$tok"; exit 130' INT
+    # The reader may be gone: a failed write must not end this producer
+    # before its group is dealt with.
+    trap '' PIPE
     printf '\036%s p %s %s\036' "$tok" "$c" "$w"
     wait "$c"
     s=$?
+    # A TERM ends that wait early (status over 128) and its trap KILLed the
+    # group, so wait again to reap the script.
+    if [[ -n $d ]]; then
+        wait "$c"
+        s=$?
+    fi
     [[ -n $w ]] && kill -TERM -"$w"
     # Leftovers of a normal exit: TERM and CONT, then KILL within the grace.
     if kill -0 -"$c"; then
@@ -182,6 +205,19 @@ __gpy_g_prod() {
         kill -KILL -"$c"
     fi
     printf '\036%s r %s\036' "$tok" "$s"
+}
+
+# TERM trap of __gpy_g_prod (reads its c, g and d): notes the TERM, then once
+# the group exists, and only once, gives it TERM and CONT, then KILL after
+# the grace.
+__gpy_g_prod_late() {
+    g=1
+    [[ -n $c && -z $d ]] || return 0
+    d=1
+    kill -TERM -"$c"
+    kill -CONT -"$c"
+    "$__gpy_g_sleep" "$__gpy_g_grace"
+    __gpy_g_kill_group "$c"
 }
 
 # KILL group $1, then again while members remain, at most five times 10 ms
@@ -230,7 +266,7 @@ __gpy_g_batch() {
     local LC_ALL=C
     local k=0 m n i j id ms cwd cmd req pay ref name t start= left rem ch
     local c w f r q o sep intr= late= kf= v x y s
-    local -a ids ts ord ds cs ws fs rs qs os
+    local -a ids ts ord ds cs ws fs rs qs os ps
     if [[ -n $__gpy_g_clock ]]; then
         start=${EPOCHREALTIME/[.,]/}
         start=$((10#$start))
@@ -275,6 +311,8 @@ __gpy_g_batch() {
             [[ $ms == 500 ]] && t=0.5
             [[ -n $start ]] && ds[k]=$((start + ts[k] * 1000))
             eval "exec $((3 + k))< <(__gpy_g_prod $k)"
+            # The producer itself, for a deadline its p record misses.
+            [[ -n $__gpy_g_clock ]] && ps[k]=$!
         else
             fs[k]=x
         fi
@@ -349,7 +387,12 @@ __gpy_g_batch() {
             [[ -n $intr && $f == t ]] && f=i
         fi
         cs[m]=$c ws[m]=$w fs[m]=$f rs[m]=$r qs[m]=$q os[m]=$o
-        [[ -n $c ]] || continue
+        if [[ -z $c ]]; then
+            # No p record by the deadline: the producer has not reported its
+            # group yet, so it gets TERM and deals with the group itself.
+            [[ -n $f && -n ${ps[m]} ]] && kill -TERM "${ps[m]}"
+            continue
+        fi
         if [[ -n $f && -n $__gpy_g_clock ]]; then
             kill -TERM -"$c"
             kill -CONT -"$c"
