@@ -298,6 +298,19 @@ gpy setup
 
 then restart your shell and run `gpy doctor`. See [`gpy setup`](#gpy-setup).
 
+**Upgrading.** `brew upgrade jpease/tap/gpy` replaces the binaries only. From
+0.12.1 on, the next prompt notices the upgrade: it replaces an agent still
+running from the old version and refreshes the shell files `gpy setup`
+installed, in the background (rc files are left alone), so a new shell
+starts on the new files. An install from 0.12.0 or earlier needs one manual
+step after upgrading:
+
+```bash
+brew postinstall jpease/tap/gpy   # restart the agent
+gpy setup                         # refresh the shell files
+exec $SHELL
+```
+
 The formula lives in the tap, not in this repository.
 
 ## `gpy setup`

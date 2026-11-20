@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- An upgrade that runs no `gpy setup` (`brew upgrade`) left the old agent running and the shells on the previous version's files. The next prompt now replaces an agent of another version and, in the background, refreshes the shell files `gpy setup` installed; rc files are left alone. Upgrading from 0.12.0 or earlier still needs `brew postinstall jpease/tap/gpy && gpy setup` once.
+
+### Changed
+- Dependencies: nix 0.32, fork 0.12, sha2 0.11, sysinfo 0.40. When the process table cannot be read, `gpy uninstall` leaves a supervisor PID it cannot confirm alone.
+
 ## [0.12.0] - 2026-11-19
 
 ### Changed
