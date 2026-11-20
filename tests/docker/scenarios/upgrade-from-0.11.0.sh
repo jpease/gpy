@@ -25,8 +25,16 @@ export TERM=xterm-256color
 # What a prompt or a shell hook prints when the shell code it runs is broken.
 ERRORS='command not found|[Nn]o such file|gpy\[init\]|[Ee]rror|[Uu]nrecognized|[Uu]nknown (command|subcommand|function)'
 
+# `plain FILE OFFSET` -- FILE after byte OFFSET as text: terminal escapes
+# (CSI, OSC titles, charset selects, keypad modes) and carriage returns
+# removed, so a command's output starts its line as it does on screen.
+plain() {
+    tail -c +"$(($2 + 1))" "$1" |
+        perl -pe 's/\e\[[0-9;?<>=]*[ -\/]*[@-~]//g; s/\e\][^\a\e]*(?:\a|\e\\)//g; s/\e[()][A-Za-z0-9]//g; s/\e[=>]//g; s/\r//g'
+}
+
 # `errors_in FILE OFFSET` -- error lines in FILE after byte OFFSET.
-errors_in() { tail -c +"$(($2 + 1))" "$1" | tr -d '\r' | grep -E "$ERRORS" | head -n 5 || true; }
+errors_in() { plain "$1" "$2" | grep -E "$ERRORS" | head -n 5 || true; }
 
 step "install $OLD_TAG for every shell from its published assets"
 for sh in "${SHELLS[@]}"; do
@@ -143,9 +151,9 @@ for sh in "${SHELLS[@]}"; do
     echo "echo held-$sh-one" >&"$fd"
     echo "echo held-$sh-two" >&"$fd"
     # shellcheck disable=SC2329 # called through poll
-    answered() { tail -c +"$((held_off[$sh] + 1))" "$log" | tr -d '\r' | grep -q "^held-$sh-two"; }
+    answered() { plain "$log" "${held_off[$sh]}" | grep -q "^held-$sh-two"; }
     if ! kill -0 "${held_pid[$sh]}" 2>/dev/null || ! poll 15 answered; then
-        fail "the held $sh session died or stopped answering: $(tail -c 1500 "$log")"
+        fail "the held $sh session died or stopped answering: $(plain "$log" 0 | tail -c 1500)"
         continue
     fi
     # Let the prompt after the last command finish drawing.
@@ -153,10 +161,10 @@ for sh in "${SHELLS[@]}"; do
     bad="$(errors_in "$log" "${held_off[$sh]}")"
     if [[ -n "$bad" ]]; then
         fail "the held $sh session shows error text after the upgrade: $bad"
-    elif tail -c +"$((held_off[$sh] + 1))" "$log" | tr -d '\r' | sed -n '/^held-'"$sh"'-two/,$p' | grep -q repo; then
+    elif plain "$log" "${held_off[$sh]}" | sed -n '/^held-'"$sh"'-two/,$p' | grep -q repo; then
         pass "the held $sh session still runs commands and draws prompts naming the repository, with no error text"
     else
-        fail "the held $sh session drew no prompt naming the repository after the upgrade: $(tail -c 1500 "$log")"
+        fail "the held $sh session drew no prompt naming the repository after the upgrade: $(plain "$log" 0 | tail -c 1500)"
     fi
 done
 for sh in "${SHELLS[@]}"; do
