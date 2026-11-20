@@ -371,15 +371,10 @@ fn prune_evicts_exited_unregistered_processes_from_sysinfo() {
         .spawn()
         .expect("spawn stand-in shell");
     let pid = child.id();
-    let sys_pid = sysinfo::Pid::from_u32(pid);
 
     directory.register(pid, None);
     assert!(
-        directory
-            .sysinfo
-            .lock_or_recover()
-            .process(sys_pid)
-            .is_some(),
+        directory.sysinfo.lock_or_recover().holds(pid),
         "registration records the process"
     );
     directory.unregister(pid);
@@ -389,11 +384,7 @@ fn prune_evicts_exited_unregistered_processes_from_sysinfo() {
     let _ = directory.prune_dead_clients();
 
     assert!(
-        directory
-            .sysinfo
-            .lock_or_recover()
-            .process(sys_pid)
-            .is_none(),
+        !directory.sysinfo.lock_or_recover().holds(pid),
         "an exited, unregistered process must not stay in the shared System"
     );
 }

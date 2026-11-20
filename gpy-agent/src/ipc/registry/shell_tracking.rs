@@ -116,11 +116,37 @@ pub(super) fn ring_doorbell(pid: u32) -> nix::Result<()> {
     kill(Pid::from_raw(pid_i32), DOORBELL)
 }
 
+/// A `sysinfo::System` made on first use. Creating one can fail (sysinfo
+/// 0.40), and then it stays unmade and is tried again on the next use: every
+/// start time is unknown meanwhile, which callers treat as uncertain.
+#[cfg(unix)]
+#[derive(Default)]
+pub(super) struct ProcessTable(Option<sysinfo::System>);
+
+#[cfg(unix)]
+impl ProcessTable {
+    fn system(&mut self) -> Option<&mut sysinfo::System> {
+        if self.0.is_none() {
+            self.0 = sysinfo::System::new().ok();
+        }
+        self.0.as_mut()
+    }
+
+    /// Whether `pid` has an entry, made or kept by a refresh.
+    #[cfg(test)]
+    pub(super) fn holds(&self, pid: u32) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|sys| sys.process(sysinfo::Pid::from_u32(pid)).is_some())
+    }
+}
+
 /// Start time (epoch seconds) of the process occupying `pid`, if determinable.
 /// Refreshes only that PID's base entry: no memory, CPU, disk, exe or task
 /// reads, which a plain `refresh_processes` adds.
 #[cfg(unix)]
-pub(super) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Option<u64> {
+pub(super) fn process_start_time_secs(table: &mut ProcessTable, pid: u32) -> Option<u64> {
+    let sys = table.system()?;
     let sys_pid = sysinfo::Pid::from_u32(pid);
     sys.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::Some(&[sys_pid]),
@@ -130,11 +156,15 @@ pub(super) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Op
     sys.process(sys_pid).map(sysinfo::Process::start_time)
 }
 
-/// Drop from `sys` every process `keep` rejects once it has exited. A
+/// Drop from `table` every process `keep` rejects once it has exited. A
 /// long-lived `System` otherwise holds an entry (and on Linux an open
 /// `/proc/<pid>/stat`) for every PID it was ever asked about.
 #[cfg(unix)]
-pub(super) fn evict_exited_processes(sys: &mut sysinfo::System, keep: impl Fn(u32) -> bool) {
+pub(super) fn evict_exited_processes(table: &mut ProcessTable, keep: impl Fn(u32) -> bool) {
+    // Nothing was ever recorded in a table not yet made.
+    let Some(sys) = table.0.as_mut() else {
+        return;
+    };
     let candidates: Vec<sysinfo::Pid> = sys
         .processes()
         .keys()
@@ -178,12 +208,12 @@ pub(crate) struct ShellRenudger {
 #[cfg(unix)]
 #[derive(Default)]
 struct TrackedShellIdentities {
-    sys: sysinfo::System,
+    sys: ProcessTable,
     verified: std::collections::HashMap<u32, u64>,
-    /// A `System` created during the current scan for first-sight checks, so
-    /// their start times are in the wall-clock scale of now; dropped by
+    /// A table made during the current scan for first-sight checks, so their
+    /// start times are in the wall-clock scale of now; reset by
     /// [`Self::end_scan`].
-    fresh: Option<sysinfo::System>,
+    fresh: ProcessTable,
 }
 
 #[cfg(unix)]
@@ -211,8 +241,7 @@ impl TrackedShellIdentities {
             self.verified.remove(&pid);
             return false;
         }
-        let fresh = self.fresh.get_or_insert_with(sysinfo::System::new);
-        let same = process_start_time_secs(fresh, pid)
+        let same = process_start_time_secs(&mut self.fresh, pid)
             .is_none_or(|now_scale| !started_after_tracking(now_scale, written));
         if same {
             self.verified.insert(pid, started);
@@ -221,9 +250,9 @@ impl TrackedShellIdentities {
     }
 
     /// Forget every PID that no longer has a tracking file, and the scan's
-    /// fresh `System`.
+    /// fresh table.
     fn end_scan(&mut self, tracked: &std::collections::HashSet<u32>) {
-        self.fresh = None;
+        self.fresh = ProcessTable::default();
         self.verified.retain(|pid, _| tracked.contains(pid));
         evict_exited_processes(&mut self.sys, |pid| tracked.contains(&pid));
     }
@@ -332,7 +361,7 @@ where
 /// probes count as alive so a live shell is never pruned.
 #[cfg(unix)]
 fn tracked_shell_liveness() -> impl Fn(u32, Option<SystemTime>) -> bool {
-    let sys = std::cell::RefCell::new(sysinfo::System::new());
+    let sys = std::cell::RefCell::new(ProcessTable::default());
     move |pid, tracked_mtime| {
         if !ClientDirectory::is_client_alive(pid) {
             return false;

@@ -374,7 +374,14 @@ fn stop_if_supervisor(raw_pid: i32, pidfile: &Path) {
         return;
     };
     let pid = Pid::from_u32(unsigned);
-    let mut system = System::new();
+    // Without the process table the PID cannot be confirmed as ours.
+    let Ok(mut system) = System::new() else {
+        output::plain(format_args!(
+            "Could not read the process table; leaving PID {raw_pid} in {} alone",
+            pidfile.display()
+        ));
+        return;
+    };
     // The command line is not collected unless asked for.
     let refresh = |sys: &mut System| {
         sys.refresh_processes_specifics(

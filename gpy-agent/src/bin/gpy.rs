@@ -151,6 +151,11 @@ enum Commands {
         /// Only re-run Nerd Font detection and overwrite `ui.show_icons`.
         #[arg(long, conflicts_with_all = ["shell", "from", "check"])]
         redetect_icons: bool,
+        /// Reinstall the shell files a previous `gpy setup` installed for an
+        /// older version; touch no rc file. `gpy prompt` runs it after an
+        /// upgrade.
+        #[arg(long, hide = true, conflicts_with_all = ["shell", "from", "check", "redetect_icons"])]
+        refresh_stale: bool,
     },
 
     /// Remove GPY's shell integration, rc blocks, cache and binaries
@@ -605,14 +610,21 @@ fn run_setup(
             non_interactive,
             check,
         },
-        |target| {
-            Ok(render_completions(match target {
-                gpy_agent::shell::Shell::Fish => clap_complete::Shell::Fish,
-                gpy_agent::shell::Shell::Zsh => clap_complete::Shell::Zsh,
-                gpy_agent::shell::Shell::Bash => clap_complete::Shell::Bash,
-            }))
-        },
+        setup_completions,
     )
+}
+
+/// The completion script `gpy setup` installs for `target`.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "setup takes a fallible completion source"
+)]
+fn setup_completions(target: gpy_agent::shell::Shell) -> Result<Vec<u8>> {
+    Ok(render_completions(match target {
+        gpy_agent::shell::Shell::Fish => clap_complete::Shell::Fish,
+        gpy_agent::shell::Shell::Zsh => clap_complete::Shell::Zsh,
+        gpy_agent::shell::Shell::Bash => clap_complete::Shell::Bash,
+    }))
 }
 
 /// The structural completion script for `shell`.
@@ -715,11 +727,19 @@ fn run(command: Commands) -> Result<ExitCode> {
         }
         Commands::Debug { action } => run_debug(action)?,
         Commands::Setup {
+            refresh_stale: true,
+            ..
+        } => {
+            commands::setup::refresh_stale(setup_completions);
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Setup {
             shell,
             from,
             non_interactive,
             check,
             redetect_icons,
+            refresh_stale: false,
         } => return run_setup(shell, from, non_interactive, check, redetect_icons),
         Commands::Uninstall { yes, purge_config } => {
             return commands::uninstall::run(&commands::uninstall::UninstallOptions {

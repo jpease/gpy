@@ -53,6 +53,8 @@ pub mod setup;
 mod setup_fish;
 /// `gpy setup` step that stages and swaps in the installed shell trees.
 mod setup_install;
+/// `gpy setup --refresh-stale`: reinstall trees an upgrade left behind.
+mod setup_refresh;
 /// `gpy setup` step that retires unedited copies of builtin themes.
 mod setup_themes;
 /// Theme management commands.

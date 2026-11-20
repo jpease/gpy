@@ -106,7 +106,7 @@ toml_edit = "0.25"
 
 # Stable content hashes of released builtin themes: `gpy setup` retires user
 # copies with no edits. RustCrypto, MIT OR Apache-2.0.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Matcher tables only; `gengo` itself is not used because `Gengo::analyze`
 # reads every file in the tree (too slow for the prompt) and pulls in gix.
@@ -121,13 +121,13 @@ crossterm = "0.29"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"
-fork = "0.10"
-nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
+fork = "0.12"
+nix = { version = "0.32", features = ["signal", "process", "fs", "user"] }
 # Local time for the Fish clock `gpy prompt fish` draws (#1247).
 jiff = { version = "1.0.0", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Process start time, so a recycled PID is never signaled; the crate forbids
 # unsafe and macOS has no /proc.
-sysinfo = "0.39"
+sysinfo = "0.40"
 
 # No Windows dependencies: Windows builds the CLI only; IPC is Unix-socket only.
 

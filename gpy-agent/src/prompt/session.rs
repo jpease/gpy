@@ -32,6 +32,14 @@ struct State {
     /// The Bash that runs script segments, once resolved; `Some("")` when
     /// none was found.
     bash: Option<PathBuf>,
+    /// The `gpy` version that last checked this shell's installed tree; a new
+    /// binary checks once more after an upgrade.
+    #[serde(default)]
+    trees_checked_for: String,
+    /// The `gpy` version that last asked an agent of another version to make
+    /// way, so a newer agent it cannot replace is asked once, not every check.
+    #[serde(default)]
+    agent_nudged_for: String,
 }
 
 /// The shell's identity in a registration.
@@ -113,6 +121,7 @@ impl Session {
             sync(link, shell, pwd, &mut self.state);
             supervise(link, config, &mut self.state);
         }
+        refresh_trees(shell.name, &mut self.state);
         if let Some(path) = &self.path {
             store(path, &self.state);
         }
@@ -236,8 +245,10 @@ fn track_shell(pid: u32) {
     }
 }
 
-/// At most once per check interval, ping the agent; when it is down, start
-/// it detached, up to the attempt cap.
+/// At most once per check interval, ask the agent its status; when it is
+/// down, start it detached, up to the attempt cap. One of another version
+/// (left running across an upgrade) gets `gpy-agent start`, which replaces an
+/// older one and keeps a newer one, once per `gpy` version.
 fn supervise(link: &Link, config: &Config, state: &mut State) {
     let enabled =
         super::flag("GPY_AGENT_SUPERVISOR_ENABLED").unwrap_or(config.agent.supervisor.enabled);
@@ -251,10 +262,19 @@ fn supervise(link: &Link, config: &Config, state: &mut State) {
         return;
     }
     state.checked_at = now;
-    if let Reply::Text(reply) = link.send(&json!({"op": "ping"}), None)
-        && reply.contains(r#""status":"ok""#)
+    if let Reply::Text(reply) = link.send(&json!({"op": "status"}), None)
+        && (reply.contains(r#""AgentStatus""#) || reply.contains(r#""status":"ok""#))
     {
         state.restarts = 0;
+        // Only a status reply names a version; an agent that answers is up.
+        let current = format!(r#""version":"{}""#, crate::VERSION);
+        if reply.contains(r#""AgentStatus""#)
+            && !reply.contains(&current)
+            && state.agent_nudged_for != crate::VERSION
+        {
+            crate::VERSION.clone_into(&mut state.agent_nudged_for);
+            start_agent();
+        }
         return;
     }
     let cap = env_count("GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS")
@@ -266,6 +286,38 @@ fn supervise(link: &Link, config: &Config, state: &mut State) {
     state.restarts = state.restarts.saturating_add(1);
     state.registered = false;
     start_agent();
+}
+
+/// Once per `gpy` version: when this shell's tree under the data root was
+/// installed by `gpy setup` for another version (an upgrade that ran no
+/// setup, as Homebrew's), reinstall the stale trees with a detached
+/// `gpy setup --refresh-stale`. No rc file is touched; the next shell started
+/// sources the new files.
+fn refresh_trees(name: &str, state: &mut State) {
+    if state.trees_checked_for == crate::VERSION {
+        return;
+    }
+    crate::VERSION.clone_into(&mut state.trees_checked_for);
+    let shell = match name {
+        "bash" => crate::shell::Shell::Bash,
+        "zsh" => crate::shell::Shell::Zsh,
+        "fish" => crate::shell::Shell::Fish,
+        _ => return,
+    };
+    if !crate::commands::setup::tree_is_stale(shell) {
+        return;
+    }
+    let Ok(gpy) = std::env::current_exe() else {
+        return;
+    };
+    let mut command = Command::new(gpy);
+    command
+        .args(["setup", "--refresh-stale"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::process::spawn_in_own_process_group(&mut command);
+    let _ = command.spawn();
 }
 
 /// `gpy-agent start` in its own process group, every stream closed, not

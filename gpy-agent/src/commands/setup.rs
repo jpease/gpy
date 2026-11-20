@@ -17,6 +17,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+pub use super::setup_refresh::{refresh_stale, tree_is_stale};
+
 /// Comment on the line after the block's start marker that says what the block is for.
 pub(super) const RC_BLOCK_HEADER: &str = "GPY shell integration";
 /// File in each installed shell tree naming the `gpy` version that wrote it,
@@ -240,7 +242,7 @@ pub fn installed_integrations() -> Vec<InstalledIntegration> {
 }
 
 /// [`installed_integrations`] under an explicit environment.
-fn installed_integrations_in(env: &Environment) -> Vec<InstalledIntegration> {
+pub(super) fn installed_integrations_in(env: &Environment) -> Vec<InstalledIntegration> {
     let Ok(root) = env.data_root() else {
         return Vec::new();
     };
@@ -261,10 +263,7 @@ fn installed_integrations_in(env: &Environment) -> Vec<InstalledIntegration> {
                 || shell_dir_for(&root, shell),
                 |sourced| tree_dir_of(shell, sourced),
             );
-            let version = fs::read_to_string(dir.join(VERSION_STAMP))
-                .ok()
-                .map(|text| text.trim().to_owned())
-                .filter(|text| !text.is_empty());
+            let version = super::setup_refresh::stamped_version(&dir);
             Some(InstalledIntegration {
                 shell,
                 dir,
@@ -511,7 +510,7 @@ fn install(
 }
 
 /// Whether the source is the data root itself, so nothing needs copying.
-fn is_in_place(source_root: &Path, root: &DataRoot) -> bool {
+pub(super) fn is_in_place(source_root: &Path, root: &DataRoot) -> bool {
     root.0.exists() && fs::canonicalize(source_root).ok() == fs::canonicalize(&root.0).ok()
 }
 
