@@ -10,6 +10,7 @@ use super::manager::BUILTIN_THEMES;
 use super::released_hashes::RELEASED_THEME_HASHES;
 use super::user_copy::move_aside;
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -41,7 +42,11 @@ pub enum Outcome {
 /// Whether `bytes` are exactly a released version of builtin `name`.
 #[must_use]
 pub fn matches_release(name: &str, bytes: &[u8]) -> bool {
-    let digest = format!("{:x}", Sha256::digest(bytes));
+    let mut digest = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        // Writing to a String cannot fail.
+        let _ = write!(digest, "{byte:02x}");
+    }
     RELEASED_THEME_HASHES
         .iter()
         .any(|(released, hash)| *released == name && *hash == digest)

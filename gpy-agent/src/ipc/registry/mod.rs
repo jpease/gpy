@@ -22,12 +22,12 @@ mod shell_tracking;
 
 pub(crate) use shell_tracking::ShellFlag;
 #[cfg(unix)]
-pub(crate) use shell_tracking::{
-    ShellRenudger, announce_start_in, default_shell_dir, renudge_unregistered_shells,
+use shell_tracking::{
+    ProcessTable, evict_exited_processes, process_start_time_secs, ring_doorbell, write_shell_flag,
 };
 #[cfg(unix)]
-use shell_tracking::{
-    evict_exited_processes, process_start_time_secs, ring_doorbell, write_shell_flag,
+pub(crate) use shell_tracking::{
+    ShellRenudger, announce_start_in, default_shell_dir, renudge_unregistered_shells,
 };
 
 /// How long a start-time match stays trusted without another lookup. The
@@ -72,7 +72,7 @@ pub struct ClientDirectory {
     shell_dir: Option<PathBuf>,
     // Reused per sysinfo guidance; recreating `System` per call re-walks process tables.
     #[cfg(unix)]
-    sysinfo: Mutex<sysinfo::System>,
+    sysinfo: Mutex<ProcessTable>,
     /// Rings one shell: [`ring_doorbell`]; tests count rings instead.
     #[cfg(unix)]
     doorbell: Doorbell,
@@ -118,7 +118,7 @@ impl ClientDirectory {
             inner: Mutex::new(HashMap::new()),
             shell_dir: None,
             #[cfg(unix)]
-            sysinfo: Mutex::new(sysinfo::System::new()),
+            sysinfo: Mutex::new(ProcessTable::default()),
             #[cfg(unix)]
             doorbell: Box::new(ring_doorbell),
         }
