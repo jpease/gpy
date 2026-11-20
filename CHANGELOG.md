@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-19
+
 ### Changed
-- Every Bash, Zsh and Fish prompt is drawn by one `gpy prompt <shell>` process, and the shell integrations are thin wrappers (a few hundred lines in all) that only time and count commands, repaint when the agent rings, and swap in the transient line. `gpy prompt` also starts the agent on a shell's first prompt, registers the shell, tells the agent the working directory after a `cd`, restarts a dead agent, runs script segments and unregisters the shell on exit. Against 0.11.0 on macOS (M4 Max, `benchmarks/compare-starship/prompts.sh`), Bash prompts are about 3.5× faster (14.7 → 4.4 ms); Zsh costs about 1.7 ms more per prompt (2.2 → 3.9 ms: one process instead of none) and Fish breaks even (about 3.3 ms).
+- Every Bash, Zsh and Fish prompt is drawn by one `gpy prompt <shell>` process; the shell files only time commands, repaint and swap in the transient line, and `gpy prompt` starts, registers and supervises the agent and runs script segments. Against 0.11.0 on macOS, Bash prompts are about 3.5× faster (14.7 → 4.4 ms), Zsh about 1.7 ms slower (2.2 → 3.9 ms) and Fish even (about 3.3 ms).
 - `config.toml` and the theme are read on every prompt, so an edit shows at the next prompt without a reload.
 - No IPC client is needed any more: `socat` and `nc` are no longer used, and `gpy doctor` no longer checks for them.
 - Script segments see a declared `env` name only when it is exported (Bash used to forward unexported shell variables too). Their cache lives in `<runtime root>/refresh-throttle/<pid>.scripts` instead of shell variables, and their runner is built into `gpy`.
@@ -18,12 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supervisor-only and `agent.timeout_seconds` changes no longer ring the shells' reload doorbell: `gpy prompt` reads them from the config on every prompt.
 
 ### Removed
-- Fish `.fish` file plugins (`entry_type = "file"`): such a manifest is now rejected at discovery and install with a pointer to script segments ([docs/dev/plugins.md](docs/dev/plugins.md)).
-- The `gpy-prompt-reload` shell function in all three shells, and Fish's `gpy-prompt-debug`: no shell state is left to reload or inspect. Use `gpy doctor`, `gpy debug prompt` and `gpy debug paths`.
-- `gpy-agent theme export` and the `theme-export.{fish,zsh,bash}` files the agent wrote to the cache directory: no shell reads them since `gpy prompt` draws every prompt. `gpy debug paths` no longer lists a theme export file.
+- **Breaking:** Fish `.fish` file plugins (`entry_type = "file"`) are rejected at discovery and install. Rewrite one as a script segment ([docs/dev/plugins.md](docs/dev/plugins.md)).
+- **Breaking:** the `gpy-prompt-reload` shell function (all three shells) and Fish's `gpy-prompt-debug` are gone: no shell state is left to reload. Config edits show at the next prompt; use `gpy doctor`, `gpy debug prompt` and `gpy debug paths` to inspect.
+- **Breaking:** `gpy-agent theme export` and the `theme-export.{fish,zsh,bash}` cache files are gone, since `gpy prompt` draws every prompt. A script that sourced them should call `gpy prompt <shell>` or read `config.toml`.
 
 ### Fixed
-- A prompt render no longer slows down as the instant-prompt cache grows: the shells' check for a cached git or language segment globbed the whole cache directory on every render (about 215 ms in Fish and 1.2 s in Zsh at 29,000 files). The agent now keeps an `{key}.{git|lang}.any-entry.{ext}` marker beside each repository's entries, and the shells test that single file. A cache written by an older agent gains its markers on the next refresh; until then a repository's language segment can be missing for one prompt.
+- A prompt render no longer slows down as the instant-prompt cache grows: checking for a cached git or language segment used to glob the whole cache directory (about 215 ms in Fish and 1.2 s in Zsh at 29,000 files); a per-repository marker file now answers it. A cache from an older agent gains its markers on the next refresh, so a language segment can be missing for one prompt.
 - `gpy` starts about 2 ms faster on macOS (3.6 → 1.9 ms for `gpy --version`), which every CLI call and tab completion pays: shipped binaries are linked with `-dead_strip_dylibs` and fat LTO, so dyld no longer loads system frameworks the CLI never calls. `gpy-agent` keeps the frameworks its file watcher uses.
 - With `ui.show_icons = false` the default theme's git segment no longer shows two spaces before the branch name: the empty branch symbol now takes its separator with it. A custom theme that pads the segment itself (`[ $symbol $branch]`) gets the same result with `[ ($symbol )$branch]`.
 - On a heavily loaded machine, a script segment could outlive its deadline for good under Bash 5: when the runner had not yet reported the script's process group by the deadline, nothing sent the script TERM or KILL, so a script that loops kept running after the prompt. The runner now signals that script itself once it starts.
@@ -1188,7 +1190,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/jpease/gpy/releases/tag/v0.12.0
 [0.11.0]: https://github.com/jpease/gpy/releases/tag/v0.11.0
 [0.10.5]: https://github.com/jpease/gpy/releases/tag/v0.10.5
 [0.10.4]: https://github.com/jpease/gpy/releases/tag/v0.10.4
