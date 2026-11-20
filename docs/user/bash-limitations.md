@@ -1,7 +1,5 @@
 # Bash Support: Limitations and Caveats
 
-## Overview
-
 GPY renders the same segments in Bash as in Fish and Zsh (git status, language detection, directory, status, clock), talks to the same agent, and applies config and theme changes. Bash differs in live updates, duration precision, and `PS1` syntax. The side-by-side comparison of all shells is the [Shell feature matrix](../INSTALL.md#shell-feature-matrix); this page explains the Bash rows.
 
 ---

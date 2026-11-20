@@ -1,7 +1,5 @@
 # GPY Installation Guide
 
-This guide covers all methods for installing GPY on your system.
-
 ## Table of Contents
 
 - [Supported Platforms and Shells](#supported-platforms-and-shells)

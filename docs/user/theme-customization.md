@@ -2,7 +2,7 @@
 
 # Theme Customization
 
-How to change the way your GPY prompt looks, from the zero-effort wizard up to hand-editing a theme file.
+How to change the way your GPY prompt looks, from the interactive wizard to hand-editing a theme file.
 
 ---
 
@@ -16,7 +16,7 @@ How to change the way your GPY prompt looks, from the zero-effort wizard up to h
 
 ---
 
-## Overview
+## Precedence and paths
 
 Theme precedence is user (`~/.config/gpy/themes/`) > plugin > builtin (`default`, `text`, `starship`).
 

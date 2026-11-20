@@ -158,7 +158,7 @@ resolved `fg:`/`bg:` colors either way).
 Prefer:
 
 - clear defaults for all commonly used built-in segments
-- explicit styling for plugin segments your theme is meant to showcase
+- explicit styling for plugin segments your theme is meant to style
 - legible foreground/background combinations
 - icons that remain readable in common terminal fonts
 

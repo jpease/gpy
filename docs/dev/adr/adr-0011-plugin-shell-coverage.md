@@ -220,7 +220,7 @@ One portable script per segment, run by each shell behind a declarative trigger,
 - A public contract had to come first: shell state, colours, glyph mode, G `entry_type`, enforced `min_gpy_version`, and typed settings in a new `config.toml` table, a MAJOR configuration schema change ([PR #52](https://github.com/jpease/gpy/pull/52)).
 - SECURITY.md changes: plugin code now runs from Bash and Zsh as well as Fish, on every command, in untrusted directories; the hardening in Decision item 5 is required, not optional.
 - The timeout is bounded for one segment in every shell, Bash 3.2 included, at p99 within T + 50 + 30 ms in the spike's runners; it was not run inside GPY's hooks, and several segments need the shared deadline, which is not built. Documented gaps: a `setsid` or daemonizing escapee survives, containers without a reaping PID 1 collect zombies (`--init` required), and an uninterruptible `stat` may outlive the scan child. The margin is thin under heavy load (worst sample 580.3 ms against 580 ms).
-- Three runners, one per shell, with platform traps (dash `kill -SIG -PGID`, no `set -m` in `sh`, Bash 3.2 parse quirks) and a CI matrix with dash, busybox and Bash 4.x to keep them honest.
+- Three runners, one per shell, with platform traps (dash `kill -SIG -PGID`, no `set -m` in `sh`, Bash 3.2 parse quirks) and a CI matrix with dash, busybox and Bash 4.x to catch regressions.
 - G's trigger names differ from Starship's on purpose, so imported Starship configs still lose their `[custom.*]` modules.
 - Plugins remain pills unless the contract adds `format`, and the clock cannot be a plugin.
 - B and G are production code, each tracked as a separate work item, and four of the G items need explicit approval.

@@ -21,7 +21,7 @@ the previous segment's resolved foreground/background colors, the active color `
 
 1. Add a `Format` enum variant and return your implementation from `create_formatter`
 2. Create `formatter/<your_format>.rs` implementing the `Formatter` trait
-3. Leverage `RenderContext` instead of loading config/theme from disk inside the formatter
+3. Use `RenderContext` instead of loading config/theme from disk inside the formatter
 4. Extend `tests/formatter_integration_tests.rs` to cover the new format with parity expectations
 5. Update CLI and IPC code if the new format should be externally selectable
 
