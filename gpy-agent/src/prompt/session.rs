@@ -263,11 +263,15 @@ fn supervise(link: &Link, config: &Config, state: &mut State) {
     }
     state.checked_at = now;
     if let Reply::Text(reply) = link.send(&json!({"op": "status"}), None)
-        && reply.contains(r#""AgentStatus""#)
+        && (reply.contains(r#""AgentStatus""#) || reply.contains(r#""status":"ok""#))
     {
         state.restarts = 0;
+        // Only a status reply names a version; an agent that answers is up.
         let current = format!(r#""version":"{}""#, crate::VERSION);
-        if !reply.contains(&current) && state.agent_nudged_for != crate::VERSION {
+        if reply.contains(r#""AgentStatus""#)
+            && !reply.contains(&current)
+            && state.agent_nudged_for != crate::VERSION
+        {
             crate::VERSION.clone_into(&mut state.agent_nudged_for);
             start_agent();
         }
