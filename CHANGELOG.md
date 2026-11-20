@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-20
+
 ### Fixed
 - An upgrade that runs no `gpy setup` (`brew upgrade`) left the old agent running and the shells on the previous version's files. The next prompt now replaces an agent of another version and, in the background, refreshes the shell files `gpy setup` installed; rc files are left alone. Upgrading from 0.12.0 or earlier still needs `brew postinstall jpease/tap/gpy && gpy setup` once.
 
@@ -1196,7 +1198,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/jpease/gpy/releases/tag/v0.12.1
 [0.12.0]: https://github.com/jpease/gpy/releases/tag/v0.12.0
 [0.11.0]: https://github.com/jpease/gpy/releases/tag/v0.11.0
 [0.10.5]: https://github.com/jpease/gpy/releases/tag/v0.10.5
