@@ -60,7 +60,7 @@ The file watcher (powered by the `notify` crate) uses OS-native APIs (FSEvents o
 ## Resource Usage
 
 *   **CPU**: Near zero. The event loop blocks on `epoll`/`kqueue` until IO or a timer event occurs, and the file-watcher threads block until an event arrives or a debounce deadline falls due.
-*   **Memory**: Uses `Arc` (Atomic Reference Counting) to share large data structures (Git cache, configuration, theme) between components. The memory footprint primarily depends on the number of cached Git repositories.
+*   **Memory**: Uses `Arc` (Atomic Reference Counting) to share large data structures (Git cache, configuration, theme) between components without copying them. The memory footprint primarily depends on the number of cached Git repositories.
 *   **Handles**: Holds one file descriptor for the socket, one for the file watcher (plus internal watcher handles), and temporary handles for active client connections.
 
 ## Coordination

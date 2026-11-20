@@ -16,7 +16,7 @@ How to change the way your GPY prompt looks, from the interactive wizard to hand
 
 ---
 
-## Precedence and paths
+## Precedence and where to start
 
 Theme precedence is user (`~/.config/gpy/themes/`) > plugin > builtin (`default`, `text`, `starship`).
 
