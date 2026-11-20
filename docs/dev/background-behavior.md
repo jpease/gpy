@@ -35,7 +35,7 @@ tokio multi-thread runtime; `Agent::start_background`'s `tokio::select!` drives 
 
 ### 1. IPC Server (Idle Behavior)
 The server listens on the Unix socket using `UnixListener::accept()`. This is a non-blocking asynchronous operation.
-*   **Active**: When a request arrives, a lightweight task is spawned to handle it (deserialize, process, serialize response).
+*   **Active**: When a request arrives, a task is spawned to handle it (deserialize, process, serialize response).
 *   **Idle**: When no requests are pending, the listener task is suspended by the runtime, consuming zero CPU.
 
 ### 2. Clock Timer (Idle Behavior)
@@ -59,10 +59,8 @@ The file watcher (powered by the `notify` crate) uses OS-native APIs (FSEvents o
 
 ## Resource Usage
 
-The agent is lightweight when idle:
-
 *   **CPU**: Near zero. The event loop blocks on `epoll`/`kqueue` until IO or a timer event occurs, and the file-watcher threads block until an event arrives or a debounce deadline falls due.
-*   **Memory**: Uses `Arc` (Atomic Reference Counting) to share large data structures (Git cache, configuration, theme) between components, avoiding duplication. The memory footprint primarily depends on the number of cached Git repositories.
+*   **Memory**: Uses `Arc` (Atomic Reference Counting) to share large data structures (Git cache, configuration, theme) between components without copying them. The memory footprint primarily depends on the number of cached Git repositories.
 *   **Handles**: Holds one file descriptor for the socket, one for the file watcher (plus internal watcher handles), and temporary handles for active client connections.
 
 ## Coordination

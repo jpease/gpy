@@ -422,7 +422,7 @@ When adding new shared state:
 └──────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: Rust ownership cleans up state automatically; only watchers and servers need an explicit stop.
+Rust ownership cleans up state automatically; only watchers and servers need an explicit stop.
 
 ---
 
@@ -527,15 +527,13 @@ client_registry.notify_repaint(None)
 SIGURG to every registered shell
 ```
 
-**Key insight**: most user-visible behaviors follow one pattern: filesystem
+Most user-visible behaviors follow one pattern: filesystem
 event → watcher → agent cache update → SIGURG (plus a `<pid>.reload` flag for
 config/theme) → shell repaint. `agent/mod.rs` and `agent/events/` coordinate it.
 
 ---
 
 ## IPC Protocol Specification
-
-### Overview
 
 GPY uses a **JSON-based request/response protocol** over Unix domain sockets. The protocol is **shell-agnostic** - any shell that can write JSON and read from a socket can communicate with the agent.
 

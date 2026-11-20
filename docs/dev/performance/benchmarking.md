@@ -590,7 +590,7 @@ c.bench_function("my_bench", |b| {
 }).sample_size(10);  // Default is 100
 ```
 
-## Notes
+## Guidelines and Resources
 
 - `just bench-ci` writes `bench-results.json` in the repo root.
 - **When to benchmark**: Always benchmark when adding new formatters or segments, changing IPC protocols, modifying cache strategies, or updating hot-path dependencies (`serde`, `tokio`). Optional for docs, tests, and non-performance config additions.

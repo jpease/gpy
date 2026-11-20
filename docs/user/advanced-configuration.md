@@ -2,10 +2,6 @@
 
 # Advanced Configuration Guide
 
-This guide covers advanced configuration options for GPY beyond the basic setup.
-
----
-
 ## Configuration Files
 
 GPY uses TOML configuration files stored in `~/.config/gpy/`.
@@ -112,7 +108,7 @@ skip_paths = [
 ]
 ```
 
-This prevents git operations in those directories, improving prompt responsiveness.
+This skips git operations in those directories.
 
 ### Git Timeout
 

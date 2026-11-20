@@ -1,9 +1,5 @@
 # GPY Command-Line Interface Reference
 
-Complete reference for the `gpy` command-line tool.
-
-## Overview
-
 `gpy` is the user-facing command-line interface for managing the GPY prompt for Bash, Fish and Zsh. It controls the agent, themes, segments and configuration.
 
 A second binary, `gpy-agent`, is the daemon itself. It also carries the few subcommands the shell integrations call (`oneshot`, `config reload`); they are listed under [The `gpy-agent` binary](#the-gpy-agent-binary) below.

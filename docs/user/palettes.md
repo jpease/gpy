@@ -117,8 +117,8 @@ such keys, and `gpy theme import` warns when a Starship palette has them.
 `starship` is a dedicated builtin palette that reproduces vanilla Starship's
 colors. It is automatically paired with the `starship` theme: running
 `gpy theme use starship --force` activates the theme *and* sets `ui.palette =
-"starship"`. Without `--force` the theme switches but your current palette is
-kept, giving you "Starship structure + my Catppuccin colors" out of the box.
+"starship"`. Without `--force`, the theme switches and your current palette
+stays — Starship structure with your current colors.
 
 The three off-ANSI slots carry Starship's exact 256-indices (`orange = "202"`,
 `bright_magenta = "147"`, `bright_green = "149"`). The nine ANSI-name languages

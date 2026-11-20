@@ -4,7 +4,7 @@ How to create a custom prompt segment plugin that runs across Bash, Zsh, and Fis
 
 For complete specification and contract details, see [Plugin Framework](plugins.md).
 
-## Overview
+## Plugin Layout
 
 GPY script plugins (`entry_type = "script"`) provide segments implemented as POSIX `sh` scripts. They run consistently across all supported shells (Bash, Zsh, and Fish) without requiring shell-specific prompt code.
 

@@ -87,7 +87,7 @@ The agent starts native (`FSEvents` or `inotify`) and swaps to polling only if t
 
 ### GPY_WATCH_WORKTREE
 
-An explicit recognised value always wins over `git.watch_worktree`; an unrecognised one is ignored with a warning and the config key decides. Newly registered repositories pick up the change; existing watches keep their setting until re-registration (a `cd` or an agent restart). Turn it off on very large or slow-to-stat working trees. With it off, pure working-tree changes touch nothing under `.git`, so dirty and untracked state surfaces only on the next `.git` write or the reconcile scan; lower `GPY_RECONCILE_INTERVAL_SECS` to bound that lag.
+An explicit recognised value always wins over `git.watch_worktree`; an unrecognised one is ignored with a warning and the config key decides. Newly registered repositories pick up the change; existing watches keep their setting until re-registration (a `cd` or an agent restart). Turn it off on very large or slow-to-stat working trees. With it off, pure working-tree changes touch nothing under `.git`, so dirty and untracked state shows up only on the next `.git` write or the reconcile scan; lower `GPY_RECONCILE_INTERVAL_SECS` to bound that lag.
 
 ---
 
