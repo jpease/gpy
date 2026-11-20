@@ -14,11 +14,12 @@
 # prompt from fish, zsh and bash through their rc files.
 #
 # The same image then runs each tests/docker/scenarios/*.sh in its own
-# container (helpers in tests/docker/scenario-lib.sh): an upgrade from the
-# published v0.10.5 with a live agent and shell, the pre-0.9 Fish layout of
+# container (helpers in tests/docker/scenario-lib.sh): upgrades from the
+# published v0.10.5 (a live agent and Bash session) and v0.11.0 (Bash, Zsh and
+# Fish sessions held open across the upgrade), the pre-0.9 Fish layout of
 # v0.8.0 through setup and uninstall, `gpy setup` idempotency, and the
 # SECURITY.md promises that a repository's core.fsmonitor and pinned toolchains
-# neither run nor install. The two old releases are downloaded at run time
+# neither run nor install. The old releases are downloaded at run time
 # from GitHub over HTTPS and checked against their .sha256 sidecars.
 #
 # Run it with scripts/test-fresh-install.sh.
@@ -34,8 +35,8 @@ RUN cd gpy-agent && cargo build --release --locked --bin gpy-agent --bin gpy
 FROM ubuntu:24.04 AS runtime
 ARG TARGETARCH
 # `gpy prompt` talks to the agent's socket itself, so a fresh machine needs no
-# IPC client; socat is here only for the upgrade scenario's held session,
-# which runs v0.10.5 shell code that registers through it.
+# IPC client; socat is here only for the upgrade scenarios' held sessions,
+# which run old shell code that registers through it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends fish zsh bash git curl ca-certificates python3 socat \
     && rm -rf /var/lib/apt/lists/*
