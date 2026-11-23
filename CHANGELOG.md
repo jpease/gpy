@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `gpy setup` deleted the user's own plugins when `XDG_DATA_HOME` and `XDG_CONFIG_HOME` resolve to the same directory, because it replaces `<data root>/plugins` with the bundled plugins. Setup and the post-upgrade refresh now refuse when the data and config directories overlap, and `gpy uninstall` leaves the plugin directory alone in that layout.
 - A plugin manifest or `starship.toml` with raw control characters could write terminal escapes (window title, clipboard, cursor moves) through `gpy plugin validate`, `plugin list`, `doctor` and `theme import`, because a TOML parse error quotes the offending line. Error messages, plugin diagnostics and import warnings now show control characters as `\u{…}`.
+- On Linux, a prompt (and the shell's exit hook) could hang with no limit when the agent stopped accepting connections, because `gpy prompt` connected to its socket with a blocking `connect` before any timeout applied. The connect no longer waits: a full accept queue counts as a late agent and opens the late window, and refreshes are not sent while it is open.
 
 ## [0.12.1] - 2026-11-20
 

@@ -4,6 +4,7 @@
 
 use crate::cache::InstantPromptCache;
 use std::io::{BufRead as _, BufReader, Write as _};
+use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::FileTypeExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -120,7 +121,15 @@ impl Link {
             request.get("op").and_then(serde_json::Value::as_str),
             Some("git" | "lang" | "directory")
         );
-        let Some(dir) = self.throttle_dir.as_deref().filter(|_| !path_op) else {
+        if !path_op {
+            self.open_late_window(socket);
+        }
+    }
+
+    /// Open the late window for `socket`: requests are [`Reply::Late`] at
+    /// once until it closes.
+    fn open_late_window(&self, socket: &Path) {
+        let Some(dir) = self.throttle_dir.as_deref() else {
             return;
         };
         let file = late_window_file(dir, self.pid);
@@ -151,8 +160,14 @@ impl Link {
         let Some(socket) = self.socket.as_deref() else {
             return Reply::Unreachable;
         };
-        let Ok(mut stream) = UnixStream::connect(socket) else {
-            return Reply::Unreachable;
+        let mut stream = match connect_now(socket) {
+            Connect::Open(stream) => stream,
+            Connect::Refused => return Reply::Unreachable,
+            // The agent is not accepting: whatever the op, it is wedged.
+            Connect::Busy => {
+                self.open_late_window(socket);
+                return Reply::Late;
+            }
         };
         let budget = Duration::from_millis(timeout_ms.unwrap_or_else(warm_timeout_ms).max(1));
         let line = format!("{request}\n");
@@ -230,20 +245,74 @@ impl Link {
     }
 
     /// Send `request` and hang up without reading: the agent still handles
-    /// it, writing the cache (and ringing a registered shell).
+    /// it, writing the cache (and ringing a registered shell). Skipped while
+    /// a late window is open, so a wedged agent's backlog is not filled.
     fn fire(&self, request: &serde_json::Value) {
-        if !self.socket_present() {
+        if !self.socket_present() || self.late_active() {
             return;
         }
         let Some(socket) = self.socket.as_deref() else {
             return;
         };
-        if let Ok(mut stream) = UnixStream::connect(socket) {
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(warm_timeout_ms().max(1))));
-            let _ = stream.write_all(format!("{request}\n").as_bytes());
-            let _ = stream.shutdown(std::net::Shutdown::Write);
+        match connect_now(socket) {
+            Connect::Open(mut stream) => {
+                let _ =
+                    stream.set_write_timeout(Some(Duration::from_millis(warm_timeout_ms().max(1))));
+                let _ = stream.write_all(format!("{request}\n").as_bytes());
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+            }
+            Connect::Busy => self.open_late_window(socket),
+            Connect::Refused => {}
         }
     }
+}
+
+/// How [`connect_now`] ended.
+enum Connect {
+    /// Connected (accepted or queued), in blocking mode again.
+    Open(UnixStream),
+    /// Nothing listening, or the socket could not be created.
+    Refused,
+    /// The agent's accept backlog is full: it is not accepting.
+    Busy,
+}
+
+/// Connect to `socket` without waiting. A Unix-socket connect completes at
+/// once while the listener's accept backlog has room; when it is full, a
+/// blocking connect waits with no bound on Linux, where the non-blocking one
+/// fails with `EAGAIN` instead (macOS refuses either way).
+fn connect_now(socket: &Path) -> Connect {
+    use nix::errno::Errno;
+    use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+    use nix::sys::socket::{AddressFamily, SockFlag, SockType, UnixAddr, connect};
+
+    let Ok(addr) = UnixAddr::new(socket) else {
+        return Connect::Refused;
+    };
+    let Ok(fd) = nix::sys::socket::socket(
+        AddressFamily::Unix,
+        SockType::Stream,
+        SockFlag::empty(),
+        None,
+    ) else {
+        return Connect::Refused;
+    };
+    let stream = UnixStream::from(fd);
+    // As `UnixStream::connect` does: script children never inherit it.
+    if fcntl(&stream, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).is_err()
+        || stream.set_nonblocking(true).is_err()
+    {
+        return Connect::Refused;
+    }
+    match connect(stream.as_raw_fd(), &addr) {
+        Ok(()) => {}
+        Err(Errno::EAGAIN | Errno::EINPROGRESS) => return Connect::Busy,
+        Err(_) => return Connect::Refused,
+    }
+    if stream.set_nonblocking(false).is_err() {
+        return Connect::Refused;
+    }
+    Connect::Open(stream)
 }
 
 /// `<refresh-throttle>/<pid>.agent-late`: the late window's stamp,
@@ -286,7 +355,9 @@ fn now_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::stamp_name;
+    use super::{Connect, Link, Reply, connect_now, stamp_name};
+    use std::os::fd::AsRawFd as _;
+    use std::time::{Duration, Instant};
 
     /// Long buckets hash as the shell's FNV-1a loop does, so both render
     /// paths read and write the same stamps. The expected name is what
@@ -295,5 +366,52 @@ mod tests {
     fn long_bucket_stamp_matches_the_shell_hash() {
         assert_eq!(stamp_name(42, "git.git_last..x"), "42.git.git_last..x");
         assert_eq!(stamp_name(42, &"a".repeat(201)), "42.#876056a4");
+    }
+
+    /// A listener that never accepts, with every backlog slot taken: the
+    /// request answers at once instead of waiting in `connect` (#1257).
+    #[test]
+    fn a_full_accept_backlog_never_blocks_a_request() {
+        use nix::sys::socket::{
+            AddressFamily, Backlog, SockFlag, SockType, UnixAddr, bind, listen, socket,
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("agent.sock");
+        let listener = socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        )
+        .expect("socket");
+        bind(
+            listener.as_raw_fd(),
+            &UnixAddr::new(&path).expect("address"),
+        )
+        .expect("bind");
+        listen(&listener, Backlog::new(1_i32).expect("backlog")).expect("listen");
+        let mut queued = Vec::new();
+        while let Connect::Open(stream) = connect_now(&path) {
+            queued.push(stream);
+            assert!(queued.len() < 64, "the backlog never filled");
+        }
+        let link = Link {
+            enabled: true,
+            socket: Some(path),
+            throttle_dir: Some(dir.path().join("refresh-throttle")),
+            pid: 42,
+        };
+
+        let started = Instant::now();
+        let reply = link.send(&serde_json::json!({"op": "status"}), Some(50));
+
+        assert!(started.elapsed() < Duration::from_secs(2), "{reply:?}");
+        // Linux reports a full backlog as `EAGAIN`; macOS refuses outright.
+        let expected = if cfg!(target_os = "linux") {
+            Reply::Late
+        } else {
+            Reply::Unreachable
+        };
+        assert_eq!(reply, expected);
     }
 }
