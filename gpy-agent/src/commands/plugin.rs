@@ -2,6 +2,7 @@
 
 use super::script_lint::{Lint, Undeclared, lint_script, undeclared_vars};
 use crate::commands::output::{self, Status};
+use crate::error::escape_controls;
 use crate::plugin::{
     DiscoveredPlugin, EntryType, GpyVersion, PluginApiVersion, PluginManifest, PluginSource,
     ScriptSegmentManifest, SegmentName, discover_plugins, script_segment_manifest_path,
@@ -474,8 +475,8 @@ pub fn list() {
             output::plain(format_args!(
                 "- [{}] {}: {}",
                 diagnostic.source,
-                diagnostic.plugin_dir.display(),
-                diagnostic.message
+                escape_controls(&diagnostic.plugin_dir.display().to_string()),
+                escape_controls(&diagnostic.message)
             ));
         }
         output::plain("\nHint: run `gpy plugin validate <ID_OR_PATH>` for a specific plugin.");

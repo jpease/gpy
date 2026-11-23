@@ -9,6 +9,7 @@ use super::utils::agent_binary;
 use crate::agent::lifecycle::{AgentClient, StatusProbe};
 use crate::commands::output::{self, Status};
 use crate::commands::validation::FailureKind;
+use crate::error::escape_controls;
 use crate::plugin::discover_plugins;
 use crate::{Error, Result, config};
 use std::collections::{HashMap, HashSet};
@@ -304,9 +305,13 @@ fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
             output::detail_status(
                 2,
                 Status::Fail,
-                format_args!("{} [{}]", diag.plugin_dir.display(), diag.source),
+                format_args!(
+                    "{} [{}]",
+                    escape_controls(&diag.plugin_dir.display().to_string()),
+                    diag.source
+                ),
             );
-            output::detail_at(3, format_args!("Error: {}", diag.message));
+            output::detail_at(3, format_args!("Error: {}", escape_controls(&diag.message)));
             if is_shared_writable(diag) {
                 let dropped = if matches!(diag.source, crate::plugin::PluginSource::Bundled) {
                     "this bundled plugin is dropped, so its segments never render"

@@ -671,7 +671,8 @@ impl ScriptSegmentManifest {
     /// # Errors
     /// Returns an error naming the offending key.
     pub fn parse(text: &str) -> Result<Self> {
-        let manifest: Self = toml::from_str(text).map_err(|e| Error::invalid(e.to_string()))?;
+        let manifest: Self = toml::from_str(text)
+            .map_err(|e| Error::invalid(crate::error::escape_controls(&e.to_string())))?;
         manifest.validate()?;
         Ok(manifest)
     }

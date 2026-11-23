@@ -553,6 +553,37 @@ fn install_leaves_nothing_behind_when_validation_fails() {
 }
 
 #[test]
+fn validate_and_list_never_replay_control_bytes_from_a_broken_manifest() {
+    let (env, dir) = scaffold("foo");
+    let manifest = std::fs::read_to_string(dir.join("plugin.toml")).expect("read manifest");
+    // A raw ESC in a comment is a TOML error whose message quotes the line.
+    std::fs::write(
+        dir.join("plugin.toml"),
+        format!("{manifest}# \u{1b}]0;pwned\u{7} = [\n"),
+    )
+    .expect("write manifest");
+    let dir_arg = dir.to_string_lossy().into_owned();
+
+    let validate = env
+        .run_gpy(&["plugin", "validate", dir_arg.as_str()])
+        .expect("spawn gpy");
+    assert_eq!(validate.exit_code, 1_i32, "{validate:?}");
+    assert!(validate.stderr.contains("\\u{1b}"), "{validate:?}");
+    // The broken plugin sits in the user plugin root, so the list reports it.
+    let listed = env.run_gpy(&["plugin", "list"]).expect("spawn gpy");
+    assert!(listed.stdout.contains("\\u{1b}"), "{listed:?}");
+
+    for output in [
+        &validate.stdout,
+        &validate.stderr,
+        &listed.stdout,
+        &listed.stderr,
+    ] {
+        assert!(!output.contains(['\u{1b}', '\u{7}']), "{output:?}");
+    }
+}
+
+#[test]
 fn install_over_a_directory_without_a_manifest_is_guarded() {
     let (_source_env, dir) = scaffold("foo");
     let env = CliTestEnv::new().expect("create env");
