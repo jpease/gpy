@@ -8,7 +8,7 @@ use super::output;
 use super::rc_block::{has_start, remove_blocks};
 use super::setup::{DataRoot, Environment, SHELLS, shell_dir_for};
 use super::setup_fish::{is_gpy_prompt_link, legacy_trees};
-use super::setup_install::{fish_completions_dir, plugins_target};
+use super::setup_install::{fish_completions_dir, plugins_target, roots_overlap};
 use crate::shell::Shell;
 use crate::{Error, Result, paths};
 use std::fs;
@@ -194,7 +194,12 @@ fn build_plan(env: &Environment) -> Result<Plan> {
     integration.push(completions.join("gpy.fish"));
     integration.push(completions.join("gpy-dynamic.fish"));
     integration.push(fish_dir.join("conf.d").join("gpy_init.fish"));
-    integration.push(plugins_target(&data_root));
+    // When the data root overlaps the config root, `<data root>/plugins` may
+    // be the user's own plugin directory: never remove it as an integration
+    // file (`--purge-config` still removes the whole config root).
+    if !roots_overlap(&data_root.0, &config_home.join("gpy")) {
+        integration.push(plugins_target(&data_root));
+    }
     integration.extend(legacy_trees(&config_home, &data_root.0));
 
     let mut candidates = vec![

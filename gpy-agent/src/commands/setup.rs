@@ -7,7 +7,9 @@
 
 use super::rc_block::{BlockChange, BlockState, block_state, ensure_block, has_block};
 use super::setup_fish::{leftover_trees, link_fish_prompt, report_leftovers, retire_fish_loader};
-use super::setup_install::{InstallMode, install_bundled_plugins, install_files, preflight};
+use super::setup_install::{
+    InstallMode, install_bundled_plugins, install_files, install_root, preflight,
+};
 use crate::commands::exit_codes::SETUP_INCOMPLETE;
 use crate::commands::init::{self, InitOptions};
 use crate::paths::{self, Os};
@@ -156,7 +158,7 @@ pub fn run(
     )?;
     let source_root = find_source_root(options.from.as_deref(), &env, shell)?;
     if options.check {
-        let shell_dir = shell_dir_for(&env.data_root()?, shell);
+        let shell_dir = shell_dir_for(&install_root(&env)?, shell);
         check_sourceable(&shell_dir)?;
         crate::commands::output::plain(format_args!(
             "ok: {shell} files in {} can be installed to {}",
@@ -445,7 +447,7 @@ fn install(
     completions: &impl Fn(Shell) -> Result<Vec<u8>>,
 ) -> Result<Outcome> {
     let config_home = env.config_home()?;
-    let root = env.data_root()?;
+    let root = install_root(env)?;
     let mode = if is_in_place(source_root, &root) {
         InstallMode::InPlace
     } else {

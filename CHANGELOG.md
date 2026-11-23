@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `gpy setup` deleted the user's own plugins when `XDG_DATA_HOME` and `XDG_CONFIG_HOME` resolve to the same directory, because it replaces `<data root>/plugins` with the bundled plugins. Setup and the post-upgrade refresh now refuse when the data and config directories overlap, and `gpy uninstall` leaves the plugin directory alone in that layout.
+
 ## [0.12.1] - 2026-11-20
 
 ### Fixed
