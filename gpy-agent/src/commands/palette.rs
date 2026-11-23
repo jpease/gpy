@@ -4,7 +4,7 @@ use super::utils::{
     active_config_path, load_active_config, print_discovered, read_config, reload_agent_and_notify,
 };
 use super::validation::{self, Failure, FailureKind, ValidatableResource, ValidationReport};
-use crate::config::discovery::validate_config_name;
+use crate::config::discovery::{validate_config_name, validate_new_config_name};
 use crate::config::loader::save_config;
 use crate::{Error, Result, config, palette::PaletteManager};
 use std::path::Path;
@@ -193,7 +193,7 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
         name.clone_into(&mut palette.name);
     }
     let stem = palette.name.clone();
-    validate_config_name("palette", &stem)?;
+    validate_new_config_name("palette", &stem)?;
     if !force
         && let Some(provider) = config::discovery::shadowed_provider(
             &PaletteManager::discover_available_palettes(),

@@ -1,5 +1,6 @@
 //! Crate-wide error type.
 
+use std::borrow::Cow;
 use thiserror::Error;
 
 /// Main error type for GPY Agent operations.
@@ -170,12 +171,14 @@ impl Error {
 pub const CLI_FAILURE_EXIT_CODE: u8 = 1;
 
 /// Render an error and its `source()` chain on one line for CLI stderr.
+/// Control characters are escaped ([`escape_controls`]): a message can quote
+/// file content, such as a TOML parse error showing the offending line.
 #[must_use]
 pub fn user_message(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut rendered = err.to_string();
+    let mut rendered = escape_controls(&err.to_string()).into_owned();
     let mut cursor = err.source();
     while let Some(cause) = cursor {
-        let text = cause.to_string();
+        let text = escape_controls(&cause.to_string()).into_owned();
         // Skip a cause that only restates the message wrapping it.
         if !rendered.ends_with(&text) {
             rendered.push_str(": ");
@@ -184,6 +187,26 @@ pub fn user_message(err: &(dyn std::error::Error + 'static)) -> String {
         cursor = cause.source();
     }
     rendered
+}
+
+/// `text` with every control character except newline and tab written as
+/// `\u{…}`, so text quoted from a file (a plugin manifest, a `starship.toml`)
+/// can never replay terminal escapes when it is printed.
+#[must_use]
+pub fn escape_controls(text: &str) -> Cow<'_, str> {
+    let replayed = |ch: char| ch.is_control() && ch != '\n' && ch != '\t';
+    if !text.contains(replayed) {
+        return Cow::Borrowed(text);
+    }
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if replayed(ch) {
+            escaped.extend(ch.escape_unicode());
+        } else {
+            escaped.push(ch);
+        }
+    }
+    Cow::Owned(escaped)
 }
 
 /// Whether an error is a broken stdout pipe, which a CLI treats as success.
@@ -234,7 +257,7 @@ where
 impl From<toml::de::Error> for Error {
     fn from(err: toml::de::Error) -> Self {
         Self::Config {
-            message: format!("TOML parsing failed: {err}"),
+            message: format!("TOML parsing failed: {}", escape_controls(&err.to_string())),
             source: Some(Box::new(err)),
         }
     }

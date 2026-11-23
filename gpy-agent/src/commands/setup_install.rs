@@ -9,7 +9,7 @@
 //! the source, so setup can never delete the files it installs from.
 
 use super::output;
-use super::setup::{DataRoot, VERSION_STAMP, check_sourceable, shell_dir_for};
+use super::setup::{DataRoot, Environment, VERSION_STAMP, check_sourceable, shell_dir_for};
 use crate::shell::Shell;
 use crate::{Error, Result};
 use std::ffi::OsString;
@@ -127,6 +127,49 @@ pub(super) fn fish_completions_dir(config_home: &Path) -> PathBuf {
 /// Where the bundled plugin root is installed.
 pub(super) fn plugins_target(root: &DataRoot) -> PathBuf {
     root.0.join(BUNDLED_PLUGINS_SOURCE)
+}
+
+/// The data root setup installs into, refused when it and the config root
+/// are one directory or one holds the other: the bundled plugins replace
+/// `<data root>/plugins` wholesale, which would then be the user's own
+/// `<config root>/plugins` (or sit inside the config tree).
+///
+/// # Errors
+/// Fails without a home directory, or when the two roots overlap.
+pub(super) fn install_root(env: &Environment) -> Result<DataRoot> {
+    let root = env.data_root()?;
+    let config_root = env.config_home()?.join("gpy");
+    if roots_overlap(&root.0, &config_root) {
+        return Err(Error::invalid(format!(
+            "the data directory {} and the config directory {} overlap (one is, or holds, the \
+             other; check XDG_DATA_HOME and XDG_CONFIG_HOME): setup replaces {} with the bundled \
+             plugins, which would delete your own plugins. Set XDG_DATA_HOME outside \
+             XDG_CONFIG_HOME (the default is ~/.local/share)",
+            root.0.display(),
+            config_root.display(),
+            plugins_target(&root).display()
+        )));
+    }
+    Ok(root)
+}
+
+/// Whether `a` and `b` are one directory or one holds the other, through
+/// symlinks: each is resolved at its deepest existing ancestor.
+pub(super) fn roots_overlap(a: &Path, b: &Path) -> bool {
+    let (real_a, real_b) = (resolve_existing_prefix(a), resolve_existing_prefix(b));
+    real_a.starts_with(&real_b) || real_b.starts_with(&real_a)
+}
+
+/// `path` with its deepest existing ancestor canonicalized and the rest
+/// appended; `path` itself when no ancestor resolves.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find_map(|ancestor| {
+            let real = fs::canonicalize(ancestor).ok()?;
+            let rest = path.strip_prefix(ancestor).ok()?;
+            Some(real.join(rest))
+        })
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// Validate every location a copying `setup` will write against

@@ -353,7 +353,10 @@ impl PluginManifest {
     pub fn parse(toml_content: &str) -> crate::Result<Self> {
         let manifest: Self = toml::from_str(toml_content).map_err(|e| {
             removed_entry_type_error(toml_content).unwrap_or_else(|| {
-                crate::Error::invalid(format!("Failed to parse plugin manifest: {e}"))
+                crate::Error::invalid(format!(
+                    "Failed to parse plugin manifest: {}",
+                    crate::error::escape_controls(&e.to_string())
+                ))
             })
         })?;
 

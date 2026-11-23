@@ -523,6 +523,24 @@ fn test_theme_new_rejects_empty_and_whitespace_names() {
         );
     }
 
+    // 2b. Names discovery would skip: the file would be written, then never
+    // listed or loadable by name.
+    for name in ["my theme", "café", ".hidden", "a$b"] {
+        let res = env
+            .run_gpy_with_env(&["theme", "new", name], &env_overrides)
+            .expect("Failed to run gpy theme new");
+        assert_ne!(res.exit_code, 0_i32, "theme new '{name}' must fail");
+        assert!(
+            res.stderr.contains("ASCII letters"),
+            "the error names the allowed characters: {}",
+            res.stderr
+        );
+        assert!(
+            !themes_dir.exists(),
+            "themes dir must not be materialized for '{name}'"
+        );
+    }
+
     // 3. Valid plain name creates valid theme that validate and use accept
     let res_valid = env
         .run_gpy_with_env(&["theme", "new", "my-valid-theme"], &env_overrides)

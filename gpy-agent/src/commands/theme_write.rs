@@ -11,7 +11,7 @@
 use super::output;
 use super::theme_rebase::{header_only, message_of};
 use super::utils::read_config;
-use crate::config::discovery::{Source, validate_config_name};
+use crate::config::discovery::{Source, validate_config_name, validate_new_config_name};
 use crate::theme::load::load_named_theme;
 use crate::theme::user_copy::{self, builtin_content};
 use crate::theme::{ChainLink, LoadedTheme, ThemeChain, ThemeConfig, normalised_table, overlay};
@@ -29,7 +29,7 @@ const DEFAULT_BASE: &str = "default";
 /// that does not resolve or load, a new file that would not load, or a
 /// failed write.
 pub fn new(name: &str, from: Option<&str>, full: bool) -> Result<()> {
-    validate_config_name("theme", name)?;
+    validate_new_config_name("theme", name)?;
     let base = from.unwrap_or(DEFAULT_BASE);
     validate_config_name("theme", base)?;
     if user_copy::user_copy_path(name)?.exists() {
@@ -79,7 +79,7 @@ pub fn save(name: Option<&str>, full: bool, yes: bool) -> Result<()> {
     let top = active.chain.top();
     let own = top.name.as_str();
     let target = name.unwrap_or(own);
-    validate_config_name("theme", target)?;
+    validate_new_config_name("theme", target)?;
 
     if top.source == Source::User && (target == own || same_file(target, &top.path)) {
         output::plain(format!(

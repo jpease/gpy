@@ -82,7 +82,8 @@ impl Warnings {
             out.push_str(":\n");
             for warning in group {
                 out.push_str("  - ");
-                out.push_str(&warning.message);
+                // A warning can quote a rejected value from the user's file.
+                out.push_str(&crate::error::escape_controls(&warning.message));
                 out.push('\n');
             }
         }
@@ -119,5 +120,17 @@ mod tests {
         assert!(rendered.contains("  - module aws skipped"));
         assert!(rendered.contains("  - module battery skipped"));
         assert_eq!(warnings.len(), 3_usize);
+    }
+
+    #[test]
+    fn a_quoted_control_character_is_rendered_escaped() {
+        let mut warnings = Warnings::new();
+        warnings.push(
+            WarningKind::UnrepresentableOption,
+            "directory: read_only '\u{1b}]0;x\u{7}' is invalid; skipped",
+        );
+        let rendered = warnings.render();
+        assert!(!rendered.contains(['\u{1b}', '\u{7}']), "{rendered:?}");
+        assert!(rendered.contains("\\u{1b}]0;x\\u{7}"), "{rendered:?}");
     }
 }

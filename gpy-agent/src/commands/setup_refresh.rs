@@ -9,7 +9,7 @@ use super::setup::{
     Environment, VERSION_STAMP, find_source_root, installed_integrations_in, is_in_place,
     shell_dir_for,
 };
-use super::setup_install::{InstallMode, install_bundled_plugins, install_files};
+use super::setup_install::{InstallMode, install_bundled_plugins, install_files, install_root};
 use crate::Result;
 use crate::shell::Shell;
 use std::fs;
@@ -41,7 +41,7 @@ pub fn tree_is_stale(shell: Shell) -> bool {
 /// prompt that finds a tree still stale tries again.
 pub fn refresh_stale(completions: impl Fn(Shell) -> Result<Vec<u8>>) {
     let env = Environment::from_process();
-    let (Ok(root), Ok(config_home)) = (env.data_root(), env.config_home()) else {
+    let (Ok(root), Ok(config_home)) = (install_root(&env), env.config_home()) else {
         return;
     };
     let mut plugins_source = None;

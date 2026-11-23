@@ -469,6 +469,37 @@ fn a_bundled_plugins_symlink_is_refused_before_any_file_is_replaced() {
 }
 
 #[test]
+fn a_data_root_equal_to_the_config_root_is_refused_and_user_plugins_survive() {
+    let fx = Fixture::new();
+    let shared = fx.config();
+    let mine = shared.join("gpy/plugins/mine");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(mine.join("plugin.toml"), "id = \"mine\"\n").unwrap();
+    let before = snapshot(&shared);
+
+    let output = fx
+        .cmd()
+        .args(["--shell", "zsh", "--from"])
+        .arg(fx.source())
+        .env("XDG_DATA_HOME", &shared)
+        .env("XDG_CONFIG_HOME", &shared)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(
+        stderr(&output).contains("XDG_DATA_HOME"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(
+        snapshot(&shared),
+        before,
+        "nothing in the config root changes"
+    );
+}
+
+#[test]
 fn a_symlinked_install_dir_to_a_separate_tree_is_updated_in_place() {
     let fx = Fixture::new();
     let elsewhere = TempDir::new().unwrap();

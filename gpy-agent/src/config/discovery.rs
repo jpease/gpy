@@ -53,6 +53,27 @@ pub fn validate_config_name(kind: &str, name: &str) -> crate::Result<()> {
     }
 }
 
+/// [`validate_config_name`] for a name a command is about to create a file
+/// under. It must also be a shell-safe stem: discovery skips any other file
+/// name, so the file would be missing from `list` and completion, and the
+/// loader could not find it by name.
+///
+/// # Errors
+/// Returns an error for an unsafe name or one outside `[A-Za-z0-9._+@-]`
+/// (or starting with `.`).
+pub fn validate_new_config_name(kind: &str, name: &str) -> crate::Result<()> {
+    validate_config_name(kind, name)?;
+    if is_shell_safe_stem(name) {
+        Ok(())
+    } else {
+        Err(crate::Error::config(format!(
+            "invalid {kind} name '{}': use only ASCII letters, digits and . _ + @ -, not \
+             starting with '.'",
+            name.escape_debug()
+        )))
+    }
+}
+
 /// A discovered artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovered {
