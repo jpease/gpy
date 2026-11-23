@@ -89,17 +89,38 @@ fn insert_role(colors: &mut BTreeMap<String, ColorSpec>, role: &str, hex: &Hex) 
 }
 
 /// Lowercase, hyphenate, and strip unsafe characters for a palette file stem.
-/// Unicode letters and digits are kept; every other run of characters becomes one `-`.
+/// Accented Latin letters fold to their ASCII base (`é` → `e`); every other
+/// run of characters outside ASCII letters and digits becomes one `-`, so the
+/// stem is one discovery lists and completion offers.
 fn slugify(name: &str) -> String {
     name.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .map(|c| match fold_latin(c) {
+            Some(folded) => folded,
+            None if c.is_ascii_alphanumeric() => c,
+            None => '-',
+        })
         .collect::<String>()
         .trim_matches('-')
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// The ASCII base letter of a lowercase accented Latin-1 letter.
+const fn fold_latin(c: char) -> Option<char> {
+    Some(match c {
+        'à'..='å' => 'a',
+        'ç' => 'c',
+        'è'..='ë' => 'e',
+        'ì'..='ï' => 'i',
+        'ñ' => 'n',
+        'ò'..='ö' | 'ø' => 'o',
+        'ù'..='ü' => 'u',
+        'ý' | 'ÿ' => 'y',
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -176,9 +197,9 @@ palette:
     }
 
     #[test]
-    fn non_ascii_name_is_kept_when_no_slug() {
+    fn a_non_ascii_name_folds_to_a_listable_stem_when_no_slug() {
         let cfg = crate::import::base16::import_scheme(&rose_scheme("")).unwrap();
-        assert_eq!(cfg.name, "rosé-pine");
+        assert_eq!(cfg.name, "rose-pine");
     }
 
     #[test]

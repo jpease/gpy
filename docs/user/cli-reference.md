@@ -445,8 +445,7 @@ default
 
 Create a new theme as an overlay of an existing theme: a file that holds `extends = "<base>"` and, once you edit it, only the keys you change. Everything else comes from the base, including its later updates.
 
-Destination names must satisfy the safe configuration name invariant: non-empty,
-non-whitespace, containing no path separators (`/`, `\`), `..`, or control characters.
+Destination names may use only ASCII letters, digits and `.` `_` `+` `@` `-`, and may not start with `.`, so the new file shows up in `gpy theme list` and completion. The same rule applies to `gpy theme save <name>`, `gpy theme import --name` and `gpy palette import --name`.
 An invalid destination name is rejected before creating files or directories.
 
 Creates `~/.config/gpy/themes/<name>.toml`. Without `--from`, the base is `default`, resolved like `gpy theme use default`, so a user `default.toml` is picked up if you have one. With `--from <base>`, the base is that theme (a builtin, user, or plugin theme name). The new file is loaded before it is written; if it would not load (an unknown base, an `extends` cycle), nothing is written. The output names the base it resolved to and, when the base is a plugin theme, the plugin the new theme depends on: removing or disabling that plugin leaves the theme unable to load.

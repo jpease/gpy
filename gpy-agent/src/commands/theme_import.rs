@@ -4,7 +4,7 @@
 //! constructs become stderr warnings and the import still exits 0.
 
 use crate::commands::output;
-use crate::config::discovery::{shadowed_provider, validate_config_name};
+use crate::config::discovery::{shadowed_provider, validate_new_config_name};
 use crate::import::starship::{ImportArtifacts, build, parse};
 use crate::palette::manager::PaletteManager;
 use crate::theme::ThemeManager;
@@ -70,7 +70,7 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
     })?;
     let model = parse(&input)?;
     let name = derive_name(source_path, opts.name);
-    validate_config_name("artifact", &name)?;
+    validate_new_config_name("artifact", &name)?;
     let artifacts = build(&model, &name)?;
 
     if opts.output == ImportOutput::Stdout {
