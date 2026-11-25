@@ -9,7 +9,7 @@ use super::rc_block::{BlockChange, BlockState, block_state, ensure_block, has_bl
 use super::setup_bash::wire_bash;
 use super::setup_fish::{leftover_trees, link_fish_prompt, report_leftovers, retire_fish_loader};
 use super::setup_install::{
-    InstallMode, install_bundled_plugins, install_files, install_root, preflight,
+    InstallMode, install_bundled_plugins, install_files, install_root, lock_install, preflight,
 };
 use crate::commands::exit_codes::SETUP_INCOMPLETE;
 use crate::commands::init::{self, InitOptions};
@@ -29,6 +29,9 @@ pub(super) const RC_BLOCK_HEADER: &str = "GPY shell integration";
 pub(super) const VERSION_STAMP: &str = ".gpy-version";
 /// Every shell `gpy setup` can install.
 pub(super) const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
+/// How long `gpy setup` waits for another run (a post-upgrade refresh) to
+/// finish installing into the data root.
+const INSTALL_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -484,6 +487,12 @@ fn install(
             &config_home,
         )?;
     }
+    // Held until the trees and plugins are in place; a concurrent post-upgrade
+    // refresh skips meanwhile, and a second setup waits.
+    fs::create_dir_all(&root.0)
+        .map_err(|err| Error::io_context(format!("creating {}", root.0.display()), &err))?;
+    let _lock = lock_install(&root, INSTALL_LOCK_WAIT)
+        .map_err(|err| Error::io_context("waiting for another gpy setup to finish", &err))?;
     let shell_dir = install_files(
         shell,
         source_root,

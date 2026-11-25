@@ -122,6 +122,7 @@ fn uninstall_restores_rc_files_byte_for_byte() {
         ".local/share/gpy/zsh",
         ".local/share/gpy/bash",
         ".local/share/gpy/plugins",
+        ".local/share/gpy",
     ] {
         assert!(is_absent(&home.join(gone)), "{gone} should be gone");
     }

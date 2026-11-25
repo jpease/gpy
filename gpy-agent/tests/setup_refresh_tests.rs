@@ -114,3 +114,47 @@ fn a_tree_without_a_stamp_is_left_alone() {
         "only trees setup stamped are refreshed"
     );
 }
+
+/// `gpy setup --refresh-stale` in `home`, as `gpy prompt` starts it, with the
+/// checkout as the source.
+fn refresh_stale(home: &Path) -> std::process::Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_gpy"));
+    cmd.args(["setup", "--refresh-stale"])
+        .current_dir(home)
+        .env_clear()
+        .env("HOME", home)
+        .env("GPY_SHARE_DIR", repo_root())
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile);
+    }
+    cmd.output()
+        .expect("failed to spawn gpy setup --refresh-stale")
+}
+
+#[test]
+fn a_refresh_skips_without_waiting_while_another_setup_holds_the_install_lock() {
+    let home = TempDir::new().unwrap();
+    assert_ok(&setup(home.path(), &["--shell", "zsh"]));
+    let root = home.path().join(".local/share/gpy");
+    let zsh_dir = root.join("zsh");
+    fs::write(zsh_dir.join(".gpy-version"), "0.0.1\n").unwrap();
+
+    let held = fs::File::create(root.join(".gpy-setup.lock")).unwrap();
+    held.try_lock().unwrap();
+    let started = Instant::now();
+    assert!(refresh_stale(home.path()).status.success());
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the refresh waited"
+    );
+    assert_eq!(
+        stamp(&zsh_dir),
+        "0.0.1",
+        "refreshed under another run's lock"
+    );
+
+    drop(held);
+    assert!(refresh_stale(home.path()).status.success());
+    assert_eq!(stamp(&zsh_dir), env!("CARGO_PKG_VERSION"));
+}

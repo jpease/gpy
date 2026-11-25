@@ -370,7 +370,10 @@ root itself, so a later bare `gpy setup` works for installer users. When the
 source is the data root (the installers' `~/.local/bin/gpy` finds
 `~/.local/share/gpy` as its `share/gpy`), nothing is copied: setup still writes
 the completions and version stamps and wires the rc file. Nothing in an rc file
-is touched until the files are in place.
+is touched until the files are in place. One install into the data root runs at
+a time, under `<data root>/.gpy-setup.lock`: `gpy setup` waits up to 30 seconds
+for a background refresh to finish, and a background refresh that finds another
+run installing skips (a later prompt tries again).
 
 ## Verifying Your Download
 

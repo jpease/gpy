@@ -129,6 +129,29 @@ pub(super) fn plugins_target(root: &DataRoot) -> PathBuf {
     root.0.join(BUNDLED_PLUGINS_SOURCE)
 }
 
+/// Name of the lock that serializes installs into the data root, without the
+/// `.lock` suffix [`crate::fs_util::lock_beside`] adds.
+const INSTALL_LOCK: &str = ".gpy-setup";
+
+/// The lock file [`lock_install`] leaves in the data root.
+pub(super) fn install_lock_file(root: &DataRoot) -> PathBuf {
+    root.0.join(format!("{INSTALL_LOCK}.lock"))
+}
+
+/// Take the lock that serializes installs into the existing data root
+/// `root`, polling for up to `wait`. Without it, two runs swapping the same
+/// tree could each roll back onto the other's files.
+///
+/// # Errors
+/// Fails when the lock file cannot be opened (`root` is missing), or with
+/// `TimedOut` when another run holds the lock for the whole `wait`.
+pub(super) fn lock_install(
+    root: &DataRoot,
+    wait: std::time::Duration,
+) -> io::Result<crate::fs_util::PathLock> {
+    crate::fs_util::lock_beside(&root.0.join(INSTALL_LOCK), wait)
+}
+
 /// The data root setup installs into, refused when it and the config root
 /// are one directory or one holds the other: the bundled plugins replace
 /// `<data root>/plugins` wholesale, which would then be the user's own
