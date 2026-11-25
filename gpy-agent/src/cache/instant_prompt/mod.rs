@@ -7,7 +7,7 @@
 //! the [`PromptDialect::cache_ext`]. The `git_bg` variant holds the colour the git
 //! pill leaves for the next chevron, in the dialect's shell spelling.
 
-pub(super) mod files;
+pub(crate) mod files;
 mod key;
 mod name;
 mod sweep;

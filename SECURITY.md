@@ -147,7 +147,8 @@ such as `a[$(cmd)]` never executes; `require_files`, `require_folders` and
 `require_extensions` names with glob characters are matched literally.
 
 *State.* The cache and the once-per-command guard live in one file per shell,
-`<runtime root>/refresh-throttle/<pid>.scripts`, inside the user-private
+`<runtime root>/refresh-throttle/<pid>.scripts` (owner-only, `0600`, in an
+owner-only `0700` directory), inside the user-private
 runtime directory (never `/tmp`), removed when the shell exits, and by the
 first prompt of a new shell at the same PID (`exec`, a recycled PID) or of
 any shell once its owner is gone. Entries are

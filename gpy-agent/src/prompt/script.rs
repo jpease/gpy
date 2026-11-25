@@ -559,11 +559,7 @@ fn store_session(path: &Path, session: &Session) {
     let mut name = path.as_os_str().to_owned();
     name.push(".tmp");
     let temporary = PathBuf::from(name);
-    let written = std::fs::write(&temporary, &json).is_ok()
-        || (path
-            .parent()
-            .is_some_and(|dir| std::fs::create_dir_all(dir).is_ok())
-            && std::fs::write(&temporary, &json).is_ok());
+    let written = super::link::write_private(&temporary, &json).is_ok();
     if written && std::fs::rename(&temporary, path).is_err() {
         let _ = std::fs::remove_file(&temporary);
     }

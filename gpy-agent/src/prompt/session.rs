@@ -97,6 +97,8 @@ impl Session {
             .filter(|state| instance.is_empty() || state.instance == instance);
         let first = loaded.is_none();
         if first && let Some(dir) = &throttle {
+            // Owner-only, also when an older `gpy` made it world-readable.
+            let _ = crate::cache::instant_prompt::files::create_private_dir(dir);
             sweep(dir, pid);
         }
         let mut session = Self {
@@ -399,19 +401,22 @@ fn store(path: &Path, state: &State) {
     let Ok(bytes) = serde_json::to_vec(state) else {
         return;
     };
-    if std::fs::write(path, &bytes).is_err() {
-        let _ = path
-            .parent()
-            .map(std::fs::create_dir_all)
-            .and_then(Result::ok)
-            .map(|()| std::fs::write(path, &bytes));
-    }
+    let _ = super::link::write_private(path, &bytes);
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Session, store};
+    use std::os::unix::fs::PermissionsExt as _;
     use std::path::Path;
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
 
     /// Open shell `pid`'s session under `root` as instance `instance` and
     /// store it, as a prompt does; whether it was the shell's first prompt.
@@ -498,5 +503,23 @@ mod tests {
             assert!(!throttle.join(name).exists(), "{name} is swept");
         }
         assert!(live_file.exists(), "a live shell's file is kept");
+    }
+
+    /// The state holds script output and declared environment values: the
+    /// directory is owner-only, a world-readable one an older `gpy` left is
+    /// restricted, and the session file is owner-only (#1287).
+    #[test]
+    fn the_shell_state_is_owner_only() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let throttle = root.path().join("refresh-throttle");
+        std::fs::create_dir_all(&throttle).expect("mkdir refresh-throttle");
+        std::fs::set_permissions(&throttle, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod 755");
+        let pid = std::process::id();
+
+        assert!(prompt(root.path(), pid, "a-shell"));
+
+        assert_eq!(mode(&throttle), 0o700, "the directory");
+        assert_eq!(mode(&throttle.join(format!("{pid}.session"))), 0o600);
     }
 }

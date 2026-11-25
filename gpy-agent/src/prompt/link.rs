@@ -1,11 +1,14 @@
 //! Talking to the agent from `gpy prompt`: bounded data requests,
 //! fire-and-forget refreshes behind the per-shell refresh-throttle stamps,
 //! and the per-shell late window, both in `<runtime root>/refresh-throttle/`.
+//! That directory holds script output and declared environment values, so
+//! it is owner-only (`0700`) and its files are created owner-only (`0600`).
 
 use crate::cache::InstantPromptCache;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::FileTypeExt as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -140,9 +143,7 @@ impl Link {
             now_secs().saturating_add(LATE_SECS),
             socket.to_string_lossy()
         );
-        if std::fs::write(&file, &stamp).is_err() {
-            let _ = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, &stamp));
-        }
+        let _ = write_private(&file, stamp.as_bytes());
     }
 
     /// A bounded request (`__gpy_send_json`): `request` is one JSON object.
@@ -241,9 +242,7 @@ impl Link {
             return true;
         }
         let content = format!("{now} {bucket}");
-        if std::fs::write(&stamp, &content).is_err()
-            && (std::fs::create_dir_all(dir).is_err() || std::fs::write(&stamp, &content).is_err())
-        {
+        if write_private(&stamp, content.as_bytes()).is_err() {
             return self.socket_present();
         }
         let reached = self.fire(request);
@@ -344,6 +343,34 @@ pub(crate) fn clear_late_window(throttle_dir: &Path, pid: u32) {
     let _ = std::fs::remove_file(late_window_file(throttle_dir, pid));
 }
 
+/// Write `bytes` to `file` in the refresh-throttle directory, creating the
+/// file owner-only (`0600`) and, when missing, the directory owner-only
+/// (`0700`).
+///
+/// # Errors
+/// Returns an error if the directory cannot be created or the file written.
+pub(crate) fn write_private(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let write = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(file)?
+            .write_all(bytes)
+    };
+    match write() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let Some(dir) = file.parent() else {
+                return Err(e);
+            };
+            crate::cache::instant_prompt::files::create_private_dir(dir)?;
+            write()
+        }
+        result => result,
+    }
+}
+
 /// `__gpy_refresh_stamp_name`: `<pid>.<bucket>`, or `<pid>.#<fnv1a32>` past
 /// 200 bytes.
 fn stamp_name(pid: u32, bucket: &str) -> String {
@@ -372,9 +399,34 @@ fn now_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Connect, Link, Reply, connect_now, stamp_name};
+    use super::{Connect, Link, Reply, connect_now, late_window_file, stamp_name};
     use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::time::{Duration, Instant};
+
+    /// The first file a shell writes creates the refresh-throttle directory
+    /// owner-only, and the file is owner-only too (#1287).
+    #[test]
+    fn a_new_throttle_directory_and_its_files_are_owner_only() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("refresh-throttle");
+        let link = Link {
+            enabled: true,
+            socket: Some(root.path().join("agent.sock")),
+            throttle_dir: Some(dir.clone()),
+            pid: 42,
+        };
+        link.open_late_window(&root.path().join("agent.sock"));
+        let mode = |path: &std::path::Path| {
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(&dir), 0o700, "the directory");
+        assert_eq!(mode(&late_window_file(&dir, 42)), 0o600, "the stamp");
+    }
 
     /// Long buckets hash as the shell's FNV-1a loop does, so both render
     /// paths read and write the same stamps. The expected name is what

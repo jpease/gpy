@@ -64,7 +64,9 @@ it as a liveness and hygiene check, not as an authentication mechanism.
 **The shells write no memo files.** The wrappers keep a command counter and
 the last duration in shell variables; `gpy prompt` keeps its per-shell state
 in `<runtime root>/refresh-throttle/<pid>.*`, under the user-private runtime
-directory, never `/tmp` or `$TMPDIR`. Script-segment state is in the same
+directory, never `/tmp` or `$TMPDIR`; the directory is owner-only (`0700`,
+restricted again by a shell's first prompt) and its files are created
+owner-only (`0600`). Script-segment state is in the same
 place (see
 [Script Segment Trust Model](../../SECURITY.md#script-segment-trust-model)).
 
