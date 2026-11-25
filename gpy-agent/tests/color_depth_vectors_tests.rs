@@ -1,11 +1,14 @@
-//! The 24-bit colour downgrade must match the shared vectors that the Bash,
-//! Zsh and Fish renderers also read (`tests/fixtures/color_depth_vectors.tsv`).
+//! The colour-depth downgrade must match the shared vectors
+//! (`tests/fixtures/color_depth_vectors.tsv`): a 24-bit colour as the encoder
+//! writes it, fitted to each depth by `downgrade_sgr`, the one implementation
+//! `gpy prompt`, `gpy-agent oneshot` and the wizard's preview share.
 
-use gpy_agent::formatter::{ColorDepth, PromptDialect};
+use gpy_agent::formatter::{ColorDepth, PromptDialect, downgrade_sgr};
 use gpy_agent::template::{Color, Span, SpanKind, Style};
 use std::path::Path;
 
-fn encode(rgb: [u8; 3], background: bool, depth: ColorDepth) -> String {
+/// `x` in the 24-bit colour `rgb`, as the encoder writes it, fitted to `depth`.
+fn fitted(rgb: [u8; 3], background: bool, depth: ColorDepth) -> String {
     let [red, green, blue] = rgb;
     let color = Some(Color::Rgb {
         r: red,
@@ -30,12 +33,14 @@ fn encode(rgb: [u8; 3], background: bool, depth: ColorDepth) -> String {
         style,
         kind: SpanKind::Text,
     };
-    PromptDialect::Ansi.encode_depth(&[span], depth)
+    downgrade_sgr(&PromptDialect::Ansi.encode(&[span]), depth).into_owned()
 }
 
+/// What `x` looks like with SGR parameter `param`; with none, only the reset
+/// that ends the span is left.
 fn expected(param: &str) -> String {
     if param.is_empty() {
-        "x".to_owned()
+        "x\x1b[0m".to_owned()
     } else {
         format!("\x1b[{param}mx\x1b[0m")
     }
@@ -69,8 +74,8 @@ fn rgb_downgrade_matches_shared_vectors() {
             "none" => ColorDepth::Mono,
             other => panic!("unknown depth {other}"),
         };
-        assert_eq!(encode(rgb, false, depth), expected(fg_param), "fg {line}");
-        assert_eq!(encode(rgb, true, depth), expected(bg_param), "bg {line}");
+        assert_eq!(fitted(rgb, false, depth), expected(fg_param), "fg {line}");
+        assert_eq!(fitted(rgb, true, depth), expected(bg_param), "bg {line}");
         rows += 1;
     }
     assert!(rows > 0, "no vectors read");

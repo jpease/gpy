@@ -9,9 +9,7 @@ use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::status_resolver::StatusResolver;
-use crate::formatter::{
-    ColorDepth, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
-};
+use crate::formatter::{Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition};
 use crate::ipc::{LanguageInfo, Response};
 use crate::template::VariableResolver;
 
@@ -134,7 +132,7 @@ fn render_with_prev_bg(
         .with_prev_colors(ctx.prev_fg.clone(), prev_bg)
         .with_palette(ctx.palette.clone());
     let spans = render(format, &template_ctx)?;
-    Ok(dialect.encode_depth(&spans, ColorDepth::detect()))
+    Ok(dialect.encode(&spans))
 }
 
 /// Downgrade a template error to an empty segment (never break the live prompt),

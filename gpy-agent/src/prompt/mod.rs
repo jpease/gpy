@@ -25,15 +25,17 @@ use crate::env_config::{
 };
 use crate::formatter::{
     ColorDepth, DirectoryEnv, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
+    downgrade_sgr,
 };
 use crate::ipc::Response;
 use crate::template::{Palette, parse_color};
 use crate::theme::export::{ScriptSegmentExports, collect_script_segments};
 use crate::theme::{ThemeConfig, load::load_theme};
 use link::{Link, Reply};
-use pill::{Depth, Paint, Place};
+use pill::Place;
 use script::{Inputs, ScriptArgs, Scripts};
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use vars::ShellVars;
 
@@ -76,6 +78,26 @@ pub struct Rendered {
     /// Zsh: the prompt symbol alone, without the status icon (the
     /// transient prompt). Fish: the whole transient line. Empty for Bash.
     pub tail: String,
+}
+
+impl Rendered {
+    /// The prompt with its colours fitted to the terminal's `depth`: the
+    /// pills, the instant cache and the agent's replies are all 24-bit, so
+    /// an agent another terminal started draws right here too (#1265).
+    /// Moved through, unscanned, at 24-bit.
+    fn fit(self, depth: ColorDepth) -> Self {
+        let fit = |text: String| {
+            if let Cow::Owned(fitted) = downgrade_sgr(&text, depth) {
+                fitted
+            } else {
+                text
+            }
+        };
+        Self {
+            prompt: fit(self.prompt),
+            tail: fit(self.tail),
+        }
+    }
 }
 
 /// The shell is exiting: unregister it from the agent and remove the files
@@ -137,10 +159,6 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
     let git_root = canonical.as_deref().and_then(find_git_root);
     let mut render = Render {
         dialect,
-        paint: Paint {
-            depth: Depth::from(ColorDepth::detect()),
-            dialect,
-        },
         link: Link::new(enabled, args.pid),
         config: &config,
         theme: &theme,
@@ -154,7 +172,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
         oneshot_used: false,
         is_root: nix::unistd::geteuid().is_root(),
     };
-    let rendered = render.prompt();
+    let rendered = render.prompt().fit(ColorDepth::detect());
     // After the render, so a cold start never delays this prompt.
     session.finish(
         &render.link,
@@ -209,7 +227,6 @@ fn find_git_root(canonical: &Path) -> Option<PathBuf> {
 /// One render's inputs and the oneshot budget.
 struct Render<'a> {
     dialect: Dialect,
-    paint: Paint,
     link: Link,
     config: &'a Config,
     theme: &'a ThemeConfig,
@@ -292,7 +309,13 @@ impl Render<'_> {
             )
         };
         let prompt_tail = |show_status: bool| {
-            pill::prompt_tail(&self.vars, self.paint, self.args.status, root, show_status)
+            pill::prompt_tail(
+                &self.vars,
+                self.dialect,
+                self.args.status,
+                root,
+                show_status,
+            )
         };
         let (symbol, symbol_alone) = if character.is_empty() {
             (prompt_tail(SHOW_STATUS.flag()), prompt_tail(false))
@@ -326,7 +349,7 @@ impl Render<'_> {
         }
         if has_clock {
             line.push_str(&pill::fg_text(
-                self.paint,
+                self.dialect,
                 self.vars.or("__color_clock_fg", ""),
                 &format!(
                     "{}{}",
@@ -421,7 +444,7 @@ impl Render<'_> {
             "git" => self.git(place, prev_bg),
             "language" => Drawn::plain(self.language(place, prev_bg)),
             _ => Drawn::plain(self.scripts.as_ref().map_or_else(String::new, |scripts| {
-                scripts.pill(&self.vars, self.paint, segment, place)
+                scripts.pill(&self.vars, self.dialect, segment, place)
             })),
         }
     }
@@ -449,12 +472,12 @@ impl Render<'_> {
         }
         let content = format!(
             "{}{}",
-            self.paint.escape(self.vars.or("__prompt_time_pad", " ")),
+            self.dialect.escape(self.vars.or("__prompt_time_pad", " ")),
             self.dialect.clock_token(&spec)
         );
         pill::section_standalone(
             &self.vars,
-            self.paint,
+            self.dialect,
             self.vars.or_nonempty("__color_clock_bg", ""),
             self.vars.or_nonempty("__color_clock_fg", ""),
             &content,
@@ -483,9 +506,9 @@ impl Render<'_> {
             )
         };
         let icon = self
-            .paint
+            .dialect
             .escape(&format!(" {}", pill::status_icon(&self.vars, success)));
-        pill::section_standalone(&self.vars, self.paint, bg, fg, &icon, place)
+        pill::section_standalone(&self.vars, self.dialect, bg, fg, &icon, place)
     }
 
     /// `__gpy_segment_git`: serve the instant cache, ask the agent on a cold

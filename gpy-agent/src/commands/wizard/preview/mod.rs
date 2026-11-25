@@ -11,13 +11,13 @@ use crate::formatter::IsLast;
 use crate::formatter::RenderContext;
 use crate::formatter::SegmentPosition;
 use crate::formatter::character_resolver::CharacterResolver;
+use crate::formatter::color_depth::{index_to_ansi16, rgb_to_ansi16, rgb_to_ansi256};
 use crate::formatter::directory_resolver::DirectoryResolver;
 use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::separator::Glyphs;
 use crate::formatter::status_resolver::{StatusResolver, status_symbol};
-use crate::formatter::style_encoder::{index_to_ansi16, rgb_to_ansi16, rgb_to_ansi256};
 use crate::plugin::BuiltinSegment;
 use crate::template::{
     Attr, Color as TemplateColor, EvalContext, Span as TemplateSpan, SpanKind,
@@ -71,8 +71,9 @@ fn named_to_ratatui(name: &str) -> Option<RatatuiColor> {
     }
 }
 
-/// `color` as a terminal of `depth` shows it, the way the prompt's encoder
-/// approximates it; `None` when it shows no colour at all.
+/// `color` as a terminal of `depth` shows it, the way the prompt's
+/// [`crate::formatter::downgrade_sgr`] approximates it; `None` when it shows
+/// no colour at all.
 pub(super) fn fit_color(color: RatatuiColor, depth: ColorDepth) -> Option<RatatuiColor> {
     match (depth, color) {
         (ColorDepth::Mono, _) => None,

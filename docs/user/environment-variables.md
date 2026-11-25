@@ -123,11 +123,11 @@ Anything else is ignored with one warning and falls through to detection. A reco
 |---|---|---|
 | `GPY_COLOR_DEPTH` | detect | `truecolor` (or `24bit`), `256`, `16` or `none`, case-insensitive; anything else is ignored. See [below](#gpy_color_depth). |
 | `NO_COLOR` | unset | A non-empty value makes `gpy` command output (and `gpy doctor`) use ASCII status markers instead of emoji. Prompt colours are not affected. |
-| `TERM` | from the terminal | `dumb` turns off emoji in `gpy` command output. `TERM=linux` makes the prompt formatter use 256 colours. |
+| `TERM` | from the terminal | `dumb` turns off emoji in `gpy` command output. `TERM=linux` makes the prompt use 256 colours. |
 
 ### GPY_COLOR_DEPTH
 
-The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. `gpy prompt` reads it on every prompt for what it draws itself (clock, status and character fallbacks, script segments), with the same automatic 256-colour downgrade.
+The prompt is drawn in 24-bit colour. Without this variable `gpy prompt` drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. `gpy prompt` reads it on every prompt and fits the whole prompt to it, the git and language segments the agent renders included: the agent always renders 24-bit colour, so each terminal gets its own depth whichever terminal started the agent, and a change applies at the next prompt without restarting the agent. `gpy-agent oneshot` reads it too.
 
 ---
 

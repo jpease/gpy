@@ -4,6 +4,7 @@ pub(crate) mod character_resolver;
 pub(crate) mod chrome;
 pub(crate) mod clock_resolver;
 pub(crate) mod cluster;
+pub(crate) mod color_depth;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
 pub(crate) mod git_resolver;
@@ -14,12 +15,11 @@ pub(crate) mod separator;
 pub(crate) mod status_resolver;
 pub(crate) mod style_encoder;
 
+pub use color_depth::{ColorDepth, downgrade_sgr};
 pub use directory_resolver::DirectoryEnv;
 pub use json::JsonFormatter;
 pub use prompt::PromptFormatter;
-pub use style_encoder::{
-    ColorDepth, PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt,
-};
+pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
 
 use crate::Result;
 use crate::config::Config;

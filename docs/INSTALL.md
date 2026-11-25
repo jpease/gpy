@@ -38,7 +38,8 @@ console do not support it, so GPY falls back to 256 colours
 there (`TERM_PROGRAM=Apple_Terminal` or `TERM=linux`). Set `GPY_COLOR_DEPTH` to
 `truecolor`, `256`, `16` or `none` to override the choice; see
 [Environment Variables](user/environment-variables.md#output-and-terminal).
-It applies to the agent's formatter and to the pills the shells draw themselves.
+Each terminal gets its own choice for the whole prompt, whichever terminal
+started the agent.
 
 ### Shells
 

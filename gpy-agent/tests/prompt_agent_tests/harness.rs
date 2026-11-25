@@ -40,13 +40,23 @@ impl Shell {
     /// agent mode on and the supervisor off. Its session already exists, so
     /// no `gpy prompt` run starts a real agent behind the test's back.
     pub fn new(segments: &str) -> Self {
+        Self::with_theme(segments, "default", None)
+    }
+
+    /// [`Self::new`] with theme `theme`, written to the user's themes
+    /// directory from `theme_toml` when given.
+    pub fn with_theme(segments: &str, theme: &str, theme_toml: Option<&str>) -> Self {
         let sandbox = AgentSandbox::new();
+        if let Some(text) = theme_toml {
+            std::fs::write(sandbox.env.themes_dir().join(format!("{theme}.toml")), text)
+                .expect("write theme");
+        }
         sandbox
             .env
             .write_config(&format!(
                 "[agent]\nenabled = true\n\n[agent.supervisor]\nenabled = false\n\n\
                  [language]\nshow_versions = false\n\n\
-                 [ui]\ntheme = \"default\"\nenabled_segments = [{segments}]\n"
+                 [ui]\ntheme = \"{theme}\"\nenabled_segments = [{segments}]\n"
             ))
             .expect("write config");
         let shell = Self {

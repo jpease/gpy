@@ -10,6 +10,7 @@ use gpy_agent::{
     Result, VERSION,
     agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request},
     commands::{agent_report, exit_codes},
+    formatter::{ColorDepth, downgrade_sgr},
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -222,15 +223,17 @@ impl From<OneshotCommands> for OneshotRequest {
     }
 }
 
-/// Render the requested segment and print it.
+/// Render the requested segment and print it, fitted to the terminal's
+/// colour depth.
 ///
 /// # Errors
 /// Returns the render error, which `main` prints as one `Error:` line.
 fn handle_oneshot_command(command: OneshotCommands) -> Result<()> {
     gpy_agent::git::native::NativeGitBackend::disable_untracked_cache_setup();
     let request = OneshotRequest::from(command);
+    let rendered = handle_oneshot_request(&request)?;
 
-    println!("{}", handle_oneshot_request(&request)?);
+    println!("{}", downgrade_sgr(&rendered, ColorDepth::detect()));
     Ok(())
 }
 

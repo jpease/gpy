@@ -119,7 +119,7 @@ Bash differs in two ways: duration-segment precision varies by Bash version (dis
 
 ## Colors Look Wrong or Garbled
 
-GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so GPY already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`, then run `gpy-agent stop` and open a new prompt (the agent reads it once per process; `gpy prompt` reads it on every prompt). See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
+GPY draws 24-bit (truecolor) colors. Apple Terminal and the Linux console (`TERM=linux`) lack truecolor, so GPY already uses 256 colors there. On any other terminal without truecolor support, set `GPY_COLOR_DEPTH` to `256`, `16` or `none`; the next prompt uses it, the agent's segments included. See [`GPY_COLOR_DEPTH`](environment-variables.md#gpy_color_depth).
 
 ## No Usable Home Directory
 
