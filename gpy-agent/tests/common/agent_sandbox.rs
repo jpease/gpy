@@ -23,7 +23,9 @@ pub const NOT_RUNNING_LINE: &str = "state: not-running";
 
 /// A `CliTestEnv` plus a socket under `gpy_test_root()`, with a drop guard
 /// that stops the daemon through its own socket (there is no child handle to
-/// kill). A leaked daemon is still reaped by `scripts/cleanup-test-agents.sh`.
+/// kill). A leaked daemon carries no `--socket` argument; its socket path is in
+/// `GPY_AGENT_SOCKET_PATH`, which `scripts/cleanup-test-agents.sh` matches in its
+/// environment to reap it.
 pub struct AgentSandbox {
     pub env: CliTestEnv,
     _socket_dir: TempDir,
