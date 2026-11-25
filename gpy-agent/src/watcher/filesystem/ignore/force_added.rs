@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// How long a failed `git ls-files` is served (as the previous set, or empty)
-/// before it is retried.
+/// How long the result of a failed `git ls-files` (the previous set, or empty)
+/// is served before it is retried; an index change retries it sooner.
 const FORCE_ADDED_RETRY: Duration = Duration::from_secs(30);
 
 /// A cached force-added set and the index fingerprint it came from.
@@ -50,6 +50,12 @@ impl CachedForceAdded {
             || self
                 .failed_at
                 .is_some_and(|failed| failed.elapsed() >= FORCE_ADDED_RETRY)
+    }
+
+    /// Whether a `git ls-files` run is in flight.
+    #[cfg(test)]
+    pub(in crate::watcher::filesystem) const fn refreshing(&self) -> bool {
+        self.refreshing
     }
 }
 
@@ -135,9 +141,10 @@ fn refresh_force_added(repo_root: &Path, ignore: &IgnoreCaches) -> Arc<HashSet<P
     let cached = cache
         .entry(repo_root.to_path_buf())
         .or_insert_with(CachedForceAdded::placeholder);
+    // A failure answers for this index too, or every lookup would rerun it.
+    cached.index_signature = index_signature;
     if let Some(files) = listed {
         cached.files = Arc::new(files.into_iter().collect());
-        cached.index_signature = index_signature;
         cached.failed_at = None;
     } else {
         crate::debug_log!(
