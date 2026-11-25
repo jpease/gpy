@@ -147,8 +147,11 @@ check_version "$CLI_BIN" gpy
 
 echo "--- a repository to render ---"
 REPO="$SANDBOX/repo"
+# A branch name no stock prompt or temp path contains: seeing it in a prompt
+# proves the GPY git segment rendered.
+SMOKE_BRANCH="gpy-smoke-branch"
 mkdir -p "$REPO"
-git -C "$REPO" init -q -b main
+git -C "$REPO" init -q -b "$SMOKE_BRANCH"
 git -C "$REPO" config user.email smoke@example.com
 git -C "$REPO" config user.name Smoke
 git -C "$REPO" config commit.gpgsign false
@@ -158,7 +161,7 @@ git -C "$REPO" commit -qm init
 
 echo "--- oneshot render without the daemon ---"
 oneshot="$(GPY_AGENT_SOCKET_PATH="$SANDBOX/no-such.sock" "$AGENT_BIN" oneshot git --cwd "$REPO" --format ansi 2>&1 || true)"
-if [[ -n "$oneshot" && "$oneshot" == *main* ]]; then
+if [[ -n "$oneshot" && "$oneshot" == *"$SMOKE_BRANCH"* ]]; then
     pass "gpy-agent oneshot git renders the branch"
 else
     fail "gpy-agent oneshot git printed '${oneshot:-<nothing>}'"
@@ -185,9 +188,11 @@ sys.stdout.write(t)
 '
 }
 
-# `assert_prompt SHELL TEXT` -- the rendered prompt names the repo and has no error text.
+# `assert_prompt SHELL TEXT [MARKER]` -- the rendered prompt names the repo and
+# has no error text; with MARKER it must also contain it, which a stock prompt
+# (Fish's default shows the working directory) cannot satisfy.
 assert_prompt() {
-    local shell="$1" text="$2" plain
+    local shell="$1" text="$2" marker="${3:-}" plain
     plain="$(printf '%s' "$text" | strip_escapes)"
     if [[ -z "$plain" ]]; then
         fail "$shell rendered an empty prompt"
@@ -197,7 +202,11 @@ assert_prompt() {
         *"gpy[init]"* | *"command not found"* | *"No such file"* | *"error"* | *"Error"*)
             fail "$shell prompt carries error text: $plain" ;;
         *repo*)
-            pass "$shell renders a prompt naming the repository" ;;
+            if [[ -n "$marker" && "$plain" != *"$marker"* ]]; then
+                fail "$shell prompt lacks the GPY marker '$marker' (stock prompt?): $plain"
+            else
+                pass "$shell renders a prompt naming the repository"
+            fi ;;
         *)
             fail "$shell prompt does not name the repository: $plain" ;;
     esac
@@ -208,7 +217,7 @@ case ",$SHELLS," in *,fish,*)
     echo "--- fish: one prompt through config.fish's gpy-init block ---"
     if command -v fish >/dev/null 2>&1; then
         fish_out="$(fish -i -c 'fish_prompt' </dev/null 2>&1 || true)"
-        assert_prompt fish "$fish_out"
+        assert_prompt fish "$fish_out" "$SMOKE_BRANCH"
     else
         fail "fish is not installed on this runner"
     fi
