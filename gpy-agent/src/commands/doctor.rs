@@ -9,6 +9,7 @@ use super::utils::agent_binary;
 use crate::agent::lifecycle::{AgentClient, StatusProbe};
 use crate::commands::output::{self, Status};
 use crate::commands::validation::FailureKind;
+use crate::config::loader::SwitchSource;
 use crate::error::escape_controls;
 use crate::plugin::discover_plugins;
 use crate::{Error, Result, config};
@@ -39,7 +40,7 @@ pub fn run() -> Result<()> {
     let mut all_ok = true;
 
     let loaded_config = config::loader::load_config();
-    all_ok &= check_agent_status(loaded_config.as_ref().ok());
+    all_ok &= check_agent_status();
     output::blank();
 
     let discovery = discover_plugins();
@@ -74,12 +75,19 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn check_agent_status(cfg: Option<&config::Config>) -> bool {
+fn check_agent_status() -> bool {
     output::section("Agent");
     output::step("Checking process");
-    if cfg.is_some_and(|loaded| !loaded.agent.enabled) {
-        output::plain("Disabled via config (agent.enabled = false)");
-        return true;
+    match config::loader::agent_enabled() {
+        (true, _) => {}
+        (false, SwitchSource::Config) => {
+            output::plain("Disabled via config (agent.enabled = false)");
+            return true;
+        }
+        (false, SwitchSource::Env) => {
+            output::plain("Disabled via GPY_AGENT_ENABLED");
+            return true;
+        }
     }
     match crate::paths::SocketPath::resolve(None) {
         Ok(socket) => match AgentClient::new(&socket) {

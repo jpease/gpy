@@ -2,6 +2,7 @@
 //! (and the Windows build of the CLI) can match on them without the Unix
 //! client.
 
+use crate::config::loader::SwitchSource;
 use crate::ipc::AgentStatus;
 use crate::ipc::protocol::PROTOCOL_VERSION;
 
@@ -69,7 +70,7 @@ pub enum StartOutcome {
     /// The socket's owner could not be verified; it was left alone and
     /// nothing was started.
     Unverifiable,
-    /// `agent.enabled = false`: nothing was started.
+    /// `GPY_AGENT_ENABLED` or `agent.enabled` is off: nothing was started.
     Disabled,
 }
 
@@ -90,8 +91,8 @@ pub enum SocketCheck {
 /// A progress or advisory message during `start`, for the caller to render.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartNotice {
-    /// `agent.enabled = false`.
-    Disabled,
+    /// `GPY_AGENT_ENABLED` or `agent.enabled` (the source) is off.
+    Disabled(SwitchSource),
     /// The socket's owner could not be verified and was left alone.
     Unverifiable,
     /// An agent accepts connections but never answers; it is being evicted.

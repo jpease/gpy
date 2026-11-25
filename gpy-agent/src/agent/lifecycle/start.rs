@@ -308,8 +308,9 @@ pub fn start_background_agent(
     socket: &SocketPath,
     mut on_notice: impl FnMut(StartNotice),
 ) -> Result<StartOutcome> {
-    if !crate::config::loader::agent_enabled() {
-        on_notice(StartNotice::Disabled);
+    let (enabled, source) = crate::config::loader::agent_enabled();
+    if !enabled {
+        on_notice(StartNotice::Disabled(source));
         return Ok(StartOutcome::Disabled);
     }
 

@@ -181,8 +181,9 @@ prints `Agent at <socket> is too busy to answer; leaving it running.` on
 stderr and exits `0`. `agent.enabled = false` is honored even when other keys
 in `config.toml` are invalid, and `GPY_AGENT_ENABLED` overrides it either way,
 as it does for the prompt. A disabled agent is not started: `start` prints
-`Agent disabled in config (agent.enabled = false); not started.` on stderr,
-binds no socket, and exits `6`. If the new daemon exits or does not answer
+`Agent disabled in config (agent.enabled = false); not started.` (or, when
+the variable turned it off, `Agent disabled by GPY_AGENT_ENABLED; not
+started.`) on stderr, binds no socket, and exits `6`. If the new daemon exits or does not answer
 within 5 seconds, `gpy start`
 (and `gpy-agent start`) exits `1` with an `Error:` line; when the daemon fails
 before binding its socket, the line carries the daemon's own error, such as a
@@ -1201,9 +1202,11 @@ answer`) and for a stale socket file nothing listens on. An agent that holds
 its socket but never answers is a failure (`✗ Not answering on <socket>`,
 remediation `gpy restart`), as is a socket path that cannot be resolved.
 
-With `agent.enabled = false` the agent check reads
-`Disabled via config (agent.enabled = false)` (the agent is not probed) and
-the IPC client check is skipped.
+With the agent turned off the agent check reads
+`Disabled via config (agent.enabled = false)`, or `Disabled via
+GPY_AGENT_ENABLED` when the variable turned it off (the agent is not probed),
+and the IPC client check is skipped. `GPY_AGENT_ENABLED` decides both ways, as
+it does for `gpy-agent start`.
 
 Only a failed check fails the run. Warnings (outdated shell scripts, unknown
 config keys, an inactive broken theme override, script trial and plugin

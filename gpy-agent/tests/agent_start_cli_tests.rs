@@ -86,6 +86,12 @@ fn agent_enabled_env_overrides_the_config_both_ways() {
         !enabled.socket_path.exists(),
         "GPY_AGENT_ENABLED=off must keep the daemon from binding a socket"
     );
+    assert!(
+        forced_off
+            .stderr
+            .contains("Agent disabled by GPY_AGENT_ENABLED; not started."),
+        "the notice names the variable, not the config: {forced_off:?}"
+    );
 }
 
 /// `GPY_AGENT_ENABLED` follows the one `GPY_*` flag rule, which ignores

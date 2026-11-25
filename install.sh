@@ -280,7 +280,7 @@ if [ "$WINDOWS" != 1 ]; then
     "$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1 || rc=$?
     case $rc in
         0) ok "GPY agent started" ;;
-        6) info "agent disabled in config (agent.enabled = false); not started" ;;
+        6) info "agent disabled (GPY_AGENT_ENABLED or agent.enabled = false); not started" ;;
         *) warn "could not start the agent automatically (it will start on the next shell session)" ;;
     esac
 fi
