@@ -3,11 +3,11 @@
 
 use super::state::WizardState;
 use super::theme_file::{ThemeWrite, save_theme};
-use crate::Result;
 use crate::commands::palette;
 use crate::commands::utils::{active_config_path, load_active_config};
 use crate::config::Config;
 use crate::config::loader::save_config;
+use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
 /// Reload the config at `path`, apply the changes `state` made since startup,
@@ -39,19 +39,41 @@ fn prepare(state: &WizardState, path: &Path) -> Result<(Config, Config)> {
 
 /// Validate, then persist `state`'s theme edits and selection: the config at
 /// `path` is checked before anything is written, so a failing selection never
-/// leaves a modified theme file behind.
+/// leaves a modified theme file behind. Should the config write still fail
+/// (a lock, a read-only directory, a concurrent edit), the theme file is put
+/// back, so a save either lands whole or not at all.
 ///
 /// # Errors
 ///
 /// Returns an error if loading, validation, or a write fails.
 pub fn save_to(state: &WizardState, path: &Path) -> Result<Option<ThemeWrite>> {
     let (original, config) = prepare(state, path)?;
-    // Theme field edits go to a user file of the theme, never the builtin.
-    let theme = match state.theme_edits() {
-        Some(edits) => save_theme(state.selected_theme(), edits)?,
-        None => None,
-    };
-    save_config(path, &original, &config, &[])?;
+    write_theme_then_config(
+        || {
+            // Theme field edits go to a user file of the theme, never the builtin.
+            state
+                .theme_edits()
+                .map_or(Ok(None), |edits| save_theme(state.selected_theme(), edits))
+        },
+        || save_config(path, &original, &config, &[]),
+    )
+}
+
+/// Run `write_theme`, then `write_config`; if the config write fails, undo the
+/// theme write and report the config error.
+fn write_theme_then_config(
+    write_theme: impl FnOnce() -> Result<Option<ThemeWrite>>,
+    write_config: impl FnOnce() -> Result<()>,
+) -> Result<Option<ThemeWrite>> {
+    let theme = write_theme()?;
+    if let Err(error) = write_config() {
+        return Err(match theme.as_ref().map(ThemeWrite::undo) {
+            Some(Err(undo)) => Error::config(format!(
+                "{error}; the theme edits were written but could not be undone: {undo}"
+            )),
+            _ => error,
+        });
+    }
     Ok(theme)
 }
 
@@ -243,5 +265,75 @@ mod tests {
 
         assert_eq!(reloaded.language.display, LanguageDisplay::Text);
         assert!(!reloaded.language.show_versions);
+    }
+
+    fn theme_write(path: PathBuf, previous: Option<&str>) -> ThemeWrite {
+        ThemeWrite {
+            path,
+            notes: Vec::new(),
+            previous: previous.map(str::to_owned),
+        }
+    }
+
+    /// The theme write lands before the config write, so a failing config
+    /// write must take the changed theme file back with it.
+    #[test]
+    fn a_failed_config_write_restores_the_edited_theme_file() {
+        let (dir, _) = write_starting_config("");
+        let theme = dir.path().join("mine.toml");
+        fs::write(&theme, "extends = \"default\"\n").expect("write theme");
+
+        let result = write_theme_then_config(
+            || {
+                fs::write(&theme, "extends = \"default\"\n# edited\n").expect("edit theme");
+                Ok(Some(theme_write(
+                    theme.clone(),
+                    Some("extends = \"default\"\n"),
+                )))
+            },
+            || Err(Error::config("config write failed")),
+        );
+
+        let error = result.expect_err("config failure surfaces").to_string();
+        assert!(error.contains("config write failed"), "{error}");
+        assert_eq!(
+            fs::read_to_string(&theme).expect("read theme"),
+            "extends = \"default\"\n"
+        );
+    }
+
+    #[test]
+    fn a_failed_config_write_removes_a_theme_file_the_save_created() {
+        let (dir, _) = write_starting_config("");
+        let theme = dir.path().join("new.toml");
+
+        let result = write_theme_then_config(
+            || {
+                fs::write(&theme, "extends = \"default\"\n").expect("create theme");
+                Ok(Some(theme_write(theme.clone(), None)))
+            },
+            || Err(Error::config("config write failed")),
+        );
+
+        assert!(result.is_err());
+        assert!(!theme.exists(), "the created file is removed");
+    }
+
+    #[test]
+    fn a_successful_save_keeps_the_theme_file() {
+        let (dir, _) = write_starting_config("");
+        let theme = dir.path().join("new.toml");
+
+        let written = write_theme_then_config(
+            || {
+                fs::write(&theme, "extends = \"default\"\n").expect("create theme");
+                Ok(Some(theme_write(theme.clone(), None)))
+            },
+            || Ok(()),
+        )
+        .expect("both writes succeed");
+
+        assert!(written.is_some());
+        assert!(theme.exists());
     }
 }

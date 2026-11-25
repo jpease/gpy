@@ -108,6 +108,29 @@ pub struct ThemeWrite {
     /// Lines to print after the save: the `rebase` hint for a full copy, the
     /// plugins an overlay depends on.
     pub notes: Vec<String>,
+    /// The file's text before the write; `None` when the write created it.
+    pub(super) previous: Option<String>,
+}
+
+impl ThemeWrite {
+    /// Put the file back as it was before the write: restore its text, or
+    /// delete it if the write created it.
+    ///
+    /// # Errors
+    /// Returns an error if the file can't be restored or removed.
+    pub fn undo(&self) -> Result<()> {
+        let label = self.path.display();
+        self.previous.as_ref().map_or_else(
+            || {
+                std::fs::remove_file(&self.path)
+                    .map_err(|e| Error::io_context(format_args!("remove {label}"), &e))
+            },
+            |text| {
+                crate::fs_util::write_atomically(&self.path, text.as_bytes())
+                    .map_err(|e| Error::io_context(format_args!("restore {label}"), &e))
+            },
+        )
+    }
 }
 
 /// Write `edits` to the theme `name`'s user file. `None` when no key's
@@ -124,6 +147,7 @@ pub fn save_theme(name: &str, edits: &ThemeEdits) -> Result<Option<ThemeWrite>> 
     validate_config_name("theme", name)?;
 
     let mut notes = Vec::new();
+    let mut previous = None;
     let text = if user_copy::user_copy_path(name)?.exists() {
         let link = overlay::own_user_link(name)?;
         let label = link.path.display().to_string();
@@ -144,6 +168,7 @@ pub fn save_theme(name: &str, edits: &ThemeEdits) -> Result<Option<ThemeWrite>> 
                 link.name
             ));
         }
+        previous = Some(source);
         doc.to_string()
     } else {
         new_overlay(name, &changed, &edits.edited)?
@@ -155,6 +180,7 @@ pub fn save_theme(name: &str, edits: &ThemeEdits) -> Result<Option<ThemeWrite>> 
     Ok(Some(ThemeWrite {
         path: loaded.chain.top().path.clone(),
         notes,
+        previous,
     }))
 }
 
