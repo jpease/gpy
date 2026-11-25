@@ -2,12 +2,13 @@
 //! (#1247): the agent's `.reload` and `.reregister` flags, starting the agent
 //! with the shell's first prompt, registering, telling the agent the working
 //! directory after a `cd`, restarting an agent that died (the supervisor),
-//! the Bash that runs script segments, and unregistering at exit. Its state
-//! lives in `<runtime root>/refresh-throttle/<pid>.session`; `gpy prompt
-//! <shell> --exit` removes it with every other `<pid>.*` file. A shell that
-//! never ran its exit hook (killed, or replaced by `exec`) leaves them
-//! behind: the shell's instance token tells its successor at the same PID
-//! apart, and every shell's first prompt sweeps them.
+//! the Bash that runs script segments, the warnings this shell has seen, and
+//! unregistering at exit. Its state lives in
+//! `<runtime root>/refresh-throttle/<pid>.session`; `gpy prompt <shell>
+//! --exit` removes it with every other `<pid>.*` file. A shell that never
+//! ran its exit hook (killed, or replaced by `exec`) leaves them behind: the
+//! shell's instance token tells its successor at the same PID apart, and
+//! every shell's first prompt sweeps them.
 
 use super::link::{Link, Reply, now_secs};
 use crate::config::Config;
@@ -52,7 +53,14 @@ struct State {
     /// under another is an earlier shell's at the same PID.
     #[serde(default)]
     instance: String,
+    /// The warnings this shell has shown on stderr: each shows once per
+    /// shell, while the warning log keeps recording it.
+    #[serde(default)]
+    warned: Vec<String>,
 }
+
+/// Most warnings a shell remembers before it starts over.
+const WARNED_CAP: usize = 64;
 
 /// The shell's identity in a registration.
 pub(super) struct Shell<'a> {
@@ -146,15 +154,36 @@ impl Session {
         (!resolved.as_os_str().is_empty()).then(|| resolved.clone())
     }
 
-    /// Register, sync the workspace and supervise, then store the state.
+    /// Register, sync the workspace and supervise, show the warnings this
+    /// prompt raised, then store the state.
     pub(super) fn finish(mut self, link: &Link, config: &Config, shell: &Shell<'_>, pwd: &str) {
         if link.enabled() {
             sync(link, shell, pwd, &mut self.state);
             supervise(link, config, &mut self.state);
         }
         refresh_trees(shell.name, &mut self.state);
+        self.show_warnings();
         if let Some(path) = &self.path {
             store(path, &self.state);
+        }
+    }
+
+    /// Show each warning this prompt held that this shell has not shown yet;
+    /// without a session file to remember them, the ones the warning log
+    /// did not already end with.
+    fn show_warnings(&mut self) {
+        for warning in crate::debug::take_held() {
+            if self.path.is_none() {
+                if !warning.repeat {
+                    warning.show();
+                }
+            } else if !self.state.warned.contains(&warning.line) {
+                warning.show();
+                if self.state.warned.len() >= WARNED_CAP {
+                    self.state.warned.clear();
+                }
+                self.state.warned.push(warning.line);
+            }
         }
     }
 }

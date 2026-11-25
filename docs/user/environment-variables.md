@@ -30,7 +30,7 @@ Overrides the socket path alone; the runtime root is unchanged. Every command an
 
 ### Absolute paths only
 
-`GPY_CONFIG_PATH`, `GPY_AGENT_SOCKET_PATH`, `GPY_BUNDLED_PLUGIN_DIR` and `GPY_DEBUG_LOG` must be absolute paths. Each command, each prompt and the agent (which runs in `/`) would resolve a relative one against its own directory, so a shell that changes directory would reach a different socket or config file each time. A relative value is ignored as if unset: a command that reads it prints a one-line `Warning: [env] ignoring GPY_…` on stderr and appends it to the warning log, once per process and not again while it is the newest entry of that log, and `gpy doctor` flags the variable. A relative `--socket` on the command line is still made absolute against the directory the command runs in.
+`GPY_CONFIG_PATH`, `GPY_AGENT_SOCKET_PATH`, `GPY_BUNDLED_PLUGIN_DIR` and `GPY_DEBUG_LOG` must be absolute paths. Each command, each prompt and the agent (which runs in `/`) would resolve a relative one against its own directory, so a shell that changes directory would reach a different socket or config file each time. A relative value is ignored as if unset: a command that reads it prints a one-line `Warning: [env] ignoring GPY_…` on stderr and appends it to the warning log, once per process and not again while it is the newest entry of that log, and `gpy doctor` flags the variable. The prompt prints each such warning (and any other, such as an unrecognised flag value) once per shell session, while the warning log keeps recording it. A relative `--socket` on the command line is still made absolute against the directory the command runs in.
 
 `gpy debug paths` prints what the path variables resolve to on the current machine.
 

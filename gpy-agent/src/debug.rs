@@ -4,8 +4,11 @@
 //! writes stderr and appends to the warning log, since a daemon's stderr is
 //! `/dev/null`. The warning log is the `GPY_DEBUG_LOG` file when set, else
 //! `agent.log` in the cache root (`~/.cache/gpy/agent.log`), so warnings
-//! survive without any opt-in. Nothing else writes `agent.log`.
+//! survive without any opt-in. Nothing else writes `agent.log`. `gpy prompt`
+//! holds the stderr line ([`StderrHold`]) and shows each warning once per
+//! shell session.
 
+use crate::sync_ext::MutexExt as _;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -121,6 +124,8 @@ pub(crate) fn capture_warnings<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
 /// last `WARN_REPEAT_WINDOW` or when it already is the newest entry of the
 /// warning log (a oneshot process per prompt would otherwise repeat it on
 /// every prompt). The log is rotated to `<name>.1` past `WARN_LOG_MAX_BYTES`.
+/// While a [`StderrHold`] lives, the stderr line is held for [`take_held`]
+/// instead, the newest-entry repeat included.
 pub fn warn(category: &str, message: &str) {
     warn_into(WARN_PATH.as_deref(), category, message);
 }
@@ -146,17 +151,71 @@ fn warn_into(log_path: Option<&Path>, category: &str, message: &str) {
             return;
         }
     }
-    if seen_recently(category, message)
-        || log_path.is_some_and(|log| is_logged_repeat(log, category, message))
-    {
+    if seen_recently(category, message) {
         return;
     }
-    // Not `eprintln!`: `clippy::print_stderr` is denied.
-    let _ = writeln!(std::io::stderr(), "Warning: [{category}] {message}");
-
-    if let Some(log) = log_path {
+    let repeat = log_path.is_some_and(|log| is_logged_repeat(log, category, message));
+    let warning = HeldWarning {
+        line: format!("Warning: [{category}] {message}"),
+        repeat,
+    };
+    if let Some(held) = HELD.lock_or_recover().as_mut() {
+        held.push(warning);
+    } else if !repeat {
+        warning.show();
+    }
+    if !repeat && let Some(log) = log_path {
         rotate_if_oversized(log);
         append_to(log, &format_line(now_millis(), category, message));
+    }
+}
+
+/// A warning's stderr line, held while a [`StderrHold`] lives.
+#[derive(Debug)]
+pub(crate) struct HeldWarning {
+    /// `Warning: [category] message`.
+    pub(crate) line: String,
+    /// The warning log already ended with it, so the usual rule would not
+    /// show it.
+    pub(crate) repeat: bool,
+}
+
+impl HeldWarning {
+    /// Write the line to stderr.
+    pub(crate) fn show(&self) {
+        // Not `eprintln!`: `clippy::print_stderr` is denied.
+        let _ = writeln!(std::io::stderr(), "{}", self.line);
+    }
+}
+
+/// The held warnings while a [`StderrHold`] lives, else `None`.
+static HELD: Mutex<Option<Vec<HeldWarning>>> = Mutex::new(None);
+
+/// Holds every warning's stderr line for [`take_held`], so a caller that
+/// knows its user decides when it shows: `gpy prompt` shows each once per
+/// shell session. Dropped, it shows what is still held by the usual rule.
+#[must_use = "warnings are held only while the hold lives"]
+pub(crate) struct StderrHold;
+
+/// Start holding warnings' stderr lines; see [`StderrHold`].
+pub(crate) fn hold_stderr() -> StderrHold {
+    *HELD.lock_or_recover() = Some(Vec::new());
+    StderrHold
+}
+
+/// The warnings held since the hold started or the last call.
+pub(crate) fn take_held() -> Vec<HeldWarning> {
+    HELD.lock_or_recover()
+        .as_mut()
+        .map_or_else(Vec::new, std::mem::take)
+}
+
+impl Drop for StderrHold {
+    fn drop(&mut self) {
+        let left = HELD.lock_or_recover().take().unwrap_or_default();
+        for warning in left.iter().filter(|warning| !warning.repeat) {
+            warning.show();
+        }
     }
 }
 

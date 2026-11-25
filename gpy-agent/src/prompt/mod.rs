@@ -107,11 +107,14 @@ pub fn exit(pid: u32) {
     session::exit(&Link::new(agent_enabled(&config), pid), pid);
 }
 
-/// Render the prompt for the current directory (`$PWD`).
+/// Render the prompt for the current directory (`$PWD`). A warning shows on
+/// stderr once per shell session (the warning log records each).
 ///
 /// # Errors
 /// Returns an error if neither the configured nor the `default` theme loads.
 pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result<Rendered> {
+    // The session decides which warnings show; until it does, they are held.
+    let _held = crate::debug::hold_stderr();
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
         Config::default()

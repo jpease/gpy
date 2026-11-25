@@ -25,6 +25,7 @@ pub const BOUNDED: Duration = Duration::from_secs(5);
 /// One `gpy prompt` run.
 pub struct Run {
     pub stdout: String,
+    pub stderr: String,
     pub elapsed: Duration,
 }
 
@@ -117,12 +118,18 @@ impl Shell {
     pub fn prompt(&self, dir: &Path, envs: &[(&str, &str)]) -> Run {
         let mut command = self.command(dir);
         command.envs(envs.iter().copied());
+        Self::run(&mut command)
+    }
+
+    /// Run a [`Self::command`]; it must succeed.
+    pub fn run(command: &mut Command) -> Run {
         let started = Instant::now();
         let output = command.output().expect("run gpy prompt");
         let elapsed = started.elapsed();
         assert!(output.status.success(), "gpy prompt failed: {output:?}");
         Run {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             elapsed,
         }
     }
