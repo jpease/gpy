@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: false
+      replace_assets:
+        description: 'Allow publishing into a release that already exists for this version, replacing its assets (needs publish; default refuses)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -121,6 +126,36 @@ jobs:
 
           echo "version=$VERSION" >>"$GITHUB_OUTPUT"
           echo "Version metadata is consistent across Cargo.toml and CHANGELOG.md"
+
+      # A manual run must not attach new binaries to an older tag, and nothing
+      # may silently replace the assets of a release users already downloaded.
+      # Runs after the version is validated, and fails closed when GitHub
+      # cannot say whether the release exists.
+      - name: Refuse to overwrite an existing tag or release
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPLACE_ASSETS: ${{ inputs.replace_assets }}
+        run: |
+          set -euo pipefail
+          if tag_sha="$(git rev-parse -q --verify "refs/tags/${VERSION}^{commit}")"; then
+            if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $VERSION already exists at $tag_sha, not at $GITHUB_SHA; refusing to publish different binaries under it"
+              exit 1
+            fi
+          fi
+          if response="$(gh api "repos/$REPO/releases/tags/$VERSION" --jq .id 2>&1)"; then
+            if [ "$REPLACE_ASSETS" != "true" ]; then
+              echo "::error::A release for $VERSION already exists; re-run with replace_assets=true to replace its assets"
+              exit 1
+            fi
+            echo "::warning::Replacing the assets of the existing $VERSION release (replace_assets=true)"
+          elif ! grep -q 'HTTP 404' <<<"$response"; then
+            echo "::error::Could not check for an existing $VERSION release: $response"
+            exit 1
+          fi
 
   # Everything below runs the same legs a PR does, by calling the workflows
   # the PR gate calls, so the unproven path cannot drift into a weaker gate.
