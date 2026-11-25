@@ -102,25 +102,58 @@ impl WizardRuntime {
                         .clone_into(&mut self.cached_selection.0);
                 }
                 Err(error) => {
-                    // First line only; the rest is a TOML excerpt.
-                    let reason = error.to_string();
                     self.theme_error = Some(format!(
                         "Cannot select theme \"{}\": {}",
                         self.state.selected_theme(),
-                        reason.lines().next().unwrap_or_default()
+                        first_line(&error.to_string())
                     ));
                     self.state.select_theme(&self.cached_selection.0);
                 }
             }
         }
-        if self.state.selected_palette() != self.cached_selection.1 {
-            self.cached_palette =
-                crate::palette::resolve::palette_by_name(self.state.selected_palette());
-            self.state
-                .selected_palette()
-                .clone_into(&mut self.cached_selection.1);
+        if let Err(message) = refresh_palette(
+            &mut self.state,
+            &mut self.cached_selection.1,
+            &mut self.cached_palette,
+        ) {
+            self.theme_error = Some(message);
         }
     }
+}
+
+/// Load the palette `state` selects when it differs from `cached_name`. One
+/// that fails to load reverts the selection and returns the reason, the way a
+/// theme does: otherwise the preview would quietly show the builtin default
+/// and the save would be rejected only after the TUI has exited.
+fn refresh_palette(
+    state: &mut state::WizardState,
+    cached_name: &mut String,
+    cached: &mut crate::template::Palette,
+) -> std::result::Result<(), String> {
+    let name = state.selected_palette();
+    if name == cached_name {
+        return Ok(());
+    }
+    match crate::palette::resolve::load_palette(name) {
+        Ok(palette) => {
+            *cached = palette;
+            name.clone_into(cached_name);
+            Ok(())
+        }
+        Err(error) => {
+            let message = format!(
+                "Cannot select palette \"{name}\": {}",
+                first_line(&error.to_string())
+            );
+            state.select_palette(cached_name);
+            Err(message)
+        }
+    }
+}
+
+/// First line only; the rest of a load error is a TOML excerpt.
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or_default()
 }
 
 /// Render one frame.
@@ -251,4 +284,50 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn selecting_a_palette_that_does_not_load_reverts_with_a_reason() {
+        let mut state = state::WizardState::from_parts(
+            Config::default(),
+            vec!["default".to_owned()],
+            vec!["default".to_owned(), "no-such-palette".to_owned()],
+            vec!["directory".to_owned()],
+        );
+        let mut cached_name = state.selected_palette().to_owned();
+        let mut palette = crate::palette::resolve::palette_by_name(&cached_name);
+        let before = palette.clone();
+
+        state.select_palette("no-such-palette");
+        let result = refresh_palette(&mut state, &mut cached_name, &mut palette);
+
+        let message = result.expect_err("a palette that does not load is refused");
+        assert!(message.contains("no-such-palette"), "{message}");
+        assert_eq!(state.selected_palette(), cached_name, "selection reverted");
+        assert_eq!(palette, before);
+    }
+
+    #[test]
+    fn selecting_a_loadable_palette_updates_the_cache() {
+        let mut state = state::WizardState::from_parts(
+            Config::default(),
+            vec!["default".to_owned()],
+            vec!["default".to_owned(), "starship".to_owned()],
+            vec!["directory".to_owned()],
+        );
+        let mut cached_name = state.selected_palette().to_owned();
+        let mut palette = crate::palette::resolve::palette_by_name(&cached_name);
+
+        state.select_palette("starship");
+        let result = refresh_palette(&mut state, &mut cached_name, &mut palette);
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(cached_name, "starship");
+        assert_eq!(state.selected_palette(), "starship");
+    }
 }
