@@ -720,6 +720,8 @@ mod git_bg_tests;
 #[cfg(all(test, unix))]
 mod git_root_vectors_tests;
 #[cfg(test)]
+mod key_tests;
+#[cfg(test)]
 mod naming_vectors_tests;
 #[cfg(test)]
 mod presence_tests;

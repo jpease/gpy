@@ -1,7 +1,7 @@
 # Rust files over the 800-line cap (check-file-size.py). A listed file may
 # not grow; lower its size when it shrinks. Never add a file or raise a size
 # without saying why in the commit.
-2267 gpy-agent/src/cache/instant_prompt/tests.rs
+1996 gpy-agent/src/cache/instant_prompt/tests.rs
 823 gpy-agent/src/formatter/prompt/tests.rs
 1263 gpy-agent/src/watcher/multi_repo/tests.rs
 1212 gpy-agent/tests/cli_integration_tests.rs

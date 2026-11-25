@@ -74,7 +74,7 @@ With the agent disabled, or after a refusal (`{"error"…}` reply), `gpy prompt`
 
 `InstantPromptCache` (`gpy-agent/src/cache/instant_prompt/`) holds the rendered git and language segments the daemon keeps fresh. Files live in `<cache dir>/instant-prompts/` (`paths::gpy_cache_dir`, default `~/.cache/gpy`), named `{key}.{variant}.{token}.{ext}`:
 
-- `key`: the project root path, chunked into directories when long
+- `key`: the project root's bytes escaped into lowercase ASCII (`/` as `_s`, a capital as `_u` and its letter, a non-ASCII byte as `_x` and its hex; `path_to_cache_key`), so roots that differ only in case, Unicode normalization or bytes that are not UTF-8 never share a file on a volume that folds them; a key over 200 bytes is cut into 50-byte directory chunks
 - `variant`: the segment and its position (`git`, `git_first`, `git_last`, `git_first_last`, and the same for `lang`)
 - `token`: the previous segment's background colour, which the rendered chevron bakes in (`none` when there is none)
 - `ext`: the dialect (`ansi`, `zsh`, `bash`)

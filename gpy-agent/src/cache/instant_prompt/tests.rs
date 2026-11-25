@@ -1,9 +1,6 @@
 use super::*;
 use crate::paths::gpy_cache_dir;
 use crate::sync_ext::MutexExt;
-use key::{
-    FLAT_CACHE_KEY_MAX_CHARS, WINDOWS_CACHE_KEY_MAX_LEN, cache_key_path_for, path_to_cache_key_for,
-};
 use std::time::Duration;
 use sweep::{CACHE_ENTRY_MAX_AGE, ORPHAN_TMP_MAX_AGE};
 
@@ -753,288 +750,20 @@ fn write_cache_file_record_matches_disk_under_contention() {
     }
 }
 
+/// A file name past `NAME_MAX` bytes (here through a long render-context
+/// token) is skipped without an error, and its key logged once.
 #[test]
-fn test_path_to_cache_key_escaping() {
-    let path = Path::new("/home/user/my project");
-    let key = path_to_cache_key(path);
-    assert_eq!(
-        key, "_shome_suser_smy_wproject",
-        "Should escape separators with unique tokens"
-    );
-}
-
-/// Paths differing only in separator/underscore placement must produce
-/// distinct keys.
-#[test]
-fn test_path_to_cache_key_no_collision_for_separator_underscore_swaps() {
-    let collision_pairs = [
-        ("/a/b_c", "/a_b/c"),
-        ("/x/y z", "/x y/z"),
-        ("/p:q/r", "/p/q:r"),
-        ("/foo_bar/baz", "/foo/bar_baz"),
-    ];
-    for (left, right) in collision_pairs {
-        let key_left = path_to_cache_key(Path::new(left));
-        let key_right = path_to_cache_key(Path::new(right));
-        assert_ne!(
-            key_left, key_right,
-            "Paths {left} and {right} must not share a cache key"
-        );
-    }
-}
-
-/// The Unix escape scheme is injective: the path is recoverable from the key.
-/// (The Windows arm case-folds, so it is not.)
-#[test]
-fn test_path_to_cache_key_is_reversible() {
-    let decode = |key: &str| -> String {
-        let mut out = String::new();
-        let mut chars = key.chars();
-        while let Some(c) = chars.next() {
-            if c == '_' {
-                match chars.next() {
-                    Some('_') => out.push('_'),
-                    Some('s') => out.push('/'),
-                    Some('b') => out.push('\\'),
-                    Some('c') => out.push(':'),
-                    Some('w') => out.push(' '),
-                    other => panic!("malformed key token: _{other:?}"),
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    };
-
-    let paths = [
-        "/home/user/project",
-        "/a/b_c",
-        "/a_b/c",
-        "/path with spaces/repo",
-        "/weird/__double__/under_scores",
-        "C:\\Users\\foo\\bar",
-        "/unicode/café/项目/repo",
-        "/odd/q?a*b<c>d\"e|f",
-        "/very/long/path/that/keeps/going/on/and/on/for/a/while/repo",
-    ];
-    for path in paths {
-        let key = path_to_cache_key_for(path, crate::paths::Os::Unix);
-        assert_eq!(decode(&key), path, "round-trip failed for {path}");
-    }
-}
-
-/// Pins the exact `Os::Unix` output, which the shells copy byte-for-byte.
-#[test]
-fn test_path_to_cache_key_unix_characterization() {
-    let cases: [(&str, &str); 6] = [
-        ("/Users/foo/project", "_sUsers_sfoo_sproject"),
-        ("/tmp/what?proj", "_stmp_swhat?proj"),
-        ("/a*b<c>d\"e|f", "_sa*b<c>d\"e|f"),
-        ("/home/user/my project", "_shome_suser_smy_wproject"),
-        ("C:\\Users\\foo\\bar", "C_c_bUsers_bfoo_bbar"),
-        (
-            "/a/very/deeply/nested/directory/structure/that/goes/on/and/on/and/on/and/on/and/on/for/quite/a/while/to/stress/the/escaping/logic/and/make/sure/nothing/changes/unexpectedly/when/this/function/gains/windows/hardening/as/part/of/track/demo/implementation/work",
-            "_sa_svery_sdeeply_snested_sdirectory_sstructure_sthat_sgoes_son_sand_son_sand_son_sand_son_sand_son_sfor_squite_sa_swhile_sto_sstress_sthe_sescaping_slogic_sand_smake_ssure_snothing_schanges_sunexpectedly_swhen_sthis_sfunction_sgains_swindows_shardening_sas_spart_sof_strack_sdemo_simplementation_swork",
-        ),
-    ];
-    for (input, expected) in cases {
-        assert_eq!(
-            path_to_cache_key_for(input, crate::paths::Os::Unix),
-            expected,
-            "unix arm output for {input} must stay byte-for-byte identical"
-        );
-    }
-}
-
-/// Keys up to 200 characters keep their flat name; longer ones are split
-/// into 50-character chunks, counted in characters.
-#[test]
-fn test_cache_key_path_unix_characterization() {
-    let unix = crate::paths::Os::Unix;
-    let flat = "k".repeat(FLAT_CACHE_KEY_MAX_CHARS);
-    assert_eq!(cache_key_path_for(&flat, unix), flat.as_str());
-    let deep = path_to_cache_key_for(
-        "/a/very/deeply/nested/directory/structure/that/goes/on/and/on/and/on/and/on/and/on/for/quite/a/while/to/stress/the/escaping/logic/and/make/sure/nothing/changes/unexpectedly/when/this/function/gains/windows/hardening/as/part/of/track/demo/implementation/work",
-        unix,
-    );
-    assert_eq!(
-        cache_key_path_for(&deep, unix),
-        "_sa_svery_sdeeply_snested_sdirectory_sstructure_st/hat_sgoes_son_sand_son_sand_son_sand_son_sand_son_/sfor_squite_sa_swhile_sto_sstress_sthe_sescaping_s/logic_sand_smake_ssure_snothing_schanges_sunexpect/edly_swhen_sthis_sfunction_sgains_swindows_sharden/ing_sas_spart_sof_strack_sdemo_simplementation_swo/rk"
-    );
-    // 201 two-byte characters: chunked by character, not byte.
-    let wide = "é".repeat(201);
-    let chunked = cache_key_path_for(&wide, unix);
-    let chunks: Vec<&str> = chunked.split('/').collect();
-    assert_eq!(chunks.len(), 5);
-    assert!(chunks.iter().take(4).all(|c| c.chars().count() == 50));
-    assert_eq!(chunks.last().copied(), Some("é"));
-    // The Windows key is already capped; it is never chunked.
-    let long = "k".repeat(FLAT_CACHE_KEY_MAX_CHARS + 18);
-    assert_eq!(
-        cache_key_path_for(&long, crate::paths::Os::Windows),
-        long.as_str()
-    );
-}
-
-/// A flat key that fits 200 characters but not `NAME_MAX` bytes is
-/// skipped without an error.
-#[test]
-fn write_cache_file_skips_a_flat_key_over_name_max() {
+fn write_cache_file_skips_a_name_over_name_max() {
     let (_temp_dir, cache) = temp_cache_in("ip");
-    let key = "\u{1F600}".repeat(64);
+    let variant_token = format!("git.{}", "t".repeat(NAME_MAX_BYTES));
     for _ in 0_u8..2_u8 {
         assert!(
             !cache
-                .write_entry(&key, "git.none", PromptDialect::Ansi, "x")
+                .write_entry("repo", &variant_token, PromptDialect::Ansi, "x")
                 .expect("an unrepresentable name is skipped, not an error")
         );
     }
     assert_eq!(cache.unwritable_keys.lock_or_recover().len(), 1);
-}
-
-/// The Windows arm escapes the reserved filename characters `? * < > " |`.
-#[test]
-fn test_path_to_cache_key_windows_escapes_reserved_chars() {
-    assert_eq!(
-        path_to_cache_key_for("a?*<>\"|b", crate::paths::Os::Windows),
-        "a_q_a_l_g_d_pb"
-    );
-    assert_eq!(
-        path_to_cache_key_for(r"C:\a?b", crate::paths::Os::Windows),
-        "c_c_ba_qb"
-    );
-}
-
-/// Shared vectors (`tests/fixtures/cache_key_vectors.tsv`) also read by the
-/// Bash/Zsh/Fish encoder tests: the Unix arm must match every row and round-trip.
-#[test]
-fn test_path_to_cache_key_shared_vectors() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/fixtures/cache_key_vectors.tsv");
-    let text = std::fs::read_to_string(&fixture)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
-    let unescape = |raw: &str| -> String {
-        let mut out = String::new();
-        let mut chars = raw.chars();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('\\') => out.push('\\'),
-                    Some('n') => out.push('\n'),
-                    Some('r') => out.push('\r'),
-                    Some('t') => out.push('\t'),
-                    other => panic!("bad fixture escape: \\{other:?}"),
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    };
-    let decode = |key: &str| -> String {
-        let mut out = String::new();
-        let mut chars = key.chars();
-        while let Some(c) = chars.next() {
-            if c == '_' {
-                match chars.next() {
-                    Some('_') => out.push('_'),
-                    Some('s') => out.push('/'),
-                    Some('b') => out.push('\\'),
-                    Some('c') => out.push(':'),
-                    Some('w') => out.push(' '),
-                    other => panic!("malformed key token: _{other:?}"),
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    };
-    let mut count = 0_usize;
-    for line in text.lines() {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut cols = line.split('\t');
-        let (Some(raw_input), Some(expected), Some(stem)) = (cols.next(), cols.next(), cols.next())
-        else {
-            panic!("malformed vector row: {line:?}");
-        };
-        let input = unescape(raw_input);
-        let key = path_to_cache_key_for(&input, crate::paths::Os::Unix);
-        assert_eq!(key, expected, "vector for {raw_input}");
-        assert_eq!(decode(&key), input, "round-trip for {raw_input}");
-        assert_vector_stem(raw_input, &key, stem);
-        count += 1;
-    }
-    assert!(count > 0, "no vectors read from {}", fixture.display());
-}
-
-/// The shared vector's `stem` is the relative cache-file path the
-/// writer builds for `key`.
-fn assert_vector_stem(raw_input: &str, key: &str, stem: &str) {
-    assert_eq!(
-        cache_key_path_for(key, crate::paths::Os::Unix),
-        stem,
-        "stem for {raw_input}"
-    );
-    #[cfg(not(windows))]
-    {
-        let (dir, name) = cache_file_parts(Path::new("ip"), key, "git.none.ansi");
-        assert_eq!(
-            dir.join(name),
-            Path::new("ip").join(format!("{stem}.git.none.ansi")),
-            "cache file for {raw_input}"
-        );
-    }
-}
-
-/// Differently-cased paths to one Windows directory collide to one key.
-#[test]
-fn test_path_to_cache_key_windows_case_fold_collision() {
-    let left = path_to_cache_key_for(r"C:\Foo\Bar", crate::paths::Os::Windows);
-    let right = path_to_cache_key_for(r"C:\foo\bar", crate::paths::Os::Windows);
-    assert_eq!(
-        left, right,
-        "differently-cased paths to the same Windows directory must share a cache key"
-    );
-
-    // The Unix arm must NOT case-fold: distinct directories would collide.
-    let unix_left = path_to_cache_key_for(r"C:\Foo\Bar", crate::paths::Os::Unix);
-    let unix_right = path_to_cache_key_for(r"C:\foo\bar", crate::paths::Os::Unix);
-    assert_ne!(
-        unix_left, unix_right,
-        "the Unix arm must not case-fold -- it must stay byte-for-byte unmodified"
-    );
-}
-
-/// Long Windows paths sharing a truncated prefix still get distinct keys.
-#[test]
-fn test_path_to_cache_key_windows_length_cap() {
-    let long_prefix = "a".repeat(WINDOWS_CACHE_KEY_MAX_LEN + 50);
-    let path_a = format!("/{long_prefix}/repo-one");
-    let path_b = format!("/{long_prefix}/repo-two");
-
-    let key_a = path_to_cache_key_for(&path_a, crate::paths::Os::Windows);
-    let key_b = path_to_cache_key_for(&path_b, crate::paths::Os::Windows);
-
-    assert!(
-        key_a.chars().count() < path_a.len(),
-        "an over-long Windows key must be shorter than the escaped input"
-    );
-    assert_ne!(
-        key_a, key_b,
-        "two long paths sharing a truncated prefix must not collide"
-    );
-    assert!(
-        key_a.contains("_h") && key_b.contains("_h"),
-        "an over-long Windows key must carry the hash-tail marker"
-    );
-
-    // Under the cap: no hash-tail.
-    let short = path_to_cache_key_for("/Users/foo/project", crate::paths::Os::Windows);
-    assert_eq!(short, "_susers_sfoo_sproject");
 }
 
 /// `new()` succeeds exactly when `gpy_cache_dir` resolves; the env is
@@ -1543,7 +1272,7 @@ fn write_git_caches_repo_with_very_long_path() {
     assert!(key.len() > 255, "the key alone must exceed NAME_MAX");
     #[cfg(windows)]
     assert!(
-        key.chars().count() <= WINDOWS_CACHE_KEY_MAX_LEN + 18,
+        key.chars().count() <= key::WINDOWS_CACHE_KEY_MAX_LEN + 18,
         "the Windows key is capped by hardening"
     );
     let config = Config::default();
