@@ -8,8 +8,7 @@ use crate::ipc::Response;
 /// canonical `path` is read-only.
 #[must_use]
 pub fn directory(path: &crate::security::SafePath, display_path: &str) -> Response {
-    let canonical = path.to_string();
-    let read_only = crate::fs_util::directory_is_read_only(std::path::Path::new(&canonical));
+    let read_only = crate::fs_util::directory_is_read_only(path.as_path());
     Response::Directory {
         cwd: display_path.to_owned(),
         read_only,
@@ -104,6 +103,32 @@ mod tests {
             Response::Directory { cwd, .. } => assert_eq!(
                 cwd, link_str,
                 "cwd must be the logical (symlink) path, not the resolved target"
+            ),
+            other => panic!("expected Response::Directory, got {other:?}"),
+        }
+    }
+
+    /// A writable directory whose canonical path is not UTF-8 is not read-only:
+    /// the check runs on the path itself, not a lossy copy naming nothing.
+    /// Linux only: macOS file systems reject names that are not UTF-8.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directory_with_a_non_utf8_canonical_path_is_writable() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let target = temp_dir
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"not-utf8-\xff"));
+        std::fs::create_dir_all(&target).expect("create directory");
+        let link = temp_dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+        let path =
+            crate::security::SafePath::new(link.to_str().expect("UTF-8 link")).expect("valid path");
+        match directory(&path, "link") {
+            Response::Directory { read_only, .. } => assert!(
+                !read_only,
+                "a writable directory must not be reported read-only"
             ),
             other => panic!("expected Response::Directory, got {other:?}"),
         }
