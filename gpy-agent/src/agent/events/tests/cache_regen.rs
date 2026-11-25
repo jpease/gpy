@@ -89,6 +89,86 @@ fn theme_change_does_not_publish_git_caches_for_skipped_repo() {
     );
 }
 
+/// A status past its TTL is re-rendered too: the shell shows that status
+/// already, so skipping it would leave the old theme up after the reload.
+#[test]
+fn theme_change_regenerates_git_caches_for_a_status_past_its_ttl() {
+    use crate::git::RepositoryState;
+    use std::collections::HashMap;
+
+    let (_tmp, repo) = create_temp_repo();
+    let cache_tmp = tempdir().expect("cache dir");
+    let mut ctx = make_hermetic_ctx(cache_tmp.path());
+    // Every entry is past a zero TTL as soon as it is stored.
+    ctx.cache = Arc::new(GitStatusCache::with_policy(crate::cache::CachePolicy {
+        ttl: std::time::Duration::ZERO,
+        cooldown: std::time::Duration::ZERO,
+    }));
+    ctx.registry.register(4321, Some(repo.clone()));
+    ctx.cache
+        .set(&repo, status(0, RepositoryState::Clean), HashMap::new());
+
+    regenerate_instant_caches_for_theme_change(&ctx, &Config::default());
+
+    let files = cache_file_names(cache_tmp.path());
+    assert!(
+        files.iter().any(|f| f.ends_with(".git.none.ansi")),
+        "a status past its TTL must be re-rendered: {files:?}"
+    );
+}
+
+/// Outside git, languages cached at the project root (the nearest marker
+/// ancestor) are re-rendered under the shell's own directory, the key its
+/// prompt reads.
+#[test]
+fn theme_change_regenerates_language_caches_below_a_non_git_project_root() {
+    use crate::language::DetectedLanguage;
+
+    let project_tmp = tempdir().expect("project dir");
+    let project = project_tmp
+        .path()
+        .canonicalize()
+        .expect("canonical temp dir")
+        .join("proj");
+    let cwd = project.join("sub");
+    fs::create_dir_all(&cwd).expect("create project subdirectory");
+    fs::write(project.join("Cargo.toml"), "[package]\n").expect("write marker");
+    let cache_tmp = tempdir().expect("cache dir");
+    let ctx = make_hermetic_ctx(cache_tmp.path());
+    ctx.registry.register(4321, Some(cwd.clone()));
+    ctx.language_cache.set(
+        &project,
+        vec![DetectedLanguage {
+            name: "rust".to_owned(),
+            confidence: 1.0,
+            file_count: 1,
+            total_bytes: 128,
+        }],
+    );
+
+    // The language job is spawned on this runtime's blocking pool; dropping
+    // the runtime waits for it.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime");
+    let entered = runtime.enter();
+    regenerate_instant_caches_for_theme_change(&ctx, &Config::default());
+    drop(entered);
+    drop(runtime);
+
+    let key = InstantPromptCache::cache_key(&cwd);
+    assert!(key.len() <= 200, "the key is stored flat: {key}");
+    assert!(
+        cache_tmp
+            .path()
+            .join(format!("{key}.lang.none.ansi"))
+            .is_file(),
+        "the language cache must be re-rendered under {}: {:?}",
+        cwd.display(),
+        cache_file_names(cache_tmp.path())
+    );
+}
+
 #[test]
 fn show_icons_toggle_regenerates_git_caches_without_caps() {
     use crate::git::RepositoryState;
@@ -155,7 +235,7 @@ fn language_regen_renders_cached_data() {
         }],
     );
 
-    let wrote = regen_language_caches(&ctx, &repo, &Config::default());
+    let wrote = regen_language_caches(&ctx, &repo, &repo, &Config::default());
     assert!(wrote, "first language regen must report a write");
 
     let files = cache_file_names(cache_tmp.path());
@@ -187,7 +267,7 @@ fn language_regen_skips_cold_path() {
     let ctx = make_hermetic_ctx(cache_tmp.path());
 
     assert!(
-        !regen_language_caches(&ctx, &repo, &Config::default()),
+        !regen_language_caches(&ctx, &repo, &repo, &Config::default()),
         "a path with no cached language data must report no write"
     );
     assert_eq!(
@@ -222,7 +302,7 @@ fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
     let before_first = rung(&rings);
     let wrote_first = refresh_language_for(
         &ctx,
-        &repo,
+        LanguagePaths::at(&repo),
         &config,
         LanguageRefreshMode::CachedOnly,
         &theme,
@@ -241,7 +321,7 @@ fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
 
     let wrote_second = refresh_language_for(
         &ctx,
-        &repo,
+        LanguagePaths::at(&repo),
         &config,
         LanguageRefreshMode::CachedOnly,
         &theme,

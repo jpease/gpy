@@ -1,7 +1,7 @@
 //! Config, theme, and palette reload handling and the watcher that feeds file events.
 
 use super::{
-    AgentContext, LanguageRefreshMode, SharedWatcherSlot, config_refresh_required,
+    AgentContext, LanguagePaths, LanguageRefreshMode, SharedWatcherSlot, config_refresh_required,
     git_event_lacks_subscriber, git_segment_bg, handle_file_event, refresh, refresh_language_for,
 };
 use crate::config::Config;
@@ -360,8 +360,10 @@ fn adopt_disk_palette(ctx: &AgentContext, config: &Config) {
 
 /// Re-render instant-prompt caches for every registered repo from cached data
 /// with the new theme, so the post-reload repaint is warm and flicker-free.
-/// A repo that an unlisted `git` or `git.skip_paths` excludes has its git caches
-/// deleted instead, so shells stop showing a segment nothing refreshes.
+/// A status past its TTL is rendered too: the shell shows that status already,
+/// in the old theme. A repo that an unlisted `git` or `git.skip_paths` excludes
+/// has its git caches deleted instead, so shells stop showing a segment
+/// nothing refreshes.
 ///
 /// Renders both the context-free fallback and the new theme's `prev_bg` token the
 /// shell will send. Language rendering runs version detection, so it is deferred
@@ -378,15 +380,20 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
     for (_pid, cwd) in ctx.registry.get_registered_repos() {
-        let git_root = crate::git::find_worktree_root(&cwd);
-        // Keyed by request path when there is no git root.
-        let lang_root = git_root.clone().unwrap_or_else(|| cwd.clone());
-        if !seen_keys.insert(lang_root.clone()) {
+        // Languages are detected and cached at the project root (the git
+        // root, else the nearest marker ancestor) but, outside git, published
+        // under the request path, as the language handler does.
+        let project_root = crate::language::project_root(&cwd);
+        let in_git = project_root.is_git();
+        let lang_root = project_root.into_path();
+        let cache_path = if in_git { lang_root.clone() } else { cwd };
+        if !seen_keys.insert(cache_path.clone()) {
             continue;
         }
-        if let Some(root) = git_root.as_ref() {
+        if in_git {
+            let root = &lang_root;
             if config.git_enabled_for(root) {
-                if let Some(status) = ctx.cache.get(root) {
+                if let Some(status) = ctx.cache.get_any(root) {
                     for prev_bg in [None, Some(git_prev_bg)] {
                         if let Err(e) = ctx
                             .instant_cache
@@ -410,34 +417,49 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
         }
 
         if config.segment_enabled("language") && ctx.language_cache.get(&lang_root).is_some() {
-            schedule_language_cache_regen(ctx, &lang_root, config);
+            schedule_language_cache_regen(ctx, &lang_root, &cache_path, config);
         }
     }
 }
 
-/// Re-render a repo's language caches off the event loop and repaint on change.
-fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &Config) {
+/// Re-render a project's language caches off the event loop and repaint on change.
+fn schedule_language_cache_regen(
+    ctx: &AgentContext,
+    lang_root: &Path,
+    cache_path: &Path,
+    config: &Config,
+) {
     let regen_ctx = ctx.clone();
     let root = lang_root.to_path_buf();
+    let published_at = cache_path.to_path_buf();
     let regen_config = config.clone();
 
     let job = move || {
-        regen_language_caches(&regen_ctx, &root, &regen_config);
+        regen_language_caches(&regen_ctx, &root, &published_at, &regen_config);
     };
 
     crate::ipc::handlers::spawn_detached(job);
 }
 
-/// Synchronous body of [`schedule_language_cache_regen`]; returns `true` when a
-/// cache file changed.
-pub(super) fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) -> bool {
+/// Synchronous body of [`schedule_language_cache_regen`]: render the languages
+/// cached for `lang_root` into the files of `cache_path`; returns `true` when
+/// a cache file changed.
+pub(super) fn regen_language_caches(
+    ctx: &AgentContext,
+    lang_root: &Path,
+    cache_path: &Path,
+    config: &Config,
+) -> bool {
     // One theme snapshot for both `lang_prev_bg` and the render, to avoid a torn read.
     let theme = ctx.theme_manager.get();
     let lang_prev_bg = git_segment_bg(ctx, lang_root, config, &theme);
 
     refresh_language_for(
         ctx,
-        lang_root,
+        LanguagePaths {
+            root: lang_root,
+            cache_path,
+        },
         config,
         LanguageRefreshMode::CachedOnly,
         &theme,
