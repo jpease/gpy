@@ -55,4 +55,14 @@ check "Fish 4.2 is transient-prompt capable" 1 (string match -q '*capable=1*' --
 set out (load 5.0.0 -i | string collect)
 check "Fish 5.0 is transient-prompt capable" 1 (string match -q '*capable=1*' -- $out; and echo 1)
 
+# A beta or a development build: what follows the minor number is no
+# integer, and loading must print nothing (no `test` error).
+for ver in 4.0b1 4.2b1 3.6.1-56-gabc1234
+    set out (load $ver -i | string collect)
+    check "Fish $ver loads the handlers" 1 (string match -q '*handlers*' -- $out; and echo 1)
+    check "Fish $ver loads silently" "" (string split \n -- $out | string match -v -r '^(handlers|capable=\d|count=\d+)$' | string collect)
+end
+check "Fish 4.0b1 is not transient-prompt capable" 1 (load 4.0b1 -i | string match -q 'capable=0'; and echo 1)
+check "Fish 4.2b1 is transient-prompt capable" 1 (load 4.2b1 -i | string match -q 'capable=1'; and echo 1)
+
 test_finish "gpy_init.fish load and version gate"

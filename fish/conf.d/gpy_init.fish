@@ -9,9 +9,12 @@
 # Non-interactive shells (fish -c, scripts) must not load GPY.
 status is-interactive; or return
 
-# __gpy_test_fish_version is a non-exported test hook: FISH_VERSION is
-# read-only.
-set -l gpy_fish_version (string split . -- (set -q __gpy_test_fish_version; and echo $__gpy_test_fish_version; or echo $FISH_VERSION))
+# The major and minor numbers alone: a beta (`4.2b1`) or a development build
+# (`4.1.2-56-gabc`) carries more after them. A version without them counts as
+# 3.6, the oldest supported. __gpy_test_fish_version is a non-exported test
+# hook: FISH_VERSION is read-only.
+set -l gpy_fish_version (string match -rg -- '^(\d+)\.(\d+)' (set -q __gpy_test_fish_version; and echo $__gpy_test_fish_version; or echo $FISH_VERSION))
+set -q gpy_fish_version[2]; or set gpy_fish_version 3 6
 if test "$gpy_fish_version[1]" -lt 3; or test "$gpy_fish_version[1]" -eq 3 -a "$gpy_fish_version[2]" -lt 6
     echo "gpy: GPY needs Fish 3.6 or newer (this is $FISH_VERSION); see https://fishshell.com/" >&2
     return
