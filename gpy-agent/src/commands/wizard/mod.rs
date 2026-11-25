@@ -23,7 +23,9 @@ use std::time::Duration;
 const SIGNAL_POLL: Duration = Duration::from_millis(100);
 
 /// Restores the terminal on drop, including on early return.
-/// `ratatui::try_init` installs the panic hook that covers panics.
+/// A panic is covered by the hook [`init_terminal`] installs, not by this
+/// guard: release builds use `panic = "abort"` (ADR-0008), which runs no
+/// destructors, so only a panic hook gets to undo the terminal setup.
 struct RestoreOnDrop;
 
 impl Drop for RestoreOnDrop {
@@ -38,7 +40,30 @@ fn init_terminal() -> Result<(DefaultTerminal, RestoreOnDrop)> {
         ratatui::restore();
         crate::Error::config(format!("Failed to initialize terminal: {e}"))
     })?;
+    // `try_init` wrapped the panic hook to restore raw mode and the main
+    // screen. Drawing hides the cursor and only `Terminal`'s destructor shows
+    // it again, which an aborting panic never runs: show it from the hook.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(cursor_showing_hook(std::io::stdout(), hook));
     Ok((terminal, RestoreOnDrop))
+}
+
+/// A panic hook that runs `previous`, then shows the cursor on `out`.
+fn cursor_showing_hook<W>(
+    sink: W,
+    previous: Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>,
+) -> Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>
+where
+    W: std::io::Write + Send + 'static,
+{
+    let out = std::sync::Mutex::new(sink);
+    Box::new(move |info| {
+        previous(info);
+        // A failed write cannot be reported while panicking.
+        if let Ok(mut guard) = out.lock() {
+            drop(crossterm::execute!(guard, crossterm::cursor::Show));
+        }
+    })
 }
 
 /// Per-frame render-loop state.
@@ -329,5 +354,48 @@ mod tests {
         assert_eq!(result, Ok(()));
         assert_eq!(cached_name, "starship");
         assert_eq!(state.selected_palette(), "starship");
+    }
+
+    /// A `Write` the test can read back after the hook ran on another thread.
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("sink lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Under `panic = "abort"` the hook is the last code to run, so it must
+    /// show the cursor itself, after the previous hook has restored the screen.
+    #[test]
+    fn the_panic_hook_shows_the_cursor_after_the_previous_hook() {
+        let sink = Sink::default();
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = std::sync::Arc::clone(&order);
+        let probe = sink.clone();
+        std::panic::set_hook(cursor_showing_hook(
+            sink.clone(),
+            Box::new(move |_| {
+                let written = probe.0.lock().expect("sink lock").len();
+                seen.lock().expect("order lock").push(written);
+            }),
+        ));
+
+        let panicked = std::thread::spawn(|| panic!("wizard test panic")).join();
+        drop(std::panic::take_hook());
+
+        assert!(panicked.is_err());
+        assert_eq!(
+            *order.lock().expect("order lock"),
+            vec![0],
+            "previous hook first"
+        );
+        assert_eq!(*sink.0.lock().expect("sink lock"), b"\x1b[?25h");
     }
 }
