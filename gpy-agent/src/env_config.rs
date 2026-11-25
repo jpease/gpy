@@ -622,7 +622,7 @@ impl EnvVar {
         let number = |value: u64| format!("{value}{unit}");
         let on_off = |value: bool| if value { "on" } else { "off" }.to_owned();
         let from_config = || "from config".to_owned();
-        let ignored = |raw: String, expected: &'static str| Source::Ignored { raw, expected };
+        let ignored = |bad: String, expected: &'static str| Source::Ignored { raw: bad, expected };
         match self.kind {
             EnvKind::Flag { default } => match parse_flag(raw.as_deref()) {
                 Reading::Value(value) => (on_off(value), Source::Env),
