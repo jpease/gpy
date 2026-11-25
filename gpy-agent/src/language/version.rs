@@ -21,7 +21,8 @@ pub trait VersionSource: Send + Sync {
     /// Parse version from command output (return X.Y.Z format)
     fn parse_version(&self, output: &str) -> Option<String>;
 
-    /// Whether command outputs to stderr instead of stdout
+    /// Whether the command prints its version to stderr rather than stdout;
+    /// the other stream is parsed when this one yields none.
     fn uses_stderr(&self) -> bool {
         false
     }
@@ -137,11 +138,7 @@ pub(crate) fn detect_python_binary_version(python: &Path) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    // Python < 3.4 prints `--version` to stderr.
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    PythonDetector
-        .parse_version(&stdout)
-        .or_else(|| PythonDetector.parse_version(&String::from_utf8_lossy(&output.stderr)))
+    parse_version_output(&PythonDetector, &output)
 }
 
 /// Execute a version command through mise for project-local tool versions.
@@ -302,17 +299,21 @@ fn parse_ruby_version(contents: &str) -> Option<String> {
     (!version.trim().is_empty()).then(|| version.trim().to_owned())
 }
 
+/// The version in the detector's stream, else in the other one: a tool may
+/// move it between releases (Python < 3.4 prints `--version` to stderr).
 fn parse_version_output<P: VersionSource + ?Sized>(
     detector: &P,
     output: &Output,
 ) -> Option<String> {
-    let text = if detector.uses_stderr() {
-        String::from_utf8_lossy(&output.stderr)
+    let (preferred, other) = if detector.uses_stderr() {
+        (&output.stderr, &output.stdout)
     } else {
-        String::from_utf8_lossy(&output.stdout)
+        (&output.stdout, &output.stderr)
     };
 
-    detector.parse_version(&text)
+    detector
+        .parse_version(&String::from_utf8_lossy(preferred))
+        .or_else(|| detector.parse_version(&String::from_utf8_lossy(other)))
 }
 
 /// Whether a version lookup may run a probe command on a cache miss.
@@ -949,6 +950,21 @@ mod tests {
             !marker.exists(),
             "fallback must not run when primary exists"
         );
+    }
+
+    /// Python < 3.4 prints `--version` to stderr: the direct probe must read
+    /// it there, as the forwarded-venv probe does.
+    #[test]
+    #[cfg(unix)]
+    fn version_printed_to_the_other_stream_is_parsed() {
+        let stub = StubDetector {
+            name: "stderr-version-test",
+            command: vec!["sh", "-c", "echo Python 2.7.18 >&2"],
+            fallbacks: vec![],
+        };
+
+        let version = execute_version_command(&stub, None).expect("the probe should run");
+        assert_eq!(version.as_deref(), Some("2.7.18"));
     }
 
     #[test]
