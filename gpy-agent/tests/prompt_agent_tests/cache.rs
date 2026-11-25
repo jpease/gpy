@@ -27,12 +27,11 @@ fn git_shell() -> (Shell, TestRepo) {
     )
 }
 
-/// A stale `git_first_last.black` entry holding [`STALE`], with its marker.
+/// A stale `git_first_last.black` entry holding [`STALE`].
 fn stale_entry(shell: &Shell, repo: &Path) -> PathBuf {
     let entry = shell.cache_file(repo, "git_first_last", Some("black"));
     write_entry(&entry, STALE);
     backdate(&entry);
-    write_entry(&shell.marker(repo, "git"), "");
     entry
 }
 
@@ -216,7 +215,7 @@ fn language_under_a_chunked_cache_key_is_drawn() {
         entry.display()
     );
     write_entry(&entry, "LANG-CHUNKED-TEXT");
-    let marker = shell.marker(&project, "lang");
+    let marker = shell.lang_marker(&project);
     write_entry(&marker, "");
     let marked = shell.prompt(&project, &[]);
     assert!(
@@ -245,7 +244,7 @@ fn language_none_fallback_is_drawn_and_refreshed_in_the_background() {
         &shell.cache_file(&project, "lang_first_last", None),
         NONE_TEXT,
     );
-    write_entry(&shell.marker(&project, "lang"), "");
+    write_entry(&shell.lang_marker(&project), "");
     let agent = agent_answering(&shell, "lang", Duration::ZERO);
     let run = shell.prompt(&project, &[]);
     assert!(
@@ -274,7 +273,6 @@ fn git_none_fallback_draws_the_agents_reply() {
         &shell.cache_file(repo.path(), "git_first_last", None),
         NONE_TEXT,
     );
-    write_entry(&shell.marker(repo.path(), "git"), "");
     let agent = agent_answering(&shell, "git", Duration::ZERO);
     let run = shell.prompt(repo.path(), &[]);
     assert!(
@@ -307,7 +305,6 @@ fn git_none_fallback_without_a_timely_agent_draws_none() {
         &shell.cache_file(repo.path(), "git_first_last", None),
         NONE_TEXT,
     );
-    write_entry(&shell.marker(repo.path(), "git"), "");
     let down = shell.prompt(repo.path(), &[]);
     assert!(down.stdout.contains(NONE_TEXT), "no agent: {}", down.stdout);
     assert!(
@@ -350,8 +347,6 @@ fn git_other_variants_are_a_cold_miss() {
             &shell.cache_file(repo.path(), variant, Some(prev_bg)),
             &other,
         );
-        write_entry(&shell.marker(repo.path(), "git"), "");
-
         let down = shell.prompt(repo.path(), &[]);
         assert!(
             !down.stdout.contains(&other),

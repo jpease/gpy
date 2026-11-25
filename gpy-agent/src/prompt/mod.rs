@@ -362,7 +362,7 @@ impl Render<'_> {
                 }
                 let present = self
                     .lang_key()
-                    .is_some_and(|key| marker_present(&key, "lang", self.dialect));
+                    .is_some_and(|key| lang_marker_present(&key, self.dialect));
                 if !present {
                     self.refresh(
                         "lang",
@@ -685,9 +685,9 @@ fn variant_suffix(base: &str, place: Place) -> String {
     suffix
 }
 
-/// Whether the agent's presence marker for `base` exists under `key`.
-fn marker_present(key: &Path, base: &str, dialect: Dialect) -> bool {
-    InstantPromptCache::presence_marker_for_dir(key, base, dialect.prompt_dialect())
+/// Whether the agent's language presence marker exists under `key`.
+fn lang_marker_present(key: &Path, dialect: Dialect) -> bool {
+    InstantPromptCache::lang_marker_for_dir(key, dialect.prompt_dialect())
         .is_ok_and(|path| path.is_file())
 }
 

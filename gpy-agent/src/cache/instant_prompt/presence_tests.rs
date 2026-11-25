@@ -1,11 +1,13 @@
-//! Presence markers: the file a shell's omit check probes instead of
-//! scanning the cache directory (`__gpy_instant_cache_present`).
+//! The language presence marker: the file the prompt's omit check probes
+//! instead of scanning the cache directory. Git keeps none: the prompt draws
+//! git in any repository, from the cache, the agent or the oneshot.
 
 use super::git_bg_tests::{cache_with_repo, clean_status};
 use super::*;
 use crate::theme::ThemeManager;
 
-/// Path of `kind`'s presence marker for `repo` in `dialect`.
+/// Path of `kind`'s presence marker (`{key}.{kind}.any-entry.{ext}`) for
+/// `repo` in `dialect`.
 fn marker_path(
     cache: &InstantPromptCache,
     repo: &Path,
@@ -13,12 +15,15 @@ fn marker_path(
     dialect: PromptDialect,
 ) -> PathBuf {
     let key = path_to_cache_key(&find_project_root(repo));
-    let (dir, name) = cache_file_parts(
-        &cache.cache_dir,
-        &key,
-        &presence_marker(&key, kind, dialect).tail(),
-    );
-    dir.join(name)
+    let name = CacheFileName {
+        key: &key,
+        kind,
+        position: SEGMENT_POSITIONS[0],
+        token: PRESENCE_TOKEN,
+        dialect,
+    };
+    let (dir, file_name) = cache_file_parts(&cache.cache_dir, &key, &name.tail());
+    dir.join(file_name)
 }
 
 fn write_git(cache: &InstantPromptCache, repo: &Path, prev_bg: Option<&str>) {
@@ -54,67 +59,41 @@ fn write_lang(cache: &InstantPromptCache, repo: &Path, prev_bg: Option<&str>) {
 }
 
 /// A shell whose first request carried a `prev_bg` gets only token files, so
-/// the marker must not depend on a `.none` entry existing.
+/// the marker must not depend on a `.none` entry existing. Git writes none.
 #[test]
-fn writes_mark_each_kind_present_in_every_dialect() {
+fn language_writes_mark_it_present_in_every_dialect_and_git_writes_nothing() {
     let (_dir, cache, repo) = cache_with_repo();
     write_git(&cache, &repo, Some("blue"));
     write_lang(&cache, &repo, Some("blue"));
 
     for dialect in PromptDialect::ALL {
-        for kind in [CacheKind::Git, CacheKind::Lang] {
-            assert!(
-                marker_path(&cache, &repo, kind, dialect).is_file(),
-                "{kind:?} marker missing for {dialect:?}"
-            );
-        }
-    }
-}
-
-/// A removed repository must stop counting as present, or a shell with the
-/// agent down would give its git segment a position and fork oneshot.
-#[test]
-fn remove_git_drops_the_git_marker_only() {
-    let (_dir, cache, repo) = cache_with_repo();
-    write_git(&cache, &repo, None);
-    write_lang(&cache, &repo, None);
-
-    cache.remove_git(&repo);
-
-    for dialect in PromptDialect::ALL {
-        assert!(!marker_path(&cache, &repo, CacheKind::Git, dialect).exists());
-        assert!(marker_path(&cache, &repo, CacheKind::Lang, dialect).is_file());
+        assert!(
+            marker_path(&cache, &repo, CacheKind::Lang, dialect).is_file(),
+            "language marker missing for {dialect:?}"
+        );
+        assert!(
+            !marker_path(&cache, &repo, CacheKind::Git, dialect).exists(),
+            "nothing reads a git marker, so none is written ({dialect:?})"
+        );
     }
 }
 
 /// The restart clear removes every language entry, so the language marker
-/// goes with them; the git `.none` entries survive, and so does their marker.
+/// goes with them, and so does a git marker an older agent left.
 #[test]
-fn restart_clear_keeps_markers_in_step_with_entries() {
+fn restart_clear_removes_the_markers() {
     let (_dir, cache, repo) = cache_with_repo();
     write_git(&cache, &repo, None);
     write_lang(&cache, &repo, None);
+    let stale_git_marker = marker_path(&cache, &repo, CacheKind::Git, PromptDialect::Ansi);
+    std::fs::write(&stale_git_marker, "").expect("write an old agent's git marker");
 
     cache.clear_unrefreshable_files();
 
+    assert!(!stale_git_marker.exists());
     for dialect in PromptDialect::ALL {
-        assert!(marker_path(&cache, &repo, CacheKind::Git, dialect).is_file());
         assert!(!marker_path(&cache, &repo, CacheKind::Lang, dialect).exists());
     }
-}
-
-/// A cache from before markers existed gains them on the next touch: the
-/// touch fails on the missing marker, and the caller's fallback write adds it.
-#[test]
-fn touch_without_marker_falls_back_to_a_write() {
-    let (_dir, cache, repo) = cache_with_repo();
-    write_git(&cache, &repo, None);
-    for dialect in PromptDialect::ALL {
-        std::fs::remove_file(marker_path(&cache, &repo, CacheKind::Git, dialect))
-            .expect("remove marker");
-    }
-
-    assert!(!cache.touch_git(&repo, None));
 }
 
 /// No `prev_bg` can name a file that collides with a marker.

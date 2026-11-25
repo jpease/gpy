@@ -287,17 +287,15 @@ impl InstantPromptCache {
         if self.suppressed_git.lock_or_recover().contains_key(&key) {
             return false;
         }
-        let marker_names =
-            PromptDialect::ALL.map(|dialect| presence_marker(&key, CacheKind::Git, dialect));
-        let bg_names = PromptDialect::ALL.map(|dialect| CacheFileName {
-            key: &key,
-            kind: CacheKind::GitBg,
-            position: SEGMENT_POSITIONS[0],
-            token: NO_PREV_BG_TOKEN,
-            dialect,
-        });
-        for name in bg_names.iter().chain(&marker_names) {
-            if !self.touch_cache_file(&mut cache, name, now) {
+        for dialect in PromptDialect::ALL {
+            let bg_name = CacheFileName {
+                key: &key,
+                kind: CacheKind::GitBg,
+                position: SEGMENT_POSITIONS[0],
+                token: NO_PREV_BG_TOKEN,
+                dialect,
+            };
+            if !self.touch_cache_file(&mut cache, &bg_name, now) {
                 return false;
             }
         }
@@ -429,8 +427,8 @@ impl InstantPromptCache {
                 }
             }
         }
-        if on_disk {
-            self.write_presence_markers(key, kind);
+        if on_disk && kind == CacheKind::Lang {
+            self.write_lang_markers(key);
         }
         match first_err {
             Some(e) if !wrote_any => Err(e),
@@ -442,12 +440,13 @@ impl InstantPromptCache {
         }
     }
 
-    /// Keep `kind`'s presence marker beside `key`'s entries in every dialect;
-    /// the marker never changes content, so it never rings a shell. A failed
-    /// write is logged: the shell then omits the segment until the next write.
-    fn write_presence_markers(&self, key: &str, kind: CacheKind) {
+    /// Keep the language presence marker beside `key`'s entries in every
+    /// dialect; the marker never changes content, so it never rings a shell.
+    /// A failed write is logged: the prompt then omits the segment until the
+    /// next write.
+    fn write_lang_markers(&self, key: &str) {
         for dialect in PromptDialect::ALL {
-            if let Err(e) = self.write_cache_file(&presence_marker(key, kind, dialect), "") {
+            if let Err(e) = self.write_cache_file(&lang_marker(key, dialect), "") {
                 debug_log!(
                     "cache",
                     "Could not write instant cache presence marker: {e}"
@@ -643,20 +642,15 @@ impl InstantPromptCache {
         Ok(parent.join(file_name))
     }
 
-    /// The presence marker for `base` (`git` or `lang`) of the project at
-    /// `dir` in `dialect`: what a shell's omit check tests.
+    /// The language presence marker of the project at `dir` in `dialect`:
+    /// what the prompt's omit check tests.
     /// # Errors
     /// Returns an error if the cache directory cannot be determined.
-    pub fn presence_marker_for_dir(
-        dir: &Path,
-        base: &str,
-        dialect: PromptDialect,
-    ) -> Result<PathBuf> {
+    pub fn lang_marker_for_dir(dir: &Path, dialect: PromptDialect) -> Result<PathBuf> {
         let cache_dir = get_instant_cache_dir()?;
         let key = path_to_cache_key(dir);
-        let ext = dialect.cache_ext();
         let (parent, file_name) =
-            cache_file_parts(&cache_dir, &key, &format!("{base}.{PRESENCE_TOKEN}.{ext}"));
+            cache_file_parts(&cache_dir, &key, &lang_marker(&key, dialect).tail());
         Ok(parent.join(file_name))
     }
 
@@ -675,11 +669,11 @@ impl InstantPromptCache {
     }
 }
 
-/// The presence marker of `kind` for `key` in `dialect`.
-const fn presence_marker(key: &str, kind: CacheKind, dialect: PromptDialect) -> CacheFileName<'_> {
+/// The language presence marker for `key` in `dialect`.
+const fn lang_marker(key: &str, dialect: PromptDialect) -> CacheFileName<'_> {
     CacheFileName {
         key,
-        kind,
+        kind: CacheKind::Lang,
         position: SEGMENT_POSITIONS[0],
         token: PRESENCE_TOKEN,
         dialect,

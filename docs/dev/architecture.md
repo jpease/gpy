@@ -79,7 +79,7 @@ With the agent disabled, or after a refusal (`{"error"…}` reply), `gpy prompt`
 - `token`: the previous segment's background colour, which the rendered chevron bakes in (`none` when there is none)
 - `ext`: the dialect (`ansi`, `zsh`, `bash`)
 
-Beside a key's git or language entries the agent keeps an empty presence marker, `{key}.{git|lang}.any-entry.{ext}`. The language segment's omit check tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows; git is drawn in any repository, from the cache, the agent or the oneshot. The marker is written with the entries, refreshed with them, and removed with them (`remove_git`, the restart clear of language files); `prev_bg_token` never emits `-`, so no render context can name it.
+Beside a key's language entries the agent keeps an empty presence marker, `{key}.lang.any-entry.{ext}`. The language segment's omit check tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows. Git keeps no marker: it is drawn in any repository, from the cache, the agent or the oneshot. The marker is written with the entries, refreshed with them, and removed with them (the restart clear of language files, which also removes a git marker an older agent left); `prev_bg_token` never emits `-`, so no render context can name it.
 
 Who writes and who reads:
 - The agent writes a file while handling a request, again on a background refresh, on a watcher event, and for a theme or config change before it rings the reload doorbell.

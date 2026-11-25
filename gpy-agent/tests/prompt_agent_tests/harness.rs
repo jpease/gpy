@@ -125,10 +125,10 @@ impl Shell {
             .expect("instant cache path")
     }
 
-    /// The Bash presence marker of `base` (`git`, `lang`) for `key_dir`.
-    pub fn marker(&self, key_dir: &Path, base: &str) -> PathBuf {
+    /// The Bash language presence marker for `key_dir`.
+    pub fn lang_marker(&self, key_dir: &Path) -> PathBuf {
         let _env = EnvGuard::set_one("XDG_CACHE_HOME", self.sandbox.env.xdg_cache_home());
-        InstantPromptCache::presence_marker_for_dir(key_dir, base, PromptDialect::BashPrompt)
+        InstantPromptCache::lang_marker_for_dir(key_dir, PromptDialect::BashPrompt)
             .expect("presence marker path")
     }
 
