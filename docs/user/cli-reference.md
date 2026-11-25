@@ -1168,7 +1168,7 @@ Verifies:
   (clean environment, the plugin root as working directory or the current one
   when `pwd` is declared, killed after `timeout_ms`) and reports the run time,
   what it would show and why it would be hidden
-- The `GPY_*` variables the agent ("Agent tuning") and `gpy prompt`
+- The `GPY_*` variables the agent ("Agent tuning") and the prompt renderer
   ("Prompt environment") read: each effective value and where it came from;
   an ignored value is a warning
 - `gpy-agent` runs
