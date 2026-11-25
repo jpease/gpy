@@ -156,16 +156,16 @@ pub fn user_plugins_dir() -> crate::Result<PathBuf> {
     Ok(crate::paths::config_root()?.join("plugins"))
 }
 
-/// Return the bundled plugin root: `GPY_BUNDLED_PLUGIN_DIR` when set, else
-/// `plugins` in the data root, where `gpy setup` installs the plugins GPY ships
-/// (`username`, `hostname`). `None` without either (never a relative
-/// `.local/share/gpy`): there are no bundled plugins then.
+/// Return the bundled plugin root: `GPY_BUNDLED_PLUGIN_DIR` when set (only
+/// an absolute value counts), else `plugins` in the data root, where
+/// `gpy setup` installs the plugins GPY ships (`username`, `hostname`).
+/// `None` without either (never a relative `.local/share/gpy`): there are no
+/// bundled plugins then.
 #[must_use]
 pub fn bundled_plugins_dir() -> Option<PathBuf> {
-    if let Some(dir) = crate::env_config::BUNDLED_PLUGIN_DIR.path() {
-        return Some(crate::paths::absolutize(&dir));
-    }
-    crate::paths::data_root().map(|root| root.join(BUNDLED_PLUGINS_SOURCE_DIR))
+    crate::env_config::BUNDLED_PLUGIN_DIR
+        .path()
+        .or_else(|| crate::paths::data_root().map(|root| root.join(BUNDLED_PLUGINS_SOURCE_DIR)))
 }
 
 /// Directory name of the bundled plugin root under the data root.
