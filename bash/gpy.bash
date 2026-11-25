@@ -57,7 +57,8 @@ __gpy_now_into() {
 
 # Milliseconds from $1 to $2 (as __gpy_now_into wrote them) into variable $3.
 # EPOCHREALTIME's separator is locale-dependent and a leading-zero fraction
-# would parse as octal, so every operand is forced with `10#`.
+# would parse as octal, so every operand is forced with `10#`. Status 1, and
+# no duration, when the clock stepped back: `--duration-ms` is a u64.
 __gpy_elapsed_into() {
     local __gpy_e
     case $__gpy_clock in
@@ -70,6 +71,7 @@ __gpy_elapsed_into() {
         seconds) __gpy_e=$((($2 - $1) * 1000)) ;;
         *) return 1 ;;
     esac
+    ((__gpy_e >= 0)) || return 1
     printf -v "$3" '%s' "$__gpy_e"
 }
 

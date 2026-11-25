@@ -77,6 +77,8 @@ function __gpy_precmd() {
     if (( __gpy_cmd_start > 0 )); then
         __gpy_duration=$(( EPOCHREALTIME * 1000 - __gpy_cmd_start ))
         __gpy_duration=${__gpy_duration%.*}
+        # None when the clock stepped back: `--duration-ms` is a u64.
+        [[ $__gpy_duration == <-> ]] || __gpy_duration=""
         __gpy_cmd_start=0
     fi
     __gpy_render
