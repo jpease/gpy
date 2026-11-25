@@ -654,15 +654,15 @@ impl InstantPromptCache {
         Ok(parent.join(file_name))
     }
 
-    /// The flat cache key of `path` (no chunking), as the shells' refresh
+    /// The flat cache key of `path` (no chunking), as `gpy prompt`'s refresh
     /// throttle names its buckets.
     #[must_use]
     pub fn cache_key(path: &Path) -> String {
         path_to_cache_key(path)
     }
 
-    /// The filename token for `prev_bg` (`none` when empty), as the shells'
-    /// `__gpy_prev_bg_token` spells it.
+    /// The filename token for `prev_bg` (`none` when empty), as `gpy prompt`
+    /// names the entry it reads.
     #[must_use]
     pub fn prev_bg_token(prev_bg: &str) -> String {
         prev_bg_token((!prev_bg.is_empty()).then_some(prev_bg))

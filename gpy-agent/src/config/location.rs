@@ -141,7 +141,7 @@ mod config_path_tests {
         ),
         // No home at all: no candidate remains.
         (None, None, None, &[]),
-        // An empty or relative HOME is unset, as in the shells' __gpy_home.
+        // An empty or relative HOME is unset, as `paths::home_path` reads it.
         (
             None,
             Some("/xdgcfg"),

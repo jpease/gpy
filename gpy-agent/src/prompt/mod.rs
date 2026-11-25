@@ -699,7 +699,8 @@ impl Render<'_> {
     }
 }
 
-/// `__gpy_cache_variant_suffix`: `git`, `git_first`, `git_last`, `git_first_last`.
+/// The cache variant at `place` (`git`, `git_first`, `git_last`,
+/// `git_first_last`), as the agent's `position_suffix` names its files.
 fn variant_suffix(base: &str, place: Place) -> String {
     let mut suffix = base.to_owned();
     if place.is_first {

@@ -82,9 +82,8 @@ impl ShellFlag {
 }
 
 #[cfg(unix)]
-/// `<runtime_root>/shells`, or `None` without a runtime root. The shells'
-/// `__gpy_shell_registry_dir` copy is pinned by
-/// `xdg_absoluteness_shared_vectors` and the `path_parity` tests.
+/// `<runtime_root>/shells`, or `None` without a runtime root: where the
+/// agent leaves a shell's flags for `gpy prompt` to take (`prompt::session`).
 #[must_use]
 pub(crate) fn default_shell_dir() -> Option<PathBuf> {
     crate::paths::runtime_dir()

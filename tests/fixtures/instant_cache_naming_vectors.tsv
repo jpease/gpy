@@ -1,24 +1,20 @@
 # tests/fixtures/instant_cache_naming_vectors.tsv
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Shared vectors for the pieces of an instant-cache file name and the
-# cache-read status code, beyond the path key (cache_key_vectors.tsv). The
-# cache file names must match exactly what the agent writes
-# (`CacheFileName` / `prev_bg_token` in gpy-agent/src/cache/instant_prompt/name.rs).
+# Shared vectors for the pieces of an instant-cache file name, beyond the
+# path key (cache_key_vectors.tsv). The cache file names must match exactly
+# what the agent writes (`CacheFileName` / `prev_bg_token` in
+# gpy-agent/src/cache/instant_prompt/name.rs) and `gpy prompt` reads.
 # Read by the Rust tests:
 #   - gpy-agent/src/cache/instant_prompt/naming_vectors_tests.rs
 #   - gpy-agent/src/cache/instant_prompt/git_bg_tests.rs
 #
 # Format: tab-separated, the first column names the row kind:
-#   token<TAB>prev_bg<TAB>expected            __gpy_prev_bg_token
+#   token<TAB>prev_bg<TAB>expected            the `prev_bg` filename token
 #   suffix<TAB>base<TAB>is_last<TAB>is_first<TAB>expected
-#                                              __gpy_cache_variant_suffix
-#   bgfile<TAB>ext<TAB>expected               __gpy_git_bg_file_tail OUT_VAR
-#                                              (the git pill's background file
-#                                              tail: `git_bg.none.{ext}`)
-#   status<TAB>code<TAB>stale<TAB>variant      __gpy_cache_status_stale /
-#                                              __gpy_cache_status_variant
-#                                              (yes|no each)
+#                                              the variant at a position
+#   bgfile<TAB>ext<TAB>expected               the git pill's background file
+#                                              tail: `git_bg.none.{ext}`
 # Blank lines and lines starting with # are ignored; extra columns MUST be
 # ignored. The whole-column token \e means the EMPTY string, and an input
 # column uses the mini escape scheme of json_escape_vectors.tsv (backslash
@@ -26,19 +22,13 @@
 # literal. Every reader MUST fail on an unknown kind, or if this file is
 # missing or yields no vectors.
 #
-# Status codes are __gpy_read_instant_cache's contract: 0 fresh hit, 1 miss,
-# 2 stale hit, 4 fresh variant-fallback hit, 6 stale variant-fallback hit.
-# Other codes are never produced.
-#
 # Rust is the oracle: `instant_cache_naming_shared_vectors`
 # (gpy-agent/src/cache/instant_prompt/naming_vectors_tests.rs) asserts these
 # rows against `prev_bg_token` and `position_suffix`, so an edited expected
 # value fails there too. Rust checks every `token` row, and a `suffix` row
-# whose two flag cells are `true`, `false` or `\e` (`\e` is false). It skips
-# `suffix` rows with other spellings (`TRUE`, `1`), which test the
-# "anything but `true` is false" rule, and the `status` and `present` kinds
-# (the cache-read codes and the presence probe). `bgfile` rows are checked by
-# `git_bg_names_match_the_shared_vectors`.
+# whose two flag cells are `true`, `false` or `\e` (`\e` is false); it skips
+# `suffix` rows with other spellings (`TRUE`, `1`). `bgfile` rows are checked
+# by `git_bg_names_match_the_shared_vectors`.
 
 token	\e	none
 token	blue	blue
@@ -61,9 +51,3 @@ suffix	lang	TRUE	1	lang
 bgfile	ansi	git_bg.none.ansi
 bgfile	bash	git_bg.none.bash
 bgfile	zsh	git_bg.none.zsh
-
-status	0	no	no
-status	1	no	no
-status	2	yes	no
-status	4	no	yes
-status	6	yes	yes

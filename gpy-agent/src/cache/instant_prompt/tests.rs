@@ -1689,7 +1689,7 @@ fn prev_bg_token_sanitizes_and_defaults_to_none() {
     );
 }
 
-/// Variant names are the shells' `__gpy_cache_variant_suffix` outputs.
+/// Variant names are the ones `gpy prompt`'s `variant_suffix` asks for.
 #[test]
 fn cache_file_name_tail_spells_the_shell_variants() {
     let tails: Vec<String> = [CacheKind::Git, CacheKind::Lang]
