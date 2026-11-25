@@ -72,9 +72,19 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
     result
 }
 
+/// Starship modules that draw nothing until a config sets `disabled = false`.
+pub const OFF_BY_DEFAULT: [&str; 1_usize] = ["time"];
+
+/// Whether `format` references the module `name` (escaped refs don't count).
+#[must_use]
+pub fn references_module(format: &str, name: &str) -> bool {
+    module_refs(format).any(|module| module == name)
+}
+
 /// Drop each segment in `segments` whose every module reference in `format`
-/// names a `disabled` Starship module; a segment with no reference there (it
-/// came from `$all`) stays.
+/// names a `disabled` Starship module. A segment with no reference there (it
+/// came from `$all`) stays unless an [`OFF_BY_DEFAULT`] module that maps to it
+/// is disabled.
 pub fn drop_disabled(format: &str, segments: &mut Vec<String>, disabled: &[String]) {
     if disabled.is_empty() {
         return;
@@ -83,7 +93,13 @@ pub fn drop_disabled(format: &str, segments: &mut Vec<String>, disabled: &[Strin
         let mut refs = module_refs(format)
             .filter(|module| map_module(module) == Some(segment.as_str()))
             .peekable();
-        refs.peek().is_none() || !refs.all(|module| disabled.iter().any(|name| name == module))
+        if refs.peek().is_none() {
+            return !disabled.iter().any(|name| {
+                OFF_BY_DEFAULT.contains(&name.as_str())
+                    && map_module(name) == Some(segment.as_str())
+            });
+        }
+        !refs.all(|module| disabled.iter().any(|name| name == module))
     });
 }
 

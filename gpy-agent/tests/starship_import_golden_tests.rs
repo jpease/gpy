@@ -286,3 +286,45 @@ fn directory_without_read_only_leaves_icon_unset() {
     let artifacts = import("import_default.toml", "default-import");
     assert!(artifacts.theme.segments.directory.read_only_icon.is_none());
 }
+
+fn build_inline(source: &str) -> ImportArtifacts {
+    build(&parse(source).expect("parse inline snippet"), "inline").expect("build")
+}
+
+#[test]
+fn time_module_is_hidden_unless_enabled() {
+    // Starship's `time.disabled` defaults to true: `$time` alone draws nothing.
+    let hidden = build_inline("format = \"$directory$time\"\n");
+    assert_eq!(hidden.segments, vec!["directory"]);
+    let table_only = build_inline("format = \"$directory$time\"\n[time]\nformat = \"at $time\"\n");
+    assert_eq!(table_only.segments, vec!["directory"]);
+    assert!(
+        table_only
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("'time'")),
+        "{:?}",
+        table_only.warnings
+    );
+
+    let enabled = build_inline("format = \"$directory$time\"\n[time]\ndisabled = false\n");
+    assert_eq!(enabled.segments, vec!["directory", "clock"]);
+}
+
+#[test]
+fn dollar_all_does_not_enable_the_hidden_clock() {
+    let hidden = build_inline("format = \"$all\"\n");
+    assert!(
+        !hidden.segments.iter().any(|s| s == "clock"),
+        "{:?}",
+        hidden.segments
+    );
+    assert!(hidden.segments.iter().any(|s| s == "directory"));
+
+    let enabled = build_inline("format = \"$all\"\n[time]\ndisabled = false\n");
+    assert!(
+        enabled.segments.iter().any(|s| s == "clock"),
+        "{:?}",
+        enabled.segments
+    );
+}

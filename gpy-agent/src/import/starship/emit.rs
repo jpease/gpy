@@ -122,12 +122,22 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     })
 }
 
-/// `model` without its `disabled = true` module tables, plus those modules'
-/// names (sorted): a disabled module is not imported and not in the layout.
+/// `model` without its disabled module tables, plus those modules' names
+/// (sorted): a disabled module is not imported and not in the layout.
+///
+/// A module is disabled by `disabled = true`, or, for [`layout::OFF_BY_DEFAULT`]
+/// modules, by not setting `disabled = false`.
 fn without_disabled(
     model: &StarshipConfig,
     warnings: &mut Warnings,
 ) -> (StarshipConfig, Vec<String>) {
+    let disabled_flag = |name: &str| {
+        model
+            .modules
+            .get(name)
+            .and_then(|value| value.get("disabled"))
+            .and_then(toml::Value::as_bool)
+    };
     let mut disabled: Vec<String> = model
         .modules
         .iter()
@@ -139,14 +149,32 @@ fn without_disabled(
         })
         .map(|(name, _)| name.clone())
         .collect();
+    for module in layout::OFF_BY_DEFAULT {
+        if disabled_flag(module) != Some(false) && !disabled.iter().any(|name| name == module) {
+            disabled.push((*module).to_owned());
+            let named = model.module_table(module).is_some()
+                || model
+                    .format
+                    .as_deref()
+                    .is_some_and(|format| layout::references_module(format, module));
+            if named {
+                warnings.push(
+                    WarningKind::UnrepresentableOption,
+                    format!("module '{module}' is off by default in Starship (set disabled = false to show it); not imported and left out of the layout"),
+                );
+            }
+        }
+    }
     disabled.sort();
     let mut kept = model.clone();
     for module in &disabled {
         kept.modules.remove(module);
-        warnings.push(
-            WarningKind::UnrepresentableOption,
-            format!("module '{module}' is disabled (disabled = true); not imported and left out of the layout"),
-        );
+        if disabled_flag(module) == Some(true) {
+            warnings.push(
+                WarningKind::UnrepresentableOption,
+                format!("module '{module}' is disabled (disabled = true); not imported and left out of the layout"),
+            );
+        }
     }
     (kept, disabled)
 }
