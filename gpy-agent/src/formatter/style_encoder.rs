@@ -341,7 +341,7 @@ const fn cube_level(channel: u8) -> u8 {
 }
 
 /// The nearest xterm 256-color index to `r;g;b`: the grey ramp for greys, else the color cube.
-fn rgb_to_ansi256(red: u8, green: u8, blue: u8) -> u8 {
+pub(crate) fn rgb_to_ansi256(red: u8, green: u8, blue: u8) -> u8 {
     if red == green && green == blue {
         return match red {
             0..=7 => 16,
@@ -376,7 +376,7 @@ const ANSI16_RGB: [(u8, u8, u8); 16] = [
 ];
 
 /// The foreground code (`30-37`, `90-97`) of the ANSI color nearest to `r;g;b`.
-fn rgb_to_ansi16(red: u8, green: u8, blue: u8) -> u8 {
+pub(crate) fn rgb_to_ansi16(red: u8, green: u8, blue: u8) -> u8 {
     let distance = |&(pr, pg, pb): &(u8, u8, u8)| {
         let gap = |x: u8, y: u8| u32::from(x.abs_diff(y));
         [gap(red, pr), gap(green, pg), gap(blue, pb)]
@@ -398,7 +398,7 @@ fn rgb_to_ansi16(red: u8, green: u8, blue: u8) -> u8 {
 }
 
 /// The foreground code (`30-37`, `90-97`) of the ANSI color nearest to a 256-color `index`.
-fn index_to_ansi16(index: u8) -> u8 {
+pub(crate) fn index_to_ansi16(index: u8) -> u8 {
     match index {
         0..=7 => 30_u8.saturating_add(index),
         8..=15 => 90_u8.saturating_add(index.saturating_sub(8)),

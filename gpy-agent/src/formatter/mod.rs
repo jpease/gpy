@@ -12,7 +12,7 @@ pub(crate) mod language_resolver;
 mod prompt;
 pub(crate) mod separator;
 pub(crate) mod status_resolver;
-mod style_encoder;
+pub(crate) mod style_encoder;
 
 pub use directory_resolver::DirectoryEnv;
 pub use json::JsonFormatter;

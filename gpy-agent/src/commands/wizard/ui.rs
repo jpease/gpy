@@ -2,8 +2,9 @@
 
 use super::bindings;
 use super::keys::InputMode;
-use super::preview::to_ratatui_color;
+use super::preview::{fit_color, to_ratatui_color};
 use super::state::{Section, WizardState};
+use crate::formatter::ColorDepth;
 use crate::plugin::BuiltinSegment;
 use crate::template::Palette;
 use ratatui::Frame;
@@ -37,7 +38,11 @@ impl WizardColors {
 }
 
 fn palette_named(palette: &Palette, name: &str) -> Option<RatatuiColor> {
-    palette.get(name).as_ref().and_then(to_ratatui_color)
+    palette
+        .get(name)
+        .as_ref()
+        .and_then(to_ratatui_color)
+        .and_then(|color| fit_color(color, ColorDepth::detect()))
 }
 
 fn border_style(focused: bool, accent: Option<RatatuiColor>) -> Style {
