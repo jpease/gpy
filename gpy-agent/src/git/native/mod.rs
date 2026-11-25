@@ -192,18 +192,20 @@ impl NativeGitBackend {
     /// unknown answer for "none".
     #[must_use]
     pub fn tracked_ignored_files(repo_root: &Path) -> Option<Vec<PathBuf>> {
-        let output = Self::run_git_optional(
+        let output = run_git_quiet_bytes_until(
             repo_root,
             &["ls-files", "--cached", "-i", "--exclude-standard", "-z"],
+            &[],
             Self::default_deadline(),
-        )?;
+        )
+        .ok()?;
 
         Some(
             output
-                .split('\0')
+                .split(|&byte| byte == b'\0')
                 .filter(|entry| !entry.is_empty())
                 .map(|rel| {
-                    let joined = repo_root.join(rel);
+                    let joined = repo_root.join(parser::path_from_bytes(rel));
                     fs::canonicalize(&joined).unwrap_or(joined)
                 })
                 .collect(),
@@ -545,7 +547,7 @@ impl NativeGitBackend {
             .collect();
         Self::push_pathspecs(&mut args, paths, ignore_case);
 
-        let output = run_git_until(repo_root, &args, deadline)?;
+        let output = run_git_bytes_until(repo_root, &args, &[], deadline)?;
         Ok(PathspecScan {
             files: parser::parse_v2_files(&output),
             ignore_case,
@@ -622,7 +624,22 @@ fn run_git_env_until<S: AsRef<OsStr>>(
     envs: &[(&str, &str)],
     deadline: Instant,
 ) -> Result<String> {
-    let result = run_git_quiet_env_until(repo_path, args, envs, deadline);
+    run_git_bytes_until(repo_path, args, envs, deadline).map(|stdout| stdout_text(&stdout))
+}
+
+/// [`run_git_env_until`] returning stdout as git wrote it, for output naming
+/// paths, which need not be UTF-8.
+///
+/// # Errors
+///
+/// Same as [`run_git_until`].
+fn run_git_bytes_until<S: AsRef<OsStr>>(
+    repo_path: &Path,
+    args: &[S],
+    envs: &[(&str, &str)],
+    deadline: Instant,
+) -> Result<Vec<u8>> {
+    let result = run_git_quiet_bytes_until(repo_path, args, envs, deadline);
     if let Err(error) = &result {
         failure_log::log_failure(repo_path, args, error);
     }
@@ -642,6 +659,20 @@ fn run_git_quiet_env_until<S: AsRef<OsStr>>(
     envs: &[(&str, &str)],
     deadline: Instant,
 ) -> Result<String> {
+    run_git_quiet_bytes_until(repo_path, args, envs, deadline).map(|stdout| stdout_text(&stdout))
+}
+
+/// [`run_git_quiet_env_until`] returning stdout as git wrote it.
+///
+/// # Errors
+///
+/// Same as [`run_git_until`].
+fn run_git_quiet_bytes_until<S: AsRef<OsStr>>(
+    repo_path: &Path,
+    args: &[S],
+    envs: &[(&str, &str)],
+    deadline: Instant,
+) -> Result<Vec<u8>> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
         return Err(Error::git(
@@ -679,7 +710,7 @@ fn run_git_quiet_env_until<S: AsRef<OsStr>>(
             Error::git("git command worker exited without a result".to_owned())
         }
     })?;
-    git_output_to_string(&output)
+    git_stdout(output)
 }
 
 /// Repository-selection env vars never forwarded to git: they override `-C`.
@@ -705,12 +736,12 @@ const REPO_LOCAL_GIT_ENV: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
-/// Convert `process::Output` to a trimmed string.
+/// The stdout of a git command that succeeded.
 ///
 /// # Errors
 ///
 /// Returns an error if git exited non-zero.
-fn git_output_to_string(output: &std::process::Output) -> Result<String> {
+fn git_stdout(output: std::process::Output) -> Result<Vec<u8>> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::git(format!(
@@ -719,10 +750,13 @@ fn git_output_to_string(output: &std::process::Output) -> Result<String> {
             stderr.trim()
         )));
     }
-    // Don't trim leading whitespace — git status porcelain uses it.
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_owned())
+    Ok(output.stdout)
+}
+
+/// `stdout` as text with trailing whitespace trimmed; bytes that are not
+/// UTF-8 are replaced.
+fn stdout_text(stdout: &[u8]) -> String {
+    String::from_utf8_lossy(stdout).trim_end().to_owned()
 }
 
 /// Guard against git's stale untracked cache (#1204).
