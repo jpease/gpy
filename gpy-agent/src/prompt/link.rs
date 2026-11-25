@@ -86,6 +86,8 @@ impl Link {
     }
 
     /// Whether agent mode is on and a socket file exists (`[[ -S ... ]]`).
+    /// The file outlives an agent that crashed: [`Self::send`] and
+    /// [`Self::maybe_refresh`] tell whether anything listens on it.
     pub(crate) fn socket_present(&self) -> bool {
         self.enabled
             && self
@@ -203,18 +205,20 @@ impl Link {
 
     /// `__gpy_maybe_refresh`: at most one refresh per 500 ms per bucket,
     /// sent without waiting for the reply. `root` is the path the shell
-    /// keys the bucket by (its logical `$PWD`).
+    /// keys the bucket by (its logical `$PWD`). `false` when no agent
+    /// listens (agent mode off, no socket, or a connect refused): nothing
+    /// will refresh the entry, so the caller does the work itself.
     pub(crate) fn maybe_refresh(
         &self,
         request: &serde_json::Value,
         bucket_parts: [&str; 3],
         root: &Path,
-    ) {
+    ) -> bool {
         if !self.enabled {
-            return;
+            return false;
         }
         let Some(dir) = &self.throttle_dir else {
-            return;
+            return self.socket_present();
         };
         let [op, suffix, extra] = bucket_parts;
         let bucket = format!(
@@ -232,27 +236,36 @@ impl Link {
                     .flatten()
             })
             .unwrap_or(0);
+        // Only a refresh that reached the agent leaves its stamp.
         if now.saturating_sub(last) < REFRESH_GAP_MS {
-            return;
+            return true;
         }
         let content = format!("{now} {bucket}");
         if std::fs::write(&stamp, &content).is_err()
             && (std::fs::create_dir_all(dir).is_err() || std::fs::write(&stamp, &content).is_err())
         {
-            return;
+            return self.socket_present();
         }
-        self.fire(request);
+        let reached = self.fire(request);
+        if !reached {
+            let _ = std::fs::remove_file(&stamp);
+        }
+        reached
     }
 
     /// Send `request` and hang up without reading: the agent still handles
     /// it, writing the cache (and ringing a registered shell). Skipped while
     /// a late window is open, so a wedged agent's backlog is not filled.
-    fn fire(&self, request: &serde_json::Value) {
-        if !self.socket_present() || self.late_active() {
-            return;
+    /// `false` when no agent listens.
+    fn fire(&self, request: &serde_json::Value) -> bool {
+        if !self.socket_present() {
+            return false;
+        }
+        if self.late_active() {
+            return true;
         }
         let Some(socket) = self.socket.as_deref() else {
-            return;
+            return false;
         };
         match connect_now(socket) {
             Connect::Open(mut stream) => {
@@ -260,9 +273,13 @@ impl Link {
                     stream.set_write_timeout(Some(Duration::from_millis(warm_timeout_ms().max(1))));
                 let _ = stream.write_all(format!("{request}\n").as_bytes());
                 let _ = stream.shutdown(std::net::Shutdown::Write);
+                true
             }
-            Connect::Busy => self.open_late_window(socket),
-            Connect::Refused => {}
+            Connect::Busy => {
+                self.open_late_window(socket);
+                true
+            }
+            Connect::Refused => false,
         }
     }
 }

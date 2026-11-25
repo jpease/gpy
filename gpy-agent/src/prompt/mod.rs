@@ -365,14 +365,9 @@ impl Render<'_> {
                 .args
                 .duration_ms
                 .is_some_and(|ms| ms >= self.duration_threshold()),
-            "git" => {
-                let Some(root) = &self.git_root else {
-                    return false;
-                };
-                !(self.link.enabled()
-                    && !marker_present(root, "git", self.dialect)
-                    && !self.link.socket_present())
-            }
+            // Drawn from the cache, the agent or, when it is off, down or
+            // refuses, the in-process oneshot.
+            "git" => self.git_root.is_some(),
             "language" => {
                 if !lang_detect(&self.pwd) {
                     return false;
@@ -507,7 +502,7 @@ impl Render<'_> {
 
     /// `__gpy_segment_git`: serve the instant cache, ask the agent on a cold
     /// or wrong-variant miss, refresh a stale entry, and fall back to an
-    /// in-process oneshot when the agent is off or down.
+    /// in-process oneshot when the agent is off, down or refuses.
     fn git(&mut self, place: Place, prev_bg: &str) -> Drawn {
         let suffix = variant_suffix("git", place);
         let Some(root) = self.git_root.clone() else {
@@ -518,20 +513,18 @@ impl Render<'_> {
                 return self.oneshot_git(place);
             }
             let request = self.data_request("git", place, prev_bg, true);
-            match self.link.send(&request, Some(link::cold_timeout_ms())) {
-                Reply::Text(text) => return Drawn::plain(text),
-                // Refused for good (a denied cwd), so a refresh would be too:
-                // Zsh omits git, Fish draws it agent-free.
-                Reply::Refused(_) if self.dialect == Dialect::Zsh => {
-                    return Drawn::plain(String::new());
+            return match self.link.send(&request, Some(link::cold_timeout_ms())) {
+                Reply::Text(text) => Drawn::plain(text),
+                // Nothing listens, or a refusal for good (a denied cwd) that
+                // a refresh would get too: draw it agent-free.
+                Reply::Unreachable | Reply::Refused(_) => self.oneshot_git(place),
+                // A live agent that is late has the request: it fills the
+                // cache, and the next prompt draws it.
+                Reply::Late => {
+                    self.refresh("git", &suffix, "", place, prev_bg);
+                    Drawn::plain(String::new())
                 }
-                Reply::Refused(_) if self.dialect == Dialect::Fish => {
-                    return self.oneshot_git(place);
-                }
-                _ => {}
-            }
-            self.refresh("git", &suffix, "", place, prev_bg);
-            return Drawn::plain(String::new());
+            };
         };
         if entry.text.is_empty() {
             return Drawn::plain(String::new());
@@ -546,8 +539,7 @@ impl Render<'_> {
         if !entry.stale {
             return Drawn::plain(entry.text);
         }
-        if self.link.socket_present() {
-            self.refresh("git", &suffix, "", place, prev_bg);
+        if self.refresh("git", &suffix, "", place, prev_bg) {
             return Drawn::plain(entry.text);
         }
         let fresh = self.oneshot_git(place);
@@ -634,10 +626,12 @@ impl Render<'_> {
         request
     }
 
-    fn refresh(&self, op: &str, suffix: &str, extra: &str, place: Place, prev_bg: &str) {
+    /// Ask the agent to refresh `op`'s entry in the background; `false`
+    /// when no agent listens to do it.
+    fn refresh(&self, op: &str, suffix: &str, extra: &str, place: Place, prev_bg: &str) -> bool {
         let request = self.data_request(op, place, prev_bg, false);
         self.link
-            .maybe_refresh(&request, [op, suffix, extra], &self.pwd);
+            .maybe_refresh(&request, [op, suffix, extra], &self.pwd)
     }
 
     /// `__gpy_segment_bg`: the background the next chevron starts from.
