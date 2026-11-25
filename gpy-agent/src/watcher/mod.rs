@@ -317,7 +317,7 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
         });
     }
 
-    let event = if is_language_cache_trigger(file_name) {
+    let event = if is_language_cache_trigger(path, file_name) {
         FileEvent::Language {
             path: path.to_path_buf(),
         }
@@ -333,7 +333,8 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
 }
 
 /// Lockfiles and version pins that invalidate the language cache but are not
-/// language-detection markers.
+/// language-detection markers; mise's are
+/// [`TOOL_VERSION_CONFIG_FILES`](crate::language::version::TOOL_VERSION_CONFIG_FILES).
 const LANGUAGE_CACHE_LOCKFILES: &[&str] = &[
     "package-lock.json",
     "yarn.lock",
@@ -342,14 +343,9 @@ const LANGUAGE_CACHE_LOCKFILES: &[&str] = &[
     "rust-toolchain",
     "rust-toolchain.toml",
     "go.work",
-    ".tool-versions",
     ".python-version",
     ".node-version",
     ".nvmrc",
-    "mise.toml",
-    ".mise.toml",
-    "mise.local.toml",
-    ".mise.local.toml",
     "poetry.lock",
     "Gemfile.lock",
     "mix.lock",
@@ -357,11 +353,13 @@ const LANGUAGE_CACHE_LOCKFILES: &[&str] = &[
     "settings.gradle",
 ];
 
-/// Whether a change to `file_name` should invalidate the language cache
-/// (detection markers plus [`LANGUAGE_CACHE_LOCKFILES`]). Case-sensitive.
-fn is_language_cache_trigger(file_name: &str) -> bool {
+/// Whether a change to `path` (named `file_name`) should invalidate the
+/// language cache: detection markers, [`LANGUAGE_CACHE_LOCKFILES`] and mise's
+/// version files. Case-sensitive.
+fn is_language_cache_trigger(path: &Path, file_name: &str) -> bool {
     crate::language::metadata::marker_file_names().contains(file_name)
         || LANGUAGE_CACHE_LOCKFILES.contains(&file_name)
+        || crate::language::version::is_tool_version_config_path(path)
 }
 /// Watcher tuning parsed at startup.
 #[derive(Clone, Copy, Debug)]

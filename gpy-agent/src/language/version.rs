@@ -199,7 +199,42 @@ fn wait_with_timeout(child: Child, label: &str, timeout: Duration) -> Result<Out
     })
 }
 
-/// Whether a `.tool-versions`/`mise.toml`/`.mise.toml` governs `path`, global
+/// Files, relative to a directory, by which mise pins tool versions there:
+/// `.tool-versions` and every fixed name in mise's "Config file locations",
+/// each with its local override. `conf.d` fragments and `mise.<env>.toml`
+/// environment files are not looked for.
+pub(crate) const TOOL_VERSION_CONFIG_FILES: &[&str] = &[
+    ".tool-versions",
+    "mise.toml",
+    "mise.local.toml",
+    ".mise.toml",
+    ".mise.local.toml",
+    "mise/config.toml",
+    "mise/config.local.toml",
+    ".mise/config.toml",
+    ".mise/config.local.toml",
+    ".config/mise.toml",
+    ".config/mise.local.toml",
+    ".config/mise/mise.toml",
+    ".config/mise/mise.local.toml",
+    ".config/mise/config.toml",
+    ".config/mise/config.local.toml",
+];
+
+/// Whether `path` ends with one of the [`TOOL_VERSION_CONFIG_FILES`], so a
+/// change to it can change the versions mise pins.
+pub(crate) fn is_tool_version_config_path(path: &Path) -> bool {
+    TOOL_VERSION_CONFIG_FILES.iter().any(|relative| {
+        let mut components = path.components().rev();
+        relative.rsplit('/').all(|name| {
+            components
+                .next()
+                .is_some_and(|component| component.as_os_str() == name)
+        })
+    })
+}
+
+/// Whether one of the [`TOOL_VERSION_CONFIG_FILES`] governs `path`, global
 /// config in `$HOME` included. Memoized per directory; the walk stops at
 /// `$HOME` or [`MAX_ANCESTOR_DEPTH`] levels.
 fn has_tool_version_config(path: &Path) -> bool {
@@ -223,9 +258,9 @@ fn tool_config_presence(path: &Path) -> ToolConfigPresence {
         below_home: false,
     };
     for ancestor in bounded_ancestors(path, home.as_deref(), MAX_ANCESTOR_DEPTH) {
-        let has_config = [".tool-versions", "mise.toml", ".mise.toml"]
+        let has_config = TOOL_VERSION_CONFIG_FILES
             .iter()
-            .any(|name| ancestor.join(name).exists());
+            .any(|relative| ancestor.join(relative).exists());
         presence.anywhere |= has_config;
         presence.below_home |= has_config && home.as_deref() != Some(ancestor);
     }
@@ -782,6 +817,30 @@ mod tests {
 
         assert!(has_tool_version_config(&nested));
         assert!(!has_tool_version_config(temp_dir.path()));
+    }
+
+    /// mise reads a project's versions from more than `mise.toml`; its other
+    /// documented config locations make it govern the directory too.
+    #[test]
+    fn tool_version_config_detects_mise_config_locations() {
+        for relative in [
+            "mise.local.toml",
+            ".config/mise.toml",
+            ".config/mise/config.toml",
+            "mise/config.toml",
+            ".mise/config.toml",
+        ] {
+            let temp_dir = tempfile::tempdir().expect("create temp dir");
+            let config = temp_dir.path().join(relative);
+            std::fs::create_dir_all(config.parent().expect("config dir"))
+                .expect("create config dir");
+            std::fs::write(&config, "[tools]\n").expect("write mise config");
+
+            assert!(
+                has_tool_version_config(temp_dir.path()),
+                "{relative} must count as mise config"
+            );
+        }
     }
 
     #[test]
