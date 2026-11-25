@@ -69,6 +69,9 @@ printf '%s\n' \
     "" \
     "set -gx PATH '$stub_dir' '$agent_dir' '$safe_path'" \
     "set -e XDG_RUNTIME_DIR" \
+    "# install-dev.fish exports GPY_AGENT_ENABLED=0 for its own run, and that" \
+    "# overrides the config at start; drop it, as install-dev's restart step does." \
+    "set -e GPY_AGENT_ENABLED" \
     "" \
     "gpy-agent start >'$home_dir/own-agent.log' 2>&1" \
     "if test \$status -ne 0" \
