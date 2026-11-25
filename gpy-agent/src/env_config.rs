@@ -500,6 +500,10 @@ impl EnvVar {
         }
     }
 
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only gpy prompt (Unix-only) reads counts")
+    )]
     fn count_reading(&self) -> Reading<u64> {
         let reading = parse_u64(self.raw_text().as_deref());
         if let Reading::Invalid(raw) = &reading {
@@ -510,6 +514,10 @@ impl EnvVar {
 
     /// The whole number, `0` included; the default when unset or invalid.
     #[must_use]
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only gpy prompt (Unix-only) reads counts")
+    )]
     pub(crate) fn count(&self) -> u64 {
         let default = if let EnvKind::Count { default } = self.kind {
             default
@@ -524,6 +532,10 @@ impl EnvVar {
 
     /// The whole number, `0` included; `None` when unset or invalid.
     #[must_use]
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only gpy prompt (Unix-only) reads counts")
+    )]
     pub(crate) fn count_override(&self) -> Option<u64> {
         match self.count_reading() {
             Reading::Value(value) => Some(value),

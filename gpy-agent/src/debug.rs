@@ -177,6 +177,13 @@ pub(crate) struct HeldWarning {
     pub(crate) line: String,
     /// The warning log already ended with it, so the usual rule would not
     /// show it.
+    #[cfg_attr(
+        not(unix),
+        allow(
+            dead_code,
+            reason = "read only by StderrHold, which gpy prompt (Unix-only) uses"
+        )
+    )]
     pub(crate) repeat: bool,
 }
 
@@ -195,15 +202,27 @@ static HELD: Mutex<Option<Vec<HeldWarning>>> = Mutex::new(None);
 /// knows its user decides when it shows: `gpy prompt` shows each once per
 /// shell session. Dropped, it shows what is still held by the usual rule.
 #[must_use = "warnings are held only while the hold lives"]
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only gpy prompt (Unix-only) holds warnings")
+)]
 pub(crate) struct StderrHold;
 
 /// Start holding warnings' stderr lines; see [`StderrHold`].
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only gpy prompt (Unix-only) holds warnings")
+)]
 pub(crate) fn hold_stderr() -> StderrHold {
     *HELD.lock_or_recover() = Some(Vec::new());
     StderrHold
 }
 
 /// The warnings held since the hold started or the last call.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only gpy prompt (Unix-only) holds warnings")
+)]
 pub(crate) fn take_held() -> Vec<HeldWarning> {
     HELD.lock_or_recover()
         .as_mut()
