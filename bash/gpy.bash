@@ -34,6 +34,9 @@ fi
 __gpy_cmd_start=""
 __gpy_cmd_count=0
 __gpy_armed=""
+# This shell, as `gpy prompt` tells it from an earlier one at the same PID
+# (`exec bash`, a recycled PID): drawn once per load, never inherited.
+__gpy_instance="$RANDOM$RANDOM${EPOCHREALTIME-}"
 
 # The `gpy` command into variable $1: PATH first, then ~/.local/bin.
 __gpy_bin_into() {
@@ -83,7 +86,7 @@ __gpy_precmd() {
     fi
     if __gpy_bin_into __gpy_pc_bin; then
         local -a __gpy_pc_args=(prompt bash --status "$__gpy_pc_status" --pid "$$"
-            --cmd "$__gpy_cmd_count" --shell-version "$BASH_VERSION")
+            --cmd "$__gpy_cmd_count" --instance "$__gpy_instance" --shell-version "$BASH_VERSION")
         [[ -n $__gpy_pc_ms ]] && __gpy_pc_args+=(--duration-ms "$__gpy_pc_ms")
         # stderr stays the terminal: a tripped script segment says so there.
         local __gpy_pc_out

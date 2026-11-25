@@ -376,6 +376,10 @@ verdicts and environment. With no Bash at all, script segments are disabled
 - **Cache in the session file.** `gpy prompt` keeps each shell's results,
   trigger state and breaker counters in
   `<runtime>/refresh-throttle/<pid>.scripts`, removed when the shell exits.
+  A new shell at the same PID (`exec`, a recycled PID) draws another instance
+  token when the integration loads and starts empty, and a shell's first
+  prompt removes the files of shells that are gone without running their exit
+  hook.
   A result is keyed by the segment's static cache key plus the current values
   of the declared inputs and `env` names and expires after `ttl_secs` (`0` =
   no cache). Ages come from the `gpy` binary's wall clock (seconds since the

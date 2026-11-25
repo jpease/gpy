@@ -37,6 +37,7 @@ fn draw(theme: &ThemeConfig, is_root: bool, status: i32) -> (String, String) {
             duration_ms: None,
             pid: 1,
             cmd: String::new(),
+            instance: String::new(),
         },
         pwd: PathBuf::from("/"),
         canonical: None,

@@ -4,12 +4,16 @@
 //! directory after a `cd`, restarting an agent that died (the supervisor),
 //! the Bash that runs script segments, and unregistering at exit. Its state
 //! lives in `<runtime root>/refresh-throttle/<pid>.session`; `gpy prompt
-//! <shell> --exit` removes it with every other `<pid>.*` file.
+//! <shell> --exit` removes it with every other `<pid>.*` file. A shell that
+//! never ran its exit hook (killed, or replaced by `exec`) leaves them
+//! behind: the shell's instance token tells its successor at the same PID
+//! apart, and every shell's first prompt sweeps them.
 
 use super::link::{Link, Reply, now_secs};
 use crate::config::Config;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -40,6 +44,10 @@ struct State {
     /// way, so a newer agent it cannot replace is asked once, not every check.
     #[serde(default)]
     agent_nudged_for: String,
+    /// The integration's token for this shell (`--instance`): a state kept
+    /// under another is an earlier shell's at the same PID.
+    #[serde(default)]
+    instance: String,
 }
 
 /// The shell's identity in a registration.
@@ -65,17 +73,37 @@ impl Session {
     /// Load the state and take the agent's flags for `pid`. On the shell's
     /// first prompt, start the agent (when enabled): that counts as the
     /// first supervisor check.
-    pub(super) fn open(pid: u32, agent_enabled: bool) -> Self {
+    pub(super) fn open(pid: u32, instance: &str, agent_enabled: bool) -> Self {
         let runtime = crate::paths::runtime_dir().ok();
-        let path = runtime
+        let (session, first) = Self::open_in(runtime.as_deref(), pid, instance);
+        if first && agent_enabled {
+            start_agent();
+        }
+        session
+    }
+
+    /// [`Self::open`] under the runtime root `runtime`, without starting the
+    /// agent; whether this is the shell's first prompt. `instance` is empty
+    /// from an integration that predates it: any state at `pid` is then
+    /// this shell's.
+    fn open_in(runtime: Option<&Path>, pid: u32, instance: &str) -> (Self, bool) {
+        let throttle = runtime.map(|root| root.join("refresh-throttle"));
+        let path = throttle
             .as_deref()
-            .map(|root| root.join("refresh-throttle").join(format!("{pid}.session")));
-        let loaded = path.as_deref().and_then(load);
+            .map(|dir| dir.join(format!("{pid}.session")));
+        let loaded = path
+            .as_deref()
+            .and_then(load)
+            .filter(|state| instance.is_empty() || state.instance == instance);
         let first = loaded.is_none();
+        if first && let Some(dir) = &throttle {
+            sweep(dir, pid);
+        }
         let mut session = Self {
             path,
             state: loaded.unwrap_or_else(|| State {
                 checked_at: now_secs(),
+                instance: instance.to_owned(),
                 ..State::default()
             }),
             reload: first,
@@ -94,10 +122,7 @@ impl Session {
                 super::link::clear_late_window(&root.join("refresh-throttle"), pid);
             }
         }
-        if first && agent_enabled {
-            start_agent();
-        }
-        session
+        (session, first)
     }
 
     /// The duration scripts see: this prompt's command's, else the last one's.
@@ -144,12 +169,35 @@ pub(super) fn exit(link: &Link, pid: u32) {
     ] {
         let _ = std::fs::remove_file(file);
     }
-    let prefix = format!("{pid}.");
-    if let Ok(entries) = std::fs::read_dir(root.join("refresh-throttle")) {
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                let _ = std::fs::remove_file(entry.path());
-            }
+    remove_shell_files(&root.join("refresh-throttle"), |owner| owner == pid);
+}
+
+/// A shell's first prompt: remove what an earlier shell at `pid` left (its
+/// script state, refresh stamps and late window), and every file of a shell
+/// that is gone without its exit hook running.
+fn sweep(throttle: &Path, pid: u32) {
+    let mut alive = HashMap::new();
+    remove_shell_files(throttle, |owner| {
+        owner == pid
+            || !*alive
+                .entry(owner)
+                .or_insert_with(|| crate::ipc::ClientDirectory::is_client_alive(owner))
+    });
+}
+
+/// Remove every `<pid>.*` file in `throttle` whose PID `stale` accepts.
+fn remove_shell_files(throttle: &Path, mut stale: impl FnMut(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(throttle) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let owner = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.split_once('.'))
+            .and_then(|(owner, _)| owner.parse::<u32>().ok());
+        if owner.is_some_and(&mut stale) {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -357,5 +405,98 @@ fn store(path: &Path, state: &State) {
             .map(std::fs::create_dir_all)
             .and_then(Result::ok)
             .map(|()| std::fs::write(path, &bytes));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Session, store};
+    use std::path::Path;
+
+    /// Open shell `pid`'s session under `root` as instance `instance` and
+    /// store it, as a prompt does; whether it was the shell's first prompt.
+    fn prompt(root: &Path, pid: u32, instance: &str) -> bool {
+        let (session, first) = Session::open_in(Some(root), pid, instance);
+        assert_eq!(session.reload, first, "a first prompt reloads the scripts");
+        store(
+            session.path.as_deref().expect("a session path"),
+            &session.state,
+        );
+        first
+    }
+
+    /// A PID no process holds: a child that has exited and been reaped.
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("reap true");
+        pid
+    }
+
+    /// `exec` keeps the PID but loads the integration again, with a new
+    /// instance token: that prompt is the shell's first (its script breakers
+    /// reset) and the earlier shell's script state is gone (#1283).
+    #[test]
+    fn another_instance_at_the_same_pid_starts_a_fresh_session() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+        let scripts = root.path().join(format!("refresh-throttle/{pid}.scripts"));
+
+        assert!(prompt(root.path(), pid, "first-shell"), "the first prompt");
+        std::fs::write(&scripts, "{}").expect("write script state");
+        assert!(
+            !prompt(root.path(), pid, "first-shell"),
+            "the same shell's next prompt"
+        );
+        assert!(scripts.exists(), "the shell keeps its script state");
+
+        assert!(
+            prompt(root.path(), pid, "exec-ed-shell"),
+            "a new instance at the PID is a new shell"
+        );
+        assert!(
+            !scripts.exists(),
+            "the earlier shell's script state is gone"
+        );
+        assert!(
+            !prompt(root.path(), pid, "exec-ed-shell"),
+            "and its own next prompt is not first again"
+        );
+    }
+
+    /// An integration that passes no instance keeps whatever state the PID
+    /// has, as before the token existed.
+    #[test]
+    fn no_instance_keeps_the_state_at_the_pid() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+        assert!(prompt(root.path(), pid, "some-shell"));
+        assert!(!prompt(root.path(), pid, ""));
+    }
+
+    /// A shell's first prompt removes the files of shells that are gone
+    /// without running their exit hook, and keeps a live shell's.
+    #[test]
+    fn a_first_prompt_sweeps_the_files_of_dead_shells() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let throttle = root.path().join("refresh-throttle");
+        std::fs::create_dir_all(&throttle).expect("mkdir refresh-throttle");
+        let dead = dead_pid();
+        let live = std::os::unix::process::parent_id();
+        let dead_files = [format!("{dead}.session"), format!("{dead}.git.git_last..x")];
+        let live_file = throttle.join(format!("{live}.scripts"));
+        for name in &dead_files {
+            std::fs::write(throttle.join(name), "").expect("write a dead shell's file");
+        }
+        std::fs::write(&live_file, "").expect("write a live shell's file");
+
+        assert!(prompt(root.path(), std::process::id(), "a-shell"));
+
+        for name in &dead_files {
+            assert!(!throttle.join(name).exists(), "{name} is swept");
+        }
+        assert!(live_file.exists(), "a live shell's file is kept");
     }
 }

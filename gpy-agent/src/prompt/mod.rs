@@ -48,6 +48,10 @@ pub struct PromptArgs {
     /// A token that changes with every command the shell ran: script
     /// segments run again when it does.
     pub cmd: String,
+    /// A token the shell integration draws once when it loads; empty from
+    /// one that predates it. Another token at the same PID is another shell
+    /// (an `exec`, or a recycled PID): it starts a fresh session.
+    pub instance: String,
 }
 
 /// The built-in segments `gpy prompt` draws; any other enabled name is a
@@ -97,7 +101,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
         collect_script_segments(&crate::plugin::discover_plugins(), &config)
     };
     let enabled = agent_enabled(&config);
-    let mut session = session::Session::open(args.pid, enabled);
+    let mut session = session::Session::open(args.pid, &args.instance, enabled);
     let script_duration = session.script_duration(args.duration_ms);
     let theme = load_theme(config.ui.theme.as_str()).or_else(|_| load_theme("default"))?;
     let palette = crate::palette::active_palette(&config);

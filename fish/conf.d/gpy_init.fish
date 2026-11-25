@@ -25,6 +25,9 @@ if test "$gpy_fish_version[1]" -gt 4; or test "$gpy_fish_version[1]" -eq 4 -a "$
 end
 
 set -q __gpy_cmd_count; or set -g __gpy_cmd_count 0
+# This shell, as `gpy prompt` tells it from an earlier one at the same PID
+# (`exec fish`, a recycled PID): drawn once per load, never inherited.
+set -g __gpy_instance (random)(random)
 
 # fish_postexec is emitted for a command, never for an empty Enter.
 function __gpy_on_postexec --on-event fish_postexec

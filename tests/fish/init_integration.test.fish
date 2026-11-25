@@ -7,7 +7,8 @@
 #   - with this checkout's `gpy`, fish_prompt prints a prompt ending in the
 #     prompt symbol and never the 0x1F separator;
 #   - fish_prompt hands `gpy prompt fish` the last status, the PID, the Fish
-#     version, the command count and, only after a command ran, its duration;
+#     version, the shell's instance token (another in every shell), the
+#     command count and, only after a command ran, its duration;
 #   - fish_exit runs `gpy prompt fish --exit --pid PID`;
 #   - `gpy` is found on PATH, else at ~/.local/bin/gpy; with none, or when it
 #     fails or prints no separator, the prompt is the bare `❯ `.
@@ -70,11 +71,15 @@ check "the prompt shows no error" 1 (string match -qi '*error*' -- "$out"; or ec
 
 # --- the arguments ---
 rm -f $log
-set out (in_shell $fake_path 'false; fish_prompt; echo; echo pid=$fish_pid; echo ver=$FISH_VERSION' | string collect)
+set out (in_shell $fake_path 'false; fish_prompt; echo; echo pid=$fish_pid; echo ver=$FISH_VERSION; echo instance=$__gpy_instance' | string collect)
 check "fish_prompt prints the binary's prompt part" 1 (string match -q 'FAKEPROMPT*' -- "$out"; and echo 1)
 set -l pid (string match -rg 'pid=(\d+)' -- $out)
 set -l ver (string match -rg 'ver=(\S+)' -- $out)
-check "first prompt arguments" "prompt fish --status 1 --pid $pid --shell-version $ver --cmd 0" (head -1 $log)
+set -l instance (string match -rg 'instance=(\S+)' -- $out)
+check "first prompt arguments" "prompt fish --status 1 --pid $pid --shell-version $ver --instance $instance --cmd 0" (head -1 $log)
+# `exec fish` keeps the PID: only the token tells the new shell apart.
+set -l other (in_shell $fake_path 'echo $__gpy_instance' | string collect)
+check "another shell draws another instance token" 1 (test -n "$instance" -a "$instance" != "$other"; and echo 1)
 
 rm -f $log
 in_shell $fake_path '

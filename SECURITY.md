@@ -148,7 +148,9 @@ such as `a[$(cmd)]` never executes; `require_files`, `require_folders` and
 
 *State.* The cache and the once-per-command guard live in one file per shell,
 `<runtime root>/refresh-throttle/<pid>.scripts`, inside the user-private
-runtime directory (never `/tmp`), removed when the shell exits. Entries are
+runtime directory (never `/tmp`), removed when the shell exits, and by the
+first prompt of a new shell at the same PID (`exec`, a recycled PID) or of
+any shell once its owner is gone. Entries are
 keyed by the segment's fixed key plus the current values of its declared
 inputs and `env` names, and expire after `ttl_secs`. A non-zero exit, a
 failed `require_command` or C1 output is cached as hidden; a timeout,
