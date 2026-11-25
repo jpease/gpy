@@ -601,19 +601,58 @@ fn install_over_a_directory_without_a_manifest_is_guarded() {
     assert!(!target.join("plugin.toml").exists());
     assert!(!env.config_dir().join("plugins.bak").exists());
 
-    install(&env, &dir, &["--force"]).assert_success("forced install");
-    assert!(target.join("plugin.toml").is_file());
-    let backups: Vec<_> = std::fs::read_dir(env.config_dir().join("plugins.bak"))
-        .expect("plugins.bak exists")
-        .map(|e| e.expect("entry").path())
-        .collect();
-    assert_eq!(backups.len(), 1_usize);
+    // `--force` replaces a copy of the same plugin, not a directory with no manifest.
+    let forced = install(&env, &dir, &["--force"]);
+    assert_eq!(forced.exit_code, 1_i32, "{forced:?}");
     assert!(
-        backups
-            .first()
-            .expect("one backup")
-            .join("notes.txt")
-            .is_file()
+        forced.stderr.contains("no readable plugin.toml"),
+        "{forced:?}"
+    );
+    assert!(target.join("notes.txt").is_file());
+    assert!(!target.join("plugin.toml").exists());
+    assert!(!env.config_dir().join("plugins.bak").exists());
+}
+
+#[test]
+fn force_install_refuses_a_directory_holding_another_plugin() {
+    let (_source_env, dir) = scaffold("foo");
+    let (_other_env, other) = scaffold("bar");
+    let env = CliTestEnv::new().expect("create env");
+    install(&env, &other, &[]).assert_success("install bar");
+    // Plugin `bar` sits where `foo` would be installed.
+    let target = env.plugins_dir().join("foo");
+    std::fs::rename(env.plugins_dir().join("bar"), &target).expect("move bar into foo/");
+
+    for extra in [&[][..], &["--force"][..]] {
+        let refused = install(&env, &dir, extra);
+        assert_eq!(refused.exit_code, 1_i32, "{refused:?}");
+        assert!(
+            refused.stderr.contains("plugin 'bar'") && refused.stderr.contains("--force only"),
+            "{refused:?}"
+        );
+    }
+    let manifest = std::fs::read_to_string(target.join("plugin.toml")).expect("bar kept");
+    assert!(manifest.contains("id = \"bar\""), "{manifest}");
+    assert!(!env.config_dir().join("plugins.bak").exists());
+}
+
+#[test]
+fn force_install_replaces_a_case_variant_directory_of_the_same_plugin() {
+    let (_source_env, dir) = scaffold("foo");
+    let env = CliTestEnv::new().expect("create env");
+    install(&env, &dir, &[]).assert_success("first install");
+    // On a case-insensitive volume `plugins/foo` still resolves to `Foo`.
+    let variant = env.plugins_dir().join("Foo");
+    std::fs::rename(env.plugins_dir().join("foo"), &variant).expect("rename to Foo");
+
+    install(&env, &dir, &["--force"]).assert_success("forced install");
+
+    assert!(env.plugins_dir().join("foo/plugin.toml").is_file());
+    let names = backup_names(&env);
+    assert_eq!(names.len(), 1_usize, "{names:?}");
+    assert!(
+        names.iter().all(|name| !name.contains("blocking")),
+        "{names:?}"
     );
 }
 

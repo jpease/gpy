@@ -1329,7 +1329,11 @@ owned by you or root, not group- or other-writable, and inside the plugin root.
 
 `--force` replaces an installed user plugin with the same id (the old
 directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
-needed to shadow a bundled plugin. Backups and staging live outside
+needed to shadow a bundled plugin. It only replaces a copy of the same plugin: a
+`plugins/<id>` directory that holds another plugin or has no valid `plugin.toml`
+is refused, with or without `--force`, and is left for you to move away. On a
+case-insensitive volume a `Foo` directory holding plugin `foo` counts as that
+plugin's copy. Backups and staging live outside
 `plugins/` because discovery would load them as plugins. Only the newest 3
 backups of that plugin id are kept; older ones are deleted (they are your data,
 not recoverable) and the command prints `Pruned N old backup(s) of <id>`. Other

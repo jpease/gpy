@@ -12,6 +12,7 @@
 //! any subdirectory holding `plugin.toml` as a plugin.
 
 use super::backup_stamp::backup_stamp;
+use super::install_target::{Occupant, occupant, same_directory};
 use super::output;
 use super::plugin::unsupported_entry_type;
 use super::utils::{active_config_path, load_active_config, reload_agent_and_notify};
@@ -42,7 +43,7 @@ struct Plan {
     /// `<user plugins dir>/<id>`.
     target: PathBuf,
     /// Directories to move to `plugins.bak` first: the installed plugin with
-    /// this id, then whatever else occupies `target`.
+    /// this id, then a second, unloadable copy of the same plugin at `target`.
     to_move: Vec<PathBuf>,
     /// The bundled or first-party plugin a user copy shadows, if any.
     shadowed: Option<PluginSource>,
@@ -424,9 +425,30 @@ fn plan_install(id: &PluginId, force: bool) -> Result<Plan> {
 
     let target = user_plugins_dir()?.join(id.as_str());
     let mut to_move: Vec<PathBuf> = existing.iter().cloned().collect();
+    // On a case-insensitive volume `<id>` can name the directory discovery
+    // listed under another spelling (`Foo`): that is `existing`, not a second
+    // directory in the way.
+    let target_is_existing = existing
+        .as_ref()
+        .is_some_and(|root| same_directory(root, &target));
     // Discovery omits a directory that is broken or has no `plugin.toml`, and
     // renaming onto a non-empty directory fails, so look at the path itself.
-    let blocked = existing.as_ref() != Some(&target) && std::fs::symlink_metadata(&target).is_ok();
+    let blocked = if target_is_existing {
+        false
+    } else {
+        match occupant(&target, id) {
+            Occupant::Absent => false,
+            Occupant::SamePlugin => true,
+            // `--force` replaces a copy of this plugin, never another plugin
+            // or a directory holding something else.
+            Occupant::Other(what) => {
+                return Err(Error::invalid(format!(
+                    "{} holds {what}, not plugin '{id}'; move it away yourself, since --force only replaces a copy of the same plugin",
+                    target.display()
+                )));
+            }
+        }
+    };
     if blocked {
         to_move.push(target.clone());
     }
@@ -440,7 +462,7 @@ fn plan_install(id: &PluginId, force: bool) -> Result<Plan> {
         }
         if blocked {
             return Err(Error::invalid(format!(
-                "{} exists but is not a loadable plugin; move it away or pass --force",
+                "{} holds plugin '{id}' but it is not loadable; move it away or pass --force",
                 target.display()
             )));
         }

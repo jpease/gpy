@@ -27,6 +27,7 @@ mod doctor_tuning;
 pub mod exit_codes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
+mod install_target;
 /// Agent lifecycle management (start/stop/restart).
 pub mod lifecycle;
 /// Pass/fail/warn markers for CLI status lines.
