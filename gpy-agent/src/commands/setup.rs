@@ -230,7 +230,7 @@ pub struct InstalledIntegration {
     /// The rc file holding the GPY block.
     pub rc: PathBuf,
     /// The file the rc block sources; `None` when the block is incomplete or
-    /// names no file.
+    /// names no file GPY can resolve without the shell.
     pub entry: Option<PathBuf>,
     /// The rc file has a start marker but no complete block, so the shell is
     /// not wired.
@@ -260,7 +260,7 @@ pub(super) fn installed_integrations_in(env: &Environment) -> Vec<InstalledInteg
                     incomplete = true;
                     None
                 }
-                BlockState::Present(body) => sourced_entry(&body),
+                BlockState::Present(body) => sourced_entry(&body, env.home.as_deref()),
             };
             let dir = entry.as_deref().map_or_else(
                 || shell_dir_for(&root, shell),
@@ -279,11 +279,24 @@ pub(super) fn installed_integrations_in(env: &Environment) -> Vec<InstalledInteg
         .collect()
 }
 
-/// The file an rc block body sources: the first `source "<path>"`.
-fn sourced_entry(body: &str) -> Option<PathBuf> {
+/// The file an rc block body sources: the first `source "<path>"`, with a
+/// leading `$HOME/` or `${HOME}/` expanded to `home` as the shell would.
+/// `None` when the path holds any other expansion, which only the shell can
+/// resolve.
+fn sourced_entry(body: &str, home: Option<&Path>) -> Option<PathBuf> {
     let (_, after) = body.split_once("source \"")?;
     let (path, _) = after.split_once('"')?;
-    Some(PathBuf::from(path))
+    let in_home = ["$HOME/", "${HOME}/"]
+        .into_iter()
+        .find_map(|prefix| path.strip_prefix(prefix));
+    let literal = in_home.unwrap_or(path);
+    if literal.contains(['$', '`']) {
+        return None;
+    }
+    in_home.map_or_else(
+        || Some(PathBuf::from(path)),
+        |rest| home.map(|dir| dir.join(rest)),
+    )
 }
 
 /// The shell tree a sourced `entry` file belongs to: Fish's entry sits in
@@ -782,5 +795,53 @@ mod tests {
         let bash = found.iter().find(|item| item.shell == Shell::Bash).unwrap();
         assert!(bash.incomplete && bash.entry.is_none());
         assert!(found.iter().all(|item| item.shell != Shell::Fish));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_integrations_expand_home_in_the_sourced_path() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(".local/share/gpy");
+        for (rc, body) in [
+            (".zshrc", "source \"$HOME/.local/share/gpy/zsh/gpy.zsh\""),
+            (
+                ".bashrc",
+                "source \"${HOME}/.local/share/gpy/bash/gpy.bash\"",
+            ),
+        ] {
+            fs::write(
+                home.path().join(rc),
+                format!("# >>> gpy-init >>>\n# {RC_BLOCK_HEADER}\n{body}\n# <<< gpy-init <<<\n"),
+            )
+            .unwrap();
+        }
+        let env = Environment {
+            home: Some(home.path().to_path_buf()),
+            ..Environment::default()
+        };
+
+        let found = installed_integrations_in(&env);
+
+        for (shell, entry) in [(Shell::Zsh, "zsh/gpy.zsh"), (Shell::Bash, "bash/gpy.bash")] {
+            let item = found.iter().find(|item| item.shell == shell).unwrap();
+            assert_eq!(item.entry, Some(root.join(entry)), "{shell}");
+            assert_eq!(item.dir, shell_dir_for(&DataRoot(root.clone()), shell));
+        }
+    }
+
+    #[test]
+    fn a_sourced_path_only_the_shell_can_expand_names_no_entry() {
+        let home = Path::new("/home/u");
+        for body in [
+            "source \"$XDG_DATA_HOME/gpy/zsh/gpy.zsh\"",
+            "source \"$HOMEDIR/gpy.zsh\"",
+            "source \"$HOME/$(whoami)/gpy.zsh\"",
+        ] {
+            assert_eq!(sourced_entry(body, Some(home)), None, "{body}");
+        }
+        assert_eq!(
+            sourced_entry("source \"/opt/gpy/zsh/gpy.zsh\"", Some(home)),
+            Some(PathBuf::from("/opt/gpy/zsh/gpy.zsh"))
+        );
     }
 }
