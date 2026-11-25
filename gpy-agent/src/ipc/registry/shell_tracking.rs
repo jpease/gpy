@@ -317,13 +317,20 @@ where
                 suffix == ShellFlag::Reload.suffix() || suffix == ShellFlag::Reregister.suffix();
             if is_flag
                 && let Ok(flag_pid) = stem.parse::<u32>()
+                && crate::ipc::ClientPid::pid_in_range(flag_pid)
                 && !is_alive(flag_pid, None)
             {
                 let _ = std::fs::remove_file(&path);
             }
             continue;
         }
-        let Ok(pid) = name.parse::<u32>() else {
+        // `kill` reads PID 0 as the caller's own process group, so probing or
+        // ringing it would signal the agent's group: only plausible PIDs count.
+        let Some(pid) = name
+            .parse::<u32>()
+            .ok()
+            .filter(|&pid| crate::ipc::ClientPid::pid_in_range(pid))
+        else {
             continue;
         };
 
