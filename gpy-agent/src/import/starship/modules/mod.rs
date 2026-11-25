@@ -130,18 +130,23 @@ pub fn translate_directory_layout(
         ..Default::default()
     };
     if let Some(raw) = table.get("truncation_length") {
-        match raw
-            .as_integer()
-            .and_then(|value| usize::try_from(value).ok())
-            .and_then(DirectoryTruncationLength::new)
-        {
-            Some(length) => recommended.truncation_length = Some(length),
-            None => warnings.push(
-                WarningKind::UnrepresentableOption,
-                format!(
-                    "directory: truncation_length {raw} is outside GPY's supported range (1..=255); dropped"
+        // Starship documents `0` as "do not truncate" (`utils::directory::truncate`).
+        if raw.as_integer() == Some(0) {
+            recommended.display = Some(crate::config::types::DirectoryDisplay::Full);
+        } else {
+            match raw
+                .as_integer()
+                .and_then(|value| usize::try_from(value).ok())
+                .and_then(DirectoryTruncationLength::new)
+            {
+                Some(length) => recommended.truncation_length = Some(length),
+                None => warnings.push(
+                    WarningKind::UnrepresentableOption,
+                    format!(
+                        "directory: truncation_length {raw} is outside GPY's supported range (1..=255); dropped"
+                    ),
                 ),
-            ),
+            }
         }
     }
     if let Some(raw) = table.get("truncation_symbol") {

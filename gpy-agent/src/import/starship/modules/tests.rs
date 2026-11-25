@@ -113,6 +113,20 @@ fn translate_directory_layout_always_recommends_starships_default_behavior() {
 }
 
 #[test]
+fn translate_directory_layout_zero_length_means_no_truncation() {
+    use super::translate_directory_layout;
+    use crate::config::types::DirectoryDisplay;
+
+    // Starship's `truncate` returns the path whole for a length of 0.
+    let module = table("truncation_length = 0\n");
+    let mut warnings = Warnings::new();
+    let layout = translate_directory_layout(&module, &mut warnings);
+    assert_eq!(layout.display, Some(DirectoryDisplay::Full));
+    assert!(layout.truncation_length.is_none());
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[test]
 fn translate_directory_layout_warns_on_out_of_range_length() {
     use super::translate_directory_layout;
     let module = table("truncation_length = 300\n");
