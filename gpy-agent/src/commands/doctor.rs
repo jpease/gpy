@@ -1,7 +1,7 @@
 //! `gpy doctor`: agent, config, theme, segment, plugin and binary checks.
 
 use super::doctor_agent::check_answering_agent;
-use super::doctor_bundled::{SETUP_REMEDIATION, is_uninstalled_bundled};
+use super::doctor_bundled::{is_uninstalled_bundled, uninstalled_bundled_remediation};
 use super::doctor_integration::{check_path_agent, check_shell_integrations};
 use super::doctor_themes::check_theme_overrides;
 use super::doctor_tuning::print_agent_tuning;
@@ -249,7 +249,10 @@ fn check_segments(enabled_segments: &[String], discovery: &crate::plugin::Plugin
                     crate::paths::NO_DATA_DIR
                 ));
             }
-            output::detail(SETUP_REMEDIATION);
+            let overridden = crate::env_config::BUNDLED_PLUGIN_DIR
+                .path()
+                .and(bundled_dir.as_deref());
+            output::detail(uninstalled_bundled_remediation(overridden));
         }
         if !unknown.is_empty() {
             output::detail(

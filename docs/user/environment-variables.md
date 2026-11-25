@@ -21,7 +21,7 @@ Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`
 | `XDG_RUNTIME_DIR` | unset | Runtime root `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
 | `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. With no usable home there is no `/tmp/gpy` or relative fallback: GPY fails closed (see [Troubleshooting](troubleshooting.md#no-usable-home-directory)). |
 | `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. See [below](#gpy_agent_socket_path). |
-| `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
+| `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). `gpy setup` installs them only into the default location, so a directory set here must already hold them. See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
 | `VISUAL`, `EDITOR` | platform editor | The editor `gpy config open` launches, in that order. |
 
 ### GPY_AGENT_SOCKET_PATH

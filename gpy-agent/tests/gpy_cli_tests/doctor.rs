@@ -45,6 +45,28 @@ fn doctor_points_uninstalled_bundled_segments_at_setup() {
         "[ui]\nenabled_segments = [\"username\", \"usrname\", \"directory\"]\n",
     )
     .expect("Failed to create isolated CLI test environment");
+
+    // No GPY_BUNDLED_PLUGIN_DIR: the bundled root is the (empty) data root's,
+    // which `gpy setup` fills.
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("Unrecognized segments found"),
+        "missing bundled plugin must stay a failure: {output:?}"
+    );
+    assert!(
+        output.stdout.contains("Remediation: Run `gpy setup`"),
+        "bundled segment must point at `gpy setup`: {output:?}"
+    );
+    assert!(
+        output.stdout.contains("Check for typos"),
+        "a genuinely unknown segment keeps the typo remediation: {output:?}"
+    );
+}
+
+#[test]
+fn doctor_does_not_send_an_overridden_bundled_dir_to_setup() {
+    let env = CliTestEnv::with_config("[ui]\nenabled_segments = [\"username\", \"directory\"]\n")
+        .expect("Failed to create isolated CLI test environment");
     let empty_bundled = env.config_dir().join("empty-bundled");
     fs::create_dir_all(&empty_bundled).expect("Failed to create empty bundled dir");
 
@@ -59,12 +81,15 @@ fn doctor_points_uninstalled_bundled_segments_at_setup() {
         "missing bundled plugin must stay a failure: {output:?}"
     );
     assert!(
-        output.stdout.contains("Remediation: Run `gpy setup`"),
-        "bundled segment must point at `gpy setup`: {output:?}"
+        output.stdout.contains(&format!(
+            "GPY_BUNDLED_PLUGIN_DIR points at {}",
+            empty_bundled.display()
+        )),
+        "the remediation must name the override: {output:?}"
     );
     assert!(
-        output.stdout.contains("Check for typos"),
-        "a genuinely unknown segment keeps the typo remediation: {output:?}"
+        !output.stdout.contains("Remediation: Run `gpy setup`"),
+        "`gpy setup` never installs into the override: {output:?}"
     );
 }
 
