@@ -387,8 +387,8 @@ fn section<'a>(
     } else {
         [
             ("__segment_delim_end", "]"),
-            ("__segment_delimiter_color", ""),
-            ("__segment_delimiter_bg", ""),
+            ("__segment_delimiter_close_color", ""),
+            ("__segment_delimiter_close_bg", ""),
         ]
     };
     // `d`: a script pill's theme close cap sits on the default background.
@@ -541,5 +541,37 @@ mod tests {
         assert_eq!(sgr_param(true, "transparent", Depth::TrueColor), "49");
         assert_eq!(sgr_param(true, "red", Depth::NoColor), "");
         assert_eq!(sgr_param(false, "#808080", Depth::Ansi256), "38;5;244");
+    }
+
+    /// A middle pill's start cap takes `[ui.segment_open]`'s colours and its
+    /// end cap `[ui.segment_close]`'s, not the open ones twice.
+    #[test]
+    fn middle_pill_caps_use_their_own_delimiter_colours() {
+        let vars = ShellVars::new(
+            [
+                ("__segment_delim_start", "<"),
+                ("__segment_delimiter_color", "red"),
+                ("__segment_delimiter_bg", "blue"),
+                ("__segment_delim_end", ">"),
+                ("__segment_delimiter_close_color", "green"),
+                ("__segment_delimiter_close_bg", "yellow"),
+            ]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .into(),
+        );
+        let paint = Paint {
+            depth: Depth::TrueColor,
+            dialect: Dialect::Fish,
+        };
+        let place = Place {
+            is_last: false,
+            is_first: false,
+        };
+
+        let drawn = section_standalone(&vars, paint, "black", "white", "x", place);
+
+        let cap = |fg: &str, bg: &str, glyph: &str| format!("{}{glyph}", sgr_pair(fg, bg, paint));
+        assert!(drawn.starts_with(&cap("red", "blue", "<")), "{drawn:?}");
+        assert!(drawn.contains(&cap("green", "yellow", ">")), "{drawn:?}");
     }
 }
