@@ -1,12 +1,17 @@
 //! Cache keys: the path escape, its decoding, and the on-disk chunking.
 
+#[cfg(unix)]
 use super::git_bg_tests::{cache_with_repo, clean_status};
 use super::key::{
-    CACHE_KEY_CHUNK_BYTES, FLAT_CACHE_KEY_MAX_BYTES, WINDOWS_CACHE_KEY_MAX_LEN, cache_file_parts,
-    cache_key_path_for, find_project_root, path_to_cache_key, path_to_cache_key_for,
+    CACHE_KEY_CHUNK_BYTES, FLAT_CACHE_KEY_MAX_BYTES, WINDOWS_CACHE_KEY_MAX_LEN, cache_key_path_for,
+    path_to_cache_key, path_to_cache_key_for,
 };
+#[cfg(unix)]
+use super::key::{cache_file_parts, find_project_root};
+#[cfg(unix)]
 use crate::config::Config;
 use crate::paths::Os;
+#[cfg(unix)]
 use crate::theme::ThemeConfig;
 use std::path::Path;
 
@@ -194,7 +199,10 @@ fn test_cache_key_path_unix_characterization() {
 }
 
 /// A root whose name is long and not ASCII still gets its git files: the key
-/// is cut by bytes, so no file name passes `NAME_MAX`.
+/// is cut by bytes, so no file name passes `NAME_MAX`. Unix only: the Windows
+/// key is capped separately, and there the whole path meets `MAX_PATH` first
+/// (native Windows has no prompt integration that reads these files).
+#[cfg(unix)]
 #[test]
 fn write_git_caches_a_root_with_a_long_non_ascii_name() {
     let (dir, cache, _repo) = cache_with_repo();
