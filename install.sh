@@ -244,7 +244,7 @@ stage_binary "bin/$BINARY" "$INSTALL_DIR/$DEST_AGENT" "agent"
 stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/$DEST_CLI" "CLI"
 if [ "$wire_shell" = 1 ]; then
     CURRENT_STEP="checking the shell files (nothing is installed yet)"
-    "$STAGED_CLI" setup --check --from "$(pwd)"
+    "$STAGED_CLI" setup --check --shell "$shell_name" --from "$(pwd)"
 fi
 commit_binary "$STAGED_AGENT" "$INSTALL_DIR/$DEST_AGENT" "agent"
 commit_binary "$STAGED_CLI" "$INSTALL_DIR/$DEST_CLI" "CLI"
