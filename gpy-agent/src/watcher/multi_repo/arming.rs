@@ -69,12 +69,22 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         // A relocated gitdir can move the common dir; re-acquire against the new one.
         release_common_dir_watches(self, git_root);
 
-        let repo_watches = self.start_repo_watches(git_root, git_dir, watch_worktree)?;
+        let keeps_git_dir = stale
+            .as_ref()
+            .is_some_and(|(stale_git_dir, _)| stale_git_dir == git_dir);
+        let repo_watches = self
+            .start_repo_watches(git_root, git_dir, watch_worktree)
+            .inspect_err(|_| {
+                if !keeps_git_dir {
+                    self.registry.unregister_external_gitdir(git_dir);
+                }
+            })?;
 
-        if let Some((stale_git_dir, _)) = &stale {
+        if let Some((stale_git_dir, _)) = &stale
+            && !keeps_git_dir
+        {
             self.registry.unregister_external_gitdir(stale_git_dir);
         }
-        self.register_external_gitdir_if_needed(git_dir, git_root);
 
         {
             let mut repos = self.watched_repos.lock_or_recover();
@@ -100,7 +110,9 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// ([`WatchTarget::repo_armed`]), queue one catch-up refresh for changes
     /// made before the watch was live (the debounce window delivers it after
     /// the caller records the repo), and log one `Watch ready` line, the
-    /// marker the e2e tests wait on before touching the tree.
+    /// marker the e2e tests wait on before touching the tree. An external
+    /// `git_dir` is registered first, as the poll backend picks its poller
+    /// from the registry; after a failed arm the caller unregisters it.
     ///
     /// # Errors
     /// Returns an error if the coordinator is gone or `.git` cannot be watched.
@@ -110,6 +122,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         git_dir: &Path,
         watch_worktree: bool,
     ) -> Result<RepoWatches> {
+        self.register_external_gitdir_if_needed(git_dir, git_root);
         let watches = self.arm_watches(git_root, git_dir, watch_worktree)?;
         if let Some(w) = self.watcher.lock_or_recover().as_ref() {
             w.repo_armed(git_root, git_dir);

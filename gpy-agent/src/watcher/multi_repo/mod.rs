@@ -347,7 +347,9 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         );
 
         // A failed worktree watch degrades to .git-only rather than failing.
-        let repo_watches = self.start_repo_watches(&git_root, &git_dir, watch_worktree)?;
+        let repo_watches = self
+            .start_repo_watches(&git_root, &git_dir, watch_worktree)
+            .inspect_err(|_| self.registry.unregister_external_gitdir(&git_dir))?;
         self.track_new_repo(pid, git_root.clone(), git_dir, repo_watches);
         Ok(git_root)
     }
@@ -572,9 +574,6 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         clients.insert(pid);
         let git_dir_id = dir_identity(&git_dir);
         let root_key = git_root.clone();
-
-        // Map external gitdirs (submodules/linked worktrees) back to this root.
-        self.register_external_gitdir_if_needed(&git_dir, &git_root);
 
         {
             let mut repos = self.watched_repos.lock_or_recover();

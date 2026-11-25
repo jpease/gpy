@@ -1,8 +1,10 @@
 //! Client attach/detach without `ops_lock`, the teardown grace, retrying a
-//! degraded worktree watch, and the catch-up refresh once a watch is live.
+//! degraded worktree watch, the catch-up refresh once a watch is live, and
+//! registering git directories before their watch is armed.
 
 use super::tests::{RecordingTarget, no_fault, recording_watcher, test_registry, tracked_worktree};
 use super::{MultiRepoWatcher, WatchTarget};
+use crate::watcher::WatchRegistry;
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -326,4 +328,112 @@ fn watched_since_covers_only_attached_periods() {
             .is_some_and(|since| since > first),
         "returning starts a new watched period"
     );
+}
+
+/// Each armed path, and whether the registry knew it as git metadata then.
+type ArmLog = Arc<Mutex<Vec<(PathBuf, bool)>>>;
+
+/// A target that arms nothing and records, per watch, whether the registry
+/// already held the path's git directory: the poll backend picks a path's
+/// poller from the registry when the path is armed.
+struct RoutingTarget {
+    registry: Arc<WatchRegistry>,
+    log: ArmLog,
+}
+
+impl RoutingTarget {
+    fn record(&self, path: &Path) {
+        let registered = self.registry.path_below_registered_gitdir(path).is_some();
+        self.log
+            .lock()
+            .expect("arm log")
+            .push((path.to_path_buf(), registered));
+    }
+}
+
+impl WatchTarget for RoutingTarget {
+    fn watch(&mut self, path: &Path) -> Result<()> {
+        self.record(path);
+        Ok(())
+    }
+
+    fn watch_shallow(&mut self, path: &Path) -> Result<()> {
+        self.record(path);
+        Ok(())
+    }
+
+    fn covers(&self, _path: &Path) -> bool {
+        false
+    }
+
+    fn unwatch(&mut self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn unwatch_shallow(&mut self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn stop_watching(&mut self) {}
+}
+
+/// A linked worktree's gitdir and a bare common dir have no `.git` component,
+/// so only the registry tells the poll backend they are git metadata. Both
+/// must be registered before they are armed, on attach and on the re-arm
+/// after the gitdir moved.
+#[test]
+fn external_and_common_gitdirs_are_registered_before_they_are_armed() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let base = std::fs::canonicalize(temp_dir.path()).expect("canonical base");
+    let common = base.join("main.git");
+    std::fs::create_dir_all(common.join("refs")).expect("common refs");
+    let root = base.join("wt");
+    std::fs::create_dir_all(&root).expect("worktree root");
+    let link_worktree = |name: &str| {
+        let admin = common.join("worktrees").join(name);
+        std::fs::create_dir_all(&admin).expect("admin dir");
+        std::fs::write(admin.join("commondir"), "../..\n").expect("commondir");
+        std::fs::write(root.join(".git"), format!("gitdir: {}\n", admin.display()))
+            .expect(".git pointer");
+        admin
+    };
+    let registry = test_registry(true);
+    let log = ArmLog::default();
+    let watcher = MultiRepoWatcher {
+        watcher: Arc::new(Mutex::new(Some(RoutingTarget {
+            registry: Arc::clone(&registry),
+            log: Arc::clone(&log),
+        }))),
+        watched_repos: Arc::default(),
+        registry,
+        common_watches: Mutex::default(),
+        ops_lock: Mutex::new(()),
+        teardown_grace: Duration::ZERO,
+    };
+
+    let first_gitdir = link_worktree("wt");
+    watcher.attach_client(1, &root).expect("attach");
+    let moved_gitdir = link_worktree("wt-moved");
+    watcher
+        .attach_client(1, &root)
+        .expect("re-arm after the gitdir moved");
+
+    let arms = log.lock().expect("arm log").clone();
+    for gitdir_path in [
+        first_gitdir,
+        moved_gitdir,
+        common.clone(),
+        common.join("refs"),
+    ] {
+        let registered_when_armed: Vec<bool> = arms
+            .iter()
+            .filter(|(path, _)| *path == gitdir_path)
+            .map(|(_, registered)| *registered)
+            .collect();
+        assert!(
+            !registered_when_armed.is_empty() && registered_when_armed.iter().all(|known| *known),
+            "{} was armed before it was registered: {arms:?}",
+            gitdir_path.display()
+        );
+    }
 }
