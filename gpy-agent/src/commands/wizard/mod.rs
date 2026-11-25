@@ -57,6 +57,8 @@ struct WizardRuntime {
     cached_palette: crate::template::Palette,
     /// Why the last theme activation failed; cleared on next key.
     theme_error: Option<String>,
+    /// Scroll offsets of the master lists, kept across frames.
+    list_scroll: ui::ListScroll,
 }
 
 impl WizardRuntime {
@@ -84,6 +86,7 @@ impl WizardRuntime {
             cached_theme,
             cached_palette,
             theme_error: None,
+            list_scroll: ui::ListScroll::default(),
         })
     }
 
@@ -170,7 +173,7 @@ fn draw_frame(terminal: &mut DefaultTerminal, runtime: &mut WizardRuntime) -> Re
     };
 
     terminal
-        .draw(|frame| ui::draw(frame, &draw_args))
+        .draw(|frame| ui::draw(frame, &draw_args, &mut runtime.list_scroll))
         .map_err(|e| crate::Error::config(format!("Failed to draw wizard frame: {e}")))?;
     Ok(())
 }
