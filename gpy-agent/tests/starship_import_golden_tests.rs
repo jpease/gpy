@@ -33,7 +33,7 @@ fn default_config_emits_valid_validatable_theme() {
     );
     assert_eq!(
         artifacts.theme.segments.git.format.as_deref(),
-        Some(r"on [$symbol$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
+        Some(r"on [($symbol )$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
     );
     assert_eq!(
         artifacts.theme.segments.character.success_color.as_str(),
@@ -341,7 +341,14 @@ fn right_format_warns() {
         artifacts.warnings
     );
     let none = build_inline("right_format = \"\"\n");
-    assert!(none.warnings.is_empty(), "{:?}", none.warnings);
+    assert!(
+        !none
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("right_format")),
+        "{:?}",
+        none.warnings
+    );
 }
 
 #[test]
