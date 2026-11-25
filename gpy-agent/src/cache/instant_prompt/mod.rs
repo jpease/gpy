@@ -88,8 +88,9 @@ pub struct InstantPromptCache {
     unwritable_keys: Mutex<HashSet<String>>,
     /// Repos whose git caches [`Self::remove_git`] dropped, by cache key, with
     /// the root each key names. Git writes for these keys are skipped until
-    /// [`Self::release_git_suppression`] lets them through again, so a write
-    /// already in flight when a reload excluded the repo cannot republish it.
+    /// [`Self::release_git_suppression`] or
+    /// [`Self::release_git_suppression_for`] lets them through again, so a
+    /// write already in flight when the repo was excluded cannot republish it.
     /// Locked only while `last_written` is held.
     suppressed_git: Mutex<HashMap<String, PathBuf>>,
     /// Temp directory backing `cache_dir` for [`Self::new_for_test`]; removed on drop.
@@ -500,20 +501,40 @@ impl InstantPromptCache {
 
     /// Delete every git cache file of the repository at `path` (each variant,
     /// `prev_bg` token and dialect, including contexts no longer tracked) so
-    /// shells stop serving its git segment. Best-effort.
-    pub fn remove_git(&self, path: &Path) {
+    /// shells stop serving its git segment, and suppress its git writes.
+    /// Returns `true` when this call did so; a repository already suppressed
+    /// has nothing left to delete, so the call is a cheap no-op. Best-effort.
+    pub fn remove_git(&self, path: &Path) -> bool {
         let root = find_project_root(path);
         let key = path_to_cache_key(&root);
 
         // Held across the deletion so the record keeps matching the disk.
         let mut last_written = self.last_written.lock_or_recover();
+        let mut suppressed = self.suppressed_git.lock_or_recover();
+        if suppressed.contains_key(&key) {
+            return false;
+        }
         last_written.entries.retain(|name, _written| {
             !parse_cache_file_name(name)
                 .is_some_and(|parsed| parsed.kind.is_git() && parsed.key == key)
         });
         remove_git_files(&self.cache_dir, &key);
-        self.suppressed_git.lock_or_recover().insert(key, root);
+        suppressed.insert(key, root);
+        drop(suppressed);
         drop(last_written);
+        true
+    }
+
+    /// Let git writes for the repository at `path` through again if
+    /// [`Self::remove_git`] suppressed it, for a writer that found its root
+    /// enabled: an exclusion can lapse without a reload (a retargeted
+    /// `git.skip_paths` symlink), and nothing else would release it.
+    pub fn release_git_suppression_for(&self, path: &Path) {
+        let _last_written = self.last_written.lock_or_recover();
+        let mut suppressed = self.suppressed_git.lock_or_recover();
+        if !suppressed.is_empty() {
+            suppressed.remove(&path_to_cache_key(&find_project_root(path)));
+        }
     }
 
     /// Let git writes through again for every repo [`Self::remove_git`]
