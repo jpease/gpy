@@ -1,9 +1,13 @@
 //! Configuration file loading, parsing, and comment-preserving saving.
 
 use super::{Config, GitIconSet, location, validation};
+use crate::plugin::SegmentName;
 use crate::{Error, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Top-level table of per-segment plugin overrides.
+const PLUGIN_TABLE: &str = "plugin";
 
 /// Load the first available config file, fresh from disk.
 ///
@@ -174,9 +178,10 @@ fn save_locked(
     }
 
     for (leaf, change) in &changes {
+        let spelled = as_spelled_in(&document, leaf);
         match change {
-            Some(value) => set_leaf(&mut document, leaf, value)?,
-            None => remove_leaf(&mut document, leaf),
+            Some(value) => set_leaf(&mut document, &spelled, value)?,
+            None => remove_leaf(&mut document, &spelled),
         }
     }
 
@@ -272,6 +277,29 @@ fn to_edit_value(value: &toml::Value) -> Result<toml_edit::Value> {
             toml_edit::Value::InlineTable(inline)
         }
     })
+}
+
+/// `leaf` with a `plugin.<segment>` name respelled as the file already has it.
+///
+/// Segment names are case-insensitive: `[plugin.MySeg]` loads as `myseg`. The
+/// typed config only knows the normalized name, so writing it verbatim would
+/// add a second table that the loader then merges with the first, losing one.
+fn as_spelled_in(document: &toml_edit::DocumentMut, leaf: &[String]) -> Vec<String> {
+    let mut spelled = leaf.to_vec();
+    if let ([root, segment, ..], Some(plugins)) = (
+        spelled.as_mut_slice(),
+        document
+            .get(PLUGIN_TABLE)
+            .and_then(toml_edit::Item::as_table_like),
+    ) && root == PLUGIN_TABLE
+        && let Some(existing) = plugins
+            .iter()
+            .map(|(name, _)| name)
+            .find(|name| SegmentName::new(name).is_ok_and(|n| n.as_str() == segment))
+    {
+        existing.clone_into(segment);
+    }
+    spelled
 }
 
 /// Set the value at `leaf`, creating missing parent tables.
