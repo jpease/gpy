@@ -646,13 +646,12 @@ GPY is yours and stays.
 
 When the prompt destination is absent (or becomes absent after removing the GPY
 symlink/implementation), `gpy uninstall` restores the newest
-`fish_prompt.fish.backup.<stamp>` (`YYYYMMDD_HHMMSS`, written by `install.sh`,
-`install-oneline.sh`, `gpy setup` and `install-dev.fish`). Older backups remain
-untouched. Backups from older releases, named `fish_prompt.fish.gpy-backup.<stamp>`
-or `fish_prompt.fish.backup-<stamp>`, are not restored automatically; rename the one
-you want to `fish_prompt.fish`.
+`fish_prompt.fish.backup.<stamp>` (`YYYYMMDD_HHMMSS`, written by `gpy setup`).
+Older backups remain untouched. Backups from older releases, named
+`fish_prompt.fish.gpy-backup.<stamp>` or `fish_prompt.fish.backup-<stamp>`, are not
+restored automatically; rename the one you want to `fish_prompt.fish`.
 
-Every installer moves an existing prompt that is not GPY's own link aside with `mv`,
+`gpy setup` moves an existing prompt that is not GPY's own link aside by renaming it,
 so a symlinked prompt (stow, yadm, chezmoi) stays a symlink to the same dotfile and is
 restored as one. A symlink into any `gpy/functions/fish_prompt.fish` or
 `gpy/fish/functions/fish_prompt.fish` tree is GPY's own: it is never backed up
