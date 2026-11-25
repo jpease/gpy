@@ -264,7 +264,7 @@ struct Stripped {
 fn strip_blocks(text: &[u8]) -> Stripped {
     let lines: Vec<&[u8]> = text.split_inclusive(|byte| *byte == b'\n').collect();
     let mut cut = vec![false; lines.len()];
-    let mut chomp = vec![false; lines.len()];
+    let mut chomp: Vec<Option<&[u8]>> = vec![None; lines.len()];
     let mut found = Stripped {
         bytes: Vec::with_capacity(text.len()),
         outcome: RemoveOutcome::default(),
@@ -296,11 +296,9 @@ fn strip_blocks(text: &[u8]) -> Stripped {
         if *skipped {
             continue;
         }
-        let keep = if *chomped {
-            line.strip_suffix(b"\n").unwrap_or(*line)
-        } else {
-            *line
-        };
+        let keep = chomped
+            .and_then(|eol| line.strip_suffix(eol))
+            .unwrap_or(*line);
         found.bytes.extend_from_slice(keep);
     }
     found
@@ -308,14 +306,15 @@ fn strip_blocks(text: &[u8]) -> Stripped {
 
 /// Flag the block `start..=end` for removal, plus the line before it that
 /// [`append_block`] added: a blank line, or the newline of a last line that
-/// had none when the block ends the file.
-fn mark_block(
-    lines: &[&[u8]],
+/// had none when the block ends the file. That line ends the way the start
+/// marker does, so a file converted to CRLF after setup loses its `\r\n`.
+fn mark_block<'text>(
+    lines: &[&'text [u8]],
     start: usize,
     end: usize,
     ends_file: bool,
     cut: &mut [bool],
-    chomp: &mut [bool],
+    chomp: &mut [Option<&'text [u8]>],
 ) {
     let count = end.saturating_sub(start).saturating_add(1);
     for flag in cut.iter_mut().skip(start).take(count) {
@@ -327,12 +326,16 @@ fn mark_block(
     if cut.get(previous) != Some(&false) {
         return;
     }
-    if lines.get(previous).is_some_and(|line| *line == b"\n") {
+    let Some(marker) = lines.get(start) else {
+        return;
+    };
+    let eol = marker.get(trim_eol(marker).len()..).unwrap_or_default();
+    if lines.get(previous).is_some_and(|line| *line == eol) {
         if let Some(flag) = cut.get_mut(previous) {
             *flag = true;
         }
     } else if ends_file && let Some(flag) = chomp.get_mut(previous) {
-        *flag = true;
+        *flag = Some(eol);
     }
 }
 
@@ -637,6 +640,37 @@ mod tests {
         remove_blocks(&rc).unwrap();
 
         assert_eq!(fs::read(&rc).unwrap(), b"export A=1");
+    }
+
+    /// An editor converted the whole file to CRLF after setup, the block and
+    /// the line ending `append_block` put before it included.
+    #[test]
+    fn remove_blocks_round_trips_append_block_on_a_file_converted_to_crlf() {
+        let to_crlf = |bytes: &[u8]| {
+            String::from_utf8_lossy(bytes)
+                .replace("\r\n", "\n")
+                .replace('\n', "\r\n")
+        };
+        for (original, appended_after) in [
+            ("export A=1\r\n", ""),
+            ("export A=1", ""),
+            ("export A=1\r\n", "alias b=2\r\n"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let rc = dir.path().join("rc");
+            fs::write(&rc, original).unwrap();
+            append_block(&rc, fs::read(&rc).ok().as_deref(), "hdr", "body").unwrap();
+            let converted = format!("{}{appended_after}", to_crlf(&fs::read(&rc).unwrap()));
+            fs::write(&rc, converted).unwrap();
+
+            remove_blocks(&rc).unwrap();
+
+            assert_eq!(
+                String::from_utf8(fs::read(&rc).unwrap()).unwrap(),
+                format!("{original}{appended_after}"),
+                "{original:?} + {appended_after:?}"
+            );
+        }
     }
 
     #[test]
