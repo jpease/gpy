@@ -1,6 +1,7 @@
 //! Client attach/detach without `ops_lock`, the teardown grace, retrying a
-//! degraded worktree watch, the catch-up refresh once a watch is live, and
-//! registering git directories before their watch is armed.
+//! degraded worktree watch, the catch-up refresh once a watch is live,
+//! registering git directories before their watch is armed, and restoring
+//! the watches a failed re-arm released.
 
 use super::tests::{RecordingTarget, no_fault, recording_watcher, test_registry, tracked_worktree};
 use super::{MultiRepoWatcher, WatchTarget};
@@ -436,4 +437,68 @@ fn external_and_common_gitdirs_are_registered_before_they_are_armed() {
             gitdir_path.display()
         );
     }
+}
+
+/// A re-arm that fails (the moved gitdir cannot be watched) puts the previous
+/// watches back: the repo stays watched for its other client, and its entry
+/// lists exactly what is held, so teardown releases all of it.
+#[test]
+fn failed_rearm_restores_the_previous_watches() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let base = std::fs::canonicalize(temp_dir.path()).expect("canonical base");
+    let root = base.join("work");
+    let old_gitdir = base.join("store-a");
+    let new_gitdir = base.join("store-b");
+    for dir in [&root, &old_gitdir, &new_gitdir] {
+        std::fs::create_dir_all(dir).expect("create dir");
+    }
+    let point_git_at = |gitdir: &Path| {
+        std::fs::write(root.join(".git"), format!("gitdir: {}\n", gitdir.display()))
+            .expect(".git pointer");
+    };
+    let unwatchable = new_gitdir.clone();
+    let watcher = recording_watcher(
+        test_registry(true),
+        Arc::new(move |path: &Path| {
+            (path == unwatchable).then(|| Error::watcher("injected watch failure (test)"))
+        }),
+    );
+    let covered = |path: &Path| {
+        watcher
+            .watcher
+            .lock()
+            .expect("watcher lock")
+            .as_ref()
+            .expect("coordinator present")
+            .covers(path)
+    };
+
+    point_git_at(&old_gitdir);
+    watcher.attach_client(1, &root).expect("attach 1");
+    watcher.attach_client(2, &root).expect("attach 2");
+    point_git_at(&new_gitdir);
+    let rearmed = watcher.attach_client(2, &root);
+    let kept = (covered(&old_gitdir), covered(&root));
+    let new_gitdir_registered = watcher
+        .registry()
+        .path_below_registered_gitdir(&new_gitdir)
+        .is_some();
+    watcher.unregister_client(1);
+    let released = (covered(&old_gitdir), covered(&root));
+
+    assert!(rearmed.is_err(), "the moved gitdir cannot be watched");
+    assert_eq!(
+        kept,
+        (true, true),
+        "the previous gitdir and worktree watches must be back"
+    );
+    assert!(
+        !new_gitdir_registered,
+        "the unwatchable gitdir must not stay registered"
+    );
+    assert_eq!(
+        released,
+        (false, false),
+        "teardown must release exactly the restored watches"
+    );
 }
