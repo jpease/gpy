@@ -52,10 +52,15 @@ pub(super) fn wire_bash(
         "so it loads the files in the data directory",
     )?;
 
+    // A login file that is `~/.bashrc` itself (a symlink either way) holds the
+    // block just wired, not a loader, and a login shell reading it loads GPY.
+    let rc_real = fs::canonicalize(&rc).ok();
+    let is_rc = |path: &Path| rc_real.is_some() && fs::canonicalize(path).ok() == rc_real;
+
     // Upgrade loaders earlier releases wrote before deciding whether one is
     // needed: `sources_bashrc` accepts the old loader as a working one.
     let login_files = [".bash_profile", ".bash_login", ".profile"].map(|name| home.join(name));
-    for path in &login_files {
+    for path in login_files.iter().filter(|path| !is_rc(path)) {
         if has_block(path) {
             ensure_and_report(
                 path,
@@ -74,8 +79,8 @@ pub(super) fn wire_bash(
         .find(|path| path.exists())
         .cloned()
         .unwrap_or_else(|| home.join(".profile"));
-    let loads_bashrc =
-        fs::read(&login).is_ok_and(|bytes| sources_bashrc(&String::from_utf8_lossy(&bytes)));
+    let loads_bashrc = is_rc(&login)
+        || fs::read(&login).is_ok_and(|bytes| sources_bashrc(&String::from_utf8_lossy(&bytes)));
     if !loads_bashrc
         && ensure_block(&login, BASH_LOGIN_HEADER, BASH_LOGIN_LOADER, &[])? == BlockChange::Added
     {

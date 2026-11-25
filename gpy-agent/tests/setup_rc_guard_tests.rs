@@ -372,3 +372,26 @@ fn zsh_and_bash_setup_repoint_a_block_that_sources_the_pre_0_9_tree() {
         );
     }
 }
+
+#[test]
+fn setup_leaves_a_bash_profile_linked_to_bashrc_alone() {
+    let home = TempDir::new().unwrap();
+    let bashrc = home.path().join(".bashrc");
+    fs::write(&bashrc, "export A=1\n").unwrap();
+    let profile = home.path().join(".bash_profile");
+    std::os::unix::fs::symlink(".bashrc", &profile).unwrap();
+
+    for run in 1_u8..=2_u8 {
+        let output = setup(home.path(), &["--shell", "bash"]);
+        assert_ok(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("differs from the current text") && !stdout.contains("loader"),
+            "run {run}: {stdout}"
+        );
+    }
+
+    assert_eq!(block_count(&bashrc), 1);
+    assert!(profile.symlink_metadata().unwrap().is_symlink());
+    assert!(!home.path().join(".profile").exists());
+}
