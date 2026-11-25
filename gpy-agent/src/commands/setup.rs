@@ -6,6 +6,7 @@
 //! `gpy uninstall` removes by. Every step is idempotent.
 
 use super::rc_block::{BlockChange, BlockState, block_state, ensure_block, has_block};
+use super::setup_bash::wire_bash;
 use super::setup_fish::{leftover_trees, link_fish_prompt, report_leftovers, retire_fish_loader};
 use super::setup_install::{
     InstallMode, install_bundled_plugins, install_files, install_root, preflight,
@@ -598,27 +599,6 @@ fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange
     Ok((rc, change))
 }
 
-/// The `.bashrc` block body: GPY loads only in interactive shells.
-pub(super) fn bash_rc_body(gpy_bash: &Path) -> String {
-    format!(
-        "case $- in\n    *i*) source \"{}\" ;;\nesac",
-        gpy_bash.display()
-    )
-}
-
-/// `.bashrc` block bodies earlier releases wrote for this install.
-pub(super) fn legacy_bash_rc_bodies(gpy_bash: &Path) -> Vec<String> {
-    vec![format!("source \"{}\"", gpy_bash.display())]
-}
-
-/// Login-file loader body; inert outside Bash.
-const BASH_LOGIN_LOADER: &str =
-    "[ -n \"${BASH_VERSION:-}\" ] && [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
-/// Login-file loader body earlier releases wrote.
-const LEGACY_BASH_LOGIN_LOADER: &str = "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
-/// Header line of the login-file loader block.
-const BASH_LOGIN_HEADER: &str = "GPY: load ~/.bashrc in login shells";
-
 /// Run [`ensure_block`] on an rc file and report the outcome. Failing to
 /// rewrite an existing block is a warning, since the old block keeps working;
 /// an incomplete block is a warning too, since the shell is not wired.
@@ -665,109 +645,6 @@ pub(super) fn ensure_and_report(
         }
     }
     Ok(change)
-}
-
-/// Wire Bash: rc block in `~/.bashrc`, plus a login-shell loader.
-fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
-    let home = env.home()?;
-    let rc = rc_file_for(env, Shell::Bash)?;
-    let gpy_bash = shell_dir.join("gpy.bash");
-    let legacy_bodies = legacy_bash_rc_bodies(&gpy_bash);
-    let change = ensure_and_report(
-        &rc,
-        RC_BLOCK_HEADER,
-        &bash_rc_body(&gpy_bash),
-        &legacy_bodies,
-        "so it loads the files in the data directory",
-    )?;
-
-    // Upgrade loaders earlier releases wrote before deciding whether one is
-    // needed: `sources_bashrc` accepts the old loader as a working one.
-    let login_files = [".bash_profile", ".bash_login", ".profile"].map(|name| home.join(name));
-    for path in &login_files {
-        if has_block(path) {
-            ensure_and_report(
-                path,
-                BASH_LOGIN_HEADER,
-                BASH_LOGIN_LOADER,
-                &[LEGACY_BASH_LOGIN_LOADER.to_owned()],
-                "so `sh` login shells skip it",
-            )?;
-        }
-    }
-
-    // A login shell reads only the first of these. With none present, create
-    // ~/.profile (~/.bash_profile would shadow a later ~/.profile).
-    let login = login_files
-        .iter()
-        .find(|path| path.exists())
-        .cloned()
-        .unwrap_or_else(|| home.join(".profile"));
-    let loads_bashrc =
-        fs::read(&login).is_ok_and(|bytes| sources_bashrc(&String::from_utf8_lossy(&bytes)));
-    if !loads_bashrc
-        && ensure_block(&login, BASH_LOGIN_HEADER, BASH_LOGIN_LOADER, &[])? == BlockChange::Added
-    {
-        crate::commands::output::plain(format_args!(
-            "Added ~/.bashrc loader to {}",
-            login.display()
-        ));
-    }
-    Ok((rc, change))
-}
-
-/// Whether a startup file runs `~/.bashrc`: a `.`/`source` command, outside a
-/// comment, whose argument is a `.bashrc` path. A mention alone (a comment, a
-/// commented-out loader, `echo ~/.bashrc`) does not load it.
-fn sources_bashrc(text: &str) -> bool {
-    text.lines().any(|line| {
-        let words = shell_words(line);
-        words
-            .array_windows::<2>()
-            .enumerate()
-            .any(|(index, &[command, argument])| {
-                let in_command_position = index
-                    .checked_sub(1)
-                    .and_then(|previous| words.get(previous))
-                    .is_none_or(|word| {
-                        matches!(
-                            *word,
-                            ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
-                        )
-                    });
-                let path = argument.trim_matches(['"', '\'']);
-                in_command_position
-                    && matches!(command, "." | "source")
-                    && (path == ".bashrc" || path.ends_with("/.bashrc"))
-            })
-    })
-}
-
-/// Splits one shell line into words, with each of `;&|()` as its own word,
-/// and drops a trailing `#` comment. Quoting is not interpreted.
-fn shell_words(line: &str) -> Vec<&str> {
-    let mut words = Vec::new();
-    let mut word_start = None;
-    for (index, ch) in line.char_indices() {
-        let separator = matches!(ch, ';' | '&' | '|' | '(' | ')');
-        if ch.is_whitespace() || separator {
-            if let Some(start) = word_start.take() {
-                words.push(&line[start..index]);
-            }
-            if separator {
-                words.push(&line[index..=index]);
-            }
-        } else if word_start.is_none() {
-            if ch == '#' {
-                return words;
-            }
-            word_start = Some(index);
-        }
-    }
-    if let Some(start) = word_start {
-        words.push(&line[start..]);
-    }
-    words
 }
 
 /// Whether this is Apple's frozen `/bin/bash` 3.2 (decided from the path alone).
@@ -847,30 +724,6 @@ mod tests {
         assert!(!is_stock_macos_bash(Shell::Bash, Some("/bin/zsh"), true));
         assert!(!is_stock_macos_bash(Shell::Zsh, Some("/bin/bash"), true));
         assert!(!is_stock_macos_bash(Shell::Bash, Some("/bin/bash"), false));
-    }
-
-    #[test]
-    fn only_an_uncommented_source_command_counts_as_a_bashrc_loader() {
-        for loader in [
-            "[ -f ~/.bashrc ] && . ~/.bashrc",
-            "[ -r \"$HOME/.bashrc\" ] && source \"$HOME/.bashrc\" # login",
-            "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi",
-            "if [ -f ~/.bashrc ]; then\n    . ~/.bashrc\nfi",
-            "test -f ${HOME}/.bashrc&&. ${HOME}/.bashrc",
-            "case $- in *i*) . ~/.bashrc;; esac",
-        ] {
-            assert!(sources_bashrc(loader), "{loader}");
-        }
-        for mention in [
-            "# .bashrc is intentionally not sourced here yet",
-            "# [ -f ~/.bashrc ] && . ~/.bashrc",
-            "    #. \"$HOME/.bashrc\"",
-            "export PATH=$PATH:~/bin # then . ~/.bashrc",
-            "echo . ~/.bashrc",
-            "[ -f ~/.bashrc ] && . ~/.bashrc.local",
-        ] {
-            assert!(!sources_bashrc(mention), "{mention}");
-        }
     }
 
     #[test]

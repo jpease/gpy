@@ -49,6 +49,8 @@ mod script_run;
 pub mod segments;
 /// `gpy setup` — install and wire the per-shell scripts.
 pub mod setup;
+/// `gpy setup` Bash steps: the `.bashrc` block and the login-file loader.
+mod setup_bash;
 /// `gpy setup` Fish steps: prompt link, old loader, old directories.
 mod setup_fish;
 /// `gpy setup` step that stages and swaps in the installed shell trees.
