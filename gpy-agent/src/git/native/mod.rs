@@ -2,7 +2,10 @@
 //!
 //! Shelling out lets git use its own optimizations (untracked cache). Every
 //! command runs with `core.fsmonitor` off, so a repository's own config cannot
-//! make a prompt run a hook command.
+//! make a prompt run its fsmonitor hook. That does not reach every command a
+//! repository can configure: a repository-local `filter.<driver>.clean` or
+//! `filter.<driver>.process` still runs when `git status` compares the content
+//! of a file `.gitattributes` assigns to it, and is not detected here.
 
 use super::{
     CompleteStatus, PathspecScan, RebaseProgress, RepositoryState, RepositoryStatus,

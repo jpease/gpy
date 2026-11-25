@@ -625,7 +625,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 
 **git CLI** (chosen):
 - Inherits git's own optimizations: `core.untrackedCache` reduces a full scan to
-  a check of what git already knows changed. Every command runs with `core.fsmonitor` off, so a repository's config cannot make a prompt run a hook command
+  a check of what git already knows changed. Every command runs with `core.fsmonitor` off, so a repository's config cannot make a prompt run its fsmonitor hook; a repository-local `filter.<driver>.clean` or `process` command still runs when `git status` compares a filtered file's content (see [security-model.md](security-model.md#subprocesses))
 - One subprocess returns branch, ahead/behind and file status together
 - `--porcelain=v2` is machine-readable and has been stable since Git 2.11.0 (2016)
 - Spawn overhead is real but small against what the untracked cache saves:
