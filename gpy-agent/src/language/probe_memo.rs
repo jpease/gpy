@@ -4,6 +4,7 @@ use crate::cache::ttl_map::TtlMap;
 use crate::language::version::{ColdVersion, ProbePolicy};
 use crate::sync_ext::MutexExt;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
@@ -21,6 +22,10 @@ const FOLLOWER_WAIT: Duration = Duration::from_secs(20);
 struct Flight {
     done: Mutex<bool>,
     finished: Condvar,
+    /// Set by [`ProbeMemo::retain`] when it drops this key mid-probe: the
+    /// probe saw the state before the invalidation, so its result is not
+    /// stored. Read and written under the memo's `flights` lock.
+    invalidated: AtomicBool,
 }
 
 impl Flight {
@@ -28,6 +33,7 @@ impl Flight {
         Self {
             done: Mutex::new(false),
             finished: Condvar::new(),
+            invalidated: AtomicBool::new(false),
         }
     }
 
@@ -103,24 +109,35 @@ impl<K: Eq + Hash + Clone> ProbeMemo<K> {
         if policy == ProbePolicy::CachedOnly {
             return Err(ColdVersion);
         }
-        let _flight = match self.claim(key) {
+        let flight = match self.claim(key) {
             Ok(flight) => flight,
             Err(running) => {
                 running.wait(FOLLOWER_WAIT);
                 return Ok(self.found.get(key));
             }
         };
-        probe().map_or_else(
-            || {
-                self.failed.insert(key.clone(), SystemTime::now());
-                Ok(None)
-            },
-            |version| {
-                self.failed.remove(key);
-                self.found.insert(key.clone(), version.clone());
-                Ok(Some(version))
-            },
-        )
+        let version = probe();
+        self.store(&flight, version.as_deref());
+        Ok(version)
+    }
+
+    /// Memoize the probed version (a success) or record a failure (`None`) for
+    /// the flight's key, unless [`Self::retain`] dropped the key while the
+    /// probe ran. Under the `flights` lock, so a `retain` either is seen here
+    /// or removes the entry.
+    fn store(&self, flight: &FlightGuard<'_, K>, probed: Option<&str>) {
+        let flights = self.flights.lock_or_recover();
+        if flight.flight.invalidated.load(Ordering::Relaxed) {
+            return;
+        }
+        let key = flight.key;
+        if let Some(version) = probed {
+            self.failed.remove(key);
+            self.found.insert(key.clone(), version.to_owned());
+        } else {
+            self.failed.insert(key.clone(), SystemTime::now());
+        }
+        drop(flights);
     }
 
     /// Become the prober for `key`, or get the probe already running for it.
@@ -149,10 +166,19 @@ impl<K: Eq + Hash + Clone> ProbeMemo<K> {
         })
     }
 
-    /// Keep only the entries (successes and failures) whose key satisfies `keep`.
+    /// Keep only the entries (successes and failures) whose key satisfies
+    /// `keep`. A probe still running for a dropped key stores nothing: it saw
+    /// the state before this invalidation.
     pub(crate) fn retain(&self, mut keep: impl FnMut(&K) -> bool) {
+        let flights = self.flights.lock_or_recover();
+        for (key, flight) in flights.iter() {
+            if !keep(key) {
+                flight.invalidated.store(true, Ordering::Relaxed);
+            }
+        }
         self.found.retain(&mut keep);
         self.failed.retain(keep);
+        drop(flights);
     }
 }
 
@@ -218,6 +244,42 @@ mod tests {
             Ok(None)
         );
         assert_eq!(calls.get(), 2);
+    }
+
+    /// An invalidation landing while a probe runs wins: the probe saw the old
+    /// state, so neither its version nor its failure may be memoized.
+    #[test]
+    fn invalidation_during_a_probe_discards_its_result() {
+        let memo = ProbeMemo::<u8>::new(8);
+        let invalidate = |dropped: u8| memo.retain(|key| *key != dropped);
+
+        let stale = memo.lookup_or_probe(&1, ProbePolicy::Spawn, || {
+            invalidate(1);
+            Some("1.0".to_owned())
+        });
+        let fresh = memo.lookup_or_probe(&1, ProbePolicy::Spawn, || Some("2.0".to_owned()));
+        let failed = memo.lookup_or_probe(&2, ProbePolicy::Spawn, || {
+            invalidate(2);
+            None
+        });
+        let retried = memo.lookup_or_probe(&2, ProbePolicy::Spawn, || Some("3.0".to_owned()));
+
+        assert_eq!(
+            stale,
+            Ok(Some("1.0".to_owned())),
+            "its caller still gets it"
+        );
+        assert_eq!(
+            fresh,
+            Ok(Some("2.0".to_owned())),
+            "a stale version was kept"
+        );
+        assert_eq!(failed, Ok(None));
+        assert_eq!(
+            retried,
+            Ok(Some("3.0".to_owned())),
+            "a stale failure was kept"
+        );
     }
 
     #[test]
