@@ -1,9 +1,13 @@
 //! Configuration file loading, parsing, and comment-preserving saving.
 
 use super::{Config, GitIconSet, location, validation};
+use crate::plugin::SegmentName;
 use crate::{Error, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Top-level table of per-segment plugin overrides.
+const PLUGIN_TABLE: &str = "plugin";
 
 /// Load the first available config file, fresh from disk.
 ///
@@ -16,18 +20,34 @@ pub fn load_config() -> Result<Config> {
     }
 }
 
-/// Whether the agent may run (`agent.enabled`), the one reader of that switch.
-/// Uses the typed config when it loads; when validation fails it falls back to
-/// the raw `agent.enabled` boolean, so the kill switch survives an otherwise
-/// broken file. A missing, unreadable or unparsable file means enabled.
+/// What decided whether the agent may run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchSource {
+    /// `GPY_AGENT_ENABLED` held a flag spelling.
+    Env,
+    /// `agent.enabled` in the config file, or its default.
+    Config,
+}
+
+/// Whether the agent may run, and what decided it: `GPY_AGENT_ENABLED`
+/// when it holds a flag spelling, else `agent.enabled`, so the environment
+/// wins both ways, as it does for `gpy prompt`. `gpy-agent start` and
+/// `gpy doctor` read the switch here. The config side uses the typed config
+/// when it loads; when validation fails it falls back to the raw
+/// `agent.enabled` boolean, so the kill switch survives an otherwise broken
+/// file. A missing, unreadable or unparsable file means enabled.
 #[must_use]
-pub fn agent_enabled() -> bool {
-    match location::resolve_active_config(&location::get_config_paths()) {
+pub fn agent_enabled() -> (bool, SwitchSource) {
+    if let Some(enabled) = crate::env_config::AGENT_ENABLED.flag_override() {
+        return (enabled, SwitchSource::Env);
+    }
+    let enabled = match location::resolve_active_config(&location::get_config_paths()) {
         Some((_, Some(existing))) => {
             std::fs::read_to_string(existing).map_or(true, |contents| agent_enabled_in(&contents))
         }
         _ => true,
-    }
+    };
+    (enabled, SwitchSource::Config)
 }
 
 /// [`agent_enabled`] for one file's contents.
@@ -174,9 +194,10 @@ fn save_locked(
     }
 
     for (leaf, change) in &changes {
+        let spelled = as_spelled_in(&document, leaf);
         match change {
-            Some(value) => set_leaf(&mut document, leaf, value)?,
-            None => remove_leaf(&mut document, leaf),
+            Some(value) => set_leaf(&mut document, &spelled, value)?,
+            None => remove_leaf(&mut document, &spelled),
         }
     }
 
@@ -272,6 +293,29 @@ fn to_edit_value(value: &toml::Value) -> Result<toml_edit::Value> {
             toml_edit::Value::InlineTable(inline)
         }
     })
+}
+
+/// `leaf` with a `plugin.<segment>` name respelled as the file already has it.
+///
+/// Segment names are case-insensitive: `[plugin.MySeg]` loads as `myseg`. The
+/// typed config only knows the normalized name, so writing it verbatim would
+/// add a second table that the loader then merges with the first, losing one.
+fn as_spelled_in(document: &toml_edit::DocumentMut, leaf: &[String]) -> Vec<String> {
+    let mut spelled = leaf.to_vec();
+    if let ([root, segment, ..], Some(plugins)) = (
+        spelled.as_mut_slice(),
+        document
+            .get(PLUGIN_TABLE)
+            .and_then(toml_edit::Item::as_table_like),
+    ) && root == PLUGIN_TABLE
+        && let Some(existing) = plugins
+            .iter()
+            .map(|(name, _)| name)
+            .find(|name| SegmentName::new(name).is_ok_and(|n| n.as_str() == segment))
+    {
+        existing.clone_into(segment);
+    }
+    spelled
 }
 
 /// Set the value at `leaf`, creating missing parent tables.

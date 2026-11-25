@@ -363,7 +363,7 @@ main() {
     "$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1 || rc=$?
     case $rc in
         0) ok "GPY agent started" ;;
-        6) info "agent disabled in config (agent.enabled = false); not started" ;;
+        6) info "agent disabled (GPY_AGENT_ENABLED or agent.enabled = false); not started" ;;
         *) warn "Could not start agent automatically (will start on next shell session)" ;;
     esac
 

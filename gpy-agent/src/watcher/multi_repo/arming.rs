@@ -33,6 +33,7 @@ fn warn_degraded(git_root: &Path, reason: &str) {
 impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// Re-arm a tracked repo's stale watches and refresh its entry. `pid` is
     /// `None` for a config-driven re-arm, which must not change the refcount.
+    /// On failure the previous watches are restored.
     ///
     /// # Errors
     /// Returns an error if the essential `.git` watch cannot be re-established.
@@ -55,10 +56,12 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             let repos = self.watched_repos.lock_or_recover();
             repos
                 .get(git_root)
-                .map(|repo| (repo.git_dir.clone(), repo.armed.clone()))
+                .map(|repo| (repo.git_dir.clone(), repo.armed.clone(), repo.worktree))
         };
 
-        if let Some((_, stale_armed)) = &stale
+        // Released before arming, not after: a recreated `.git` needs a fresh
+        // OS watch, which re-acquiring a still-held path would not add.
+        if let Some((_, stale_armed, _)) = &stale
             && let Some(w) = self.watcher.lock_or_recover().as_mut()
         {
             for path in stale_armed {
@@ -69,12 +72,27 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         // A relocated gitdir can move the common dir; re-acquire against the new one.
         release_common_dir_watches(self, git_root);
 
-        let repo_watches = self.start_repo_watches(git_root, git_dir, watch_worktree)?;
+        let keeps_git_dir = stale
+            .as_ref()
+            .is_some_and(|(stale_git_dir, ..)| stale_git_dir == git_dir);
+        let repo_watches = match self.start_repo_watches(git_root, git_dir, watch_worktree) {
+            Ok(repo_watches) => repo_watches,
+            Err(err) => {
+                if !keeps_git_dir {
+                    self.registry.unregister_external_gitdir(git_dir);
+                }
+                if let Some((stale_git_dir, _, stale_worktree)) = &stale {
+                    self.restore_repo_watches(git_root, stale_git_dir, stale_worktree.requested());
+                }
+                return Err(err);
+            }
+        };
 
-        if let Some((stale_git_dir, _)) = &stale {
+        if let Some((stale_git_dir, ..)) = &stale
+            && !keeps_git_dir
+        {
             self.registry.unregister_external_gitdir(stale_git_dir);
         }
-        self.register_external_gitdir_if_needed(git_dir, git_root);
 
         {
             let mut repos = self.watched_repos.lock_or_recover();
@@ -96,11 +114,42 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         Ok(())
     }
 
+    /// Arm `git_root` again as it was (`git_dir`, `watch_worktree`) after a
+    /// failed re-arm released its watches, so it stays watched. If that fails
+    /// too, the entry records nothing armed (its gitdir stays registered until
+    /// teardown) and a warning says so.
+    fn restore_repo_watches(&self, git_root: &Path, git_dir: &Path, watch_worktree: bool) {
+        let restored = self.start_repo_watches(git_root, git_dir, watch_worktree);
+        if let Err(err) = &restored {
+            crate::warn_log!(
+                "watcher",
+                "could not restore the watch of {} ({err}); changes there may show \
+                 only after the periodic reconcile",
+                git_root.display()
+            );
+        }
+        let mut repos = self.watched_repos.lock_or_recover();
+        if let Some(repo) = repos.get_mut(git_root) {
+            match restored {
+                Ok(repo_watches) => {
+                    repo.worktree = repo_watches.worktree;
+                    repo.armed = repo_watches.armed;
+                }
+                Err(_) => repo.armed.clear(),
+            }
+            repo.last_arm_attempt = Instant::now();
+            // Changes made while nothing was armed were never delivered.
+            repo.watched_since = Instant::now();
+        }
+    }
+
     /// Arm watches for a repo, prepare the watcher for its events
     /// ([`WatchTarget::repo_armed`]), queue one catch-up refresh for changes
     /// made before the watch was live (the debounce window delivers it after
     /// the caller records the repo), and log one `Watch ready` line, the
-    /// marker the e2e tests wait on before touching the tree.
+    /// marker the e2e tests wait on before touching the tree. An external
+    /// `git_dir` is registered first, as the poll backend picks its poller
+    /// from the registry; after a failed arm the caller unregisters it.
     ///
     /// # Errors
     /// Returns an error if the coordinator is gone or `.git` cannot be watched.
@@ -110,6 +159,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         git_dir: &Path,
         watch_worktree: bool,
     ) -> Result<RepoWatches> {
+        self.register_external_gitdir_if_needed(git_dir, git_root);
         let watches = self.arm_watches(git_root, git_dir, watch_worktree)?;
         if let Some(w) = self.watcher.lock_or_recover().as_ref() {
             w.repo_armed(git_root, git_dir);

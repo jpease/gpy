@@ -1,10 +1,11 @@
 //! Config, theme, and palette reload handling and the watcher that feeds file events.
 
 use super::{
-    AgentContext, LanguageRefreshMode, SharedWatcherSlot, config_refresh_required,
+    AgentContext, LanguagePaths, LanguageRefreshMode, SharedWatcherSlot, config_refresh_required,
     git_event_lacks_subscriber, git_segment_bg, handle_file_event, refresh, refresh_language_for,
 };
 use crate::config::Config;
+use crate::config::validation::ValidationError;
 use crate::config::validation::templates::validate_segment_templates;
 use crate::debug_log;
 use crate::palette::PaletteCache;
@@ -203,10 +204,49 @@ fn reload_palette(old_config: &Config, new_config: &Config) -> Result<Option<Pal
     }
 }
 
-/// `candidate`, unless the active theme, kept by this reload, renders with
-/// the current palette but not with it: a newly selected palette is then
-/// rejected, and a re-read of the same palette keeps the last good one
-/// (`None`), as a failed load does.
+/// The template error `palette` would add to `theme`: `None` when it renders
+/// `theme`, or when `theme` already fails with `current`, so it is no worse.
+fn palette_regression(
+    theme: &ThemeConfig,
+    current: &Palette,
+    palette: &Palette,
+) -> Option<ValidationError> {
+    let error = validate_segment_templates(theme, palette).err()?;
+    validate_segment_templates(theme, current)
+        .is_ok()
+        .then_some(error)
+}
+
+/// Reject a newly selected `candidate` palette that cannot render `theme`
+/// ([`palette_regression`]). A re-read of the same palette is not rejected:
+/// [`palette_rendering_active_theme`] keeps the last good one instead.
+///
+/// # Errors
+/// Returns an error when a newly selected palette cannot render `theme`.
+fn check_new_palette(
+    theme: &ThemeConfig,
+    current: &Palette,
+    candidate: Option<&Palette>,
+    old_config: &Config,
+    new_config: &Config,
+) -> Result<()> {
+    let name = &new_config.ui.palette;
+    if old_config.ui.palette == *name {
+        return Ok(());
+    }
+    let Some(error) = candidate.and_then(|palette| palette_regression(theme, current, palette))
+    else {
+        return Ok(());
+    };
+    Err(Error::config(format!(
+        "palette '{name}' cannot render theme '{}': {error}",
+        new_config.ui.theme
+    )))
+}
+
+/// `candidate`, unless the active theme renders with the current palette but
+/// not with it: a newly selected palette is then rejected, and a re-read of
+/// the same palette keeps the last good one (`None`), as a failed load does.
 ///
 /// # Errors
 /// Returns an error when a newly selected palette cannot render the theme.
@@ -220,22 +260,13 @@ fn palette_rendering_active_theme(
         return Ok(None);
     };
     let theme = ctx.theme_manager.get();
-    let Err(error) = validate_segment_templates(&theme, &palette) else {
+    let current = ctx.palette_cache.get();
+    check_new_palette(&theme, &current, Some(&palette), old_config, new_config)?;
+    let Some(error) = palette_regression(&theme, &current, &palette) else {
         return Ok(Some(palette));
     };
-    if validate_segment_templates(&theme, &ctx.palette_cache.get()).is_err() {
-        // Already broken with the current palette: this one is no worse.
-        return Ok(Some(palette));
-    }
-    let name = &new_config.ui.palette;
-    if old_config.ui.palette != *name {
-        return Err(Error::config(format!(
-            "palette '{name}' cannot render theme '{}': {error}",
-            new_config.ui.theme
-        )));
-    }
     crate::debug::warn_fallback(
-        &format!("Palette '{name}' reload"),
+        &format!("Palette '{}' reload", new_config.ui.palette),
         "keeping the last good palette",
         &Error::from(error),
     );
@@ -256,11 +287,21 @@ pub(in crate::agent) fn handle_config_reload(
     new_config: &Config,
 ) -> Result<()> {
     // Loaded before the theme switch so a rejected palette leaves nothing
-    // half-applied. Every theme this reload applies is checked against it.
+    // half-applied. Every theme this reload applies is checked against it,
+    // and must not make a newly selected palette fail, which would reject
+    // the reload after the theme had switched.
     let candidate = reload_palette(old_config, new_config)?;
-    let render_palette = candidate.clone().unwrap_or_else(|| ctx.palette_cache.get());
+    let current_palette = ctx.palette_cache.get();
+    let render_palette = candidate.clone().unwrap_or_else(|| current_palette.clone());
     let check = |loaded: &LoadedTheme, active: &ThemeConfig| {
-        check_theme_templates(loaded, &render_palette, active)
+        check_theme_templates(loaded, &render_palette, active)?;
+        check_new_palette(
+            &loaded.theme,
+            &current_palette,
+            candidate.as_ref(),
+            old_config,
+            new_config,
+        )
     };
     let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config, &check)?;
 
@@ -268,8 +309,8 @@ pub(in crate::agent) fn handle_config_reload(
         let _announcing = ctx.announce_gate.lock_or_recover();
         let theme_changed =
             theme_switched || reload_active_theme(&ctx.theme_manager, new_config, &check);
-        // A theme this reload applied renders with the candidate, so only an
-        // unchanged theme can reject it here, with nothing applied yet.
+        // A theme this reload applied passed `check_new_palette`, so only an
+        // unchanged theme can reject the palette here, with nothing applied yet.
         let palette = palette_rendering_active_theme(ctx, old_config, new_config, candidate)?;
         let palette_changed = palette.is_some_and(|loaded| ctx.palette_cache.replace(loaded));
         (theme_changed, palette_changed)
@@ -360,8 +401,10 @@ fn adopt_disk_palette(ctx: &AgentContext, config: &Config) {
 
 /// Re-render instant-prompt caches for every registered repo from cached data
 /// with the new theme, so the post-reload repaint is warm and flicker-free.
-/// A repo that an unlisted `git` or `git.skip_paths` excludes has its git caches
-/// deleted instead, so shells stop showing a segment nothing refreshes.
+/// A status past its TTL is rendered too: the shell shows that status already,
+/// in the old theme. A repo that an unlisted `git` or `git.skip_paths` excludes
+/// has its git caches deleted instead, so shells stop showing a segment
+/// nothing refreshes.
 ///
 /// Renders both the context-free fallback and the new theme's `prev_bg` token the
 /// shell will send. Language rendering runs version detection, so it is deferred
@@ -378,15 +421,20 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
     for (_pid, cwd) in ctx.registry.get_registered_repos() {
-        let git_root = crate::git::find_worktree_root(&cwd);
-        // Keyed by request path when there is no git root.
-        let lang_root = git_root.clone().unwrap_or_else(|| cwd.clone());
-        if !seen_keys.insert(lang_root.clone()) {
+        // Languages are detected and cached at the project root (the git
+        // root, else the nearest marker ancestor) but, outside git, published
+        // under the request path, as the language handler does.
+        let project_root = crate::language::project_root(&cwd);
+        let in_git = project_root.is_git();
+        let lang_root = project_root.into_path();
+        let cache_path = if in_git { lang_root.clone() } else { cwd };
+        if !seen_keys.insert(cache_path.clone()) {
             continue;
         }
-        if let Some(root) = git_root.as_ref() {
+        if in_git {
+            let root = &lang_root;
             if config.git_enabled_for(root) {
-                if let Some(status) = ctx.cache.get(root) {
+                if let Some(status) = ctx.cache.get_any(root) {
                     for prev_bg in [None, Some(git_prev_bg)] {
                         if let Err(e) = ctx
                             .instant_cache
@@ -410,34 +458,49 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
         }
 
         if config.segment_enabled("language") && ctx.language_cache.get(&lang_root).is_some() {
-            schedule_language_cache_regen(ctx, &lang_root, config);
+            schedule_language_cache_regen(ctx, &lang_root, &cache_path, config);
         }
     }
 }
 
-/// Re-render a repo's language caches off the event loop and repaint on change.
-fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &Config) {
+/// Re-render a project's language caches off the event loop and repaint on change.
+fn schedule_language_cache_regen(
+    ctx: &AgentContext,
+    lang_root: &Path,
+    cache_path: &Path,
+    config: &Config,
+) {
     let regen_ctx = ctx.clone();
     let root = lang_root.to_path_buf();
+    let published_at = cache_path.to_path_buf();
     let regen_config = config.clone();
 
     let job = move || {
-        regen_language_caches(&regen_ctx, &root, &regen_config);
+        regen_language_caches(&regen_ctx, &root, &published_at, &regen_config);
     };
 
     crate::ipc::handlers::spawn_detached(job);
 }
 
-/// Synchronous body of [`schedule_language_cache_regen`]; returns `true` when a
-/// cache file changed.
-pub(super) fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) -> bool {
+/// Synchronous body of [`schedule_language_cache_regen`]: render the languages
+/// cached for `lang_root` into the files of `cache_path`; returns `true` when
+/// a cache file changed.
+pub(super) fn regen_language_caches(
+    ctx: &AgentContext,
+    lang_root: &Path,
+    cache_path: &Path,
+    config: &Config,
+) -> bool {
     // One theme snapshot for both `lang_prev_bg` and the render, to avoid a torn read.
     let theme = ctx.theme_manager.get();
     let lang_prev_bg = git_segment_bg(ctx, lang_root, config, &theme);
 
     refresh_language_for(
         ctx,
-        lang_root,
+        LanguagePaths {
+            root: lang_root,
+            cache_path,
+        },
         config,
         LanguageRefreshMode::CachedOnly,
         &theme,

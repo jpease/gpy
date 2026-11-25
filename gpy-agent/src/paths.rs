@@ -11,23 +11,14 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-/// Directory `gpy-agent start` ran in, recorded before the daemon `chdir`s to
-/// `/`, so user-supplied relative paths keep resolving against it.
-pub(crate) static LAUNCH_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-/// `path` made absolute against [`LAUNCH_DIR`], else the current directory.
+/// `path` made absolute against the current directory.
 #[must_use]
 pub fn absolutize(path: &Path) -> PathBuf {
     if path.is_absolute() || path.is_empty() {
         return path.to_path_buf();
     }
-    LAUNCH_DIR
-        .get()
-        .cloned()
-        .or_else(|| std::env::current_dir().ok())
-        .map_or_else(|| path.to_path_buf(), |dir| dir.join(path))
+    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |dir| dir.join(path))
 }
 
 /// Bytes in `sockaddr_un.sun_path`, NUL included (hardcoded: crate forbids `unsafe`).
@@ -230,9 +221,9 @@ impl Os {
 /// ([`cache_root_for`]: `$XDG_CACHE_HOME/gpy`, then `$HOME/.cache/gpy` on Unix
 /// or `%LOCALAPPDATA%\gpy` on Windows), each `XDG_*` value absolute per `os`.
 /// `None` when none is usable (no `/tmp` fallback: a shared directory would
-/// let another user squat the socket). The shells' `__gpy_runtime_root`
-/// copies (Unix rules) are pinned by `xdg_absoluteness_shared_vectors` and
-/// `path_parity`, and disable GPY for the session on `None`.
+/// let another user squat the socket). The agent, `gpy` and `gpy prompt`
+/// all resolve it here; `xdg_absoluteness_shared_vectors` pins the `XDG_*`
+/// rules.
 #[must_use]
 pub fn runtime_root_for(
     xdg_runtime_dir: Option<&Path>,
@@ -570,7 +561,7 @@ mod tests {
                 Some("/home/u"),
                 Some("/home/u/.cache/gpy"),
             ),
-            // An empty or relative HOME is unset, as in the shells' __gpy_home.
+            // An empty or relative HOME is unset, as `home_path` reads it.
             (None, None, Some("relhome"), None),
             (Some("run"), Some("cache"), Some(""), None),
         ];
@@ -670,7 +661,7 @@ mod tests {
                 Some("/home/u"),
                 Some("/home/u/.cache/gpy"),
             ),
-            // Empty or relative HOME is unset, as in the shells' __gpy_home.
+            // Empty or relative HOME is unset, as `home_path` reads it.
             (None, Some("relhome"), None),
             (None, Some(""), None),
         ];

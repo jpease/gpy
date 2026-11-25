@@ -2,21 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Shared boolean-flag vectors for GPY_* environment switches. `1/true/yes/on`
-# is on and `0/false/no/off` is off, case-insensitive, with no surrounding
-# whitespace; anything else counts as unset (the caller's default applies).
+# is on and `0/false/no/off` is off, case-insensitive, surrounding whitespace
+# ignored; anything else counts as unset (the caller's default applies).
 # Read by the Rust test:
 #   - env_config::parse_flag (gpy-agent/src/env_config.rs,
-#     shell_env_flag_shared_vectors)
+#     shell_env_flag_shared_vectors), the one parser of every GPY_* flag,
+#     `gpy prompt`'s included
 #
 # Format: one vector per line, tab-separated: value<TAB>state (on|off|unset).
-# Blank lines and lines starting with # are ignored. No value is padded with
-# whitespace: Rust's parse_flag trims. The single whole-column token \e means
-# the EMPTY string. Every reader MUST fail if this file is missing or yields
-# zero vectors.
-#
-# Rust maps a row to a state with parse_flag(Some(value), true) and
-# parse_flag(Some(value), false): equal results mean on (true) or off (false);
-# different results mean unset.
+# Blank lines and lines starting with # are ignored. The single whole-column
+# token \e means the EMPTY string. Every reader MUST fail if this file is
+# missing or yields zero vectors.
 1	on
 true	on
 YES	on
@@ -31,3 +27,5 @@ FALSE	off
 maybe	unset
 2	unset
 \e	unset
+ 1	on
+ off	off

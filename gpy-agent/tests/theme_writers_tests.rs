@@ -85,6 +85,31 @@ fn save_on_an_active_user_file_writes_nothing() {
 
 #[test]
 #[serial]
+fn save_under_the_active_builtin_name_asks_before_writing() {
+    let env = env_with_theme("starship");
+    let path = env.themes_dir().join("starship.toml");
+    assert!(!path.exists(), "starship is a builtin here");
+
+    let declined = env
+        .run_gpy_with_stdin(&["theme", "save", "starship"], "n\n")
+        .expect("run gpy");
+
+    assert_ne!(declined.exit_code, 0_i32, "{declined:?}");
+    assert!(declined.stderr.contains("cancelled"), "{declined:?}");
+    assert!(!path.exists(), "declined: nothing written");
+
+    let accepted = env
+        .run_gpy_with_stdin(&["theme", "save", "starship"], "y\n")
+        .expect("run gpy");
+    accepted.assert_success("gpy theme save starship");
+    assert_eq!(
+        fs::read_to_string(&path).expect("read overlay"),
+        "extends = \"starship\"\n"
+    );
+}
+
+#[test]
+#[serial]
 fn save_on_an_active_user_overlay_writes_nothing() {
     let env = env_with_theme("starship");
     let path = write_theme(&env, "starship", MINE);

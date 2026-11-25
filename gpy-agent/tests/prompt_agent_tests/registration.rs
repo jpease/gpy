@@ -92,3 +92,16 @@ fn reregister_flag_registers_again() {
     assert_eq!(agent.ops(), [op("register", &a), op("register", &a)]);
     assert!(!flag.exists(), "the flag is consumed");
 }
+
+/// `GPY_AGENT_ENABLED` follows the one `GPY_*` flag rule, which ignores
+/// surrounding whitespace: a padded `0` turns agent mode off, so the prompt
+/// never registers.
+#[test]
+#[serial]
+fn padded_agent_enabled_off_keeps_the_prompt_from_registering() {
+    let (shell, a, _) = shell_with_dirs();
+    let agent = ScriptedAgent::spawn(shell.socket(), |_| ack());
+    shell.prompt(&a, &[("GPY_AGENT_ENABLED", " 0 ")]);
+    let ops = agent.ops();
+    assert!(ops.is_empty(), "agent mode is off: {ops:?}");
+}

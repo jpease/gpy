@@ -349,3 +349,16 @@ fn announce_start_rings_once_for_reload_and_reregister() {
         "one ring, after both flags were written"
     );
 }
+
+/// A tracking file named `0` (or past the PID range) is never a target:
+/// `kill(0, ..)` would signal the agent's own process group.
+#[test]
+fn renudge_never_targets_pid_zero_or_an_implausible_pid() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    track_shells(dir.path(), &[0_u32, 4_194_305_u32, 100_u32]);
+
+    let mut renudger = ShellRenudger::default();
+    let targets = renudger.pids_to_nudge(dir.path(), |_| false, |_, _| true);
+
+    assert_eq!(targets, vec![100_u32], "only a plausible PID may be rung");
+}

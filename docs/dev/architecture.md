@@ -74,16 +74,16 @@ With the agent disabled, or after a refusal (`{"error"…}` reply), `gpy prompt`
 
 `InstantPromptCache` (`gpy-agent/src/cache/instant_prompt/`) holds the rendered git and language segments the daemon keeps fresh. Files live in `<cache dir>/instant-prompts/` (`paths::gpy_cache_dir`, default `~/.cache/gpy`), named `{key}.{variant}.{token}.{ext}`:
 
-- `key`: the project root path, chunked into directories when long
+- `key`: the project root's bytes escaped into lowercase ASCII (`/` as `_s`, a capital as `_u` and its letter, a non-ASCII byte as `_x` and its hex; `path_to_cache_key`), so roots that differ only in case, Unicode normalization or bytes that are not UTF-8 never share a file on a volume that folds them; a key over 200 bytes is cut into 50-byte directory chunks
 - `variant`: the segment and its position (`git`, `git_first`, `git_last`, `git_first_last`, and the same for `lang`)
 - `token`: the previous segment's background colour, which the rendered chevron bakes in (`none` when there is none)
 - `ext`: the dialect (`ansi`, `zsh`, `bash`)
 
-Beside a key's git or language entries the agent keeps an empty presence marker, `{key}.{git|lang}.any-entry.{ext}`. The omit check tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows. The marker is written with the entries, refreshed with them, and removed with them (`remove_git`, the restart clear of language files); `prev_bg_token` never emits `-`, so no render context can name it.
+Beside a key's language entries the agent keeps an empty presence marker, `{key}.lang.any-entry.{ext}`. The language segment's omit check tests that one file instead of globbing for any variant, since a glob reads the whole directory and slows every render as the cache grows. Git keeps no marker: it is drawn in any repository, from the cache, the agent or the oneshot. The marker is written with the entries, refreshed with them, and removed with them (the restart clear of language files, which also removes a git marker an older agent left); `prev_bg_token` never emits `-`, so no render context can name it.
 
 Who writes and who reads:
 - The agent writes a file while handling a request, again on a background refresh, on a watcher event, and for a theme or config change before it rings the reload doorbell.
-- `gpy prompt` serves any file it finds. A file older than the prompt-side TTL is stale (git 5 s, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`; language 30 s, `GPY_LANGUAGE_CACHE_TTL_SECONDS`) and also triggers a refresh. A `.none` file served for a request that has a real `prev_bg` re-queries the agent, because its chevron colour is wrong.
+- `gpy prompt` serves any file it finds. A file older than the prompt-side TTL is stale (git 5 s, `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`; language 30 s, `GPY_LANGUAGE_CACHE_TTL_SECONDS`) and also triggers a refresh; a stale git file with no agent listening (no socket, or one left by a crashed agent) is replaced by the in-process oneshot. A `.none` file served for a request that has a real `prev_bg` re-queries the agent, because its chevron colour is wrong.
 - Files unused for 14 days are removed by an age sweep (at agent start and hourly); files the agent cannot refresh are cleared at start. The in-memory bookkeeping is bounded (`INSTANT_PROMPT_KEY_CAPACITY`, `INSTANT_PROMPT_LAST_WRITTEN_CAPACITY`).
 
 The benchmark side of this path is in [benchmarking.md](performance/benchmarking.md#mechanisms-behind-the-cached-prompt-budget).
@@ -625,7 +625,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 
 **git CLI** (chosen):
 - Inherits git's own optimizations: `core.untrackedCache` reduces a full scan to
-  a check of what git already knows changed. Every command runs with `core.fsmonitor` off, so a repository's config cannot make a prompt run a hook command
+  a check of what git already knows changed. Every command runs with `core.fsmonitor` off, so a repository's config cannot make a prompt run its fsmonitor hook; a repository-local `filter.<driver>.clean` or `process` command still runs when `git status` compares a filtered file's content (see [security-model.md](security-model.md#subprocesses))
 - One subprocess returns branch, ahead/behind and file status together
 - `--porcelain=v2` is machine-readable and has been stable since Git 2.11.0 (2016)
 - Spawn overhead is real but small against what the untracked cache saves:
@@ -700,7 +700,7 @@ The gates enforce `max` plus the 15% `measurement_variance_percent`, so a 1.5 ms
 
 ```
 1. $GPY_CONFIG_PATH (when set and non-empty, the ONLY config file: read and created there even if absent;
-                     a relative value is made absolute against the launch directory; empty counts as unset)
+                     a relative value is ignored with a warning; empty counts as unset)
 2. $XDG_CONFIG_HOME/gpy/config.toml
 3. ~/.config/gpy/config.toml
 4. Built-in defaults (config::Config::default())

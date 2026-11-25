@@ -178,15 +178,6 @@ impl WatchRegistry {
         is_significant.then_some(root)
     }
 
-    /// Whether `path` lies under any registered external gitdir (submodule,
-    /// linked-worktree or `--separate-git-dir` gitdir), significant or not.
-    pub(crate) fn is_under_registered_external_gitdir(&self, path: &Path) -> bool {
-        self.external_gitdirs
-            .read_or_recover()
-            .keys()
-            .any(|git_dir| path.starts_with(git_dir))
-    }
-
     /// Record that `git_root` (a canonical linked-worktree working root) depends on
     /// the shared metadata in `common_dir` (canonical). Idempotent.
     pub(crate) fn register_common_gitdir(&self, common_dir: &Path, git_root: &Path) {
@@ -237,6 +228,30 @@ impl WatchRegistry {
             .read_or_recover()
             .keys()
             .any(|common_dir| path.starts_with(common_dir))
+    }
+
+    /// `path` relative to the deepest registered external gitdir (submodule,
+    /// linked-worktree or `--separate-git-dir` gitdir) or common git directory
+    /// holding it; `None` outside every one.
+    pub(crate) fn path_below_registered_gitdir<'path>(
+        &self,
+        path: &'path Path,
+    ) -> Option<&'path Path> {
+        let below = |git_dir: &PathBuf| path.strip_prefix(git_dir).ok();
+        let depth = |relative: &&Path| relative.as_os_str().len();
+        let external = self
+            .external_gitdirs
+            .read_or_recover()
+            .keys()
+            .filter_map(below)
+            .min_by_key(depth);
+        let common = self
+            .common_gitdirs
+            .read_or_recover()
+            .keys()
+            .filter_map(below)
+            .min_by_key(depth);
+        external.into_iter().chain(common).min_by_key(depth)
     }
 
     /// Parent repository roots whose gitlink status can change because

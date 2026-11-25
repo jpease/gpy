@@ -686,6 +686,30 @@ fn version_pin_files_trigger_language_event() {
     }
 }
 
+/// mise's config also lives below `mise/`, `.mise/` and `.config/`, as a
+/// `config.toml` that must not pass for a gpy config file.
+#[test]
+fn nested_mise_config_files_trigger_language_event() {
+    for relative in [
+        ".config/mise/config.toml",
+        "mise/config.toml",
+        ".mise/config.toml",
+        ".config/mise.toml",
+    ] {
+        let path = Path::new("/tmp/project").join(relative);
+        assert_matches!(
+            classify_event(&path),
+            Some(FileEvent::Language { .. }),
+            "{relative} must trigger a Language event (mise config)"
+        );
+    }
+    assert_matches!(
+        classify_event(Path::new("/tmp/project/other/config.toml")),
+        Some(FileEvent::Config { .. }),
+        "any other config.toml stays a Config event"
+    );
+}
+
 #[test]
 fn split_at_git_dir_modules_uses_first_occurrence_for_nested_submodules() {
     let nested = Path::new("/super/.git/modules/outer/modules/inner/HEAD");

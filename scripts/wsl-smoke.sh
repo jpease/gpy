@@ -32,7 +32,16 @@ RUN_CHECKS=1
 case "${1:-}" in
     --prompts) RUN_PROMPTS=1 ;;
     --prompts-only) RUN_PROMPTS=1; RUN_CHECKS=0 ;;
+    "") ;;
+    *)
+        echo "Usage: scripts/wsl-smoke.sh [--prompts | --prompts-only]" >&2
+        exit 2
+        ;;
 esac
+if [[ $# -gt 1 ]]; then
+    echo "Usage: scripts/wsl-smoke.sh [--prompts | --prompts-only]" >&2
+    exit 2
+fi
 
 failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }

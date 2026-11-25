@@ -287,7 +287,7 @@ fn run_daemon(startup: StartupHandoff, socket: SocketPath) -> Result<()> {
 /// # Errors
 /// Returns an error if `chdir` or runtime construction fails.
 fn enter_daemon() -> Result<tokio::runtime::Runtime> {
-    // Inputs were absolutized pre-fork; don't keep the launch dir busy.
+    // Every path input is absolute by now; don't keep the launch dir busy.
     if let Err(e) = fork::chdir() {
         crate::warn_log!("agent", "Failed to chdir to /: {e}");
         return Err(Error::agent(format!(
@@ -308,21 +308,12 @@ pub fn start_background_agent(
     socket: &SocketPath,
     mut on_notice: impl FnMut(StartNotice),
 ) -> Result<StartOutcome> {
-    if !crate::config::loader::agent_enabled() {
-        on_notice(StartNotice::Disabled);
+    let (enabled, source) = crate::config::loader::agent_enabled();
+    if !enabled {
+        on_notice(StartNotice::Disabled(source));
         return Ok(StartOutcome::Disabled);
     }
 
-    // The daemon runs in `/`: anchor relative inputs before the fork.
-    if let Ok(cwd) = std::env::current_dir()
-        && let Err(rejected) = crate::paths::LAUNCH_DIR.set(cwd)
-    {
-        debug_assert!(
-            crate::paths::LAUNCH_DIR.get() == Some(&rejected),
-            "launch dir set twice with a different value: new={}",
-            rejected.display()
-        );
-    }
     crate::debug::init_path();
     super::ensure_runtime_dir(socket)?;
 

@@ -8,7 +8,7 @@ read_only_style = "red"
 
 [git_branch]
 format = "on [$symbol$branch(:$remote_branch)]($style) "
-symbol = " "
+symbol = "\ue0a0 "
 style = "bold purple"
 
 [git_status]

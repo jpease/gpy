@@ -129,6 +129,19 @@ pub fn rename_vars(format: &str, renames: &[(&str, &str)]) -> String {
         .collect()
 }
 
+/// Replace every reference to the variable `name` with the literal `replacement`.
+#[must_use]
+pub fn replace_var(format: &str, name: &str, replacement: &str) -> String {
+    tokens(format)
+        .into_iter()
+        .map(|token| match token {
+            Token::Var { name: found, .. } if found == name => replacement,
+            Token::Var { raw, .. } => raw,
+            Token::Literal(text) => text,
+        })
+        .collect()
+}
+
 /// Replace `$style`/`$*_style` references with the module's literal style values.
 ///
 /// References without a string value in `table` are kept.

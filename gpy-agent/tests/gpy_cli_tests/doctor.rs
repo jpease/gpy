@@ -45,6 +45,28 @@ fn doctor_points_uninstalled_bundled_segments_at_setup() {
         "[ui]\nenabled_segments = [\"username\", \"usrname\", \"directory\"]\n",
     )
     .expect("Failed to create isolated CLI test environment");
+
+    // No GPY_BUNDLED_PLUGIN_DIR: the bundled root is the (empty) data root's,
+    // which `gpy setup` fills.
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("Unrecognized segments found"),
+        "missing bundled plugin must stay a failure: {output:?}"
+    );
+    assert!(
+        output.stdout.contains("Remediation: Run `gpy setup`"),
+        "bundled segment must point at `gpy setup`: {output:?}"
+    );
+    assert!(
+        output.stdout.contains("Check for typos"),
+        "a genuinely unknown segment keeps the typo remediation: {output:?}"
+    );
+}
+
+#[test]
+fn doctor_does_not_send_an_overridden_bundled_dir_to_setup() {
+    let env = CliTestEnv::with_config("[ui]\nenabled_segments = [\"username\", \"directory\"]\n")
+        .expect("Failed to create isolated CLI test environment");
     let empty_bundled = env.config_dir().join("empty-bundled");
     fs::create_dir_all(&empty_bundled).expect("Failed to create empty bundled dir");
 
@@ -59,12 +81,15 @@ fn doctor_points_uninstalled_bundled_segments_at_setup() {
         "missing bundled plugin must stay a failure: {output:?}"
     );
     assert!(
-        output.stdout.contains("Remediation: Run `gpy setup`"),
-        "bundled segment must point at `gpy setup`: {output:?}"
+        output.stdout.contains(&format!(
+            "GPY_BUNDLED_PLUGIN_DIR points at {}",
+            empty_bundled.display()
+        )),
+        "the remediation must name the override: {output:?}"
     );
     assert!(
-        output.stdout.contains("Check for typos"),
-        "a genuinely unknown segment keeps the typo remediation: {output:?}"
+        !output.stdout.contains("Remediation: Run `gpy setup`"),
+        "`gpy setup` never installs into the override: {output:?}"
     );
 }
 
@@ -406,6 +431,67 @@ fn doctor_lists_agent_tuning_and_warns_on_ignored_env() {
     assert_eq!(
         output.exit_code, 0_i32,
         "an ignored tunable is a warning, not a failure: {output:?}"
+    );
+}
+
+/// The variables `gpy prompt` reads are listed too, with what the prompt
+/// makes of them.
+#[test]
+fn doctor_lists_the_prompt_environment() {
+    let env = CliTestEnv::with_config("[agent]\nenabled = false\n")
+        .expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy_with_env(
+            &["doctor"],
+            &[("GPY_IPC_TIMEOUT_MS", "soon"), ("GPY_SHOW_STATUS", " off ")],
+        )
+        .expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("[Prompt environment]"),
+        "doctor must print the Prompt environment section: {output:?}"
+    );
+    let line = |name: &str| {
+        output
+            .stdout
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("no {name} line: {output:?}"))
+            .to_owned()
+    };
+    let timeout = line("GPY_IPC_TIMEOUT_MS");
+    assert!(
+        timeout.contains("ignored") && timeout.contains("150 ms"),
+        "an ignored value must say so and show the default: {timeout:?}"
+    );
+    let status = line("GPY_SHOW_STATUS");
+    assert!(
+        status.contains("off (env)"),
+        "a padded flag counts: {status:?}"
+    );
+}
+
+/// A relative path variable is ignored; doctor names it and says why.
+#[test]
+fn doctor_flags_a_relative_path_variable() {
+    let env = CliTestEnv::with_config("[agent]\nenabled = false\n")
+        .expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy_with_env(&["doctor"], &[("GPY_AGENT_SOCKET_PATH", "gpy.sock")])
+        .expect("Failed to run gpy doctor");
+    let line = output
+        .stdout
+        .lines()
+        .find(|line| line.contains("GPY_AGENT_SOCKET_PATH"))
+        .unwrap_or_else(|| panic!("no GPY_AGENT_SOCKET_PATH line: {output:?}"));
+    assert!(
+        line.contains("ignored \"gpy.sock\": expected an absolute path"),
+        "{line:?}"
+    );
+    assert_eq!(
+        output.exit_code, 0_i32,
+        "a warning, not a failure: {output:?}"
     );
 }
 

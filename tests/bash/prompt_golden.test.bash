@@ -104,7 +104,7 @@ warm() {
     local shell
     for shell in bash zsh fish; do render "$shell" 0 "" >/dev/null; done
     marker() {
-        ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.any-entry.* >/dev/null 2>&1
+        ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git_bg.none.* >/dev/null 2>&1
     }
     shell_e2e_poll 5 marker
     sleep 1

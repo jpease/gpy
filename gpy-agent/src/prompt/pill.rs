@@ -1,7 +1,8 @@
 //! The pills `gpy prompt` draws itself rather than asking the agent: the
 //! clock and status fallbacks, script segment pills and the
-//! root/no-character prompt tail. `tests/bash/prompt_golden.test.bash` pins
-//! the output.
+//! root/no-character prompt tail. Colours are 24-bit, as the agent's;
+//! [`super::render`] fits the whole prompt to the terminal's colour depth.
+//! `tests/bash/prompt_golden.test.bash` pins the output.
 
 use super::dialect::Dialect;
 use super::vars::ShellVars;
@@ -9,178 +10,25 @@ use super::vars::ShellVars;
 /// `ESC`, as the shell's `__GPY_SGR_ESC`.
 const ESC: char = '\u{1b}';
 
-/// Colour depth as `__gpy_color_depth` resolves it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Depth {
-    /// 24-bit SGR.
-    TrueColor,
-    /// xterm 256 palette.
-    Ansi256,
-    /// The 16 ANSI colours.
-    Ansi16,
-    /// No colour codes.
-    NoColor,
-}
-
-impl Depth {
-    /// `GPY_COLOR_DEPTH` (case-insensitive, surrounding blanks ignored) wins;
-    /// otherwise 256 on `Apple_Terminal` or `TERM=linux`, else truecolor.
-    pub(crate) fn from_env(
-        depth: Option<&str>,
-        term_program: Option<&str>,
-        term: Option<&str>,
-    ) -> Self {
-        match depth.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-            Some("truecolor" | "24bit") => Self::TrueColor,
-            Some("256") => Self::Ansi256,
-            Some("16") => Self::Ansi16,
-            Some("none") => Self::NoColor,
-            _ if term_program == Some("Apple_Terminal") || term == Some("linux") => Self::Ansi256,
-            _ => Self::TrueColor,
-        }
-    }
-}
-
-/// How a pill is painted: the colour depth and the shell's prompt syntax.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Paint {
-    pub(crate) depth: Depth,
-    pub(crate) dialect: Dialect,
-}
-
-impl Paint {
-    /// Escape data for the prompt (`__gpy_prompt_escape`).
-    pub(crate) fn escape(self, text: &str) -> String {
-        self.dialect.escape(text)
-    }
-
-    /// The zero-width SGR reset that ends every pill.
-    fn reset(self) -> String {
-        self.dialect.invisible(&format!("{ESC}[0m"))
-    }
-}
-
-/// The 16 ANSI colours as xterm draws them, in SGR order.
-const ANSI16_RGB: [[i32; 3]; 16] = [
-    [0, 0, 0],
-    [205, 0, 0],
-    [0, 205, 0],
-    [205, 205, 0],
-    [0, 0, 238],
-    [205, 0, 205],
-    [0, 205, 205],
-    [229, 229, 229],
-    [127, 127, 127],
-    [255, 0, 0],
-    [0, 255, 0],
-    [255, 255, 0],
-    [92, 92, 255],
-    [255, 0, 255],
-    [0, 255, 255],
-    [255, 255, 255],
-];
-
-/// Foreground code (30-37, 90-97) of the ANSI colour nearest to `rgb`.
-fn rgb_to_16(rgb: [i32; 3]) -> i32 {
-    let mut best = 0_i32;
-    let mut best_distance = -1_i32;
-    for (index, ansi) in (0_i32..).zip(ANSI16_RGB) {
-        let distance = rgb
-            .iter()
-            .zip(ansi)
-            .map(|(c, a)| c.saturating_sub(a).saturating_pow(2))
-            .fold(0_i32, i32::saturating_add);
-        if best_distance < 0_i32 || distance < best_distance {
-            best_distance = distance;
-            best = index;
-        }
-    }
-    if best < 8 {
-        best.saturating_add(30)
-    } else {
-        best.saturating_add(82)
-    }
-}
-
-/// xterm cube level (0-5) nearest to `channel`.
-const fn cube_level(channel: i32) -> i32 {
-    match channel {
-        ..48 => 0,
-        48..115 => 1,
-        115..155 => 2,
-        155..195 => 3,
-        195..235 => 4,
-        _ => 5,
-    }
-}
-
-/// Nearest xterm 256 index to `rgb`.
-fn rgb_to_256([red, green, blue]: [i32; 3]) -> i32 {
-    if red == green && green == blue {
-        return match red {
-            ..8 => 16,
-            248.. => 231,
-            _ => red
-                .saturating_sub(3)
-                .saturating_div(10)
-                .min(23)
-                .saturating_add(232),
-        };
-    }
-    cube_level(red)
-        .saturating_mul(36)
-        .saturating_add(cube_level(green).saturating_mul(6))
-        .saturating_add(cube_level(blue))
-        .saturating_add(16)
-}
-
-/// Foreground code (30-37, 90-97) nearest to 256-colour `index`.
-fn index_to_16(index: i32) -> i32 {
-    match index {
-        ..8 => index.saturating_add(30),
-        8..16 => index.saturating_add(82),
-        16..232 => {
-            let cube = index.saturating_sub(16);
-            let level = |l: i32| {
-                if l == 0_i32 {
-                    0_i32
-                } else {
-                    l.saturating_mul(40).saturating_add(55)
-                }
-            };
-            rgb_to_16([
-                level(cube.saturating_div(36)),
-                level(cube.saturating_div(6).rem_euclid(6)),
-                level(cube.rem_euclid(6)),
-            ])
-        }
-        _ => {
-            let gray = index
-                .saturating_sub(232)
-                .saturating_mul(10)
-                .saturating_add(8);
-            rgb_to_16([gray, gray, gray])
-        }
-    }
+/// The zero-width SGR reset that ends every pill.
+fn reset(dialect: Dialect) -> String {
+    dialect.invisible(&format!("{ESC}[0m"))
 }
 
 /// `#rrggbb` as three channels.
-fn hex_rgb(color: &str) -> Option<[i32; 3]> {
+fn hex_rgb(color: &str) -> Option<[u8; 3]> {
     let hex = color.strip_prefix('#')?;
     if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let channel = |range| hex.get(range).and_then(|h| i32::from_str_radix(h, 16).ok());
+    let channel = |range| hex.get(range).and_then(|h| u8::from_str_radix(h, 16).ok());
     Some([channel(0..2)?, channel(2..4)?, channel(4..6)?])
 }
 
-/// SGR parameter for `color` as foreground (`bg == false`) or background,
-/// as `__gpy_sgr_param`: empty under [`Depth::NoColor`]; unknown names,
+/// SGR parameter for `color` as foreground (`bg == false`) or background:
+/// a name, `#rrggbb` (24-bit) or a 256-colour index; unknown names,
 /// `transparent`, `normal` and empty are the default (39/49).
-fn sgr_param(bg: bool, color: &str, depth: Depth) -> String {
-    if depth == Depth::NoColor {
-        return String::new();
-    }
+fn sgr_param(bg: bool, color: &str) -> String {
     let base: i32 = if bg { 40 } else { 30 };
     let named = |offset: i32| base.saturating_add(offset).to_string();
     match color {
@@ -201,43 +49,25 @@ fn sgr_param(bg: bool, color: &str, depth: Depth) -> String {
         "brcyan" | "bright_cyan" | "bright-cyan" => named(66),
         "brwhite" | "bright_white" | "bright-white" => named(67),
         _ => {
-            if let Some(rgb @ [r, g, b]) = hex_rgb(color) {
-                return match depth {
-                    Depth::TrueColor => format!("{};2;{r};{g};{b}", base.saturating_add(8)),
-                    Depth::Ansi256 => format!("{};5;{}", base.saturating_add(8), rgb_to_256(rgb)),
-                    Depth::Ansi16 | Depth::NoColor => rgb_to_16(rgb)
-                        .saturating_add(base)
-                        .saturating_sub(30)
-                        .to_string(),
-                };
+            if let Some([r, g, b]) = hex_rgb(color) {
+                return format!("{};2;{r};{g};{b}", base.saturating_add(8));
             }
-            if (1..=3).contains(&color.len()) && color.bytes().all(|b| b.is_ascii_digit()) {
-                let index: i32 = color.parse().unwrap_or(256);
-                if index <= 255 {
-                    return if depth == Depth::Ansi16 {
-                        index_to_16(index)
-                            .saturating_add(base)
-                            .saturating_sub(30)
-                            .to_string()
-                    } else {
-                        format!("{};5;{index}", base.saturating_add(8))
-                    };
-                }
+            if (1..=3).contains(&color.len())
+                && color.bytes().all(|b| b.is_ascii_digit())
+                && let Ok(index) = color.parse::<u8>()
+            {
+                return format!("{};5;{index}", base.saturating_add(8));
             }
             named(9)
         }
     }
 }
 
-/// One zero-width `ESC[fg;bgm` sequence, or nothing when both parameters are
-/// empty.
-fn sgr_pair(fg: &str, bg: &str, paint: Paint) -> String {
-    let f = sgr_param(false, fg, paint.depth);
-    let b = sgr_param(true, bg, paint.depth);
-    if f.is_empty() && b.is_empty() {
-        return String::new();
-    }
-    paint.dialect.invisible(&format!("{ESC}[{f};{b}m"))
+/// One zero-width `ESC[fg;bgm` sequence.
+fn sgr_pair(fg: &str, bg: &str, dialect: Dialect) -> String {
+    let f = sgr_param(false, fg);
+    let b = sgr_param(true, bg);
+    dialect.invisible(&format!("{ESC}[{f};{b}m"))
 }
 
 /// Where a pill sits in the chain.
@@ -283,9 +113,9 @@ impl<'a> Cap<'a> {
         )
     }
 
-    fn draw(&self, paint: Paint) -> String {
-        let mut out = sgr_pair(self.color, self.back, paint);
-        out.push_str(&paint.escape(self.glyph));
+    fn draw(&self, dialect: Dialect) -> String {
+        let mut out = sgr_pair(self.color, self.back, dialect);
+        out.push_str(&dialect.escape(self.glyph));
         out
     }
 }
@@ -304,30 +134,30 @@ pub(crate) struct Caps<'a> {
 /// source (escape data first).
 pub(crate) fn section_standalone(
     vars: &ShellVars,
-    paint: Paint,
+    dialect: Dialect,
     bg: &str,
     fg: &str,
     content: &str,
     place: Place,
 ) -> String {
-    section(vars, paint, [bg, fg], content, place, None)
+    section(vars, dialect, [bg, fg], content, place, None)
 }
 
 /// `__gpy_section_standalone` for a script segment pill (CAPS `o`, `c`, `d`).
 pub(crate) fn section_with_caps(
     vars: &ShellVars,
-    paint: Paint,
+    dialect: Dialect,
     [bg, fg]: [&str; 2],
     content: &str,
     place: Place,
     caps: &Caps<'_>,
 ) -> String {
-    section(vars, paint, [bg, fg], content, place, Some(caps))
+    section(vars, dialect, [bg, fg], content, place, Some(caps))
 }
 
 fn section<'a>(
     vars: &'a ShellVars,
-    paint: Paint,
+    dialect: Dialect,
     [bg, fg]: [&'a str; 2],
     content: &str,
     place: Place,
@@ -350,7 +180,7 @@ fn section<'a>(
     // and Zsh, but only when non-empty in Fish (`__gpy_section_pill`).
     let own_cap =
         |values: [&'a str; 3], names: [(&str, &'a str); 3], back_default: Option<&'a str>| {
-            if paint.dialect != Dialect::Fish {
+            if dialect != Dialect::Fish {
                 return Cap::resolve(values, bg, fg);
             }
             let [glyph, color, back] = values;
@@ -387,8 +217,8 @@ fn section<'a>(
     } else {
         [
             ("__segment_delim_end", "]"),
-            ("__segment_delimiter_color", ""),
-            ("__segment_delimiter_bg", ""),
+            ("__segment_delimiter_close_color", ""),
+            ("__segment_delimiter_close_bg", ""),
         ]
     };
     // `d`: a script pill's theme close cap sits on the default background.
@@ -403,29 +233,29 @@ fn section<'a>(
         },
         |values| own_cap(values, close_names, plugin_last.then_some("")),
     );
-    let mut out = open.draw(paint);
-    out.push_str(&sgr_pair(fg, bg, paint));
+    let mut out = open.draw(dialect);
+    out.push_str(&sgr_pair(fg, bg, dialect));
     out.push_str(content);
     if !place.is_last {
-        out.push_str(&sgr_pair("normal", bg, paint));
+        out.push_str(&sgr_pair("normal", bg, dialect));
         out.push(' ');
     }
-    out.push_str(&close.draw(paint));
-    out.push_str(&paint.reset());
+    out.push_str(&close.draw(dialect));
+    out.push_str(&reset(dialect));
     out
 }
 
 /// Text in foreground `color` on the default background, then a reset, as
 /// Fish's `__gpy_set_fg_color COLOR; printf …; set_color normal`:
 /// `transparent`, `match_bg`, `match_text` and empty are the default colour.
-pub(crate) fn fg_text(paint: Paint, color: &str, text: &str) -> String {
+pub(crate) fn fg_text(dialect: Dialect, color: &str, text: &str) -> String {
     let shown = match color {
         "transparent" | "match_bg" | "match_text" | "" => "normal",
         other => other,
     };
-    let mut out = sgr_pair(shown, "normal", paint);
+    let mut out = sgr_pair(shown, "normal", dialect);
     out.push_str(text);
-    out.push_str(&paint.reset());
+    out.push_str(&reset(dialect));
     out
 }
 
@@ -464,12 +294,12 @@ pub(crate) fn status_icon(vars: &ShellVars, ok: bool) -> &str {
 /// the prompt or root symbol.
 pub(crate) fn prompt_tail(
     vars: &ShellVars,
-    paint: Paint,
+    dialect: Dialect,
     exit: i32,
     root: bool,
     show_status: bool,
 ) -> String {
-    let reset = paint.reset();
+    let end = reset(dialect);
     let mut out = String::new();
     if show_status {
         let (icon, color) = if exit == 0_i32 {
@@ -477,10 +307,10 @@ pub(crate) fn prompt_tail(
         } else {
             (status_icon(vars, false), "red")
         };
-        out.push_str(&sgr_pair(color, "normal", paint));
-        out.push_str(&paint.escape(icon));
+        out.push_str(&sgr_pair(color, "normal", dialect));
+        out.push_str(&dialect.escape(icon));
         out.push(' ');
-        out.push_str(&reset);
+        out.push_str(&end);
     }
     let (icon, color) = if root {
         (
@@ -493,10 +323,10 @@ pub(crate) fn prompt_tail(
             vars.or_nonempty("__prompt_color", "green"),
         )
     };
-    out.push_str(&sgr_pair(color, "normal", paint));
-    out.push_str(&paint.escape(icon));
+    out.push_str(&sgr_pair(color, "normal", dialect));
+    out.push_str(&dialect.escape(icon));
     out.push(' ');
-    out.push_str(&reset);
+    out.push_str(&end);
     out
 }
 
@@ -524,22 +354,60 @@ pub(crate) fn clock_time_spec(vars: &ShellVars) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formatter::{ColorDepth, downgrade_sgr};
 
     /// The colour conversions follow the shell's tables (renderer.bash).
     #[test]
     fn sgr_params_match_the_shell_tables() {
-        assert_eq!(sgr_param(false, "red", Depth::TrueColor), "31");
-        assert_eq!(sgr_param(true, "bright-cyan", Depth::TrueColor), "106");
+        assert_eq!(sgr_param(false, "red"), "31");
+        assert_eq!(sgr_param(true, "bright-cyan"), "106");
+        assert_eq!(sgr_param(false, "#51576d"), "38;2;81;87;109");
+        assert_eq!(sgr_param(false, "200"), "38;5;200");
+        assert_eq!(sgr_param(false, "300"), "39");
+        assert_eq!(sgr_param(true, "transparent"), "49");
+    }
+
+    /// Fitted to a smaller colour depth, a pill's colours are the ones the
+    /// shells' tables gave at that depth.
+    #[test]
+    fn fitted_pill_colours_match_the_shell_tables() {
+        let fitted = |fg: &str, bg: &str, depth| {
+            downgrade_sgr(&sgr_pair(fg, bg, Dialect::Fish), depth).into_owned()
+        };
         assert_eq!(
-            sgr_param(false, "#51576d", Depth::TrueColor),
-            "38;2;81;87;109"
+            fitted("#808080", "#51576d", ColorDepth::Ansi256),
+            "\x1b[38;5;244;48;5;59m"
         );
-        assert_eq!(sgr_param(true, "#51576d", Depth::Ansi256), "48;5;59");
-        assert_eq!(sgr_param(false, "#ff0000", Depth::Ansi16), "91");
-        assert_eq!(sgr_param(false, "200", Depth::Ansi256), "38;5;200");
-        assert_eq!(sgr_param(false, "300", Depth::Ansi256), "39");
-        assert_eq!(sgr_param(true, "transparent", Depth::TrueColor), "49");
-        assert_eq!(sgr_param(true, "red", Depth::NoColor), "");
-        assert_eq!(sgr_param(false, "#808080", Depth::Ansi256), "38;5;244");
+        assert_eq!(fitted("#ff0000", "200", ColorDepth::Ansi16), "\x1b[91;105m");
+        assert_eq!(fitted("red", "black", ColorDepth::Mono), "");
+    }
+
+    /// A middle pill's start cap takes `[ui.segment_open]`'s colours and its
+    /// end cap `[ui.segment_close]`'s, not the open ones twice.
+    #[test]
+    fn middle_pill_caps_use_their_own_delimiter_colours() {
+        let vars = ShellVars::new(
+            [
+                ("__segment_delim_start", "<"),
+                ("__segment_delimiter_color", "red"),
+                ("__segment_delimiter_bg", "blue"),
+                ("__segment_delim_end", ">"),
+                ("__segment_delimiter_close_color", "green"),
+                ("__segment_delimiter_close_bg", "yellow"),
+            ]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .into(),
+        );
+        let dialect = Dialect::Fish;
+        let place = Place {
+            is_last: false,
+            is_first: false,
+        };
+
+        let drawn = section_standalone(&vars, dialect, "black", "white", "x", place);
+
+        let cap = |fg: &str, bg: &str, glyph: &str| format!("{}{glyph}", sgr_pair(fg, bg, dialect));
+        assert!(drawn.starts_with(&cap("red", "blue", "<")), "{drawn:?}");
+        assert!(drawn.contains(&cap("green", "yellow", ">")), "{drawn:?}");
     }
 }

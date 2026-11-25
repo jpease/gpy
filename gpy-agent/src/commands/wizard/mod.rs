@@ -23,7 +23,9 @@ use std::time::Duration;
 const SIGNAL_POLL: Duration = Duration::from_millis(100);
 
 /// Restores the terminal on drop, including on early return.
-/// `ratatui::try_init` installs the panic hook that covers panics.
+/// A panic is covered by the hook [`init_terminal`] installs, not by this
+/// guard: release builds use `panic = "abort"` (ADR-0008), which runs no
+/// destructors, so only a panic hook gets to undo the terminal setup.
 struct RestoreOnDrop;
 
 impl Drop for RestoreOnDrop {
@@ -38,7 +40,30 @@ fn init_terminal() -> Result<(DefaultTerminal, RestoreOnDrop)> {
         ratatui::restore();
         crate::Error::config(format!("Failed to initialize terminal: {e}"))
     })?;
+    // `try_init` wrapped the panic hook to restore raw mode and the main
+    // screen. Drawing hides the cursor and only `Terminal`'s destructor shows
+    // it again, which an aborting panic never runs: show it from the hook.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(cursor_showing_hook(std::io::stdout(), hook));
     Ok((terminal, RestoreOnDrop))
+}
+
+/// A panic hook that runs `previous`, then shows the cursor on `out`.
+fn cursor_showing_hook<W>(
+    sink: W,
+    previous: Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>,
+) -> Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>
+where
+    W: std::io::Write + Send + 'static,
+{
+    let out = std::sync::Mutex::new(sink);
+    Box::new(move |info| {
+        previous(info);
+        // A failed write cannot be reported while panicking.
+        if let Ok(mut guard) = out.lock() {
+            drop(crossterm::execute!(guard, crossterm::cursor::Show));
+        }
+    })
 }
 
 /// Per-frame render-loop state.
@@ -57,6 +82,8 @@ struct WizardRuntime {
     cached_palette: crate::template::Palette,
     /// Why the last theme activation failed; cleared on next key.
     theme_error: Option<String>,
+    /// Scroll offsets of the master lists, kept across frames.
+    list_scroll: ui::ListScroll,
 }
 
 impl WizardRuntime {
@@ -84,6 +111,7 @@ impl WizardRuntime {
             cached_theme,
             cached_palette,
             theme_error: None,
+            list_scroll: ui::ListScroll::default(),
         })
     }
 
@@ -99,25 +127,58 @@ impl WizardRuntime {
                         .clone_into(&mut self.cached_selection.0);
                 }
                 Err(error) => {
-                    // First line only; the rest is a TOML excerpt.
-                    let reason = error.to_string();
                     self.theme_error = Some(format!(
                         "Cannot select theme \"{}\": {}",
                         self.state.selected_theme(),
-                        reason.lines().next().unwrap_or_default()
+                        first_line(&error.to_string())
                     ));
                     self.state.select_theme(&self.cached_selection.0);
                 }
             }
         }
-        if self.state.selected_palette() != self.cached_selection.1 {
-            self.cached_palette =
-                crate::palette::resolve::palette_by_name(self.state.selected_palette());
-            self.state
-                .selected_palette()
-                .clone_into(&mut self.cached_selection.1);
+        if let Err(message) = refresh_palette(
+            &mut self.state,
+            &mut self.cached_selection.1,
+            &mut self.cached_palette,
+        ) {
+            self.theme_error = Some(message);
         }
     }
+}
+
+/// Load the palette `state` selects when it differs from `cached_name`. One
+/// that fails to load reverts the selection and returns the reason, the way a
+/// theme does: otherwise the preview would quietly show the builtin default
+/// and the save would be rejected only after the TUI has exited.
+fn refresh_palette(
+    state: &mut state::WizardState,
+    cached_name: &mut String,
+    cached: &mut crate::template::Palette,
+) -> std::result::Result<(), String> {
+    let name = state.selected_palette();
+    if name == cached_name {
+        return Ok(());
+    }
+    match crate::palette::resolve::load_palette(name) {
+        Ok(palette) => {
+            *cached = palette;
+            name.clone_into(cached_name);
+            Ok(())
+        }
+        Err(error) => {
+            let message = format!(
+                "Cannot select palette \"{name}\": {}",
+                first_line(&error.to_string())
+            );
+            state.select_palette(cached_name);
+            Err(message)
+        }
+    }
+}
+
+/// First line only; the rest of a load error is a TOML excerpt.
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or_default()
 }
 
 /// Render one frame.
@@ -170,7 +231,7 @@ fn draw_frame(terminal: &mut DefaultTerminal, runtime: &mut WizardRuntime) -> Re
     };
 
     terminal
-        .draw(|frame| ui::draw(frame, &draw_args))
+        .draw(|frame| ui::draw(frame, &draw_args, &mut runtime.list_scroll))
         .map_err(|e| crate::Error::config(format!("Failed to draw wizard frame: {e}")))?;
     Ok(())
 }
@@ -248,4 +309,93 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn selecting_a_palette_that_does_not_load_reverts_with_a_reason() {
+        let mut state = state::WizardState::from_parts(
+            Config::default(),
+            vec!["default".to_owned()],
+            vec!["default".to_owned(), "no-such-palette".to_owned()],
+            vec!["directory".to_owned()],
+        );
+        let mut cached_name = state.selected_palette().to_owned();
+        let mut palette = crate::palette::resolve::palette_by_name(&cached_name);
+        let before = palette.clone();
+
+        state.select_palette("no-such-palette");
+        let result = refresh_palette(&mut state, &mut cached_name, &mut palette);
+
+        let message = result.expect_err("a palette that does not load is refused");
+        assert!(message.contains("no-such-palette"), "{message}");
+        assert_eq!(state.selected_palette(), cached_name, "selection reverted");
+        assert_eq!(palette, before);
+    }
+
+    #[test]
+    fn selecting_a_loadable_palette_updates_the_cache() {
+        let mut state = state::WizardState::from_parts(
+            Config::default(),
+            vec!["default".to_owned()],
+            vec!["default".to_owned(), "starship".to_owned()],
+            vec!["directory".to_owned()],
+        );
+        let mut cached_name = state.selected_palette().to_owned();
+        let mut palette = crate::palette::resolve::palette_by_name(&cached_name);
+
+        state.select_palette("starship");
+        let result = refresh_palette(&mut state, &mut cached_name, &mut palette);
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(cached_name, "starship");
+        assert_eq!(state.selected_palette(), "starship");
+    }
+
+    /// A `Write` the test can read back after the hook ran on another thread.
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("sink lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Under `panic = "abort"` the hook is the last code to run, so it must
+    /// show the cursor itself, after the previous hook has restored the screen.
+    #[test]
+    fn the_panic_hook_shows_the_cursor_after_the_previous_hook() {
+        let sink = Sink::default();
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = std::sync::Arc::clone(&order);
+        let probe = sink.clone();
+        std::panic::set_hook(cursor_showing_hook(
+            sink.clone(),
+            Box::new(move |_| {
+                let written = probe.0.lock().expect("sink lock").len();
+                seen.lock().expect("order lock").push(written);
+            }),
+        ));
+
+        let panicked = std::thread::spawn(|| panic!("wizard test panic")).join();
+        drop(std::panic::take_hook());
+
+        assert!(panicked.is_err());
+        assert_eq!(
+            *order.lock().expect("order lock"),
+            vec![0],
+            "previous hook first"
+        );
+        assert_eq!(*sink.0.lock().expect("sink lock"), b"\x1b[?25h");
+    }
 }

@@ -103,7 +103,7 @@ pub fn save(name: Option<&str>, full: bool, yes: bool) -> Result<()> {
     let path = written.chain.top().path.clone();
     let exists = written.chain.top().on_disk;
 
-    if !yes && save_requires_confirmation(name, exists) {
+    if !yes && save_requires_confirmation(target == own, exists) {
         let prompt = if exists {
             format!("Theme '{target}' already exists. Overwrite? (a copy is kept as .bak) [y/N] ")
         } else {
@@ -324,10 +324,11 @@ fn would_not_load(name: &str, reason: &str) -> Error {
     ))
 }
 
-/// Omitting `name` always writes over the theme in use, so it always
-/// confirms, even if the active theme is an unmaterialized builtin.
-const fn save_requires_confirmation(name: Option<&str>, target_exists: bool) -> bool {
-    name.is_none() || target_exists
+/// A write named for the theme in use (by omitting `name` or spelling the
+/// active theme's own name) always confirms, even if the active theme is an
+/// unmaterialized builtin; any other name confirms only to overwrite.
+const fn save_requires_confirmation(target_is_active: bool, target_exists: bool) -> bool {
+    target_is_active || target_exists
 }
 
 /// What the user said to a yes/no question.
@@ -369,18 +370,18 @@ mod tests {
 
     #[test]
     fn no_confirmation_needed_for_new_named_theme() {
-        assert!(!save_requires_confirmation(Some("mytheme"), false));
+        assert!(!save_requires_confirmation(false, false));
     }
 
     #[test]
     fn confirmation_needed_when_named_theme_already_exists() {
-        assert!(save_requires_confirmation(Some("mytheme"), true));
+        assert!(save_requires_confirmation(false, true));
     }
 
     #[test]
-    fn confirmation_always_needed_when_name_omitted() {
-        assert!(save_requires_confirmation(None, false));
-        assert!(save_requires_confirmation(None, true));
+    fn confirmation_always_needed_when_saving_over_the_active_theme() {
+        assert!(save_requires_confirmation(true, false));
+        assert!(save_requires_confirmation(true, true));
     }
 
     #[test]

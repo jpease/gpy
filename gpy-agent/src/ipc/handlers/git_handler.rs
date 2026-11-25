@@ -99,6 +99,10 @@ struct GitStatusJob {
 
 /// Write the instant-prompt cache for `status` and repaint live shells only when
 /// the rendered output changed. `prev_bg` is `None` for background work.
+///
+/// A suppression left by an exclusion that has since lapsed is released when
+/// the config, read here at write time, enables `git_root`; an exclusion a
+/// reload applied meanwhile keeps it.
 pub(super) fn publish_and_repaint(
     deps: &RenderDeps,
     git_root: &Path,
@@ -109,6 +113,9 @@ pub(super) fn publish_and_repaint(
     let theme = deps.theme_manager.get();
     let palette = deps.palette_cache.get();
 
+    if config.git_enabled_for(git_root) {
+        deps.instant_cache.release_git_suppression_for(git_root);
+    }
     let result = deps
         .instant_cache
         .write_git(git_root, status, &config, &theme, prev_bg, &palette);
@@ -204,20 +211,34 @@ impl GitHandler {
     ///
     /// Shares the request path's single-flight and `git.timeout_seconds`, so
     /// shells registering together in one repository start one scan. Does
-    /// nothing outside a repository, when git is off or skipped for the root,
-    /// while the cached status is within its cooldown, or after a recent failure.
+    /// nothing outside a repository, while the cached status is within its
+    /// cooldown, or after a recent failure; a root git is off or skipped for
+    /// has its instant-prompt files dropped instead ([`Self::drop_excluded`]).
     pub(crate) fn prewarm(&self, path: &Path) {
         let Some(git_root) = git::find_repo_root(path) else {
             return;
         };
         let config = self.render.config_manager.get();
-        if !config.git_enabled_for(&git_root)
-            || self.git_cache.is_fresh_canonical(&git_root)
-            || self.failures.get(&git_root).is_some()
-        {
+        if !config.git_enabled_for(&git_root) {
+            self.drop_excluded(&git_root);
+            return;
+        }
+        if self.git_cache.is_fresh_canonical(&git_root) || self.failures.get(&git_root).is_some() {
             return;
         }
         drop(self.git_status_job(&git_root, git_root.clone(), config.git.max_ahead_behind));
+    }
+
+    /// Delete the instant-prompt git files of `git_root`, which the config
+    /// excludes. Shells draw any file they find and nothing refreshes an
+    /// excluded repository, so a file an earlier agent or config left would
+    /// show a frozen segment. The first drop repaints live shells and forgets
+    /// the cached status, so including the repository again rescans it.
+    fn drop_excluded(&self, git_root: &Path) {
+        if self.render.instant_cache.remove_git(git_root) {
+            self.git_cache.invalidate_canonical(git_root);
+            notify_if_changed(&self.render, git_root, Ok(true), "git");
+        }
     }
 
     /// Get git status for a path, checking cache first.
@@ -247,6 +268,7 @@ impl GitHandler {
 
         // `skip_paths` gates the repository root, as every background entry point does.
         if !config.git_enabled_for(&git_root) {
+            self.drop_excluded(&git_root);
             return Err(HandlerError::FeatureDisabled("Git"));
         }
 
@@ -725,6 +747,100 @@ mod tests {
         assert_matches!(
             handler.status(&path, None),
             Err(HandlerError::FeatureDisabled("Git"))
+        );
+    }
+
+    /// A handler over `config` whose instant-prompt cache lives in `cache_dir`.
+    fn handler_caching_in(cache_dir: &Path, config: crate::config::Config) -> GitHandler {
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
+        let render = RenderDeps {
+            instant_cache: Arc::new(
+                crate::cache::InstantPromptCache::new_in_dir(cache_dir.to_path_buf())
+                    .expect("instant cache"),
+            ),
+            ..render_deps(config_manager)
+        };
+        GitHandler::new(render, Arc::new(GitStatusCache::new()))
+    }
+
+    /// Names of the git instant-prompt files under `dir`, chunk directories included.
+    fn git_cache_files(dir: &Path) -> Vec<String> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                names.extend(git_cache_files(&path));
+            } else if let Some(name) = path.file_name().and_then(|name| name.to_str())
+                && name.contains(".git")
+            {
+                names.push(name.to_owned());
+            }
+        }
+        names
+    }
+
+    /// A request the `git.skip_paths` gate refuses deletes the git files an
+    /// earlier config published: shells draw any file they find, and nothing
+    /// refreshes an excluded repository.
+    #[test]
+    fn refused_request_drops_git_files_published_before_the_exclusion() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo = init_dirty_repo(&temp_dir);
+        let cache_dir = temp_dir.path().join("instant");
+        let mut config = crate::config::Config::default();
+        config.git.skip_paths = vec![repo.to_string_lossy().into_owned()];
+        let handler = handler_caching_in(&cache_dir, config);
+        let before_exclusion = crate::config::Config::default();
+        handler
+            .render
+            .instant_cache
+            .write_git(
+                &repo,
+                &status(1),
+                &before_exclusion,
+                &handler.render.theme_manager.get(),
+                None,
+                &crate::palette::active_palette(&before_exclusion),
+            )
+            .expect("publish before the exclusion");
+        assert!(
+            !git_cache_files(&cache_dir).is_empty(),
+            "control: the files to drop exist"
+        );
+
+        let path = crate::security::SafePath::new(repo.to_str().expect("utf8")).expect("safe");
+        assert_matches!(
+            handler.status(&path, None),
+            Err(HandlerError::FeatureDisabled("Git"))
+        );
+        assert_eq!(
+            git_cache_files(&cache_dir),
+            Vec::<String>::new(),
+            "a refused repository must not keep serving its git segment"
+        );
+    }
+
+    /// A repository suppressed under an exclusion that has since lapsed
+    /// without a reload (a retargeted `git.skip_paths` symlink) publishes
+    /// again once a request finds it enabled.
+    #[test]
+    fn request_for_an_enabled_root_releases_a_lapsed_suppression() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo = init_dirty_repo(&temp_dir);
+        let cache_dir = temp_dir.path().join("instant");
+        let handler = handler_caching_in(&cache_dir, crate::config::Config::default());
+        assert!(
+            handler.render.instant_cache.remove_git(&repo),
+            "control: suppressed as an exclusion would"
+        );
+
+        let path = crate::security::SafePath::new(repo.to_str().expect("utf8")).expect("safe");
+        handler
+            .status(&path, None)
+            .expect("an enabled repository is served");
+        assert!(
+            !git_cache_files(&cache_dir).is_empty(),
+            "an enabled repository must publish its git segment again"
         );
     }
 

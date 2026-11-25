@@ -82,9 +82,8 @@ impl ShellFlag {
 }
 
 #[cfg(unix)]
-/// `<runtime_root>/shells`, or `None` without a runtime root. The shells'
-/// `__gpy_shell_registry_dir` copy is pinned by
-/// `xdg_absoluteness_shared_vectors` and the `path_parity` tests.
+/// `<runtime_root>/shells`, or `None` without a runtime root: where the
+/// agent leaves a shell's flags for `gpy prompt` to take (`prompt::session`).
 #[must_use]
 pub(crate) fn default_shell_dir() -> Option<PathBuf> {
     crate::paths::runtime_dir()
@@ -317,13 +316,20 @@ where
                 suffix == ShellFlag::Reload.suffix() || suffix == ShellFlag::Reregister.suffix();
             if is_flag
                 && let Ok(flag_pid) = stem.parse::<u32>()
+                && crate::ipc::ClientPid::pid_in_range(flag_pid)
                 && !is_alive(flag_pid, None)
             {
                 let _ = std::fs::remove_file(&path);
             }
             continue;
         }
-        let Ok(pid) = name.parse::<u32>() else {
+        // `kill` reads PID 0 as the caller's own process group, so probing or
+        // ringing it would signal the agent's group: only plausible PIDs count.
+        let Some(pid) = name
+            .parse::<u32>()
+            .ok()
+            .filter(|&pid| crate::ipc::ClientPid::pid_in_range(pid))
+        else {
             continue;
         };
 

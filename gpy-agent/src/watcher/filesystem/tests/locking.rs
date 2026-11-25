@@ -1,4 +1,6 @@
+use super::super::ignore::force_added::CachedForceAdded;
 use super::*;
+use std::sync::atomic::AtomicUsize;
 
 /// How long the stand-in `git ls-files` takes.
 const SLOW_BACKEND_RUN: Duration = Duration::from_millis(300);
@@ -179,6 +181,52 @@ fn event_thread_lookup_never_runs_ls_files_inline() {
     assert!(
         elapsed < FAST_LOOKUP_BUDGET,
         "the event-thread lookup took {elapsed:?}, so it waited on `git ls-files`"
+    );
+}
+
+/// A failed `git ls-files` waits out its retry interval: the next lookup of an
+/// unchanged index must not run it again, or every ignored-path event would.
+#[test]
+fn failed_force_added_listing_is_not_rerun_by_the_next_lookup() {
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let repo = fake_repo_with_index(&tmp);
+
+    let runs = Arc::new(AtomicUsize::new(0));
+    let release = new_gate();
+    let runs_for_ls_files = Arc::clone(&runs);
+    let release_for_ls_files = Arc::clone(&release);
+    let ls_files = move |_: &Path| -> Option<Vec<PathBuf>> {
+        // A rerun parks here, so it is still in flight when the test looks.
+        if runs_for_ls_files.fetch_add(1, Ordering::SeqCst) > 0 {
+            wait_for_gate(&release_for_ls_files, GATE_BUDGET);
+        }
+        None
+    };
+    let registry = configure_registry(
+        WatchRegistry::with_ignore(IgnoreCaches::new(Arc::new(ls_files))),
+        true,
+        HashSet::new(),
+    );
+
+    drop(force_added_set(&repo, &registry, Lookup::Wait));
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "the first lookup failed inline"
+    );
+    drop(force_added_set(&repo, &registry, Lookup::NoWait));
+    let rerun_in_flight = registry
+        .ignore()
+        .force_added
+        .lock()
+        .unwrap()
+        .get(&repo)
+        .is_some_and(CachedForceAdded::refreshing);
+    open_gate(&release);
+
+    assert!(
+        !rerun_in_flight,
+        "a lookup right after a failed `git ls-files` must not run it again"
     );
 }
 

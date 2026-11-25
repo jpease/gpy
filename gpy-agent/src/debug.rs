@@ -4,13 +4,16 @@
 //! writes stderr and appends to the warning log, since a daemon's stderr is
 //! `/dev/null`. The warning log is the `GPY_DEBUG_LOG` file when set, else
 //! `agent.log` in the cache root (`~/.cache/gpy/agent.log`), so warnings
-//! survive without any opt-in. Nothing else writes `agent.log`.
+//! survive without any opt-in. Nothing else writes `agent.log`. `gpy prompt`
+//! holds the stderr line ([`StderrHold`]) and shows each warning once per
+//! shell session.
 
+use crate::sync_ext::MutexExt as _;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
 /// File name of the default warning log inside the cache root.
@@ -20,28 +23,27 @@ const AGENT_LOG_NAME: &str = "agent.log";
 /// `None` without a cache root.
 static WARN_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
     debug_log_path()
-        .map(PathBuf::from)
-        .or_else(|| crate::paths::cache_root().map(|root| root.join(AGENT_LOG_NAME)))
+        .map(Path::to_path_buf)
+        .or_else(agent_log_path)
 });
 
-/// `GPY_DEBUG_LOG`, made absolute against the launch directory.
-static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
+/// `GPY_DEBUG_LOG`, as the environment spells it (a relative value is
+/// ignored).
+static DEBUG_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| crate::env_config::DEBUG_LOG.path());
 
 /// Return the path to the debug log file if enabled.
-fn debug_log_path() -> Option<&'static str> {
-    DEBUG_PATH
-        .get_or_init(|| {
-            crate::env_config::DEBUG_LOG.path().map(|value| {
-                crate::paths::absolutize(&value)
-                    .to_string_lossy()
-                    .into_owned()
-            })
-        })
-        .as_deref()
+fn debug_log_path() -> Option<&'static Path> {
+    DEBUG_PATH.as_deref()
 }
 
-/// Resolve `GPY_DEBUG_LOG` now, so a daemon forked afterwards inherits the
-/// path as it resolved in the launch directory, not against `/`.
+/// `agent.log` in the cache root, the warning log without `GPY_DEBUG_LOG`.
+fn agent_log_path() -> Option<PathBuf> {
+    crate::paths::cache_root().map(|root| root.join(AGENT_LOG_NAME))
+}
+
+/// Read `GPY_DEBUG_LOG` now, so a value the agent ignores is reported on the
+/// terminal that starts it, before the daemon's stderr is `/dev/null`.
 pub fn init_path() {
     let _ = debug_log_path();
 }
@@ -80,10 +82,7 @@ macro_rules! debug_log {
 /// Write a debug log entry (internal use only).
 pub(crate) fn write_debug_log(category: &str, message: &str) {
     if let Some(log_path) = debug_log_path() {
-        append_to(
-            Path::new(log_path),
-            &format_line(now_millis(), category, message),
-        );
+        append_to(log_path, &format_line(now_millis(), category, message));
     }
 }
 
@@ -125,7 +124,21 @@ pub(crate) fn capture_warnings<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
 /// last `WARN_REPEAT_WINDOW` or when it already is the newest entry of the
 /// warning log (a oneshot process per prompt would otherwise repeat it on
 /// every prompt). The log is rotated to `<name>.1` past `WARN_LOG_MAX_BYTES`.
+/// While a [`StderrHold`] lives, the stderr line is held for [`take_held`]
+/// instead, the newest-entry repeat included.
 pub fn warn(category: &str, message: &str) {
+    warn_into(WARN_PATH.as_deref(), category, message);
+}
+
+/// [`warn`], into `agent.log` whatever `GPY_DEBUG_LOG` says: for a warning
+/// raised while `GPY_DEBUG_LOG` itself resolves, where [`warn`] would
+/// re-enter that resolution. Only an ignored `GPY_DEBUG_LOG` warns there, and
+/// then `agent.log` is the warning log anyway.
+pub(crate) fn warn_to_agent_log(category: &str, message: &str) {
+    warn_into(agent_log_path().as_deref(), category, message);
+}
+
+fn warn_into(log_path: Option<&Path>, category: &str, message: &str) {
     #[cfg(test)]
     {
         let captured = CAPTURED.with(|slot| {
@@ -138,18 +151,90 @@ pub fn warn(category: &str, message: &str) {
             return;
         }
     }
-    let log_path = WARN_PATH.as_deref();
-    if seen_recently(category, message)
-        || log_path.is_some_and(|log| is_logged_repeat(log, category, message))
-    {
+    if seen_recently(category, message) {
         return;
     }
-    // Not `eprintln!`: `clippy::print_stderr` is denied.
-    let _ = writeln!(std::io::stderr(), "Warning: [{category}] {message}");
-
-    if let Some(log) = log_path {
+    let repeat = log_path.is_some_and(|log| is_logged_repeat(log, category, message));
+    let warning = HeldWarning {
+        line: format!("Warning: [{category}] {message}"),
+        repeat,
+    };
+    if let Some(held) = HELD.lock_or_recover().as_mut() {
+        held.push(warning);
+    } else if !repeat {
+        warning.show();
+    }
+    if !repeat && let Some(log) = log_path {
         rotate_if_oversized(log);
         append_to(log, &format_line(now_millis(), category, message));
+    }
+}
+
+/// A warning's stderr line, held while a [`StderrHold`] lives.
+#[derive(Debug)]
+pub(crate) struct HeldWarning {
+    /// `Warning: [category] message`.
+    pub(crate) line: String,
+    /// The warning log already ended with it, so the usual rule would not
+    /// show it.
+    #[cfg_attr(
+        not(unix),
+        allow(
+            dead_code,
+            reason = "read only by StderrHold, which gpy prompt (Unix-only) uses"
+        )
+    )]
+    pub(crate) repeat: bool,
+}
+
+impl HeldWarning {
+    /// Write the line to stderr.
+    pub(crate) fn show(&self) {
+        // Not `eprintln!`: `clippy::print_stderr` is denied.
+        let _ = writeln!(std::io::stderr(), "{}", self.line);
+    }
+}
+
+/// The held warnings while a [`StderrHold`] lives, else `None`.
+static HELD: Mutex<Option<Vec<HeldWarning>>> = Mutex::new(None);
+
+/// Holds every warning's stderr line for [`take_held`], so a caller that
+/// knows its user decides when it shows: `gpy prompt` shows each once per
+/// shell session. Dropped, it shows what is still held by the usual rule.
+#[must_use = "warnings are held only while the hold lives"]
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only gpy prompt (Unix-only) holds warnings")
+)]
+pub(crate) struct StderrHold;
+
+/// Start holding warnings' stderr lines; see [`StderrHold`].
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only gpy prompt (Unix-only) holds warnings")
+)]
+pub(crate) fn hold_stderr() -> StderrHold {
+    *HELD.lock_or_recover() = Some(Vec::new());
+    StderrHold
+}
+
+/// The warnings held since the hold started or the last call.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only gpy prompt (Unix-only) holds warnings")
+)]
+pub(crate) fn take_held() -> Vec<HeldWarning> {
+    HELD.lock_or_recover()
+        .as_mut()
+        .map_or_else(Vec::new, std::mem::take)
+}
+
+impl Drop for StderrHold {
+    fn drop(&mut self) {
+        let left = HELD.lock_or_recover().take().unwrap_or_default();
+        for warning in left.iter().filter(|warning| !warning.repeat) {
+            warning.show();
+        }
     }
 }
 

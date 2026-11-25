@@ -2,7 +2,7 @@
 //! the agent), the restart clear of unrefreshable entries, and one
 //! repository's git caches.
 
-use super::key::{CACHE_KEY_CHUNK_CHARS, cache_key_path, split_key_path};
+use super::key::{CACHE_KEY_CHUNK_BYTES, cache_key_path, split_key_path};
 use super::name::parse_cache_file_name;
 use crate::debug_log;
 use std::path::Path;
@@ -26,13 +26,16 @@ fn read_entries(dir: &Path) -> Option<std::fs::ReadDir> {
     }
 }
 
-/// Whether `entry` is a chunk directory ([`CACHE_KEY_CHUNK_CHARS`] chars, not a symlink).
+/// Whether `entry` is a chunk directory ([`CACHE_KEY_CHUNK_BYTES`] long, not
+/// a symlink). Counted in characters, which equal bytes for today's ASCII
+/// keys, so the chunk directories of keys older versions cut by character
+/// are still swept.
 fn is_chunk_dir(entry: &std::fs::DirEntry) -> bool {
     entry.file_type().is_ok_and(|t| t.is_dir())
         && entry
             .file_name()
             .to_str()
-            .is_some_and(|name| name.chars().count() == CACHE_KEY_CHUNK_CHARS)
+            .is_some_and(|name| name.chars().count() == CACHE_KEY_CHUNK_BYTES)
 }
 
 /// Call `visit` on every entry under `dir` except chunk directories, which

@@ -21,7 +21,8 @@ pub trait VersionSource: Send + Sync {
     /// Parse version from command output (return X.Y.Z format)
     fn parse_version(&self, output: &str) -> Option<String>;
 
-    /// Whether command outputs to stderr instead of stdout
+    /// Whether the command prints its version to stderr rather than stdout;
+    /// the other stream is parsed when this one yields none.
     fn uses_stderr(&self) -> bool {
         false
     }
@@ -137,11 +138,7 @@ pub(crate) fn detect_python_binary_version(python: &Path) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    // Python < 3.4 prints `--version` to stderr.
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    PythonDetector
-        .parse_version(&stdout)
-        .or_else(|| PythonDetector.parse_version(&String::from_utf8_lossy(&output.stderr)))
+    parse_version_output(&PythonDetector, &output)
 }
 
 /// Execute a version command through mise for project-local tool versions.
@@ -199,7 +196,42 @@ fn wait_with_timeout(child: Child, label: &str, timeout: Duration) -> Result<Out
     })
 }
 
-/// Whether a `.tool-versions`/`mise.toml`/`.mise.toml` governs `path`, global
+/// Files, relative to a directory, by which mise pins tool versions there:
+/// `.tool-versions` and every fixed name in mise's "Config file locations",
+/// each with its local override. `conf.d` fragments and `mise.<env>.toml`
+/// environment files are not looked for.
+pub(crate) const TOOL_VERSION_CONFIG_FILES: &[&str] = &[
+    ".tool-versions",
+    "mise.toml",
+    "mise.local.toml",
+    ".mise.toml",
+    ".mise.local.toml",
+    "mise/config.toml",
+    "mise/config.local.toml",
+    ".mise/config.toml",
+    ".mise/config.local.toml",
+    ".config/mise.toml",
+    ".config/mise.local.toml",
+    ".config/mise/mise.toml",
+    ".config/mise/mise.local.toml",
+    ".config/mise/config.toml",
+    ".config/mise/config.local.toml",
+];
+
+/// Whether `path` ends with one of the [`TOOL_VERSION_CONFIG_FILES`], so a
+/// change to it can change the versions mise pins.
+pub(crate) fn is_tool_version_config_path(path: &Path) -> bool {
+    TOOL_VERSION_CONFIG_FILES.iter().any(|relative| {
+        let mut components = path.components().rev();
+        relative.rsplit('/').all(|name| {
+            components
+                .next()
+                .is_some_and(|component| component.as_os_str() == name)
+        })
+    })
+}
+
+/// Whether one of the [`TOOL_VERSION_CONFIG_FILES`] governs `path`, global
 /// config in `$HOME` included. Memoized per directory; the walk stops at
 /// `$HOME` or [`MAX_ANCESTOR_DEPTH`] levels.
 fn has_tool_version_config(path: &Path) -> bool {
@@ -223,9 +255,9 @@ fn tool_config_presence(path: &Path) -> ToolConfigPresence {
         below_home: false,
     };
     for ancestor in bounded_ancestors(path, home.as_deref(), MAX_ANCESTOR_DEPTH) {
-        let has_config = [".tool-versions", "mise.toml", ".mise.toml"]
+        let has_config = TOOL_VERSION_CONFIG_FILES
             .iter()
-            .any(|name| ancestor.join(name).exists());
+            .any(|relative| ancestor.join(relative).exists());
         presence.anywhere |= has_config;
         presence.below_home |= has_config && home.as_deref() != Some(ancestor);
     }
@@ -267,17 +299,21 @@ fn parse_ruby_version(contents: &str) -> Option<String> {
     (!version.trim().is_empty()).then(|| version.trim().to_owned())
 }
 
+/// The version in the detector's stream, else in the other one: a tool may
+/// move it between releases (Python < 3.4 prints `--version` to stderr).
 fn parse_version_output<P: VersionSource + ?Sized>(
     detector: &P,
     output: &Output,
 ) -> Option<String> {
-    let text = if detector.uses_stderr() {
-        String::from_utf8_lossy(&output.stderr)
+    let (preferred, other) = if detector.uses_stderr() {
+        (&output.stderr, &output.stdout)
     } else {
-        String::from_utf8_lossy(&output.stdout)
+        (&output.stdout, &output.stderr)
     };
 
-    detector.parse_version(&text)
+    detector
+        .parse_version(&String::from_utf8_lossy(preferred))
+        .or_else(|| detector.parse_version(&String::from_utf8_lossy(other)))
 }
 
 /// Whether a version lookup may run a probe command on a cache miss.
@@ -784,6 +820,30 @@ mod tests {
         assert!(!has_tool_version_config(temp_dir.path()));
     }
 
+    /// mise reads a project's versions from more than `mise.toml`; its other
+    /// documented config locations make it govern the directory too.
+    #[test]
+    fn tool_version_config_detects_mise_config_locations() {
+        for relative in [
+            "mise.local.toml",
+            ".config/mise.toml",
+            ".config/mise/config.toml",
+            "mise/config.toml",
+            ".mise/config.toml",
+        ] {
+            let temp_dir = tempfile::tempdir().expect("create temp dir");
+            let config = temp_dir.path().join(relative);
+            std::fs::create_dir_all(config.parent().expect("config dir"))
+                .expect("create config dir");
+            std::fs::write(&config, "[tools]\n").expect("write mise config");
+
+            assert!(
+                has_tool_version_config(temp_dir.path()),
+                "{relative} must count as mise config"
+            );
+        }
+    }
+
     #[test]
     fn python_detector_uses_python_command() {
         let detector = PythonDetector;
@@ -890,6 +950,21 @@ mod tests {
             !marker.exists(),
             "fallback must not run when primary exists"
         );
+    }
+
+    /// Python < 3.4 prints `--version` to stderr: the direct probe must read
+    /// it there, as the forwarded-venv probe does.
+    #[test]
+    #[cfg(unix)]
+    fn version_printed_to_the_other_stream_is_parsed() {
+        let stub = StubDetector {
+            name: "stderr-version-test",
+            command: vec!["sh", "-c", "echo Python 2.7.18 >&2"],
+            fallbacks: vec![],
+        };
+
+        let version = execute_version_command(&stub, None).expect("the probe should run");
+        assert_eq!(version.as_deref(), Some("2.7.18"));
     }
 
     #[test]

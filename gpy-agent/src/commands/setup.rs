@@ -6,9 +6,10 @@
 //! `gpy uninstall` removes by. Every step is idempotent.
 
 use super::rc_block::{BlockChange, BlockState, block_state, ensure_block, has_block};
+use super::setup_bash::wire_bash;
 use super::setup_fish::{leftover_trees, link_fish_prompt, report_leftovers, retire_fish_loader};
 use super::setup_install::{
-    InstallMode, install_bundled_plugins, install_files, install_root, preflight,
+    InstallMode, install_bundled_plugins, install_files, install_root, lock_install, preflight,
 };
 use crate::commands::exit_codes::SETUP_INCOMPLETE;
 use crate::commands::init::{self, InitOptions};
@@ -28,6 +29,9 @@ pub(super) const RC_BLOCK_HEADER: &str = "GPY shell integration";
 pub(super) const VERSION_STAMP: &str = ".gpy-version";
 /// Every shell `gpy setup` can install.
 pub(super) const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
+/// How long `gpy setup` waits for another run (a post-upgrade refresh) to
+/// finish installing into the data root.
+const INSTALL_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -229,7 +233,7 @@ pub struct InstalledIntegration {
     /// The rc file holding the GPY block.
     pub rc: PathBuf,
     /// The file the rc block sources; `None` when the block is incomplete or
-    /// names no file.
+    /// names no file GPY can resolve without the shell.
     pub entry: Option<PathBuf>,
     /// The rc file has a start marker but no complete block, so the shell is
     /// not wired.
@@ -259,7 +263,7 @@ pub(super) fn installed_integrations_in(env: &Environment) -> Vec<InstalledInteg
                     incomplete = true;
                     None
                 }
-                BlockState::Present(body) => sourced_entry(&body),
+                BlockState::Present(body) => sourced_entry(&body, env.home.as_deref()),
             };
             let dir = entry.as_deref().map_or_else(
                 || shell_dir_for(&root, shell),
@@ -278,11 +282,24 @@ pub(super) fn installed_integrations_in(env: &Environment) -> Vec<InstalledInteg
         .collect()
 }
 
-/// The file an rc block body sources: the first `source "<path>"`.
-fn sourced_entry(body: &str) -> Option<PathBuf> {
+/// The file an rc block body sources: the first `source "<path>"`, with a
+/// leading `$HOME/` or `${HOME}/` expanded to `home` as the shell would.
+/// `None` when the path holds any other expansion, which only the shell can
+/// resolve.
+fn sourced_entry(body: &str, home: Option<&Path>) -> Option<PathBuf> {
     let (_, after) = body.split_once("source \"")?;
     let (path, _) = after.split_once('"')?;
-    Some(PathBuf::from(path))
+    let in_home = ["$HOME/", "${HOME}/"]
+        .into_iter()
+        .find_map(|prefix| path.strip_prefix(prefix));
+    let literal = in_home.unwrap_or(path);
+    if literal.contains(['$', '`']) {
+        return None;
+    }
+    in_home.map_or_else(
+        || Some(PathBuf::from(path)),
+        |rest| home.map(|dir| dir.join(rest)),
+    )
 }
 
 /// The shell tree a sourced `entry` file belongs to: Fish's entry sits in
@@ -470,6 +487,12 @@ fn install(
             &config_home,
         )?;
     }
+    // Held until the trees and plugins are in place; a concurrent post-upgrade
+    // refresh skips meanwhile, and a second setup waits.
+    fs::create_dir_all(&root.0)
+        .map_err(|err| Error::io_context(format!("creating {}", root.0.display()), &err))?;
+    let _lock = lock_install(&root, INSTALL_LOCK_WAIT)
+        .map_err(|err| Error::io_context("waiting for another gpy setup to finish", &err))?;
     let shell_dir = install_files(
         shell,
         source_root,
@@ -499,8 +522,8 @@ fn install(
 
     let (rc_file, rc_change) = match shell {
         Shell::Fish => wire_fish(env, &config_home, &shell_dir)?,
-        Shell::Zsh => wire_zsh(env, &shell_dir)?,
-        Shell::Bash => wire_bash(env, &shell_dir)?,
+        Shell::Zsh => wire_zsh(env, &config_home, &shell_dir)?,
+        Shell::Bash => wire_bash(env, &config_home, &shell_dir)?,
     };
     Ok(Outcome {
         shell_dir,
@@ -585,39 +608,24 @@ fn wire_fish(
     Ok((config, change))
 }
 
-/// Wire Zsh: rc block in `$ZDOTDIR/.zshrc` or `~/.zshrc`.
-fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
+/// Wire Zsh: rc block in `$ZDOTDIR/.zshrc` or `~/.zshrc`. The block releases
+/// before 0.9 wrote, sourcing the tree in `~/.config/gpy/zsh` that `gpy setup`
+/// no longer keeps, is repointed.
+fn wire_zsh(
+    env: &Environment,
+    config_home: &Path,
+    shell_dir: &Path,
+) -> Result<(PathBuf, BlockChange)> {
     let rc = rc_file_for(env, Shell::Zsh)?;
     let change = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,
         &zsh_rc_body(shell_dir),
-        &[],
+        &[zsh_rc_body(&config_home.join("gpy/zsh"))],
         "so it loads the files in the data directory",
     )?;
     Ok((rc, change))
 }
-
-/// The `.bashrc` block body: GPY loads only in interactive shells.
-pub(super) fn bash_rc_body(gpy_bash: &Path) -> String {
-    format!(
-        "case $- in\n    *i*) source \"{}\" ;;\nesac",
-        gpy_bash.display()
-    )
-}
-
-/// `.bashrc` block bodies earlier releases wrote for this install.
-pub(super) fn legacy_bash_rc_bodies(gpy_bash: &Path) -> Vec<String> {
-    vec![format!("source \"{}\"", gpy_bash.display())]
-}
-
-/// Login-file loader body; inert outside Bash.
-const BASH_LOGIN_LOADER: &str =
-    "[ -n \"${BASH_VERSION:-}\" ] && [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
-/// Login-file loader body earlier releases wrote.
-const LEGACY_BASH_LOGIN_LOADER: &str = "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"";
-/// Header line of the login-file loader block.
-const BASH_LOGIN_HEADER: &str = "GPY: load ~/.bashrc in login shells";
 
 /// Run [`ensure_block`] on an rc file and report the outcome. Failing to
 /// rewrite an existing block is a warning, since the old block keeps working;
@@ -665,109 +673,6 @@ pub(super) fn ensure_and_report(
         }
     }
     Ok(change)
-}
-
-/// Wire Bash: rc block in `~/.bashrc`, plus a login-shell loader.
-fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
-    let home = env.home()?;
-    let rc = rc_file_for(env, Shell::Bash)?;
-    let gpy_bash = shell_dir.join("gpy.bash");
-    let legacy_bodies = legacy_bash_rc_bodies(&gpy_bash);
-    let change = ensure_and_report(
-        &rc,
-        RC_BLOCK_HEADER,
-        &bash_rc_body(&gpy_bash),
-        &legacy_bodies,
-        "so it loads the files in the data directory",
-    )?;
-
-    // Upgrade loaders earlier releases wrote before deciding whether one is
-    // needed: `sources_bashrc` accepts the old loader as a working one.
-    let login_files = [".bash_profile", ".bash_login", ".profile"].map(|name| home.join(name));
-    for path in &login_files {
-        if has_block(path) {
-            ensure_and_report(
-                path,
-                BASH_LOGIN_HEADER,
-                BASH_LOGIN_LOADER,
-                &[LEGACY_BASH_LOGIN_LOADER.to_owned()],
-                "so `sh` login shells skip it",
-            )?;
-        }
-    }
-
-    // A login shell reads only the first of these. With none present, create
-    // ~/.profile (~/.bash_profile would shadow a later ~/.profile).
-    let login = login_files
-        .iter()
-        .find(|path| path.exists())
-        .cloned()
-        .unwrap_or_else(|| home.join(".profile"));
-    let loads_bashrc =
-        fs::read(&login).is_ok_and(|bytes| sources_bashrc(&String::from_utf8_lossy(&bytes)));
-    if !loads_bashrc
-        && ensure_block(&login, BASH_LOGIN_HEADER, BASH_LOGIN_LOADER, &[])? == BlockChange::Added
-    {
-        crate::commands::output::plain(format_args!(
-            "Added ~/.bashrc loader to {}",
-            login.display()
-        ));
-    }
-    Ok((rc, change))
-}
-
-/// Whether a startup file runs `~/.bashrc`: a `.`/`source` command, outside a
-/// comment, whose argument is a `.bashrc` path. A mention alone (a comment, a
-/// commented-out loader, `echo ~/.bashrc`) does not load it.
-fn sources_bashrc(text: &str) -> bool {
-    text.lines().any(|line| {
-        let words = shell_words(line);
-        words
-            .array_windows::<2>()
-            .enumerate()
-            .any(|(index, &[command, argument])| {
-                let in_command_position = index
-                    .checked_sub(1)
-                    .and_then(|previous| words.get(previous))
-                    .is_none_or(|word| {
-                        matches!(
-                            *word,
-                            ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
-                        )
-                    });
-                let path = argument.trim_matches(['"', '\'']);
-                in_command_position
-                    && matches!(command, "." | "source")
-                    && (path == ".bashrc" || path.ends_with("/.bashrc"))
-            })
-    })
-}
-
-/// Splits one shell line into words, with each of `;&|()` as its own word,
-/// and drops a trailing `#` comment. Quoting is not interpreted.
-fn shell_words(line: &str) -> Vec<&str> {
-    let mut words = Vec::new();
-    let mut word_start = None;
-    for (index, ch) in line.char_indices() {
-        let separator = matches!(ch, ';' | '&' | '|' | '(' | ')');
-        if ch.is_whitespace() || separator {
-            if let Some(start) = word_start.take() {
-                words.push(&line[start..index]);
-            }
-            if separator {
-                words.push(&line[index..=index]);
-            }
-        } else if word_start.is_none() {
-            if ch == '#' {
-                return words;
-            }
-            word_start = Some(index);
-        }
-    }
-    if let Some(start) = word_start {
-        words.push(&line[start..]);
-    }
-    words
 }
 
 /// Whether this is Apple's frozen `/bin/bash` 3.2 (decided from the path alone).
@@ -850,30 +755,6 @@ mod tests {
     }
 
     #[test]
-    fn only_an_uncommented_source_command_counts_as_a_bashrc_loader() {
-        for loader in [
-            "[ -f ~/.bashrc ] && . ~/.bashrc",
-            "[ -r \"$HOME/.bashrc\" ] && source \"$HOME/.bashrc\" # login",
-            "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi",
-            "if [ -f ~/.bashrc ]; then\n    . ~/.bashrc\nfi",
-            "test -f ${HOME}/.bashrc&&. ${HOME}/.bashrc",
-            "case $- in *i*) . ~/.bashrc;; esac",
-        ] {
-            assert!(sources_bashrc(loader), "{loader}");
-        }
-        for mention in [
-            "# .bashrc is intentionally not sourced here yet",
-            "# [ -f ~/.bashrc ] && . ~/.bashrc",
-            "    #. \"$HOME/.bashrc\"",
-            "export PATH=$PATH:~/bin # then . ~/.bashrc",
-            "echo . ~/.bashrc",
-            "[ -f ~/.bashrc ] && . ~/.bashrc.local",
-        ] {
-            assert!(!sources_bashrc(mention), "{mention}");
-        }
-    }
-
-    #[test]
     fn explicit_source_without_the_tree_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let env = Environment::default();
@@ -923,5 +804,53 @@ mod tests {
         let bash = found.iter().find(|item| item.shell == Shell::Bash).unwrap();
         assert!(bash.incomplete && bash.entry.is_none());
         assert!(found.iter().all(|item| item.shell != Shell::Fish));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_integrations_expand_home_in_the_sourced_path() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(".local/share/gpy");
+        for (rc, body) in [
+            (".zshrc", "source \"$HOME/.local/share/gpy/zsh/gpy.zsh\""),
+            (
+                ".bashrc",
+                "source \"${HOME}/.local/share/gpy/bash/gpy.bash\"",
+            ),
+        ] {
+            fs::write(
+                home.path().join(rc),
+                format!("# >>> gpy-init >>>\n# {RC_BLOCK_HEADER}\n{body}\n# <<< gpy-init <<<\n"),
+            )
+            .unwrap();
+        }
+        let env = Environment {
+            home: Some(home.path().to_path_buf()),
+            ..Environment::default()
+        };
+
+        let found = installed_integrations_in(&env);
+
+        for (shell, entry) in [(Shell::Zsh, "zsh/gpy.zsh"), (Shell::Bash, "bash/gpy.bash")] {
+            let item = found.iter().find(|item| item.shell == shell).unwrap();
+            assert_eq!(item.entry, Some(root.join(entry)), "{shell}");
+            assert_eq!(item.dir, shell_dir_for(&DataRoot(root.clone()), shell));
+        }
+    }
+
+    #[test]
+    fn a_sourced_path_only_the_shell_can_expand_names_no_entry() {
+        let home = Path::new("/home/u");
+        for body in [
+            "source \"$XDG_DATA_HOME/gpy/zsh/gpy.zsh\"",
+            "source \"$HOMEDIR/gpy.zsh\"",
+            "source \"$HOME/$(whoami)/gpy.zsh\"",
+        ] {
+            assert_eq!(sourced_entry(body, Some(home)), None, "{body}");
+        }
+        assert_eq!(
+            sourced_entry("source \"/opt/gpy/zsh/gpy.zsh\"", Some(home)),
+            Some(PathBuf::from("/opt/gpy/zsh/gpy.zsh"))
+        );
     }
 }

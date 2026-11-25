@@ -1,7 +1,6 @@
 //! [`Render`] units that need no shell, agent or files: the root prompt.
 
 use super::link::Link;
-use super::pill::{Depth, Paint};
 use super::vars::ShellVars;
 use super::{Dialect, PromptArgs, Render};
 use crate::config::Config;
@@ -23,10 +22,6 @@ fn draw(theme: &ThemeConfig, is_root: bool, status: i32) -> (String, String) {
     ]));
     let mut render = Render {
         dialect: Dialect::Fish,
-        paint: Paint {
-            depth: Depth::TrueColor,
-            dialect: Dialect::Fish,
-        },
         link: Link::new(false, 1),
         config: &config,
         theme,
@@ -37,6 +32,7 @@ fn draw(theme: &ThemeConfig, is_root: bool, status: i32) -> (String, String) {
             duration_ms: None,
             pid: 1,
             cmd: String::new(),
+            instance: String::new(),
         },
         pwd: PathBuf::from("/"),
         canonical: None,

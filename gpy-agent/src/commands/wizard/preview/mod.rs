@@ -5,11 +5,13 @@ use crate::commands::wizard::facts::PreviewFacts;
 use crate::commands::wizard::state::WizardState;
 use crate::config::Config;
 use crate::config::types::Icon;
+use crate::formatter::ColorDepth;
 use crate::formatter::IsFirst;
 use crate::formatter::IsLast;
 use crate::formatter::RenderContext;
 use crate::formatter::SegmentPosition;
 use crate::formatter::character_resolver::CharacterResolver;
+use crate::formatter::color_depth::{index_to_ansi16, rgb_to_ansi16, rgb_to_ansi256};
 use crate::formatter::directory_resolver::DirectoryResolver;
 use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
@@ -67,6 +69,64 @@ fn named_to_ratatui(name: &str) -> Option<RatatuiColor> {
         "default" => Some(RatatuiColor::Reset),
         _ => None,
     }
+}
+
+/// `color` as a terminal of `depth` shows it, the way the prompt's
+/// [`crate::formatter::downgrade_sgr`] approximates it; `None` when it shows
+/// no colour at all.
+pub(super) fn fit_color(color: RatatuiColor, depth: ColorDepth) -> Option<RatatuiColor> {
+    match (depth, color) {
+        (ColorDepth::Mono, _) => None,
+        (ColorDepth::Ansi256, RatatuiColor::Rgb(red, green, blue)) => {
+            Some(RatatuiColor::Indexed(rgb_to_ansi256(red, green, blue)))
+        }
+        (ColorDepth::Ansi16, RatatuiColor::Rgb(red, green, blue)) => {
+            Some(ansi16_color(rgb_to_ansi16(red, green, blue)))
+        }
+        (ColorDepth::Ansi16, RatatuiColor::Indexed(index)) => {
+            Some(ansi16_color(index_to_ansi16(index)))
+        }
+        (ColorDepth::TrueColor | ColorDepth::Ansi256 | ColorDepth::Ansi16, _) => Some(color),
+    }
+}
+
+/// The ratatui colour of an SGR foreground code (`30-37`, `90-97`).
+const fn ansi16_color(code: u8) -> RatatuiColor {
+    match code {
+        30 => RatatuiColor::Black,
+        31 => RatatuiColor::Red,
+        32 => RatatuiColor::Green,
+        33 => RatatuiColor::Yellow,
+        34 => RatatuiColor::Blue,
+        35 => RatatuiColor::Magenta,
+        36 => RatatuiColor::Cyan,
+        37 => RatatuiColor::Gray,
+        90 => RatatuiColor::DarkGray,
+        91 => RatatuiColor::LightRed,
+        92 => RatatuiColor::LightGreen,
+        93 => RatatuiColor::LightYellow,
+        94 => RatatuiColor::LightBlue,
+        95 => RatatuiColor::LightMagenta,
+        96 => RatatuiColor::LightCyan,
+        _ => RatatuiColor::White,
+    }
+}
+
+/// `lines` with every colour fitted to `depth`.
+fn fit_lines(lines: Vec<Line<'static>>, depth: ColorDepth) -> Vec<Line<'static>> {
+    if depth == ColorDepth::TrueColor {
+        return lines;
+    }
+    lines
+        .into_iter()
+        .map(|mut line| {
+            for span in &mut line.spans {
+                span.style.fg = span.style.fg.and_then(|fg| fit_color(fg, depth));
+                span.style.bg = span.style.bg.and_then(|bg| fit_color(bg, depth));
+            }
+            line
+        })
+        .collect()
 }
 
 const fn to_ratatui_modifier(attr: Attr) -> Modifier {
@@ -127,8 +187,23 @@ fn preview_order<'a>(
 /// then the prompt character on its own line, as in `fish_prompt.fish`.
 ///
 /// `is_first`/`is_last` are decided by position among *rendered* segments,
-/// never by segment identity.
+/// never by segment identity. Colours are fitted to the terminal's depth
+/// ([`ColorDepth::detect`]: `GPY_COLOR_DEPTH`, the Terminal.app downgrade), as
+/// the live prompt does.
 pub fn render_preview_line(
+    state: &WizardState,
+    config: &Config,
+    theme: &ThemeConfig,
+    palette: &crate::template::Palette,
+    facts: &PreviewFacts,
+) -> Vec<Line<'static>> {
+    fit_lines(
+        render_lines(state, config, theme, palette, facts),
+        ColorDepth::detect(),
+    )
+}
+
+fn render_lines(
     state: &WizardState,
     config: &Config,
     theme: &ThemeConfig,

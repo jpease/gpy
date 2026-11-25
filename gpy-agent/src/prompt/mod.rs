@@ -20,17 +20,22 @@ use crate::Result;
 use crate::agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request};
 use crate::cache::InstantPromptCache;
 use crate::config::{Config, loader::load_config};
+use crate::env_config::{
+    AGENT_ENABLED, GIT_INSTANT_CACHE_TTL_SECONDS, LANGUAGE_CACHE_TTL_SECONDS, SHOW_STATUS,
+};
 use crate::formatter::{
-    DirectoryEnv, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
+    ColorDepth, DirectoryEnv, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
+    downgrade_sgr,
 };
 use crate::ipc::Response;
 use crate::template::{Palette, parse_color};
 use crate::theme::export::{ScriptSegmentExports, collect_script_segments};
 use crate::theme::{ThemeConfig, load::load_theme};
 use link::{Link, Reply};
-use pill::{Depth, Paint, Place};
+use pill::Place;
 use script::{Inputs, ScriptArgs, Scripts};
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use vars::ShellVars;
 
@@ -48,6 +53,10 @@ pub struct PromptArgs {
     /// A token that changes with every command the shell ran: script
     /// segments run again when it does.
     pub cmd: String,
+    /// A token the shell integration draws once when it loads; empty from
+    /// one that predates it. Another token at the same PID is another shell
+    /// (an `exec`, or a recycled PID): it starts a fresh session.
+    pub instance: String,
 }
 
 /// The built-in segments `gpy prompt` draws; any other enabled name is a
@@ -71,6 +80,26 @@ pub struct Rendered {
     pub tail: String,
 }
 
+impl Rendered {
+    /// The prompt with its colours fitted to the terminal's `depth`: the
+    /// pills, the instant cache and the agent's replies are all 24-bit, so
+    /// an agent another terminal started draws right here too (#1265).
+    /// Moved through, unscanned, at 24-bit.
+    fn fit(self, depth: ColorDepth) -> Self {
+        let fit = |text: String| {
+            if let Cow::Owned(fitted) = downgrade_sgr(&text, depth) {
+                fitted
+            } else {
+                text
+            }
+        };
+        Self {
+            prompt: fit(self.prompt),
+            tail: fit(self.tail),
+        }
+    }
+}
+
 /// The shell is exiting: unregister it from the agent and remove the files
 /// kept for it.
 pub fn exit(pid: u32) {
@@ -78,11 +107,14 @@ pub fn exit(pid: u32) {
     session::exit(&Link::new(agent_enabled(&config), pid), pid);
 }
 
-/// Render the prompt for the current directory (`$PWD`).
+/// Render the prompt for the current directory (`$PWD`). A warning shows on
+/// stderr once per shell session (the warning log records each).
 ///
 /// # Errors
 /// Returns an error if neither the configured nor the `default` theme loads.
 pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result<Rendered> {
+    // The session decides which warnings show; until it does, they are held.
+    let _held = crate::debug::hold_stderr();
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
         Config::default()
@@ -97,7 +129,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
         collect_script_segments(&crate::plugin::discover_plugins(), &config)
     };
     let enabled = agent_enabled(&config);
-    let mut session = session::Session::open(args.pid, enabled);
+    let mut session = session::Session::open(args.pid, &args.instance, enabled);
     let script_duration = session.script_duration(args.duration_ms);
     let theme = load_theme(config.ui.theme.as_str()).or_else(|_| load_theme("default"))?;
     let palette = crate::palette::active_palette(&config);
@@ -130,14 +162,6 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
     let git_root = canonical.as_deref().and_then(find_git_root);
     let mut render = Render {
         dialect,
-        paint: Paint {
-            depth: Depth::from_env(
-                env("GPY_COLOR_DEPTH").as_deref(),
-                env("TERM_PROGRAM").as_deref(),
-                env("TERM").as_deref(),
-            ),
-            dialect,
-        },
         link: Link::new(enabled, args.pid),
         config: &config,
         theme: &theme,
@@ -151,7 +175,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
         oneshot_used: false,
         is_root: nix::unistd::geteuid().is_root(),
     };
-    let rendered = render.prompt();
+    let rendered = render.prompt().fit(ColorDepth::detect());
     // After the render, so a cold start never delays this prompt.
     session.finish(
         &render.link,
@@ -186,19 +210,11 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// The shared boolean table: `Some(true)` for 1/true/yes/on, `Some(false)`
-/// for 0/false/no/off (case-insensitive), `None` otherwise.
-fn flag(name: &str) -> Option<bool> {
-    match env(name)?.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
 /// `__gpy_agent_enabled`: `GPY_AGENT_ENABLED`, else `agent.enabled`.
 fn agent_enabled(config: &Config) -> bool {
-    flag("GPY_AGENT_ENABLED").unwrap_or(config.agent.enabled)
+    AGENT_ENABLED
+        .flag_override()
+        .unwrap_or(config.agent.enabled)
 }
 
 /// `__gpy_find_git_root`: the nearest ancestor of `canonical` (not `/`)
@@ -214,7 +230,6 @@ fn find_git_root(canonical: &Path) -> Option<PathBuf> {
 /// One render's inputs and the oneshot budget.
 struct Render<'a> {
     dialect: Dialect,
-    paint: Paint,
     link: Link,
     config: &'a Config,
     theme: &'a ThemeConfig,
@@ -297,13 +312,16 @@ impl Render<'_> {
             )
         };
         let prompt_tail = |show_status: bool| {
-            pill::prompt_tail(&self.vars, self.paint, self.args.status, root, show_status)
+            pill::prompt_tail(
+                &self.vars,
+                self.dialect,
+                self.args.status,
+                root,
+                show_status,
+            )
         };
         let (symbol, symbol_alone) = if character.is_empty() {
-            (
-                prompt_tail(flag("GPY_SHOW_STATUS").unwrap_or(true)),
-                prompt_tail(false),
-            )
+            (prompt_tail(SHOW_STATUS.flag()), prompt_tail(false))
         } else {
             (character.clone(), character)
         };
@@ -334,7 +352,7 @@ impl Render<'_> {
         }
         if has_clock {
             line.push_str(&pill::fg_text(
-                self.paint,
+                self.dialect,
                 self.vars.or("__color_clock_fg", ""),
                 &format!(
                     "{}{}",
@@ -361,21 +379,16 @@ impl Render<'_> {
                 .args
                 .duration_ms
                 .is_some_and(|ms| ms >= self.duration_threshold()),
-            "git" => {
-                let Some(root) = &self.git_root else {
-                    return false;
-                };
-                !(self.link.enabled()
-                    && !marker_present(root, "git", self.dialect)
-                    && !self.link.socket_present())
-            }
+            // Drawn from the cache, the agent or, when it is off, down or
+            // refuses, the in-process oneshot.
+            "git" => self.git_root.is_some(),
             "language" => {
                 if !lang_detect(&self.pwd) {
                     return false;
                 }
                 let present = self
                     .lang_key()
-                    .is_some_and(|key| marker_present(&key, "lang", self.dialect));
+                    .is_some_and(|key| lang_marker_present(&key, self.dialect));
                 if !present {
                     self.refresh(
                         "lang",
@@ -434,7 +447,7 @@ impl Render<'_> {
             "git" => self.git(place, prev_bg),
             "language" => Drawn::plain(self.language(place, prev_bg)),
             _ => Drawn::plain(self.scripts.as_ref().map_or_else(String::new, |scripts| {
-                scripts.pill(&self.vars, self.paint, segment, place)
+                scripts.pill(&self.vars, self.dialect, segment, place)
             })),
         }
     }
@@ -462,12 +475,12 @@ impl Render<'_> {
         }
         let content = format!(
             "{}{}",
-            self.paint.escape(self.vars.or("__prompt_time_pad", " ")),
+            self.dialect.escape(self.vars.or("__prompt_time_pad", " ")),
             self.dialect.clock_token(&spec)
         );
         pill::section_standalone(
             &self.vars,
-            self.paint,
+            self.dialect,
             self.vars.or_nonempty("__color_clock_bg", ""),
             self.vars.or_nonempty("__color_clock_fg", ""),
             &content,
@@ -496,14 +509,14 @@ impl Render<'_> {
             )
         };
         let icon = self
-            .paint
+            .dialect
             .escape(&format!(" {}", pill::status_icon(&self.vars, success)));
-        pill::section_standalone(&self.vars, self.paint, bg, fg, &icon, place)
+        pill::section_standalone(&self.vars, self.dialect, bg, fg, &icon, place)
     }
 
     /// `__gpy_segment_git`: serve the instant cache, ask the agent on a cold
     /// or wrong-variant miss, refresh a stale entry, and fall back to an
-    /// in-process oneshot when the agent is off or down.
+    /// in-process oneshot when the agent is off, down or refuses.
     fn git(&mut self, place: Place, prev_bg: &str) -> Drawn {
         let suffix = variant_suffix("git", place);
         let Some(root) = self.git_root.clone() else {
@@ -514,20 +527,18 @@ impl Render<'_> {
                 return self.oneshot_git(place);
             }
             let request = self.data_request("git", place, prev_bg, true);
-            match self.link.send(&request, Some(link::cold_timeout_ms())) {
-                Reply::Text(text) => return Drawn::plain(text),
-                // Refused for good (a denied cwd), so a refresh would be too:
-                // Zsh omits git, Fish draws it agent-free.
-                Reply::Refused(_) if self.dialect == Dialect::Zsh => {
-                    return Drawn::plain(String::new());
+            return match self.link.send(&request, Some(link::cold_timeout_ms())) {
+                Reply::Text(text) => Drawn::plain(text),
+                // Nothing listens, or a refusal for good (a denied cwd) that
+                // a refresh would get too: draw it agent-free.
+                Reply::Unreachable | Reply::Refused(_) => self.oneshot_git(place),
+                // A live agent that is late has the request: it fills the
+                // cache, and the next prompt draws it.
+                Reply::Late => {
+                    self.refresh("git", &suffix, "", place, prev_bg);
+                    Drawn::plain(String::new())
                 }
-                Reply::Refused(_) if self.dialect == Dialect::Fish => {
-                    return self.oneshot_git(place);
-                }
-                _ => {}
-            }
-            self.refresh("git", &suffix, "", place, prev_bg);
-            return Drawn::plain(String::new());
+            };
         };
         if entry.text.is_empty() {
             return Drawn::plain(String::new());
@@ -542,8 +553,7 @@ impl Render<'_> {
         if !entry.stale {
             return Drawn::plain(entry.text);
         }
-        if self.link.socket_present() {
-            self.refresh("git", &suffix, "", place, prev_bg);
+        if self.refresh("git", &suffix, "", place, prev_bg) {
             return Drawn::plain(entry.text);
         }
         let fresh = self.oneshot_git(place);
@@ -630,10 +640,12 @@ impl Render<'_> {
         request
     }
 
-    fn refresh(&self, op: &str, suffix: &str, extra: &str, place: Place, prev_bg: &str) {
+    /// Ask the agent to refresh `op`'s entry in the background; `false`
+    /// when no agent listens to do it.
+    fn refresh(&self, op: &str, suffix: &str, extra: &str, place: Place, prev_bg: &str) -> bool {
         let request = self.data_request(op, place, prev_bg, false);
         self.link
-            .maybe_refresh(&request, [op, suffix, extra], &self.pwd);
+            .maybe_refresh(&request, [op, suffix, extra], &self.pwd)
     }
 
     /// `__gpy_segment_bg`: the background the next chevron starts from.
@@ -687,7 +699,8 @@ impl Render<'_> {
     }
 }
 
-/// `__gpy_cache_variant_suffix`: `git`, `git_first`, `git_last`, `git_first_last`.
+/// The cache variant at `place` (`git`, `git_first`, `git_last`,
+/// `git_first_last`), as the agent's `position_suffix` names its files.
 fn variant_suffix(base: &str, place: Place) -> String {
     let mut suffix = base.to_owned();
     if place.is_first {
@@ -699,9 +712,9 @@ fn variant_suffix(base: &str, place: Place) -> String {
     suffix
 }
 
-/// Whether the agent's presence marker for `base` exists under `key`.
-fn marker_present(key: &Path, base: &str, dialect: Dialect) -> bool {
-    InstantPromptCache::presence_marker_for_dir(key, base, dialect.prompt_dialect())
+/// Whether the agent's language presence marker exists under `key`.
+fn lang_marker_present(key: &Path, dialect: Dialect) -> bool {
+    InstantPromptCache::lang_marker_for_dir(key, dialect.prompt_dialect())
         .is_ok_and(|path| path.is_file())
 }
 
@@ -741,15 +754,11 @@ fn read_entry(
     let metadata = std::fs::metadata(&path)
         .ok()
         .filter(std::fs::Metadata::is_file)?;
-    let (ttl_var, default_ttl) = if base == "git" {
-        ("GPY_GIT_INSTANT_CACHE_TTL_SECONDS", 5)
+    let ttl = if base == "git" {
+        GIT_INSTANT_CACHE_TTL_SECONDS.count()
     } else {
-        ("GPY_LANGUAGE_CACHE_TTL_SECONDS", 30)
+        LANGUAGE_CACHE_TTL_SECONDS.count()
     };
-    let ttl = env(ttl_var)
-        .filter(|v| v.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(default_ttl);
     let stale = metadata
         .modified()
         .ok()

@@ -10,7 +10,7 @@ use super::PluginSegmentTheme;
 use toml_edit::{Document, TableLike};
 
 /// Tables under `[segments]` that deserialize into typed fields instead of the plugin map.
-pub(super) const BUILTIN_TABLES: &[&str] = &[
+pub(crate) const BUILTIN_TABLES: &[&str] = &[
     "clock",
     "character",
     "directory",

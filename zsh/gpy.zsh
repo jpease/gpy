@@ -17,6 +17,9 @@ typeset -gi __gpy_cmd_start=0 __gpy_cmd_count=0
 # The last prompt's status and duration, for a repaint outside precmd.
 typeset -g __gpy_status=0 __gpy_duration=""
 typeset -g __gpy_transient="" __gpy_in_precmd="" __gpy_repaint_pending=""
+# This shell, as `gpy prompt` tells it from an earlier one at the same PID
+# (`exec zsh`, a recycled PID): drawn once per load, never inherited.
+typeset -g __gpy_instance=$EPOCHREALTIME$RANDOM
 
 # The `gpy` command into variable $1: PATH first, then ~/.local/bin.
 function __gpy_bin_into() {
@@ -42,7 +45,7 @@ function __gpy_render() {
     setopt local_options local_traps
     TRAPINT() { return 0 }
     local -a args=(prompt zsh --status $__gpy_status --pid $$ --cmd $__gpy_cmd_count
-        --shell-version "$ZSH_VERSION")
+        --instance "$__gpy_instance" --shell-version "$ZSH_VERSION")
     [[ -n $__gpy_duration ]] && args+=(--duration-ms $__gpy_duration)
     # stderr stays the terminal: a tripped script segment says so there.
     if __gpy_bin_into bin && out=$("$bin" "${args[@]}") && [[ $out == *$'\x1f'* ]]; then
@@ -74,6 +77,8 @@ function __gpy_precmd() {
     if (( __gpy_cmd_start > 0 )); then
         __gpy_duration=$(( EPOCHREALTIME * 1000 - __gpy_cmd_start ))
         __gpy_duration=${__gpy_duration%.*}
+        # None when the clock stepped back: `--duration-ms` is a u64.
+        [[ $__gpy_duration == <-> ]] || __gpy_duration=""
         __gpy_cmd_start=0
     fi
     __gpy_render

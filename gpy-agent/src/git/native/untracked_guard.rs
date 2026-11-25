@@ -11,7 +11,7 @@
 //! `git status`.
 
 use super::parser::{self, V2ParseState};
-use super::{NativeGitBackend, UNTRACKED_CACHE_SETUP, run_git_env_until, run_git_until};
+use super::{NativeGitBackend, UNTRACKED_CACHE_SETUP, run_git_bytes_until, run_git_until};
 use crate::Error;
 use crate::Result;
 use crate::cache::bounded::NATIVE_GIT_CONFIG_CACHE_CAPACITY;
@@ -184,8 +184,8 @@ fn begin(repo: &Path) -> Option<Probe> {
 /// # Errors
 ///
 /// Returns an error when git fails or misses `deadline`.
-fn bypass_status(repo: &Path, deadline: Instant) -> Result<String> {
-    run_git_env_until(
+fn bypass_status(repo: &Path, deadline: Instant) -> Result<Vec<u8>> {
+    run_git_bytes_until(
         repo,
         &["status", "--porcelain=v2", "-z"],
         &[("GIT_DISABLE_UNTRACKED_CACHE", "1")],
@@ -212,13 +212,13 @@ fn mtime_secs(path: &Path) -> Option<u64> {
 /// after the index write has a newer mtime.
 fn shows_stale_signature(repo: &Path, differing: &HashSet<PathBuf>, index_secs: u64) -> bool {
     differing.iter().any(|path| {
-        let text = path.to_string_lossy();
-        let is_dir = text.ends_with('/');
-        let entry = PathBuf::from(text.trim_end_matches('/'));
+        // Git marks an untracked directory with a trailing `/`; it is its own
+        // containing directory.
+        let is_dir = path.as_os_str().as_encoded_bytes().ends_with(b"/");
         let containing = if is_dir {
-            Some(entry.as_path())
+            Some(path.as_path())
         } else {
-            entry.parent()
+            path.parent()
         };
         containing
             .and_then(|rel| mtime_secs(&repo.join(rel)))
@@ -233,7 +233,7 @@ fn shows_stale_signature(repo: &Path, differing: &HashSet<PathBuf>, index_secs: 
 /// signature or a repeated mismatch, has git drop the cache. A mismatch or a
 /// failed check never records the state, so the next index write, including
 /// the repair's own, is checked again.
-fn reconcile(probe: &Probe, parsed: &mut V2ParseState, bypass: Result<String>, deadline: Instant) {
+fn reconcile(probe: &Probe, parsed: &mut V2ParseState, bypass: Result<Vec<u8>>, deadline: Instant) {
     let Ok(output) = bypass else {
         BACKOFF.insert(probe.repo.clone(), ());
         return;
@@ -318,9 +318,10 @@ pub(super) fn status(
         let check_handle = probe
             .as_ref()
             .map(|_| scope.spawn(|| bypass_status(repo, deadline)));
-        let cached = run_git_until(
+        let cached = run_git_bytes_until(
             repo,
             &["status", "--porcelain=v2", "--branch", "-z"],
+            &[],
             deadline,
         );
         let check_result = check_handle.map(|handle| {

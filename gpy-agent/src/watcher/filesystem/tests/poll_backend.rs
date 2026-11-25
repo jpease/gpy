@@ -572,6 +572,45 @@ fn split_poll_routes_gitdir_paths_to_content_comparison() {
     }
 }
 
+/// Only components below the git directory can name the object store: a
+/// repository or gitdir under a directory named `objects` is still compared
+/// by content, and its own object store still is not.
+#[test]
+fn split_poll_routing_ignores_an_objects_directory_above_the_gitdir() {
+    let registry = test_registry(true, HashSet::new());
+    let root = Path::new("/srv/objects/repo");
+    let separate_gitdir = Path::new("/objects/gitdirs/repo-store");
+    let common_dir = Path::new("/objects/mirrors/foo.git");
+    registry.register_external_gitdir(separate_gitdir, root);
+    registry.register_common_gitdir(common_dir, root);
+
+    for path in [
+        root.join(".git"),
+        root.join(".git/refs/heads/main"),
+        separate_gitdir.to_path_buf(),
+        separate_gitdir.join("refs/heads"),
+        common_dir.to_path_buf(),
+        common_dir.join("refs"),
+    ] {
+        assert!(
+            routes_to_gitdir(&path, &registry),
+            "{} must be compared by content",
+            path.display()
+        );
+    }
+    for path in [
+        root.join(".git/objects/pack"),
+        separate_gitdir.join("objects/ab"),
+        common_dir.join("objects"),
+    ] {
+        assert!(
+            !routes_to_gitdir(&path, &registry),
+            "{} must not be compared by content",
+            path.display()
+        );
+    }
+}
+
 /// After the registry forgets a common dir not named `.git`, `unwatch` still
 /// releases its path from whichever poller took it.
 #[test]

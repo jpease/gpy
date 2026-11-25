@@ -4,9 +4,9 @@
 
 Every environment variable GPY reads (`GPY_*`, the XDG roots, `HOME`, `ZDOTDIR`, `NO_COLOR`, `TERM`), except installer-only `GPY_VERSION` (see [Installation](../INSTALL.md#environment-variables)). Config keys live in the [Configuration Reference](configuration-reference.md).
 
-Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive. An unrecognised value is ignored and logged once, a positive-integer variable ignores `0` and garbage, and an empty value counts as unset. Where a variable has a matching config key, the precedence is the environment variable, then `config.toml`, then the built-in default.
+Every `GPY_*` flag accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive, with surrounding whitespace ignored. An unrecognised value is ignored and logged once, a positive-integer variable ignores `0` and garbage, and an empty value counts as unset. Where a variable has a matching config key, the precedence is the environment variable, then `config.toml`, then the built-in default.
 
-`gpy doctor` lists each agent tunable's effective value and where it came from (the "Agent tuning" section).
+`gpy doctor` lists each variable's effective value and where it came from: the agent's in its "Agent tuning" section, the prompt's in "Prompt environment".
 
 ---
 
@@ -14,19 +14,23 @@ Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GPY_CONFIG_PATH` | unset | The only `config.toml` GPY reads and creates, even if the file does not exist yet and a global config does. A relative value is made absolute against the launch directory. An empty value is ignored. |
+| `GPY_CONFIG_PATH` | unset | The only `config.toml` GPY reads and creates, even if the file does not exist yet and a global config does. Must be absolute (see [below](#absolute-paths-only)). An empty value is ignored. |
 | `XDG_CONFIG_HOME` | `~/.config` | Config root `$XDG_CONFIG_HOME/gpy`, also where user themes, palettes and plugins live. Only an absolute value counts. |
 | `XDG_CACHE_HOME` | `~/.cache` | Cache root `$XDG_CACHE_HOME/gpy`: instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
 | `XDG_DATA_HOME` | `~/.local/share` | Data root `$XDG_DATA_HOME/gpy`: the installed `fish/`, `zsh/`, `bash/` trees and bundled `plugins/`. Only an absolute value counts. |
 | `XDG_RUNTIME_DIR` | unset | Runtime root `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
 | `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. With no usable home there is no `/tmp/gpy` or relative fallback: GPY fails closed (see [Troubleshooting](troubleshooting.md#no-usable-home-directory)). |
-| `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. See [below](#gpy_agent_socket_path). |
-| `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
+| `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. Must be absolute. See [below](#gpy_agent_socket_path). |
+| `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). `gpy setup` installs them only into the default location, so a directory set here must already hold them. Must be absolute. See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
 | `VISUAL`, `EDITOR` | platform editor | The editor `gpy config open` launches, in that order. |
 
 ### GPY_AGENT_SOCKET_PATH
 
-Overrides the socket path alone; the runtime root is unchanged. Every command and every shell must see the same value, so export it before the shell integration loads. A relative value is resolved against the directory the shell integration loads in; the shell exports the absolute form so every command it runs sees the same path. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](cli-reference.md#gpy-start)).
+Overrides the socket path alone; the runtime root is unchanged. Every command and every shell must see the same value, so export it before the shell integration loads. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](cli-reference.md#gpy-start)).
+
+### Absolute paths only
+
+`GPY_CONFIG_PATH`, `GPY_AGENT_SOCKET_PATH`, `GPY_BUNDLED_PLUGIN_DIR` and `GPY_DEBUG_LOG` must be absolute paths. Each command, each prompt and the agent (which runs in `/`) would resolve a relative one against its own directory, so a shell that changes directory would reach a different socket or config file each time. A relative value is ignored as if unset: a command that reads it prints a one-line `Warning: [env] ignoring GPY_…` on stderr and appends it to the warning log, once per process and not again while it is the newest entry of that log, and `gpy doctor` flags the variable. The prompt prints each such warning (and any other, such as an unrecognised flag value) once per shell session, while the warning log keeps recording it. A relative `--socket` on the command line is still made absolute against the directory the command runs in.
 
 `gpy debug paths` prints what the path variables resolve to on the current machine.
 
@@ -34,7 +38,7 @@ Overrides the socket path alone; the runtime root is unchanged. Every command an
 
 ## Prompt
 
-Read by `gpy prompt` on every prompt, in all three shells. Export them in `config.fish`, `.zshrc` or `.bashrc`. A value that is not a non-negative integer falls back to the default.
+Read by `gpy prompt` on every prompt, in all three shells. Export them in `config.fish`, `.zshrc` or `.bashrc`. A number that is not a non-negative integer falls back to the default.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -47,7 +51,7 @@ Read by `gpy prompt` on every prompt, in all three shells. Export them in `confi
 | `GPY_AGENT_SUPERVISOR_ENABLED` | on | Overrides `agent.supervisor.enabled`. |
 | `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` | from config | Overrides `agent.supervisor.check_interval_seconds`; `0` checks on every prompt. Not range-checked. |
 | `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` | from config | Overrides `agent.supervisor.max_restart_attempts`; `0` never restarts. Not range-checked. |
-| `GPY_DEBUG` | off | Only `1` turns on debug output on stderr. |
+| `GPY_DEBUG` | off | A true value turns on debug output on stderr. |
 
 ### GPY_SHOW_STATUS
 
@@ -66,7 +70,7 @@ Read by the agent. Each is off, or at the default shown, unless set.
 | Variable | Default | Effect |
 |---|---|---|
 | `GPY_PROFILE` | off | A true value logs `[PROFILE] <operation>: <ms>` lines for timed operations to stderr and the debug log. |
-| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. Warnings go to it too; without it they go to `~/.cache/gpy/agent.log`. |
+| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log; must be absolute (see [above](#absolute-paths-only)). Warnings go to it too; without it they go to `~/.cache/gpy/agent.log`. |
 | `GPY_DISABLE_WATCHER` | off | A true value skips the git/language file watcher at agent startup. See [below](#gpy_disable_watcher). |
 | `GPY_THEME_WATCH_POLL_MS` | off | Positive integer: also poll the active theme's files on this interval; the theme is re-resolved only when a directory listing or plugin manifest changes. `0` or unset: notifications only. |
 | `GPY_CONFIG_WATCH_POLL_MS` | off | The same for `config.toml`, floored at the 1-second config debounce. The fix when editing the file never applies until `gpy restart`. |
@@ -119,11 +123,11 @@ Anything else is ignored with one warning and falls through to detection. A reco
 |---|---|---|
 | `GPY_COLOR_DEPTH` | detect | `truecolor` (or `24bit`), `256`, `16` or `none`, case-insensitive; anything else is ignored. See [below](#gpy_color_depth). |
 | `NO_COLOR` | unset | A non-empty value makes `gpy` command output (and `gpy doctor`) use ASCII status markers instead of emoji. Prompt colours are not affected. |
-| `TERM` | from the terminal | `dumb` turns off emoji in `gpy` command output. `TERM=linux` makes the prompt formatter use 256 colours. |
+| `TERM` | from the terminal | `dumb` turns off emoji in `gpy` command output. `TERM=linux` makes the prompt use 256 colours. |
 
 ### GPY_COLOR_DEPTH
 
-The prompt is drawn in 24-bit colour. Without this variable the agent drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. The agent reads it once per process: after changing it, run `gpy-agent stop` and open a new prompt. `gpy prompt` reads it on every prompt for what it draws itself (clock, status and character fallbacks, script segments), with the same automatic 256-colour downgrade.
+The prompt is drawn in 24-bit colour. Without this variable `gpy prompt` drops to 256 colours only when `TERM_PROGRAM=Apple_Terminal` or `TERM=linux`; every other terminal gets truecolor, so a terminal without 24-bit support needs `GPY_COLOR_DEPTH=256` or `16`. `none` drops colour codes and keeps text attributes such as bold. `gpy prompt` reads it on every prompt and fits the whole prompt to it, the git and language segments the agent renders included: the agent always renders 24-bit colour, so each terminal gets its own depth whichever terminal started the agent, and a change applies at the next prompt without restarting the agent. `gpy-agent oneshot` reads it too.
 
 ---
 

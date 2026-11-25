@@ -534,3 +534,32 @@ fn test_non_utf8_config_path_round_trips() {
     let loaded = load_config_from_file(&config_file).expect("load config from non-utf8 path");
     assert!(loaded.ui.show_icons);
 }
+
+/// `[plugin.MySeg]` loads as segment `myseg`; a later save must update that
+/// table, not append a second `[plugin.myseg]` the loader would merge away.
+#[test]
+fn test_save_updates_plugin_table_spelled_in_mixed_case() {
+    use gpy_agent::plugin::{SegmentName, TtlSecs};
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_file = temp_dir.path().join("config.toml");
+    fs::write(&config_file, "[plugin.MySeg]\nttl_secs = 5\n").unwrap();
+
+    let original = load_config_from_file(&config_file).unwrap();
+    let mut updated = original.clone();
+    let segment = SegmentName::new("MySeg").unwrap();
+    let edited = updated.plugin.get_mut(&segment).expect("entry for myseg");
+    edited.timeout_ms = Some(gpy_agent::plugin::TimeoutMs::new(500).unwrap());
+    edited.ttl_secs = Some(TtlSecs::new(9).unwrap());
+    save_config(&config_file, &original, &updated, &[]).unwrap();
+
+    let text = fs::read_to_string(&config_file).unwrap();
+    assert_eq!(text.matches("[plugin.").count(), 1, "one table:\n{text}");
+    let reloaded = load_config_from_file(&config_file).unwrap();
+    let saved = reloaded.plugin.get(&segment).expect("entry for myseg");
+    assert_eq!(saved.ttl_secs, Some(TtlSecs::new(9).unwrap()));
+    assert_eq!(
+        saved.timeout_ms.map(gpy_agent::plugin::TimeoutMs::get),
+        Some(500)
+    );
+}

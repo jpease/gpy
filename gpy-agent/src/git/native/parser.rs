@@ -1,4 +1,7 @@
 //! Pure parser for `git status --porcelain=v2 --branch -z` output.
+//!
+//! Output is parsed as bytes: a path is taken as the bytes git printed, which
+//! need not be UTF-8, so two such paths never decode to one name.
 
 use crate::git::FileStatus;
 use std::collections::HashMap;
@@ -76,35 +79,54 @@ impl V2ParseState {
     }
 }
 
-/// Parses UTF-8-decoded `git status --porcelain=v2 --branch -z` output.
+/// Parses `git status --porcelain=v2 --branch -z` output.
 #[must_use]
-pub fn parse_v2_records(output: &str, max_ahead_behind: usize) -> V2ParseState {
-    parse_v2_state(output, max_ahead_behind)
+pub fn parse_v2_records(output: impl AsRef<[u8]>, max_ahead_behind: usize) -> V2ParseState {
+    parse_v2_state(output.as_ref(), max_ahead_behind)
 }
 
 /// Parses the file records of `git status --porcelain=v2 -z` output, ignoring
 /// any header lines.
 #[must_use]
-pub fn parse_v2_files(output: &str) -> HashMap<PathBuf, FileStatus> {
-    parse_v2_state(output, 0).files
+pub fn parse_v2_files(output: impl AsRef<[u8]>) -> HashMap<PathBuf, FileStatus> {
+    parse_v2_state(output.as_ref(), 0).files
+}
+
+/// The path git printed as `bytes`. On Unix a path is any bytes; elsewhere
+/// git prints UTF-8.
+#[must_use]
+pub fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
 }
 
 /// Runs the record loop shared by [`parse_v2_records`] and [`parse_v2_files`].
-fn parse_v2_state(output: &str, max_ahead_behind: usize) -> V2ParseState {
+fn parse_v2_state(output: &[u8], max_ahead_behind: usize) -> V2ParseState {
     let mut state = V2ParseState::new();
 
     // A type `2` record is followed by a separate original-path record, which
     // must be consumed rather than parsed as its own entry.
-    let records: Vec<&str> = output.split('\0').filter(|r| !r.is_empty()).collect();
+    let records: Vec<&[u8]> = output
+        .split(|&byte| byte == b'\0')
+        .filter(|r| !r.is_empty())
+        .collect();
     let mut index = 0_usize;
     while let Some(&record) = records.get(index) {
-        if let Some(header_content) = record.strip_prefix("# branch.oid ") {
-            state.oid = (header_content != "(initial)").then(|| header_content.to_owned());
-        } else if let Some(header_content) = record.strip_prefix("# branch.head ") {
-            state.branch = Some(BranchHead::parse(header_content));
-        } else if let Some(header_content) = record.strip_prefix("# branch.ab ") {
+        if let Some(header) = record.strip_prefix(b"# branch.oid ") {
+            let header_content = String::from_utf8_lossy(header);
+            state.oid = (header_content != "(initial)").then(|| header_content.into_owned());
+        } else if let Some(header) = record.strip_prefix(b"# branch.head ") {
+            state.branch = Some(BranchHead::parse(&String::from_utf8_lossy(header)));
+        } else if let Some(header) = record.strip_prefix(b"# branch.ab ") {
             let (ahead, behind, ahead_capped, behind_capped) =
-                parse_v2_ahead_behind(header_content, max_ahead_behind);
+                parse_v2_ahead_behind(&String::from_utf8_lossy(header), max_ahead_behind);
             state.ahead = ahead;
             state.behind = behind;
             state.ahead_capped = ahead_capped;
@@ -112,7 +134,7 @@ fn parse_v2_state(output: &str, max_ahead_behind: usize) -> V2ParseState {
         } else if let Some(path) = parse_v2_untracked_line(record) {
             state.process_untracked(path);
         } else if let Some(parsed) = parse_v2_changed_line(record) {
-            let is_rename_or_copy = record.starts_with("2 ");
+            let is_rename_or_copy = record.starts_with(b"2 ");
             state.process_changed(parsed);
             if is_rename_or_copy {
                 index = index.saturating_add(1);
@@ -191,20 +213,21 @@ pub fn parse_v2_file_status(xy: &str) -> (bool, bool, bool) {
 
 /// Parses an untracked record (`? <path>`); `-z` paths are taken verbatim.
 #[must_use]
-pub fn parse_v2_untracked_line(line: &str) -> Option<PathBuf> {
-    let filename = line.strip_prefix("? ")?;
+pub fn parse_v2_untracked_line(line: impl AsRef<[u8]>) -> Option<PathBuf> {
+    let filename = line.as_ref().strip_prefix(b"? ")?;
     if filename.is_empty() {
         return None;
     }
-    Some(PathBuf::from(filename))
+    Some(path_from_bytes(filename))
 }
 
 /// Parses a changed record (type `1`, `2`, or `u`), which have 8, 9, and 10
 /// metadata fields before the path. For type `2` this is the destination path;
 /// the original path is a separate `-z` record handled by the caller.
 #[must_use]
-pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
-    let metadata_fields: usize = match line.as_bytes().first()? {
+pub fn parse_v2_changed_line(record: impl AsRef<[u8]>) -> Option<ParsedChangedFile> {
+    let line = record.as_ref();
+    let metadata_fields: usize = match line.first()? {
         b'1' => 8,
         b'2' => 9,
         b'u' => 10,
@@ -212,9 +235,9 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
     };
 
     // The final piece keeps filenames containing spaces intact.
-    let mut fields = line.splitn(metadata_fields.checked_add(1)?, ' ');
+    let mut fields = line.splitn(metadata_fields.checked_add(1)?, |&byte| byte == b' ');
     let _record_type = fields.next()?;
-    let xy = fields.next()?;
+    let xy = std::str::from_utf8(fields.next()?).ok()?;
     for _ in 0..metadata_fields.checked_sub(2)? {
         fields.next()?;
     }
@@ -223,7 +246,7 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
     if path_field.is_empty() {
         return None;
     }
-    let path = PathBuf::from(path_field);
+    let path = path_from_bytes(path_field);
 
     let (is_conflict, is_staged, is_unstaged) = parse_v2_file_status(xy);
 
@@ -481,5 +504,22 @@ mod tests {
             .get(Path::new("new name.txt"))
             .expect("renamed file present");
         assert!(renamed.staged);
+    }
+
+    /// Paths that are not UTF-8 keep their bytes, so two of them never merge
+    /// into one entry (and one count).
+    #[cfg(unix)]
+    #[test]
+    fn paths_that_are_not_utf8_stay_distinct() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let output: &[u8] = b"? a\xff\0? a\xfe\x001 .M N... 100644 100644 100644 abc abc b\xff\0";
+        let files = parse_v2_files(output);
+        assert_eq!(files.len(), 3, "{files:?}");
+        let path = |bytes: &[u8]| PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
+        let status = |bytes: &[u8]| files.get(&path(bytes)).copied().unwrap_or_default();
+        assert!(status(b"a\xff").untracked);
+        assert!(status(b"a\xfe").untracked);
+        assert!(status(b"b\xff").unstaged);
     }
 }

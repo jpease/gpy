@@ -8,7 +8,9 @@ use super::output;
 use super::rc_block::{has_start, remove_blocks};
 use super::setup::{DataRoot, Environment, SHELLS, shell_dir_for};
 use super::setup_fish::{is_gpy_prompt_link, legacy_trees};
-use super::setup_install::{fish_completions_dir, plugins_target, roots_overlap};
+use super::setup_install::{
+    fish_completions_dir, install_lock_file, plugins_target, roots_overlap,
+};
 use crate::shell::Shell;
 use crate::{Error, Result, paths};
 use std::fs;
@@ -49,7 +51,8 @@ struct Plan {
     config_home: PathBuf,
     config_dir: PathBuf,
     data_root: DataRoot,
-    /// Shell trees, completions, the fish conf.d entry and bundled plugins.
+    /// Shell trees, completions, the fish conf.d entry, bundled plugins and
+    /// setup's install lock file.
     integration: Vec<PathBuf>,
     /// rc files holding a GPY block.
     rc_files: Vec<PathBuf>,
@@ -200,6 +203,7 @@ fn build_plan(env: &Environment) -> Result<Plan> {
     if !roots_overlap(&data_root.0, &config_home.join("gpy")) {
         integration.push(plugins_target(&data_root));
     }
+    integration.push(install_lock_file(&data_root));
     integration.extend(legacy_trees(&config_home, &data_root.0));
 
     let mut candidates = vec![
@@ -629,8 +633,8 @@ fn remove_binaries(binaries: &Binaries, tally: &mut Tally) {
             }
             if let Some(share) = stray_share {
                 output::plain(format_args!(
-                    "The shell scripts `gpy setup` kept are not removed; delete them with: rm -rf '{}'",
-                    share.display()
+                    "The shell scripts `gpy setup` kept are not removed; delete them with: rm -rf {}",
+                    super::utils::shell_quote(share)
                 ));
             }
         }
@@ -647,9 +651,9 @@ fn remove_config(config_dir: &Path, purge: bool, tally: &mut Tally) {
             output::plain(format_args!("Removed empty {}", config_dir.display()));
         } else {
             output::plain(format_args!(
-                "Kept your configuration in {}; delete it with: rm -rf '{}'",
+                "Kept your configuration in {}; delete it with: rm -rf {}",
                 config_dir.display(),
-                config_dir.display()
+                super::utils::shell_quote(config_dir)
             ));
         }
     }

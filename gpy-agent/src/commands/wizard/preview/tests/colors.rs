@@ -129,3 +129,59 @@ fn to_ratatui_span_preserves_text_and_style() {
     assert_eq!(got.style.bg, Some(RatatuiColor::Rgb(1, 2, 3)));
     assert!(got.style.add_modifier.contains(Modifier::BOLD));
 }
+
+#[test]
+fn fit_color_approximates_rgb_to_the_terminal_depth() {
+    let rgb = RatatuiColor::Rgb(215, 153, 33);
+    assert_eq!(fit_color(rgb, ColorDepth::TrueColor), Some(rgb));
+    assert_eq!(
+        fit_color(rgb, ColorDepth::Ansi256),
+        Some(RatatuiColor::Indexed(172))
+    );
+    assert_eq!(
+        fit_color(rgb, ColorDepth::Ansi16),
+        Some(RatatuiColor::Yellow)
+    );
+    assert_eq!(fit_color(rgb, ColorDepth::Mono), None);
+}
+
+#[test]
+fn fit_color_folds_indexed_colors_only_below_256() {
+    let indexed = RatatuiColor::Indexed(196);
+    assert_eq!(fit_color(indexed, ColorDepth::Ansi256), Some(indexed));
+    assert_eq!(
+        fit_color(indexed, ColorDepth::Ansi16),
+        Some(RatatuiColor::LightRed)
+    );
+    assert_eq!(
+        fit_color(RatatuiColor::Green, ColorDepth::Ansi16),
+        Some(RatatuiColor::Green)
+    );
+}
+
+#[test]
+fn fit_lines_rewrites_span_colors_and_keeps_attributes() {
+    let line = Line::from(vec![RatatuiSpan::styled(
+        "x",
+        RatatuiStyle::default()
+            .fg(RatatuiColor::Rgb(255, 0, 0))
+            .bg(RatatuiColor::Rgb(0, 0, 238))
+            .add_modifier(Modifier::BOLD),
+    )]);
+
+    let span_of = |lines: Vec<Line<'static>>| {
+        lines
+            .into_iter()
+            .next()
+            .and_then(|first| first.spans.into_iter().next())
+            .expect("one span")
+    };
+
+    let span = span_of(fit_lines(vec![line.clone()], ColorDepth::Mono));
+    assert_eq!((span.style.fg, span.style.bg), (None, None));
+    assert!(span.style.add_modifier.contains(Modifier::BOLD));
+
+    let reduced = span_of(fit_lines(vec![line], ColorDepth::Ansi16));
+    assert_eq!(reduced.style.fg, Some(RatatuiColor::LightRed));
+    assert_eq!(reduced.style.bg, Some(RatatuiColor::Blue));
+}

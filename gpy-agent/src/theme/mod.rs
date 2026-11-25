@@ -13,6 +13,7 @@ pub mod retire;
 pub mod user_copy;
 pub mod warnings;
 
+pub(crate) use locate::BUILTIN_TABLES;
 pub use manager::ThemeManager;
 pub use model::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitState, GitTextElement, GitTheme,

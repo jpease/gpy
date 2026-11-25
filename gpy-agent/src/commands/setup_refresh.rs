@@ -9,7 +9,9 @@ use super::setup::{
     Environment, VERSION_STAMP, find_source_root, installed_integrations_in, is_in_place,
     shell_dir_for,
 };
-use super::setup_install::{InstallMode, install_bundled_plugins, install_files, install_root};
+use super::setup_install::{
+    InstallMode, install_bundled_plugins, install_files, install_root, lock_install,
+};
 use crate::Result;
 use crate::shell::Shell;
 use std::fs;
@@ -38,10 +40,15 @@ pub fn tree_is_stale(shell: Shell) -> bool {
 /// Reinstall every stale tree `gpy setup` wired: the shell's rc block sources
 /// the tree under the data root, and its stamp names another version. The
 /// bundled plugins are reinstalled with them. Failures are skipped: the next
-/// prompt that finds a tree still stale tries again.
+/// prompt that finds a tree still stale tries again. So is a run that finds
+/// another setup or refresh installing: the stamps are read only under the
+/// lock, so whatever that run leaves stale is retried later.
 pub fn refresh_stale(completions: impl Fn(Shell) -> Result<Vec<u8>>) {
     let env = Environment::from_process();
     let (Ok(root), Ok(config_home)) = (install_root(&env), env.config_home()) else {
+        return;
+    };
+    let Ok(_lock) = lock_install(&root, std::time::Duration::ZERO) else {
         return;
     };
     let mut plugins_source = None;

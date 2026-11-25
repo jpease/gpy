@@ -120,7 +120,9 @@ fn run(
 }
 
 /// Filter mode types other characters into the query; any other key at the
-/// discard prompt keeps editing; elsewhere unbound keys do nothing.
+/// discard prompt keeps editing, back in filter mode if a query is set (the
+/// footer only shows a query in that mode, so Normal would hide it while it
+/// still narrows the lists); elsewhere unbound keys do nothing.
 fn handle_unbound_key(
     state: &mut WizardState,
     mode: InputMode,
@@ -128,10 +130,20 @@ fn handle_unbound_key(
 ) -> (InputMode, WizardAction) {
     match (mode, key.code) {
         (InputMode::Filter, KeyCode::Char(c)) => state.push_filter_char(c),
-        (InputMode::ConfirmQuit, _) => return (InputMode::Normal, WizardAction::Continue),
+        (InputMode::ConfirmQuit, _) => return (resume_mode(state), WizardAction::Continue),
         _ => {}
     }
     (mode, WizardAction::Continue)
+}
+
+/// Where declining the discard prompt returns: a query is only visible, and
+/// only editable, in filter mode.
+fn resume_mode(state: &WizardState) -> InputMode {
+    if state.filter_query().is_empty() {
+        InputMode::Normal
+    } else {
+        InputMode::Filter
+    }
 }
 
 #[cfg(test)]
@@ -716,5 +728,32 @@ mod tests {
             InputMode::Filter,
             "'s'/'q'/'?' should not exit filter mode"
         );
+    }
+
+    #[test]
+    fn declining_quit_from_filter_mode_returns_to_the_filter() {
+        let mut state = test_state(make_config("default", "default"));
+        state.toggle_segment("git");
+        let theme = ThemeConfig::default();
+        let (filtering, _) = handle_key(
+            &mut state,
+            InputMode::Normal,
+            &theme,
+            key(KeyCode::Char('/')),
+        );
+        assert_eq!(filtering, InputMode::Filter);
+        handle_key(&mut state, filtering, &theme, key(KeyCode::Char('g')));
+        let asked = handle_key(
+            &mut state,
+            filtering,
+            &theme,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(asked, (InputMode::ConfirmQuit, WizardAction::Continue));
+
+        let declined = handle_key(&mut state, asked.0, &theme, key(KeyCode::Char('n')));
+
+        assert_eq!(declined, (InputMode::Filter, WizardAction::Continue));
+        assert_eq!(state.filter_query(), "g");
     }
 }

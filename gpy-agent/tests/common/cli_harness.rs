@@ -406,6 +406,11 @@ impl CliTestEnv {
         self.command(Path::new(env!("CARGO_BIN_EXE_gpy-agent")))
     }
 
+    /// A `gpy` command with this env's isolated `HOME`/`XDG_*`/`PATH`.
+    pub fn gpy_command(&self) -> Command {
+        self.command(Path::new(env!("CARGO_BIN_EXE_gpy")))
+    }
+
     fn command(&self, program: &Path) -> Command {
         self.isolation.command(program)
     }

@@ -12,6 +12,7 @@ function fish_prompt
         return
     end
     set -l args prompt fish --status $last_status --pid $fish_pid --shell-version $FISH_VERSION
+    set -q __gpy_instance; and set -a args --instance $__gpy_instance
     set -q __gpy_cmd_count; and set -a args --cmd $__gpy_cmd_count
     if set -q __gpy_duration; and string match -qr '\A[0-9]+\z' -- "$__gpy_duration"
         set -a args --duration-ms $__gpy_duration

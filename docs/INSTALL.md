@@ -38,7 +38,8 @@ console do not support it, so GPY falls back to 256 colours
 there (`TERM_PROGRAM=Apple_Terminal` or `TERM=linux`). Set `GPY_COLOR_DEPTH` to
 `truecolor`, `256`, `16` or `none` to override the choice; see
 [Environment Variables](user/environment-variables.md#output-and-terminal).
-It applies to the agent's formatter and to the pills the shells draw themselves.
+Each terminal gets its own choice for the whole prompt, whichever terminal
+started the agent.
 
 ### Shells
 
@@ -347,9 +348,10 @@ It:
    GPY. Delete the lines from `# >>> gpy-init >>>` that GPY added and run
    `gpy setup` again. The installers treat exit `5` as a warning: they finish
    the install, start the agent, and end with a line saying GPY is not active
-   in the rc file. The Bash block loads GPY only in interactive shells, and
-   setup rewrites an unedited Bash block or loader from an earlier release to
-   that form; a block whose text differs is left as it is.
+   in the rc file. The Bash block loads GPY only in interactive shells. Setup
+   rewrites an unedited block or Bash loader from an earlier release to the
+   current text, including a block that sources one of the old trees above; a
+   block whose text differs is left as it is.
 4. Moves a theme file in `~/.config/gpy/themes/` that is an unedited copy of a
    builtin theme as released up to 0.7.1 (`default.toml`, `text.toml`,
    `starship.toml`, byte for byte) to `<name>.toml.bak`, so the builtin and its
@@ -369,7 +371,10 @@ root itself, so a later bare `gpy setup` works for installer users. When the
 source is the data root (the installers' `~/.local/bin/gpy` finds
 `~/.local/share/gpy` as its `share/gpy`), nothing is copied: setup still writes
 the completions and version stamps and wires the rc file. Nothing in an rc file
-is touched until the files are in place.
+is touched until the files are in place. One install into the data root runs at
+a time, under `<data root>/.gpy-setup.lock`: `gpy setup` waits up to 30 seconds
+for a background refresh to finish, and a background refresh that finds another
+run installing skips (a later prompt tries again).
 
 ## Verifying Your Download
 
@@ -642,13 +647,12 @@ GPY is yours and stays.
 
 When the prompt destination is absent (or becomes absent after removing the GPY
 symlink/implementation), `gpy uninstall` restores the newest
-`fish_prompt.fish.backup.<stamp>` (`YYYYMMDD_HHMMSS`, written by `install.sh`,
-`install-oneline.sh`, `gpy setup` and `install-dev.fish`). Older backups remain
-untouched. Backups from older releases, named `fish_prompt.fish.gpy-backup.<stamp>`
-or `fish_prompt.fish.backup-<stamp>`, are not restored automatically; rename the one
-you want to `fish_prompt.fish`.
+`fish_prompt.fish.backup.<stamp>` (`YYYYMMDD_HHMMSS`, written by `gpy setup`).
+Older backups remain untouched. Backups from older releases, named
+`fish_prompt.fish.gpy-backup.<stamp>` or `fish_prompt.fish.backup-<stamp>`, are not
+restored automatically; rename the one you want to `fish_prompt.fish`.
 
-Every installer moves an existing prompt that is not GPY's own link aside with `mv`,
+`gpy setup` moves an existing prompt that is not GPY's own link aside by renaming it,
 so a symlinked prompt (stow, yadm, chezmoi) stays a symlink to the same dotfile and is
 restored as one. A symlink into any `gpy/functions/fish_prompt.fish` or
 `gpy/fish/functions/fish_prompt.fish` tree is GPY's own: it is never backed up

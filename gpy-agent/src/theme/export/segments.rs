@@ -231,14 +231,17 @@ pub(super) fn insert_delimiter_values(
 
     let (prompt_open_fg, prompt_open_bg) = delimiter_colors(ui.prompt_open.as_ref());
     let (prompt_close_fg, prompt_close_bg) = delimiter_colors(ui.prompt_close.as_ref());
-    let (seg_delim_fg, seg_delim_bg) = delimiter_colors(ui.segment_open.as_ref());
+    let (seg_open_fg, seg_open_bg) = delimiter_colors(ui.segment_open.as_ref());
+    let (seg_close_fg, seg_close_bg) = delimiter_colors(ui.segment_close.as_ref());
     for (name, color) in [
         ("__prompt_open_color", prompt_open_fg),
         ("__prompt_open_bg", prompt_open_bg),
         ("__prompt_close_color", prompt_close_fg),
         ("__prompt_close_bg", prompt_close_bg),
-        ("__segment_delimiter_color", seg_delim_fg),
-        ("__segment_delimiter_bg", seg_delim_bg),
+        ("__segment_delimiter_color", seg_open_fg),
+        ("__segment_delimiter_bg", seg_open_bg),
+        ("__segment_delimiter_close_color", seg_close_fg),
+        ("__segment_delimiter_close_bg", seg_close_bg),
     ] {
         set(assignments, name, colors.resolve(color));
     }

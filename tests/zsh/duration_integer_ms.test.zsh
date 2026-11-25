@@ -5,7 +5,8 @@
 # The command duration is an integer number of milliseconds: the binary's
 # `--duration-ms` is a u64, so a floating-point value computed from
 # $EPOCHREALTIME would be rejected. A prompt with no command before it (empty
-# Enter) passes no duration at all.
+# Enter), or after a clock that stepped back while the command ran (a
+# negative duration), passes no duration at all.
 #
 # A real preexec/precmd cycle against a stub gpy that logs its argv.
 
@@ -36,6 +37,11 @@ simulate_command() {
     args=$(<"$tmp/argv")
     __gpy_precmd
     args_empty=$(<"$tmp/argv")
+    # The clock steps back 5 s while the command runs.
+    __gpy_preexec "true"
+    (( __gpy_cmd_start += 5000 ))
+    __gpy_precmd
+    args_step_back=$(<"$tmp/argv")
 }
 simulate_command
 if [[ $duration == <-> ]] && (( duration >= 150 )); then
@@ -53,6 +59,11 @@ if [[ $args_empty != *--duration-ms* ]]; then
     pass "no command, no duration"
 else
     fail "a prompt with no command passed a duration: $args_empty"
+fi
+if [[ $args_step_back != *--duration-ms* ]]; then
+    pass "a clock that stepped back passes no duration"
+else
+    fail "a clock that stepped back passed a duration: $args_step_back"
 fi
 
 test_finish "the duration is integer milliseconds"

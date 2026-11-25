@@ -102,7 +102,7 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
                 let theme = refresh_ctx.theme_manager.get();
                 refresh_language_for(
                     &refresh_ctx,
-                    &repo_root,
+                    LanguagePaths::at(&repo_root),
                     &refresh_config,
                     LanguageRefreshMode::Immediate,
                     &theme,
@@ -171,20 +171,41 @@ enum LanguageRefreshMode {
     CachedOnly,
 }
 
-/// Refresh `root`'s languages per `mode`, write its instant-cache variants, and
-/// repaint on change. Returns whether anything was written.
+/// Where a project's languages live: detected, cached and probed for versions
+/// at `root`, published under the instant-prompt key of `cache_path`. They
+/// differ only outside git, where files are keyed by the request path.
+#[derive(Clone, Copy)]
+struct LanguagePaths<'a> {
+    root: &'a Path,
+    cache_path: &'a Path,
+}
+
+impl<'a> LanguagePaths<'a> {
+    /// A root whose files are keyed by the root itself.
+    const fn at(root: &'a Path) -> Self {
+        Self {
+            root,
+            cache_path: root,
+        }
+    }
+}
+
+/// Refresh the languages of `paths.root` per `mode`, write their instant-cache
+/// variants under `paths.cache_path`, and repaint on change. Returns whether
+/// anything was written.
 ///
 /// `theme` is passed in so callers deriving `extra_prev_bg` render from the same
 /// snapshot (no torn read). `extra_prev_bg` seeds a render context no shell has
 /// requested yet; known contexts are always refreshed.
 fn refresh_language_for(
     ctx: &AgentContext,
-    root: &Path,
+    paths: LanguagePaths<'_>,
     config: &Config,
     mode: LanguageRefreshMode,
     theme: &ThemeConfig,
     extra_prev_bg: Option<&str>,
 ) -> bool {
+    let LanguagePaths { root, cache_path } = paths;
     let Some(detected) = detected_languages_for(ctx, root, mode) else {
         return false;
     };
@@ -196,14 +217,14 @@ fn refresh_language_for(
     for prev_bg in std::iter::once(None).chain(extra_prev_bg.map(Some)) {
         match ctx
             .instant_cache
-            .write_language_variants(root, &languages, config, theme, prev_bg, &palette)
+            .write_language_variants(cache_path, &languages, config, theme, prev_bg, &palette)
         {
             Ok(changed) => wrote |= changed,
             Err(e) => {
                 debug_log!(
                     "agent",
                     "Failed to write language instant cache for {}: {}",
-                    root.display(),
+                    cache_path.display(),
                     e
                 );
             }
@@ -211,7 +232,7 @@ fn refresh_language_for(
     }
 
     if wrote {
-        ctx.registry.notify_repaint(Some(root));
+        ctx.registry.notify_repaint(Some(cache_path));
     }
     wrote
 }
@@ -601,7 +622,7 @@ fn schedule_language_refresh_from_git_status(
         let theme = refresh_ctx.theme_manager.get();
         refresh_language_for(
             &refresh_ctx,
-            &refresh_repo_root,
+            LanguagePaths::at(&refresh_repo_root),
             &refresh_config,
             LanguageRefreshMode::Throttled { signature },
             &theme,

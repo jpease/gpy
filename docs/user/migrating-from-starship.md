@@ -33,7 +33,7 @@ The importer translates:
 - **Colors** — your active `[palettes.x]` table, plus any colors it finds inline in module `style` fields, become a GPY palette.
 - **Directory, git, duration, and character segments** — `format`/`style` fields map onto GPY's equivalent segment `format` strings, including conditional groups (`(...)`) and style tokens (`bold`, `fg:`, `bg:`, `prev_fg`/`prev_bg`). `prev_fg` is accepted but renders as the terminal default in the live prompt, because only `prev_bg` is transferred; the wizard preview does show it.
 - **Language segments** — `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, and others fold into one GPY `language` segment, with per-language colors and attributes preserved.
-- **Clock** — `time_format` maps to GPY's `"12"`/`"24"` setting on a best-effort basis.
+- **Clock** — `time_format` maps to GPY's `"12"`/`"24"` setting on a best-effort basis. Starship hides `time` unless `[time]` sets `disabled = false`, so the clock is imported and listed in the suggested segment order (including through `$all`) only in that case.
 - **Username and hostname** — `ssh_symbol` becomes the theme's `ssh_icon` (Starship's default `🌐 ` when unset) and `style_root`, `style_user` and `style` become `root_bg_color`/`root_text_color` and `bg_color`/`text_color` on the bundled `username` and `hostname` plugins. `show_always` (username), `ssh_only = false` and `trim_at` (hostname) are settings, not theme keys: the import reports them as warnings, and you set them in `config.toml` as `[plugin.username]` `show_always`, `[plugin.hostname]` `show_always`/`trim_at`. `format` is not carried over. As in Starship, the username shows as root, under sudo or over SSH, red for root and yellow otherwise, and the hostname's icon shows only in SSH sessions.
 - **Segment order** — pass `--apply-layout` and the derived `enabled_segments` order is written straight into `config.toml`; without it, the command just prints the suggested order.
 - **Prompt layout** — `add_newline` becomes `add_newline` under `[ui]` in the generated theme file (a blank line before each prompt). `$line_break` in `format`, or no `format` at all, becomes `two_line = true` in the same table. Both are theme keys, not `config.toml` keys; see [Theme `[ui]` keys](theme-customization.md#theme-ui-keys).
@@ -47,10 +47,10 @@ Some Starship constructs have no GPY equivalent and are dropped with a warning r
 | Starship feature | What happens in GPY |
 |---|---|
 | `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom `[custom.x]` modules | Skipped entirely — no equivalent segment exists yet. |
-| `git_state` (rebasing/merging/cherry-picking overlay) | Folded into the git segment's `$status` token; the distinct state overlay is lost. |
+| `git_state` (rebasing/merging/cherry-picking overlay) | Becomes GPY's `$state` token, which draws its own text (e.g. `REBASING 3/5`) in the module's `style`. A custom `format` or per-operation label is not carried over and warns. |
 | Per-flag git status variables (`$conflicted`, `$ahead`, `$behind`, etc.) | Collapsed into GPY's single `$status` token. |
 | Per-language `symbol` overrides (e.g. `[rust] symbol = " "`) | Not part of the theme — set them manually after import: `gpy config set language.icons.rust ""`. |
-| Right-hand prompt | Not supported; GPY renders one left-aligned prompt line. |
+| `right_format` (right-hand prompt) | Not supported; GPY renders one left-aligned prompt line, and a non-empty `right_format` warns. |
 | Arbitrary `time_format` strftime strings | Approximated as `"12"` or `"24"`; anything finer-grained produces a warning. |
 
 `gpy theme import` prints every dropped or approximated construct as a warning grouped by category (unsupported modules, unrepresentable options, invalid colors, lossy mappings) and exits `0` even when warnings fire — a lossy import is not a failure, but it does mean the emitted theme is an approximation you should read through once.

@@ -34,6 +34,9 @@ fi
 __gpy_cmd_start=""
 __gpy_cmd_count=0
 __gpy_armed=""
+# This shell, as `gpy prompt` tells it from an earlier one at the same PID
+# (`exec bash`, a recycled PID): drawn once per load, never inherited.
+__gpy_instance="$RANDOM$RANDOM${EPOCHREALTIME-}"
 
 # The `gpy` command into variable $1: PATH first, then ~/.local/bin.
 __gpy_bin_into() {
@@ -54,7 +57,8 @@ __gpy_now_into() {
 
 # Milliseconds from $1 to $2 (as __gpy_now_into wrote them) into variable $3.
 # EPOCHREALTIME's separator is locale-dependent and a leading-zero fraction
-# would parse as octal, so every operand is forced with `10#`.
+# would parse as octal, so every operand is forced with `10#`. Status 1, and
+# no duration, when the clock stepped back: `--duration-ms` is a u64.
 __gpy_elapsed_into() {
     local __gpy_e
     case $__gpy_clock in
@@ -67,6 +71,7 @@ __gpy_elapsed_into() {
         seconds) __gpy_e=$((($2 - $1) * 1000)) ;;
         *) return 1 ;;
     esac
+    ((__gpy_e >= 0)) || return 1
     printf -v "$3" '%s' "$__gpy_e"
 }
 
@@ -83,7 +88,7 @@ __gpy_precmd() {
     fi
     if __gpy_bin_into __gpy_pc_bin; then
         local -a __gpy_pc_args=(prompt bash --status "$__gpy_pc_status" --pid "$$"
-            --cmd "$__gpy_cmd_count" --shell-version "$BASH_VERSION")
+            --cmd "$__gpy_cmd_count" --instance "$__gpy_instance" --shell-version "$BASH_VERSION")
         [[ -n $__gpy_pc_ms ]] && __gpy_pc_args+=(--duration-ms "$__gpy_pc_ms")
         # stderr stays the terminal: a tripped script segment says so there.
         local __gpy_pc_out

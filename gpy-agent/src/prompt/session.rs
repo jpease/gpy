@@ -2,14 +2,23 @@
 //! (#1247): the agent's `.reload` and `.reregister` flags, starting the agent
 //! with the shell's first prompt, registering, telling the agent the working
 //! directory after a `cd`, restarting an agent that died (the supervisor),
-//! the Bash that runs script segments, and unregistering at exit. Its state
-//! lives in `<runtime root>/refresh-throttle/<pid>.session`; `gpy prompt
-//! <shell> --exit` removes it with every other `<pid>.*` file.
+//! the Bash that runs script segments, the warnings this shell has seen, and
+//! unregistering at exit. Its state lives in
+//! `<runtime root>/refresh-throttle/<pid>.session`; `gpy prompt <shell>
+//! --exit` removes it with every other `<pid>.*` file. A shell that never
+//! ran its exit hook (killed, or replaced by `exec`) leaves them behind: the
+//! shell's instance token tells its successor at the same PID apart, and
+//! every shell's first prompt sweeps them.
 
 use super::link::{Link, Reply, now_secs};
 use crate::config::Config;
+use crate::env_config::{
+    AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS, AGENT_SUPERVISOR_ENABLED,
+    AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS, DEBUG,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -40,7 +49,18 @@ struct State {
     /// way, so a newer agent it cannot replace is asked once, not every check.
     #[serde(default)]
     agent_nudged_for: String,
+    /// The integration's token for this shell (`--instance`): a state kept
+    /// under another is an earlier shell's at the same PID.
+    #[serde(default)]
+    instance: String,
+    /// The warnings this shell has shown on stderr: each shows once per
+    /// shell, while the warning log keeps recording it.
+    #[serde(default)]
+    warned: Vec<String>,
 }
+
+/// Most warnings a shell remembers before it starts over.
+const WARNED_CAP: usize = 64;
 
 /// The shell's identity in a registration.
 pub(super) struct Shell<'a> {
@@ -65,17 +85,39 @@ impl Session {
     /// Load the state and take the agent's flags for `pid`. On the shell's
     /// first prompt, start the agent (when enabled): that counts as the
     /// first supervisor check.
-    pub(super) fn open(pid: u32, agent_enabled: bool) -> Self {
+    pub(super) fn open(pid: u32, instance: &str, agent_enabled: bool) -> Self {
         let runtime = crate::paths::runtime_dir().ok();
-        let path = runtime
+        let (session, first) = Self::open_in(runtime.as_deref(), pid, instance);
+        if first && agent_enabled {
+            start_agent();
+        }
+        session
+    }
+
+    /// [`Self::open`] under the runtime root `runtime`, without starting the
+    /// agent; whether this is the shell's first prompt. `instance` is empty
+    /// from an integration that predates it: any state at `pid` is then
+    /// this shell's.
+    fn open_in(runtime: Option<&Path>, pid: u32, instance: &str) -> (Self, bool) {
+        let throttle = runtime.map(|root| root.join("refresh-throttle"));
+        let path = throttle
             .as_deref()
-            .map(|root| root.join("refresh-throttle").join(format!("{pid}.session")));
-        let loaded = path.as_deref().and_then(load);
+            .map(|dir| dir.join(format!("{pid}.session")));
+        let loaded = path
+            .as_deref()
+            .and_then(load)
+            .filter(|state| instance.is_empty() || state.instance == instance);
         let first = loaded.is_none();
+        if first && let Some(dir) = &throttle {
+            // Owner-only, also when an older `gpy` made it world-readable.
+            let _ = crate::cache::instant_prompt::files::create_private_dir(dir);
+            sweep(dir, pid);
+        }
         let mut session = Self {
             path,
             state: loaded.unwrap_or_else(|| State {
                 checked_at: now_secs(),
+                instance: instance.to_owned(),
                 ..State::default()
             }),
             reload: first,
@@ -94,10 +136,7 @@ impl Session {
                 super::link::clear_late_window(&root.join("refresh-throttle"), pid);
             }
         }
-        if first && agent_enabled {
-            start_agent();
-        }
-        session
+        (session, first)
     }
 
     /// The duration scripts see: this prompt's command's, else the last one's.
@@ -115,15 +154,36 @@ impl Session {
         (!resolved.as_os_str().is_empty()).then(|| resolved.clone())
     }
 
-    /// Register, sync the workspace and supervise, then store the state.
+    /// Register, sync the workspace and supervise, show the warnings this
+    /// prompt raised, then store the state.
     pub(super) fn finish(mut self, link: &Link, config: &Config, shell: &Shell<'_>, pwd: &str) {
         if link.enabled() {
             sync(link, shell, pwd, &mut self.state);
             supervise(link, config, &mut self.state);
         }
         refresh_trees(shell.name, &mut self.state);
+        self.show_warnings();
         if let Some(path) = &self.path {
             store(path, &self.state);
+        }
+    }
+
+    /// Show each warning this prompt held that this shell has not shown yet;
+    /// without a session file to remember them, the ones the warning log
+    /// did not already end with.
+    fn show_warnings(&mut self) {
+        for warning in crate::debug::take_held() {
+            if self.path.is_none() {
+                if !warning.repeat {
+                    warning.show();
+                }
+            } else if !self.state.warned.contains(&warning.line) {
+                warning.show();
+                if self.state.warned.len() >= WARNED_CAP {
+                    self.state.warned.clear();
+                }
+                self.state.warned.push(warning.line);
+            }
         }
     }
 }
@@ -144,12 +204,35 @@ pub(super) fn exit(link: &Link, pid: u32) {
     ] {
         let _ = std::fs::remove_file(file);
     }
-    let prefix = format!("{pid}.");
-    if let Ok(entries) = std::fs::read_dir(root.join("refresh-throttle")) {
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                let _ = std::fs::remove_file(entry.path());
-            }
+    remove_shell_files(&root.join("refresh-throttle"), |owner| owner == pid);
+}
+
+/// A shell's first prompt: remove what an earlier shell at `pid` left (its
+/// script state, refresh stamps and late window), and every file of a shell
+/// that is gone without its exit hook running.
+fn sweep(throttle: &Path, pid: u32) {
+    let mut alive = HashMap::new();
+    remove_shell_files(throttle, |owner| {
+        owner == pid
+            || !*alive
+                .entry(owner)
+                .or_insert_with(|| crate::ipc::ClientDirectory::is_client_alive(owner))
+    });
+}
+
+/// Remove every `<pid>.*` file in `throttle` whose PID `stale` accepts.
+fn remove_shell_files(throttle: &Path, mut stale: impl FnMut(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(throttle) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let owner = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.split_once('.'))
+            .and_then(|(owner, _)| owner.parse::<u32>().ok());
+        if owner.is_some_and(&mut stale) {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -180,7 +263,7 @@ fn resolve_bash() -> PathBuf {
         if fallback.is_file() {
             fallback
         } else {
-            if super::flag("GPY_DEBUG") == Some(true) {
+            if DEBUG.flag() {
                 eprintln!("gpy[script]: warning: No bash found - script segments disabled");
             }
             PathBuf::new()
@@ -250,12 +333,14 @@ fn track_shell(pid: u32) {
 /// (left running across an upgrade) gets `gpy-agent start`, which replaces an
 /// older one and keeps a newer one, once per `gpy` version.
 fn supervise(link: &Link, config: &Config, state: &mut State) {
-    let enabled =
-        super::flag("GPY_AGENT_SUPERVISOR_ENABLED").unwrap_or(config.agent.supervisor.enabled);
+    let enabled = AGENT_SUPERVISOR_ENABLED
+        .flag_override()
+        .unwrap_or(config.agent.supervisor.enabled);
     if !enabled {
         return;
     }
-    let interval = env_count("GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS")
+    let interval = AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
+        .count_override()
         .unwrap_or(config.agent.supervisor.check_interval_seconds.get());
     let now = now_secs();
     if now.saturating_sub(state.checked_at) < interval {
@@ -277,7 +362,8 @@ fn supervise(link: &Link, config: &Config, state: &mut State) {
         }
         return;
     }
-    let cap = env_count("GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS")
+    let cap = AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS
+        .count_override()
         .and_then(|n| u32::try_from(n).ok())
         .unwrap_or(config.agent.supervisor.max_restart_attempts.get());
     if state.restarts >= cap {
@@ -335,14 +421,6 @@ fn start_agent() {
     let _ = command.spawn();
 }
 
-/// A non-negative integer from the environment (`0` = every prompt).
-fn env_count(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|v| v.parse().ok())
-}
-
 fn load(path: &Path) -> Option<State> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
@@ -351,11 +429,125 @@ fn store(path: &Path, state: &State) {
     let Ok(bytes) = serde_json::to_vec(state) else {
         return;
     };
-    if std::fs::write(path, &bytes).is_err() {
-        let _ = path
-            .parent()
-            .map(std::fs::create_dir_all)
-            .and_then(Result::ok)
-            .map(|()| std::fs::write(path, &bytes));
+    let _ = super::link::write_private(path, &bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Session, store};
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::path::Path;
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    /// Open shell `pid`'s session under `root` as instance `instance` and
+    /// store it, as a prompt does; whether it was the shell's first prompt.
+    fn prompt(root: &Path, pid: u32, instance: &str) -> bool {
+        let (session, first) = Session::open_in(Some(root), pid, instance);
+        assert_eq!(session.reload, first, "a first prompt reloads the scripts");
+        store(
+            session.path.as_deref().expect("a session path"),
+            &session.state,
+        );
+        first
+    }
+
+    /// A PID no process holds: a child that has exited and been reaped.
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("reap true");
+        pid
+    }
+
+    /// `exec` keeps the PID but loads the integration again, with a new
+    /// instance token: that prompt is the shell's first (its script breakers
+    /// reset) and the earlier shell's script state is gone (#1283).
+    #[test]
+    fn another_instance_at_the_same_pid_starts_a_fresh_session() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+        let scripts = root.path().join(format!("refresh-throttle/{pid}.scripts"));
+
+        assert!(prompt(root.path(), pid, "first-shell"), "the first prompt");
+        std::fs::write(&scripts, "{}").expect("write script state");
+        assert!(
+            !prompt(root.path(), pid, "first-shell"),
+            "the same shell's next prompt"
+        );
+        assert!(scripts.exists(), "the shell keeps its script state");
+
+        assert!(
+            prompt(root.path(), pid, "exec-ed-shell"),
+            "a new instance at the PID is a new shell"
+        );
+        assert!(
+            !scripts.exists(),
+            "the earlier shell's script state is gone"
+        );
+        assert!(
+            !prompt(root.path(), pid, "exec-ed-shell"),
+            "and its own next prompt is not first again"
+        );
+    }
+
+    /// An integration that passes no instance keeps whatever state the PID
+    /// has, as before the token existed.
+    #[test]
+    fn no_instance_keeps_the_state_at_the_pid() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+        assert!(prompt(root.path(), pid, "some-shell"));
+        assert!(!prompt(root.path(), pid, ""));
+    }
+
+    /// A shell's first prompt removes the files of shells that are gone
+    /// without running their exit hook, and keeps a live shell's.
+    #[test]
+    fn a_first_prompt_sweeps_the_files_of_dead_shells() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let throttle = root.path().join("refresh-throttle");
+        std::fs::create_dir_all(&throttle).expect("mkdir refresh-throttle");
+        let dead = dead_pid();
+        let live = std::os::unix::process::parent_id();
+        let dead_files = [format!("{dead}.session"), format!("{dead}.git.git_last..x")];
+        let live_file = throttle.join(format!("{live}.scripts"));
+        for name in &dead_files {
+            std::fs::write(throttle.join(name), "").expect("write a dead shell's file");
+        }
+        std::fs::write(&live_file, "").expect("write a live shell's file");
+
+        assert!(prompt(root.path(), std::process::id(), "a-shell"));
+
+        for name in &dead_files {
+            assert!(!throttle.join(name).exists(), "{name} is swept");
+        }
+        assert!(live_file.exists(), "a live shell's file is kept");
+    }
+
+    /// The state holds script output and declared environment values: the
+    /// directory is owner-only, a world-readable one an older `gpy` left is
+    /// restricted, and the session file is owner-only (#1287).
+    #[test]
+    fn the_shell_state_is_owner_only() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let throttle = root.path().join("refresh-throttle");
+        std::fs::create_dir_all(&throttle).expect("mkdir refresh-throttle");
+        std::fs::set_permissions(&throttle, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod 755");
+        let pid = std::process::id();
+
+        assert!(prompt(root.path(), pid, "a-shell"));
+
+        assert_eq!(mode(&throttle), 0o700, "the directory");
+        assert_eq!(mode(&throttle.join(format!("{pid}.session"))), 0o600);
     }
 }

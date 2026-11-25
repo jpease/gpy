@@ -1,13 +1,13 @@
 //! `tests/fixtures/instant_cache_naming_vectors.tsv` against the agent's cache
 //! file naming: Rust is the oracle for every row it checks, so a hand-edited
-//! expected value fails here as well as in the shell vector tests.
+//! expected value fails here.
 
 use super::name::{position_suffix, prev_bg_token};
 use crate::formatter::{IsFirst, IsLast, SegmentPosition};
 use crate::vector_cells::{cell, is_empty_token};
 
-/// A `suffix` flag cell Rust can represent: `true`, `false` or `\e` (false).
-/// Other spellings test the shells' "anything but `true` is false" rule.
+/// A `suffix` flag cell Rust can represent: `true`, `false` or `\e` (false);
+/// a row with another spelling (`TRUE`, `1`) is skipped.
 fn flag(raw: &str) -> Option<bool> {
     match raw {
         "true" => Some(true),
@@ -45,10 +45,9 @@ fn instant_cache_naming_shared_vectors() {
                 assert_eq!(actual, cell(expected), "suffix row {row:?}");
                 checked = checked.saturating_add(1);
             }
-            // Shell cache-read status codes, the shells' presence probe and the
-            // git background file tail (`git_bg_names_match_the_shared_vectors`)
-            // are not checked here.
-            ["status" | "bgfile" | "present", ..] => {}
+            // The git background file tail is checked by
+            // `git_bg_names_match_the_shared_vectors`.
+            ["bgfile", ..] => {}
             _ => panic!("unknown or short row {row:?}"),
         }
     }

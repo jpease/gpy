@@ -11,8 +11,21 @@ pub(super) fn is_uninstalled_bundled(segment: &str, bundled_dir: Option<&Path>) 
         && bundled_dir.is_none_or(|dir| !dir.join(segment).join("plugin.toml").is_file())
 }
 
-/// Remediation shown when unrecognized segments are uninstalled bundled plugins.
-pub(super) const SETUP_REMEDIATION: &str = "Remediation: Run `gpy setup`. These are bundled plugins that were never installed or are outdated after an upgrade.";
+/// Remediation shown when unrecognized segments are uninstalled bundled
+/// plugins. `overridden` is the `GPY_BUNDLED_PLUGIN_DIR` directory when it
+/// is set: `gpy setup` installs only into the data directory, so it cannot
+/// fill that one.
+pub(super) fn uninstalled_bundled_remediation(overridden: Option<&Path>) -> String {
+    overridden.map_or_else(
+        || "Remediation: Run `gpy setup`. These are bundled plugins that were never installed or are outdated after an upgrade.".to_owned(),
+        |dir| {
+            format!(
+                "Remediation: GPY_BUNDLED_PLUGIN_DIR points at {}, which lacks these bundled plugins; `gpy setup` installs them only into the data directory. Point the variable at a directory that holds them, or unset it and run `gpy setup`.",
+                dir.display()
+            )
+        },
+    )
+}
 
 #[cfg(test)]
 mod tests {

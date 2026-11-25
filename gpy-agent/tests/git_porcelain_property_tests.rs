@@ -184,7 +184,7 @@ proptest! {
     /// The `# branch.head` header is taken verbatim, `(detached)` aside.
     #[test]
     fn branch_head_is_verbatim(name in "[^\0]{1,40}") {
-        let state = parse_v2_records(&format!("# branch.head {name}\0"), 0);
+        let state = parse_v2_records(format!("# branch.head {name}\0"), 0);
         let expected = if name == "(detached)" {
             BranchHead::Detached
         } else {

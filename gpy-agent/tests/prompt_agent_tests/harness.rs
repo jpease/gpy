@@ -25,6 +25,7 @@ pub const BOUNDED: Duration = Duration::from_secs(5);
 /// One `gpy prompt` run.
 pub struct Run {
     pub stdout: String,
+    pub stderr: String,
     pub elapsed: Duration,
 }
 
@@ -40,13 +41,23 @@ impl Shell {
     /// agent mode on and the supervisor off. Its session already exists, so
     /// no `gpy prompt` run starts a real agent behind the test's back.
     pub fn new(segments: &str) -> Self {
+        Self::with_theme(segments, "default", None)
+    }
+
+    /// [`Self::new`] with theme `theme`, written to the user's themes
+    /// directory from `theme_toml` when given.
+    pub fn with_theme(segments: &str, theme: &str, theme_toml: Option<&str>) -> Self {
         let sandbox = AgentSandbox::new();
+        if let Some(text) = theme_toml {
+            std::fs::write(sandbox.env.themes_dir().join(format!("{theme}.toml")), text)
+                .expect("write theme");
+        }
         sandbox
             .env
             .write_config(&format!(
                 "[agent]\nenabled = true\n\n[agent.supervisor]\nenabled = false\n\n\
                  [language]\nshow_versions = false\n\n\
-                 [ui]\ntheme = \"default\"\nenabled_segments = [{segments}]\n"
+                 [ui]\ntheme = \"{theme}\"\nenabled_segments = [{segments}]\n"
             ))
             .expect("write config");
         let shell = Self {
@@ -107,12 +118,18 @@ impl Shell {
     pub fn prompt(&self, dir: &Path, envs: &[(&str, &str)]) -> Run {
         let mut command = self.command(dir);
         command.envs(envs.iter().copied());
+        Self::run(&mut command)
+    }
+
+    /// Run a [`Self::command`]; it must succeed.
+    pub fn run(command: &mut Command) -> Run {
         let started = Instant::now();
         let output = command.output().expect("run gpy prompt");
         let elapsed = started.elapsed();
         assert!(output.status.success(), "gpy prompt failed: {output:?}");
         Run {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             elapsed,
         }
     }
@@ -125,10 +142,10 @@ impl Shell {
             .expect("instant cache path")
     }
 
-    /// The Bash presence marker of `base` (`git`, `lang`) for `key_dir`.
-    pub fn marker(&self, key_dir: &Path, base: &str) -> PathBuf {
+    /// The Bash language presence marker for `key_dir`.
+    pub fn lang_marker(&self, key_dir: &Path) -> PathBuf {
         let _env = EnvGuard::set_one("XDG_CACHE_HOME", self.sandbox.env.xdg_cache_home());
-        InstantPromptCache::presence_marker_for_dir(key_dir, base, PromptDialect::BashPrompt)
+        InstantPromptCache::lang_marker_for_dir(key_dir, PromptDialect::BashPrompt)
             .expect("presence marker path")
     }
 

@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Shared vectors for colour-depth downgrade of 24-bit colours. Read by the Rust
-# tests gpy-agent/tests/color_depth_vectors_tests.rs and
-# gpy-agent/src/formatter/style_encoder.rs.
+# test gpy-agent/tests/color_depth_vectors_tests.rs, which fits the encoder's
+# 24-bit output with `downgrade_sgr` (gpy-agent/src/formatter/color_depth.rs):
+# the one conversion `gpy prompt`, `gpy-agent oneshot` and the wizard's
+# preview use.
 #
 # Columns (tab-separated): r g b depth fg_param bg_param. depth is one of
 # truecolor, 256, 16, none. fg_param/bg_param are the SGR parameters (no CSI,

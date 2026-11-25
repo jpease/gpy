@@ -1,8 +1,9 @@
 //! `tests/fixtures/git_root_vectors.tsv` against `find_project_root`: Rust is
-//! the oracle for every `root` row, so a hand-edited expected value fails here
-//! as well as in the shell vector tests. The `key` rows test the shells'
-//! `__gpy_instant_cache_key_path` composition, which has no single Rust
-//! function, so they are skipped.
+//! the oracle for every `root` row, so a hand-edited expected value fails
+//! here. The `key` rows describe the key path `gpy prompt` composes from
+//! the git root, else the canonical `$PWD` (`find_git_root` and
+//! `Render::lang_key` in `prompt/mod.rs`), which has no single function to
+//! check them against, so they are skipped.
 
 use super::key::find_project_root;
 use crate::vector_cells::{cell, is_empty_token};

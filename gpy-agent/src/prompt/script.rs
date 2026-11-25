@@ -7,8 +7,9 @@
 //! environment, so only exported variables reach a script; the in-shell path
 //! also forwards unexported ones.
 
+use super::dialect::Dialect;
 use super::link::now_secs;
-use super::pill::{self, Caps, Paint, Place};
+use super::pill::{self, Caps, Place};
 use super::vars::ShellVars;
 use crate::theme::export::ScriptSegmentExport;
 use serde::{Deserialize, Serialize};
@@ -490,7 +491,13 @@ impl Scripts {
     }
 
     /// `__gpy_g_render`: the pill of `word` at `place`.
-    pub(super) fn pill(&self, vars: &ShellVars, paint: Paint, word: &str, place: Place) -> String {
+    pub(super) fn pill(
+        &self,
+        vars: &ShellVars,
+        dialect: Dialect,
+        word: &str,
+        place: Place,
+    ) -> String {
         let Some((segment, state)) = self.lookup(word) else {
             return String::new();
         };
@@ -500,11 +507,11 @@ impl Scripts {
         if valid_variant(&state.variant) && !state.variant.is_empty() {
             icon = vars.or_nonempty(&format!("__icon_{token}_{}", state.variant), icon);
         }
-        let text = paint.escape(&state.text);
+        let text = dialect.escape(&state.text);
         let label = if icon.is_empty() {
             format!(" {text}")
         } else {
-            format!(" {} {text}", paint.escape(icon))
+            format!(" {} {text}", dialect.escape(icon))
         };
         let cap = |side: &str| {
             let prefix = format!("__gpy_segment_{token}_{side}");
@@ -520,7 +527,7 @@ impl Scripts {
             open: cap("open"),
             close: cap("close"),
         };
-        pill::section_with_caps(vars, paint, colors, &label, place, &caps)
+        pill::section_with_caps(vars, dialect, colors, &label, place, &caps)
     }
 }
 
@@ -559,11 +566,7 @@ fn store_session(path: &Path, session: &Session) {
     let mut name = path.as_os_str().to_owned();
     name.push(".tmp");
     let temporary = PathBuf::from(name);
-    let written = std::fs::write(&temporary, &json).is_ok()
-        || (path
-            .parent()
-            .is_some_and(|dir| std::fs::create_dir_all(dir).is_ok())
-            && std::fs::write(&temporary, &json).is_ok());
+    let written = super::link::write_private(&temporary, &json).is_ok();
     if written && std::fs::rename(&temporary, path).is_err() {
         let _ = std::fs::remove_file(&temporary);
     }

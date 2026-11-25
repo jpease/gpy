@@ -284,6 +284,35 @@ fn palette_that_cannot_render_the_theme_is_not_applied() {
     assert_eq!(daemon.directory(), first);
 }
 
+/// A reload selecting a new theme with a palette that theme cannot render is
+/// rejected before the theme switches, even when the old theme cannot render
+/// that palette either: a rejected reload changes nothing.
+#[test]
+fn rejected_palette_reload_does_not_switch_the_theme() {
+    let daemon = Daemon::start(palette_env("#123456"));
+    let first = daemon.directory();
+    assert!(first.contains(FIRST_FG), "initial render: {first:?}");
+
+    daemon.write(
+        "themes/other.toml",
+        "[ui]\n[segments.directory]\nformat = \"SWITCHED[$path](fg:signal)\"\n",
+    );
+    daemon.write("palettes/bare.toml", "[colors]\nother = \"#654321\"\n");
+    daemon.write(
+        "config.toml",
+        "[ui]\ntheme = \"other\"\npalette = \"bare\"\n",
+    );
+    assert!(
+        !daemon.reload(),
+        "selecting a palette the new theme cannot render must reject the reload"
+    );
+    assert_eq!(
+        daemon.directory(),
+        first,
+        "the rejected reload switched the theme"
+    );
+}
+
 /// A configured theme that failed to load at start is stood in for by
 /// `default` and applied by the first reload after it is fixed.
 #[test]

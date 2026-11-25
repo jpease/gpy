@@ -33,7 +33,7 @@ fn default_config_emits_valid_validatable_theme() {
     );
     assert_eq!(
         artifacts.theme.segments.git.format.as_deref(),
-        Some(r"on [$symbol$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
+        Some(r"on [($symbol )$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
     );
     assert_eq!(
         artifacts.theme.segments.character.success_color.as_str(),
@@ -285,4 +285,92 @@ fn directory_read_only_maps_to_read_only_icon() {
 fn directory_without_read_only_leaves_icon_unset() {
     let artifacts = import("import_default.toml", "default-import");
     assert!(artifacts.theme.segments.directory.read_only_icon.is_none());
+}
+
+fn build_inline(source: &str) -> ImportArtifacts {
+    build(&parse(source).expect("parse inline snippet"), "inline").expect("build")
+}
+
+#[test]
+fn time_module_is_hidden_unless_enabled() {
+    // Starship's `time.disabled` defaults to true: `$time` alone draws nothing.
+    let hidden = build_inline("format = \"$directory$time\"\n");
+    assert_eq!(hidden.segments, vec!["directory"]);
+    let table_only = build_inline("format = \"$directory$time\"\n[time]\nformat = \"at $time\"\n");
+    assert_eq!(table_only.segments, vec!["directory"]);
+    assert!(
+        table_only
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("'time'")),
+        "{:?}",
+        table_only.warnings
+    );
+
+    let enabled = build_inline("format = \"$directory$time\"\n[time]\ndisabled = false\n");
+    assert_eq!(enabled.segments, vec!["directory", "clock"]);
+}
+
+#[test]
+fn dollar_all_does_not_enable_the_hidden_clock() {
+    let hidden = build_inline("format = \"$all\"\n");
+    assert!(
+        !hidden.segments.iter().any(|s| s == "clock"),
+        "{:?}",
+        hidden.segments
+    );
+    assert!(hidden.segments.iter().any(|s| s == "directory"));
+
+    let enabled = build_inline("format = \"$all\"\n[time]\ndisabled = false\n");
+    assert!(
+        enabled.segments.iter().any(|s| s == "clock"),
+        "{:?}",
+        enabled.segments
+    );
+}
+
+#[test]
+fn right_format_warns() {
+    let artifacts = build_inline("right_format = \"$time\"\n");
+    assert!(
+        artifacts
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("right_format")),
+        "{:?}",
+        artifacts.warnings
+    );
+    let none = build_inline("right_format = \"\"\n");
+    assert!(
+        !none
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("right_format")),
+        "{:?}",
+        none.warnings
+    );
+}
+
+#[test]
+fn git_state_in_the_format_imports_the_state_variable() {
+    let artifacts = build_inline("format = \"$git_branch$git_state$git_status\"\n");
+    let format = artifacts
+        .theme
+        .segments
+        .git
+        .format
+        .clone()
+        .expect("git format");
+    assert!(format.contains("$state"), "{format}");
+    validate_segment_templates(&artifacts.theme, &artifacts.palette.to_template_palette())
+        .expect("imported theme validates");
+}
+
+#[test]
+fn git_status_symbols_land_in_the_theme_and_keep_the_preset_rest() {
+    let artifacts = build_inline("[git_status]\nmodified = \"~\"\n");
+    let git = artifacts.theme.segments.git;
+    assert_eq!(git.unstaged_icon.as_deref(), Some("~"));
+    // The preset's own icons stay for keys the source does not set.
+    assert_eq!(git.staged_icon.as_deref(), Some("+"));
 }

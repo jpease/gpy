@@ -72,6 +72,10 @@ enum Commands {
         /// A token that changes with every command the shell ran
         #[arg(long, default_value = "")]
         cmd: String,
+        /// A token the shell integration draws once when it loads: another
+        /// one at the same PID is a new shell (`exec`, a recycled PID)
+        #[arg(long, default_value = "")]
+        instance: String,
         /// The shell's version, for its registration with the agent
         #[arg(long, default_value = "")]
         shell_version: String,
@@ -710,6 +714,7 @@ fn run(command: Commands) -> Result<ExitCode> {
             duration_ms,
             pid,
             cmd,
+            instance,
             shell_version,
             exit,
         } => {
@@ -722,6 +727,7 @@ fn run(command: Commands) -> Result<ExitCode> {
                 duration_ms,
                 pid,
                 cmd,
+                instance,
             };
             return run_prompt(shell, args, &shell_version);
         }

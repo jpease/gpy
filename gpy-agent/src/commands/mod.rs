@@ -27,6 +27,7 @@ mod doctor_tuning;
 pub mod exit_codes;
 /// Icon-style bootstrap run by `gpy setup`.
 pub mod init;
+mod install_target;
 /// Agent lifecycle management (start/stop/restart).
 pub mod lifecycle;
 /// Pass/fail/warn markers for CLI status lines.
@@ -49,6 +50,8 @@ mod script_run;
 pub mod segments;
 /// `gpy setup` — install and wire the per-shell scripts.
 pub mod setup;
+/// `gpy setup` Bash steps: the `.bashrc` block and the login-file loader.
+mod setup_bash;
 /// `gpy setup` Fish steps: prompt link, old loader, old directories.
 mod setup_fish;
 /// `gpy setup` step that stages and swaps in the installed shell trees.

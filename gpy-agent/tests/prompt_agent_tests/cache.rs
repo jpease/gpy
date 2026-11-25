@@ -27,12 +27,11 @@ fn git_shell() -> (Shell, TestRepo) {
     )
 }
 
-/// A stale `git_first_last.black` entry holding [`STALE`], with its marker.
+/// A stale `git_first_last.black` entry holding [`STALE`].
 fn stale_entry(shell: &Shell, repo: &Path) -> PathBuf {
     let entry = shell.cache_file(repo, "git_first_last", Some("black"));
     write_entry(&entry, STALE);
     backdate(&entry);
-    write_entry(&shell.marker(repo, "git"), "");
     entry
 }
 
@@ -71,22 +70,65 @@ fn stale_git_with_no_agent_draws_a_fresh_oneshot() {
     );
 }
 
-/// A socket nobody listens on (the agent died): the stale entry is drawn at
-/// once and the refresh it attempts fails without blocking the prompt.
+/// A socket nobody listens on (the agent crashed): the stale entry is never
+/// drawn; the refresh it attempts is refused at once and the in-process
+/// oneshot draws the repository as it is now (#1284).
 #[test]
 #[serial]
-fn stale_git_with_a_dead_socket_serves_the_stale_entry() {
+fn stale_git_with_a_dead_socket_draws_a_fresh_oneshot() {
     let (shell, repo) = git_shell();
     stale_entry(&shell, repo.path());
     drop(std::os::unix::net::UnixListener::bind(shell.socket()).expect("bind"));
     let run = shell.prompt(repo.path(), &[STALE_TTL]);
     let _ = std::fs::remove_file(shell.socket());
     assert!(
-        run.stdout.contains(STALE),
-        "stale entry not served: {}",
+        !run.stdout.contains(STALE),
+        "stale entry served: {}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("main"),
+        "no oneshot git status: {}",
         run.stdout
     );
     assert!(run.elapsed < BOUNDED, "the prompt took {:?}", run.elapsed);
+}
+
+/// Nothing cached and no agent to ask (#1284): no socket, an agent that
+/// refuses the request, or a socket nobody listens on. Every shell draws
+/// git with the in-process oneshot, never a blank segment.
+#[test]
+#[serial]
+fn cold_git_without_a_working_agent_draws_a_oneshot() {
+    let (shell, repo) = git_shell();
+    let no_socket = shell.prompt(repo.path(), &[]);
+    assert!(
+        no_socket.stdout.contains("main"),
+        "no socket: {}",
+        no_socket.stdout
+    );
+
+    let agent = ScriptedAgent::spawn(shell.socket(), |request| {
+        if field(request, "op") == "git" {
+            Answer::Line(r#"{"error":"Parse error: path is not allowed"}"#.to_owned())
+        } else {
+            ack()
+        }
+    });
+    let refused = shell.prompt(repo.path(), &[]);
+    assert_eq!(agent.with_op("git").len(), 1, "{:?}", agent.requests());
+    drop(agent);
+    assert!(
+        refused.stdout.contains("main"),
+        "refused: {}",
+        refused.stdout
+    );
+
+    drop(std::os::unix::net::UnixListener::bind(shell.socket()).expect("bind"));
+    let dead = shell.prompt(repo.path(), &[]);
+    let _ = std::fs::remove_file(shell.socket());
+    assert!(dead.stdout.contains("main"), "dead socket: {}", dead.stdout);
+    assert!(dead.elapsed < BOUNDED, "the prompt took {:?}", dead.elapsed);
 }
 
 /// An agent that accepts but never answers: the stale entry is drawn, a
@@ -173,7 +215,7 @@ fn language_under_a_chunked_cache_key_is_drawn() {
         entry.display()
     );
     write_entry(&entry, "LANG-CHUNKED-TEXT");
-    let marker = shell.marker(&project, "lang");
+    let marker = shell.lang_marker(&project);
     write_entry(&marker, "");
     let marked = shell.prompt(&project, &[]);
     assert!(
@@ -202,7 +244,7 @@ fn language_none_fallback_is_drawn_and_refreshed_in_the_background() {
         &shell.cache_file(&project, "lang_first_last", None),
         NONE_TEXT,
     );
-    write_entry(&shell.marker(&project, "lang"), "");
+    write_entry(&shell.lang_marker(&project), "");
     let agent = agent_answering(&shell, "lang", Duration::ZERO);
     let run = shell.prompt(&project, &[]);
     assert!(
@@ -231,7 +273,6 @@ fn git_none_fallback_draws_the_agents_reply() {
         &shell.cache_file(repo.path(), "git_first_last", None),
         NONE_TEXT,
     );
-    write_entry(&shell.marker(repo.path(), "git"), "");
     let agent = agent_answering(&shell, "git", Duration::ZERO);
     let run = shell.prompt(repo.path(), &[]);
     assert!(
@@ -264,7 +305,6 @@ fn git_none_fallback_without_a_timely_agent_draws_none() {
         &shell.cache_file(repo.path(), "git_first_last", None),
         NONE_TEXT,
     );
-    write_entry(&shell.marker(repo.path(), "git"), "");
     let down = shell.prompt(repo.path(), &[]);
     assert!(down.stdout.contains(NONE_TEXT), "no agent: {}", down.stdout);
     assert!(
@@ -295,8 +335,8 @@ fn git_none_fallback_without_a_timely_agent_draws_none() {
 
 /// Another position's entry (`git_last`) or another context's
 /// (`git_first_last.red`) is a cold miss, not a fallback: never drawn;
-/// with no agent the segment is omitted (no oneshot), with one the prompt
-/// waits the cold budget (5 s here, so a 500 ms reply lands) and draws it.
+/// with no agent the oneshot draws git (#1284), with one the prompt waits
+/// the cold budget (5 s here, so a 500 ms reply lands) and draws it.
 #[test]
 #[serial]
 fn git_other_variants_are_a_cold_miss() {
@@ -307,8 +347,6 @@ fn git_other_variants_are_a_cold_miss() {
             &shell.cache_file(repo.path(), variant, Some(prev_bg)),
             &other,
         );
-        write_entry(&shell.marker(repo.path(), "git"), "");
-
         let down = shell.prompt(repo.path(), &[]);
         assert!(
             !down.stdout.contains(&other),
@@ -316,8 +354,8 @@ fn git_other_variants_are_a_cold_miss() {
             down.stdout
         );
         assert!(
-            !down.stdout.contains("main"),
-            "{other}: oneshot drawn: {}",
+            down.stdout.contains("main"),
+            "{other}: no oneshot: {}",
             down.stdout
         );
 

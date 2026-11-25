@@ -103,6 +103,45 @@ fn doctor_accepts_agent_disabled_via_config() {
     );
 }
 
+/// `gpy doctor` in `sandbox` with `GPY_AGENT_ENABLED` set to `value`.
+fn doctor_with_agent_enabled(sandbox: &AgentSandbox, value: &str) -> CliCommandResult {
+    let [(socket_key, socket)] = sandbox.socket_env();
+    sandbox
+        .env
+        .run_gpy_with_env(
+            &["doctor"],
+            &[(socket_key, socket.as_str()), ("GPY_AGENT_ENABLED", value)],
+        )
+        .expect("spawn gpy doctor")
+}
+
+/// `GPY_AGENT_ENABLED` wins over `agent.enabled` both ways, and doctor
+/// names the switch that decided.
+#[test]
+fn doctor_names_gpy_agent_enabled_when_it_decides() {
+    let enabled = AgentSandbox::new();
+    let forced_off = doctor_with_agent_enabled(&enabled, "0");
+    assert_eq!(forced_off.exit_code, 0_i32, "{forced_off:?}");
+    assert!(
+        forced_off
+            .stdout
+            .contains("Checking process... Disabled via GPY_AGENT_ENABLED"),
+        "{forced_off:?}"
+    );
+
+    let disabled = AgentSandbox::new();
+    disabled
+        .env
+        .write_config("[agent]\nenabled = false\n")
+        .expect("write config");
+    let forced_on = doctor_with_agent_enabled(&disabled, "1");
+    assert!(
+        !forced_on.stdout.contains("Disabled via"),
+        "the environment turned the agent on, so it is probed: {forced_on:?}"
+    );
+    assert!(forced_on.stdout.contains("Not running"), "{forced_on:?}");
+}
+
 #[test]
 fn doctor_fails_a_gpy_agent_whose_version_probe_fails() {
     let sandbox = AgentSandbox::new();

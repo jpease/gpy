@@ -244,7 +244,7 @@ stage_binary "bin/$BINARY" "$INSTALL_DIR/$DEST_AGENT" "agent"
 stage_binary "bin/$CLI_BINARY" "$INSTALL_DIR/$DEST_CLI" "CLI"
 if [ "$wire_shell" = 1 ]; then
     CURRENT_STEP="checking the shell files (nothing is installed yet)"
-    "$STAGED_CLI" setup --check --from "$(pwd)"
+    "$STAGED_CLI" setup --check --shell "$shell_name" --from "$(pwd)"
 fi
 commit_binary "$STAGED_AGENT" "$INSTALL_DIR/$DEST_AGENT" "agent"
 commit_binary "$STAGED_CLI" "$INSTALL_DIR/$DEST_CLI" "CLI"
@@ -280,7 +280,7 @@ if [ "$WINDOWS" != 1 ]; then
     "$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1 || rc=$?
     case $rc in
         0) ok "GPY agent started" ;;
-        6) info "agent disabled in config (agent.enabled = false); not started" ;;
+        6) info "agent disabled (GPY_AGENT_ENABLED or agent.enabled = false); not started" ;;
         *) warn "could not start the agent automatically (it will start on the next shell session)" ;;
     esac
 fi

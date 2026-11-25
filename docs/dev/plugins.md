@@ -80,7 +80,7 @@ Discovery is deterministic and isolated:
 - First-party metadata entries are always included (`gpy-core`)
 - User plugins override bundled plugins by plugin id
 - A segment name is provided by one plugin: a user plugin wins over a bundled one; within a source the lexically smaller plugin id wins and the other plugin is dropped with a diagnostic (`gpy doctor`, `gpy plugin list`); `gpy plugin install` needs `--force` when the new plugin would take a segment name or token from another plugin (it names the plugins it would displace), and reloads a running agent
-- A plugin providing a built-in segment name (`clock`, `duration`, `language`, `directory`, `git`, `status`) is rejected by discovery, `gpy plugin validate` and `gpy plugin install`; `gpy plugin new` also refuses built-in names, taken ids and taken segment names or tokens
+- A plugin providing a reserved segment name (a built-in: `clock`, `duration`, `language`, `directory`, `git`, `status`; the `lang` shorthand of `language`; or the `character` theme table) is rejected by discovery, `gpy plugin validate` and `gpy plugin install`; `gpy plugin new` also refuses reserved names, taken ids and taken segment names or tokens
 - Invalid plugins become diagnostics and do not block healthy plugins
 - Output ordering is stable (sorted by plugin id)
 
@@ -101,11 +101,14 @@ renderer, IPC request or `gpy-agent oneshot` mode for either.
   `gpy-release.zip`) and `gpy-shell-files.tar.gz` carry `plugins/`, and the
   Homebrew formula installs it under `share/gpy/plugins`. `gpy setup` (run by
   `install.sh`, `install-oneline.sh`, `install-dev.fish` and by hand after a
-  Homebrew install) replaces the bundled root with the source's `plugins/`
-  tree and clears the group and world write bits, because script segments
-  refuse a script that others can write (see [Trust](#trust)). When the
-  source already is the data root (the installers' layout), setup only clears
-  the write bits. `gpy uninstall` removes the bundled root.
+  Homebrew install) replaces `plugins` in the data root, the default bundled
+  root, with the source's `plugins/` tree and clears the group and world write
+  bits, because script segments refuse a script that others can write (see
+  [Trust](#trust)). When the source already is the data root (the installers'
+  layout), setup only clears the write bits. `gpy uninstall` removes that
+  directory. Neither writes to `$GPY_BUNDLED_PLUGIN_DIR`: it must point at a
+  directory that already holds the plugins, and `gpy doctor` says so when they
+  are missing there.
 - **Settings.** Both are configured under `config.toml`
   `[plugin.hostname]` (`show_always`, `trim_at`) and `[plugin.username]`
   (`show_always`), not in the theme.
@@ -373,6 +376,10 @@ verdicts and environment. With no Bash at all, script segments are disabled
 - **Cache in the session file.** `gpy prompt` keeps each shell's results,
   trigger state and breaker counters in
   `<runtime>/refresh-throttle/<pid>.scripts`, removed when the shell exits.
+  A new shell at the same PID (`exec`, a recycled PID) draws another instance
+  token when the integration loads and starts empty, and a shell's first
+  prompt removes the files of shells that are gone without running their exit
+  hook.
   A result is keyed by the segment's static cache key plus the current values
   of the declared inputs and `env` names and expires after `ttl_secs` (`0` =
   no cache). Ages come from the `gpy` binary's wall clock (seconds since the

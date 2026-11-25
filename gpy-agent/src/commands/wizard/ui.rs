@@ -2,8 +2,9 @@
 
 use super::bindings;
 use super::keys::InputMode;
-use super::preview::to_ratatui_color;
+use super::preview::{fit_color, to_ratatui_color};
 use super::state::{Section, WizardState};
+use crate::formatter::ColorDepth;
 use crate::plugin::BuiltinSegment;
 use crate::template::Palette;
 use ratatui::Frame;
@@ -37,7 +38,11 @@ impl WizardColors {
 }
 
 fn palette_named(palette: &Palette, name: &str) -> Option<RatatuiColor> {
-    palette.get(name).as_ref().and_then(to_ratatui_color)
+    palette
+        .get(name)
+        .as_ref()
+        .and_then(to_ratatui_color)
+        .and_then(|color| fit_color(color, ColorDepth::detect()))
 }
 
 fn border_style(focused: bool, accent: Option<RatatuiColor>) -> Style {
@@ -63,8 +68,28 @@ pub struct DrawArgs<'a> {
     pub colors: WizardColors,
 }
 
+/// Scroll position of each master list, kept across frames. A fresh
+/// `ListState` per frame scrolls the cursor row to the bottom edge every time,
+/// so moving up in a scrolled list would never move the highlight.
+#[derive(Default)]
+pub struct ListScroll {
+    theme: ListState,
+    palette: ListState,
+    segments: ListState,
+}
+
+impl ListScroll {
+    const fn of(&mut self, section: Section) -> &mut ListState {
+        match section {
+            Section::Theme => &mut self.theme,
+            Section::Palette => &mut self.palette,
+            Section::Segments => &mut self.segments,
+        }
+    }
+}
+
 /// Draw one wizard frame.
-pub fn draw(frame: &mut Frame, args: &DrawArgs) {
+pub fn draw(frame: &mut Frame, args: &DrawArgs, scroll: &mut ListScroll) {
     let area = frame.area();
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -76,12 +101,12 @@ pub fn draw(frame: &mut Frame, args: &DrawArgs) {
         .split(area);
     let [body_area, preview_area, footer_area] = *outer else {
         // Unreachable: split returns one Rect per constraint.
-        render_sections(frame, area, args.state, args.colors);
+        render_sections(frame, area, args.state, args.colors, scroll);
         return;
     };
 
     let (master_area, detail_area) = body_layout(body_area);
-    render_sections(frame, master_area, args.state, args.colors);
+    render_sections(frame, master_area, args.state, args.colors, scroll);
     render_detail_panel(frame, detail_area, args.detail);
     render_preview_panel(frame, preview_area, args.state, args.preview, args.colors);
     render_footer(
@@ -100,7 +125,13 @@ pub fn draw(frame: &mut Frame, args: &DrawArgs) {
 }
 
 /// Theme / Palette / Segments lists, all narrowed by the shared filter query.
-fn render_sections(frame: &mut Frame, area: Rect, state: &WizardState, colors: WizardColors) {
+fn render_sections(
+    frame: &mut Frame,
+    area: Rect,
+    state: &WizardState,
+    colors: WizardColors,
+    scroll: &mut ListScroll,
+) {
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Min(3), Constraint::Min(3)])
@@ -122,6 +153,7 @@ fn render_sections(frame: &mut Frame, area: Rect, state: &WizardState, colors: W
             is_selected: &|name| name == state.selected_theme(),
         },
         colors,
+        scroll.of(Section::Theme),
     );
 
     render_one_section(
@@ -136,6 +168,7 @@ fn render_sections(frame: &mut Frame, area: Rect, state: &WizardState, colors: W
             is_selected: &|name| name == state.selected_palette(),
         },
         colors,
+        scroll.of(Section::Palette),
     );
 
     let segments_title = format!(
@@ -154,6 +187,7 @@ fn render_sections(frame: &mut Frame, area: Rect, state: &WizardState, colors: W
             is_selected: &|name| state.is_segment_enabled(name),
         },
         colors,
+        scroll.of(Section::Segments),
     );
 }
 
@@ -173,6 +207,7 @@ fn render_one_section(
     state: &WizardState,
     source: &SectionSource,
     colors: WizardColors,
+    list_state: &mut ListState,
 ) {
     let indices = state.filtered_indices(source.section);
     let (items, selected, cursor_index) = narrow_to_filtered(
@@ -193,6 +228,7 @@ fn render_one_section(
             filter_query: state.filter_query(),
             accent: colors.accent,
         },
+        list_state,
     );
 }
 
@@ -324,7 +360,7 @@ fn section_title(title: &str, filter_query: &str) -> String {
 
 /// Render one section. The cursor highlight is separate from the `[x]` marker
 /// because in Segments the cursor can sit on an unselected item.
-fn render_section(frame: &mut Frame, area: Rect, spec: &SectionSpec) {
+fn render_section(frame: &mut Frame, area: Rect, spec: &SectionSpec, list_state: &mut ListState) {
     let title = section_title(spec.title, spec.filter_query);
     let block = section_block(&title, spec.focused, spec.accent);
 
@@ -356,10 +392,9 @@ fn render_section(frame: &mut Frame, area: Rect, spec: &SectionSpec) {
         .block(block)
         .highlight_style(highlight_style);
 
-    let mut list_state = ListState::default();
     list_state.select(spec.cursor_index);
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_stateful_widget(list, area, list_state);
 }
 
 /// Largest scroll offset that still shows help text on a terminal of `area`,
@@ -608,7 +643,7 @@ mod tests {
             };
 
             terminal
-                .draw(|frame| draw(frame, &args))
+                .draw(|frame| draw(frame, &args, &mut ListScroll::default()))
                 .expect("draw should not panic or error");
 
             let rendered = format!("{:?}", terminal.backend().buffer());
@@ -647,7 +682,7 @@ mod tests {
         };
 
         terminal
-            .draw(|frame| draw(frame, &args))
+            .draw(|frame| draw(frame, &args, &mut ListScroll::default()))
             .expect("draw should not panic or error");
 
         let rendered = format!("{:?}", terminal.backend().buffer());
@@ -677,10 +712,67 @@ mod tests {
         };
 
         terminal
-            .draw(|frame| draw(frame, &args))
+            .draw(|frame| draw(frame, &args, &mut ListScroll::default()))
             .expect("draw should not panic or error");
 
         let rendered = format!("{:?}", terminal.backend().buffer());
         assert!(rendered.contains("Theme /default"), "{rendered}");
+    }
+
+    /// Row of the reverse-video cursor line within the buffer.
+    fn highlighted_row(buffer: &ratatui::buffer::Buffer) -> Option<u16> {
+        (0..buffer.area.height).find(|&y| {
+            (0..buffer.area.width).any(|x| {
+                buffer
+                    .cell((x, y))
+                    .is_some_and(|cell| cell.modifier.contains(Modifier::REVERSED))
+            })
+        })
+    }
+
+    /// Moving up in a scrolled list moves the highlight up a row; it only
+    /// stays on the bottom row if the scroll offset is rebuilt every frame.
+    #[test]
+    fn draw_keeps_scroll_offset_so_highlight_moves_up_in_a_scrolled_list() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut state = make_state();
+        state.next_section();
+        state.next_section();
+        assert_eq!(state.focus(), Section::Segments);
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal should construct");
+        let mut scroll = ListScroll::default();
+        let preview = vec![Line::from("preview line")];
+        let detail = vec![Line::from("detail line")];
+        let mut draw_once = |shown: &WizardState| {
+            let args = DrawArgs {
+                state: shown,
+                mode: InputMode::Normal,
+                preview: &preview,
+                detail: &detail,
+                colors: WizardColors::default(),
+            };
+            terminal
+                .draw(|frame| draw(frame, &args, &mut scroll))
+                .expect("draw should not error");
+            highlighted_row(terminal.backend().buffer())
+        };
+
+        let mut bottom = None;
+        for _ in 0_u8..40_u8 {
+            state.move_cursor_down();
+            bottom = draw_once(&state);
+        }
+        state.move_cursor_up();
+        let after_up = draw_once(&state);
+
+        let bottom_row = bottom.expect("a highlighted row");
+        assert_eq!(
+            after_up,
+            Some(bottom_row - 1),
+            "highlight follows the cursor up"
+        );
     }
 }

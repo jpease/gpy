@@ -57,6 +57,14 @@ builtin_segments! {
     Status => "status",
 }
 
+impl BuiltinSegment {
+    /// The built-in a CLI shorthand names (`lang` → `language`).
+    #[must_use]
+    pub fn from_alias(name: &str) -> Option<Self> {
+        (name == "lang").then_some(Self::Language)
+    }
+}
+
 impl fmt::Display for BuiltinSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())

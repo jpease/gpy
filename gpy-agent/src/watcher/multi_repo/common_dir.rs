@@ -8,6 +8,8 @@ use crate::watcher::watch_set::WatchMode;
 use std::path::{Path, PathBuf};
 
 /// Add `git_root` as a dependent of its common dir; the first arms watches.
+/// The registry learns the common dir first: the poll backend picks its
+/// poller from the registry.
 pub(super) fn acquire_common_dir_watches<T: WatchTarget>(
     watcher: &MultiRepoWatcher<T>,
     w: &mut T,
@@ -17,6 +19,10 @@ pub(super) fn acquire_common_dir_watches<T: WatchTarget>(
     let Some(common_dir) = resolve_common_dir(git_dir) else {
         return;
     };
+
+    watcher
+        .registry
+        .register_common_gitdir(&common_dir, git_root);
 
     {
         let mut guard = watcher.common_watches.lock_or_recover();
@@ -28,10 +34,6 @@ pub(super) fn acquire_common_dir_watches<T: WatchTarget>(
         }
         drop(guard);
     }
-
-    watcher
-        .registry
-        .register_common_gitdir(&common_dir, git_root);
 }
 
 /// Watch `<common>` shallow (`packed-refs`, `config`; a directory watch

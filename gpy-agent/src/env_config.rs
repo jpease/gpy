@@ -1,19 +1,24 @@
-//! Every `GPY_*` environment variable the Rust code reads, in one place.
+//! Every `GPY_*` environment variable the Rust code reads, in one place:
+//! the agent and CLI commands' ([`AGENT_ENV_VARS`]) and those `gpy prompt`
+//! reads on every prompt ([`PROMPT_ENV_VARS`]). Test-only switches are not
+//! listed.
 //!
-//! [`AGENT_ENV_VARS`] lists each variable with its kind, and every read goes
-//! through that entry's typed accessor, so all variables treat whitespace,
-//! zero and garbage the same way. The `parse_*` forms take the raw value so
-//! callers and tests need no `std::env::set_var`.
+//! Each entry carries its kind, and every read goes through that entry's
+//! typed accessor, so all variables treat whitespace, zero and garbage the
+//! same way. The `parse_*` forms take the raw value so callers and tests need
+//! no `std::env::set_var`.
 //!
 //! Rules per kind:
 //! - Flags accept `1/true/yes/on` and `0/false/no/off`, case-insensitive and
-//!   trimmed; the shells read the same table
-//!   (`tests/fixtures/shell_env_flag_vectors.tsv` is checked against
+//!   trimmed (`tests/fixtures/shell_env_flag_vectors.tsv` is checked against
 //!   [`parse_flag`]).
 //! - Positive integers: `0`, garbage or an out-of-range number is ignored.
 //! - "Zero disables" integers: `0` means off; garbage is ignored.
-//! - Paths: empty is unset; a relative path resolves against the launch
-//!   directory.
+//! - Counts: any whole number, `0` included; garbage is ignored.
+//! - Paths: empty is unset. `GPY_DEBUG_LOG`, `GPY_CONFIG_PATH`,
+//!   `GPY_AGENT_SOCKET_PATH` and `GPY_BUNDLED_PLUGIN_DIR` must be absolute:
+//!   each command, shell and the agent (in `/`) would resolve a relative one
+//!   against its own directory, so it is ignored.
 //! - Empty or whitespace-only is unset for every kind, with no warning.
 //!
 //! An ignored value falls back to the default and is logged once per variable
@@ -25,6 +30,7 @@
 //! `agent.live_updates` says, and `0` or unset leaves the decision to config.
 
 use crate::font::{FontCapability, parse_nerd_font};
+use crate::formatter::ColorDepth;
 use crate::sync_ext::MutexExt;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -96,6 +102,15 @@ pub(crate) fn parse_flag(raw: Option<&str>) -> Reading<bool> {
     }
 }
 
+/// A colour depth name (see [`ColorDepth::parse`]).
+#[must_use]
+pub(crate) fn parse_color_depth(raw: Option<&str>) -> Reading<ColorDepth> {
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Reading::Unset;
+    };
+    ColorDepth::parse(value).map_or_else(|| Reading::Invalid(value.to_owned()), Reading::Value)
+}
+
 /// A path; empty (or whitespace-only) is `None`.
 #[must_use]
 pub(crate) fn parse_path(raw: Option<&OsStr>) -> Option<PathBuf> {
@@ -114,16 +129,29 @@ fn parse_text(raw: Option<&str>) -> Option<String> {
 pub(crate) enum EnvKind {
     /// A boolean flag.
     Flag { default: bool },
+    /// A boolean flag that overrides a config key; unset leaves it to config.
+    ConfigFlag,
     /// A positive integer; `0` and garbage give `default`.
     Positive { default: u64 },
     /// An integer where `0` turns the feature off; `None` default is "off".
     ZeroDisables { default: Option<u64> },
+    /// A whole number, `0` included; garbage gives `default`.
+    Count { default: u64 },
+    /// A whole number, `0` included, that overrides a config key.
+    ConfigCount,
     /// A filesystem path.
     Path,
-    /// A path read through `paths::root_var_os`, which lib tests stub out.
+    /// A filesystem path that must be absolute: every command, shell and
+    /// the agent (which runs in `/`) must resolve it alike, so a relative
+    /// value is ignored.
+    AbsolutePath,
+    /// An [`Self::AbsolutePath`] read through `paths::root_var_os`, which
+    /// lib tests stub out.
     ConfigRoot,
     /// `GPY_NERD_FONT`: a flag plus `nerd`, `none`, `ascii`, `unknown`, `auto`.
     NerdFont,
+    /// `GPY_COLOR_DEPTH`: a [`ColorDepth`] name; unset detects.
+    ColorDepth,
     /// Free text.
     Text,
 }
@@ -145,7 +173,12 @@ pub(crate) enum Source {
     /// Unset, so the built-in default applies.
     Default,
     /// The environment value was not recognised; the default applies.
-    Ignored(String),
+    Ignored {
+        /// The value as set.
+        raw: String,
+        /// What the variable accepts.
+        expected: &'static str,
+    },
 }
 
 /// `GPY_PROFILE`: log timed operations to stderr.
@@ -156,12 +189,12 @@ pub(crate) const PROFILE: EnvVar = EnvVar {
 /// `GPY_DEBUG_LOG`: debug log file.
 pub(crate) const DEBUG_LOG: EnvVar = EnvVar {
     name: "GPY_DEBUG_LOG",
-    kind: EnvKind::Path,
+    kind: EnvKind::AbsolutePath,
 };
 /// `GPY_AGENT_SOCKET_PATH`: agent socket.
 pub(crate) const AGENT_SOCKET_PATH: EnvVar = EnvVar {
     name: "GPY_AGENT_SOCKET_PATH",
-    kind: EnvKind::Path,
+    kind: EnvKind::AbsolutePath,
 };
 /// `GPY_CONFIG_PATH`: config file.
 pub(crate) const CONFIG_PATH: EnvVar = EnvVar {
@@ -214,7 +247,7 @@ pub(crate) const WATCH_WORKTREE: EnvVar = EnvVar {
 /// `GPY_BUNDLED_PLUGIN_DIR`: bundled plugin directory.
 pub(crate) const BUNDLED_PLUGIN_DIR: EnvVar = EnvVar {
     name: "GPY_BUNDLED_PLUGIN_DIR",
-    kind: EnvKind::Path,
+    kind: EnvKind::AbsolutePath,
 };
 /// `GPY_CONFIG_WATCH_POLL_MS`: config poll fallback; `0` disables it.
 pub(crate) const CONFIG_WATCH_POLL_MS: EnvVar = EnvVar {
@@ -242,8 +275,66 @@ pub(crate) const SHARE_DIR: EnvVar = EnvVar {
     kind: EnvKind::Path,
 };
 
-/// Every `GPY_*` variable the Rust code reads; `gpy doctor` prints them all.
-/// Test-only `GPY_UPDATE_SCHEMAS` and `GPY_CI_NO_SHELLS` are not listed.
+/// `GPY_AGENT_ENABLED`: overrides `agent.enabled`.
+pub(crate) const AGENT_ENABLED: EnvVar = EnvVar {
+    name: "GPY_AGENT_ENABLED",
+    kind: EnvKind::ConfigFlag,
+};
+/// `GPY_AGENT_SUPERVISOR_ENABLED`: overrides `agent.supervisor.enabled`.
+pub(crate) const AGENT_SUPERVISOR_ENABLED: EnvVar = EnvVar {
+    name: "GPY_AGENT_SUPERVISOR_ENABLED",
+    kind: EnvKind::ConfigFlag,
+};
+/// `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS`: overrides
+/// `agent.supervisor.check_interval_seconds`.
+pub(crate) const AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS: EnvVar = EnvVar {
+    name: "GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS",
+    kind: EnvKind::ConfigCount,
+};
+/// `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS`: overrides
+/// `agent.supervisor.max_restart_attempts`.
+pub(crate) const AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS: EnvVar = EnvVar {
+    name: "GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS",
+    kind: EnvKind::ConfigCount,
+};
+/// `GPY_IPC_TIMEOUT_MS`: how long a prompt waits for the agent.
+pub(crate) const IPC_TIMEOUT_MS: EnvVar = EnvVar {
+    name: "GPY_IPC_TIMEOUT_MS",
+    kind: EnvKind::Count { default: 150 },
+};
+/// `GPY_IPC_COLD_TIMEOUT_MS`: the same wait with nothing to show yet.
+pub(crate) const IPC_COLD_TIMEOUT_MS: EnvVar = EnvVar {
+    name: "GPY_IPC_COLD_TIMEOUT_MS",
+    kind: EnvKind::Count { default: 500 },
+};
+/// `GPY_GIT_INSTANT_CACHE_TTL_SECONDS`: how long a git entry is fresh.
+pub(crate) const GIT_INSTANT_CACHE_TTL_SECONDS: EnvVar = EnvVar {
+    name: "GPY_GIT_INSTANT_CACHE_TTL_SECONDS",
+    kind: EnvKind::Count { default: 5 },
+};
+/// `GPY_LANGUAGE_CACHE_TTL_SECONDS`: how long a language entry is fresh.
+pub(crate) const LANGUAGE_CACHE_TTL_SECONDS: EnvVar = EnvVar {
+    name: "GPY_LANGUAGE_CACHE_TTL_SECONDS",
+    kind: EnvKind::Count { default: 30 },
+};
+/// `GPY_SHOW_STATUS`: the standalone exit-status indicator.
+pub(crate) const SHOW_STATUS: EnvVar = EnvVar {
+    name: "GPY_SHOW_STATUS",
+    kind: EnvKind::Flag { default: true },
+};
+/// `GPY_DEBUG`: `gpy prompt`'s debug output on stderr.
+pub(crate) const DEBUG: EnvVar = EnvVar {
+    name: "GPY_DEBUG",
+    kind: EnvKind::Flag { default: false },
+};
+/// `GPY_COLOR_DEPTH`: overrides colour-depth detection.
+pub(crate) const COLOR_DEPTH: EnvVar = EnvVar {
+    name: "GPY_COLOR_DEPTH",
+    kind: EnvKind::ColorDepth,
+};
+
+/// Every `GPY_*` variable the agent and the CLI commands read; `gpy doctor`
+/// prints them all.
 pub(crate) const AGENT_ENV_VARS: &[&EnvVar] = &[
     &PROFILE,
     &DEBUG_LOG,
@@ -264,16 +355,33 @@ pub(crate) const AGENT_ENV_VARS: &[&EnvVar] = &[
     &SHARE_DIR,
 ];
 
+/// Every `GPY_*` variable `gpy prompt` reads on every prompt; `gpy doctor`
+/// prints them all.
+pub(crate) const PROMPT_ENV_VARS: &[&EnvVar] = &[
+    &IPC_TIMEOUT_MS,
+    &IPC_COLD_TIMEOUT_MS,
+    &GIT_INSTANT_CACHE_TTL_SECONDS,
+    &LANGUAGE_CACHE_TTL_SECONDS,
+    &SHOW_STATUS,
+    &AGENT_ENABLED,
+    &AGENT_SUPERVISOR_ENABLED,
+    &AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS,
+    &AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS,
+    &DEBUG,
+    &COLOR_DEPTH,
+];
+
 /// Names that have already warned in this process.
 static WARNED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 /// Emit `message` the first time `name` warns in this process.
 ///
-/// With `to_debug_log` it goes through [`crate::debug::warn`] (stderr and
-/// `GPY_DEBUG_LOG`); without, to stderr only, which `debug.rs` needs because
-/// calling `debug::warn` while its path initialises would re-enter it. The
-/// lock is released before emitting: `debug::warn` reads `GPY_DEBUG_LOG`
-/// through this module and may call `warn_once` again.
+/// With `to_debug_log` it goes through [`crate::debug::warn`] (stderr and the
+/// warning log, `GPY_DEBUG_LOG` when set); without, through
+/// [`crate::debug::warn_to_agent_log`], which `GPY_DEBUG_LOG`'s own warning
+/// needs because calling `debug::warn` while that path initialises would
+/// re-enter it. The lock is released before emitting: `debug::warn` reads
+/// `GPY_DEBUG_LOG` through this module and may call `warn_once` again.
 pub(crate) fn warn_once(name: &'static str, message: &str, to_debug_log: bool) {
     let first = {
         let mut warned = WARNED.lock_or_recover();
@@ -290,9 +398,7 @@ pub(crate) fn warn_once(name: &'static str, message: &str, to_debug_log: bool) {
     if to_debug_log {
         crate::debug::warn("env", message);
     } else {
-        use std::io::Write as _;
-        // Not `eprintln!`: `clippy::print_stderr` is denied.
-        let _ = writeln!(std::io::stderr(), "Warning: [env] {message}");
+        crate::debug::warn_to_agent_log("env", message);
     }
 }
 
@@ -308,7 +414,10 @@ fn warn_ignored(name: &'static str, raw: &str, expected: &str) {
 const EXPECTED_FLAG: &str = "1, true, yes, on, 0, false, no or off";
 const EXPECTED_POSITIVE: &str = "a positive whole number";
 const EXPECTED_NUMBER: &str = "a whole number (0 disables)";
+const EXPECTED_COUNT: &str = "a whole number";
+const EXPECTED_ABSOLUTE_PATH: &str = "an absolute path";
 const EXPECTED_NERD_FONT: &str = "a flag value, nerd, none, ascii, unknown or auto";
+const EXPECTED_COLOR_DEPTH: &str = "truecolor, 24bit, 256, 16 or none";
 
 impl EnvVar {
     /// The unparsed value, or `None` when unset.
@@ -391,11 +500,85 @@ impl EnvVar {
         }
     }
 
-    /// The path; `None` when unset or empty. Read as an `OsString`, so a
-    /// non-UTF-8 path survives.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only gpy prompt (Unix-only) reads counts")
+    )]
+    fn count_reading(&self) -> Reading<u64> {
+        let reading = parse_u64(self.raw_text().as_deref());
+        if let Reading::Invalid(raw) = &reading {
+            warn_ignored(self.name, raw, EXPECTED_COUNT);
+        }
+        reading
+    }
+
+    /// The whole number, `0` included; the default when unset or invalid.
+    #[must_use]
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only gpy prompt (Unix-only) reads counts")
+    )]
+    pub(crate) fn count(&self) -> u64 {
+        let default = if let EnvKind::Count { default } = self.kind {
+            default
+        } else {
+            0
+        };
+        match self.count_reading() {
+            Reading::Value(value) => value,
+            Reading::Unset | Reading::Invalid(_) => default,
+        }
+    }
+
+    /// The whole number, `0` included; `None` when unset or invalid.
+    #[must_use]
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only gpy prompt (Unix-only) reads counts")
+    )]
+    pub(crate) fn count_override(&self) -> Option<u64> {
+        match self.count_reading() {
+            Reading::Value(value) => Some(value),
+            Reading::Unset | Reading::Invalid(_) => None,
+        }
+    }
+
+    /// The path, unwarned: [`Reading::Invalid`] for a relative value of a
+    /// variable that must be absolute.
+    fn path_reading(&self) -> Reading<PathBuf> {
+        let Some(path) = parse_path(self.raw().as_deref()) else {
+            return Reading::Unset;
+        };
+        let absolute_only = matches!(self.kind, EnvKind::AbsolutePath | EnvKind::ConfigRoot);
+        if absolute_only && !path.is_absolute() {
+            Reading::Invalid(path.to_string_lossy().into_owned())
+        } else {
+            Reading::Value(path)
+        }
+    }
+
+    /// The path; `None` when unset or empty, and for a relative value of a
+    /// variable that must be absolute, which warns once. Read as an
+    /// `OsString`, so a non-UTF-8 path survives.
     #[must_use]
     pub(crate) fn path(&self) -> Option<PathBuf> {
-        parse_path(self.raw().as_deref())
+        match self.path_reading() {
+            Reading::Value(path) => Some(path),
+            Reading::Unset => None,
+            Reading::Invalid(raw) => {
+                // The debug log's own warning cannot go to the debug log:
+                // that path is what is being resolved.
+                warn_once(
+                    self.name,
+                    &format!(
+                        "ignoring {}=\"{raw}\": expected {EXPECTED_ABSOLUTE_PATH}",
+                        self.name
+                    ),
+                    self.name != DEBUG_LOG.name,
+                );
+                None
+            }
+        }
     }
 
     /// The text; `None` when unset, empty or not valid Unicode.
@@ -422,28 +605,51 @@ impl EnvVar {
         }
     }
 
+    /// The `GPY_COLOR_DEPTH` override; `None` means detect. An unrecognised
+    /// value warns once.
+    #[must_use]
+    pub(crate) fn color_depth(&self) -> Option<ColorDepth> {
+        match parse_color_depth(self.raw_text().as_deref()) {
+            Reading::Value(depth) => Some(depth),
+            Reading::Unset => None,
+            Reading::Invalid(raw) => {
+                warn_ignored(self.name, &raw, EXPECTED_COLOR_DEPTH);
+                None
+            }
+        }
+    }
+
     /// The value in effect and where it came from, for `gpy doctor`. Pure
     /// parse: it never warns, because `doctor` prints the ignored value itself.
     #[must_use]
     pub(crate) fn effective(&self) -> (String, Source) {
         let raw = self.raw_text();
-        let unit = if self.name.ends_with("_SECS") {
+        let unit = if self.name.ends_with("_MS") {
+            " ms"
+        } else if self.name.ends_with("_SECS") || self.name.ends_with("_SECONDS") {
             " s"
         } else {
-            " ms"
+            ""
         };
         let number = |value: u64| format!("{value}{unit}");
         let on_off = |value: bool| if value { "on" } else { "off" }.to_owned();
+        let from_config = || "from config".to_owned();
+        let ignored = |bad: String, expected: &'static str| Source::Ignored { raw: bad, expected };
         match self.kind {
             EnvKind::Flag { default } => match parse_flag(raw.as_deref()) {
                 Reading::Value(value) => (on_off(value), Source::Env),
                 Reading::Unset => (on_off(default), Source::Default),
-                Reading::Invalid(bad) => (on_off(default), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (on_off(default), ignored(bad, EXPECTED_FLAG)),
+            },
+            EnvKind::ConfigFlag => match parse_flag(raw.as_deref()) {
+                Reading::Value(value) => (on_off(value), Source::Env),
+                Reading::Unset => (from_config(), Source::Default),
+                Reading::Invalid(bad) => (from_config(), ignored(bad, EXPECTED_FLAG)),
             },
             EnvKind::Positive { default } => match parse_positive(raw.as_deref()) {
                 Reading::Value(value) => (number(value), Source::Env),
                 Reading::Unset => (number(default), Source::Default),
-                Reading::Invalid(bad) => (number(default), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (number(default), ignored(bad, EXPECTED_POSITIVE)),
             },
             EnvKind::ZeroDisables { default } => {
                 let shown = |value: Option<u64>| value.map_or_else(|| "off".to_owned(), number);
@@ -451,13 +657,28 @@ impl EnvVar {
                     Reading::Value(0) => ("off".to_owned(), Source::Env),
                     Reading::Value(value) => (number(value), Source::Env),
                     Reading::Unset => (shown(default), Source::Default),
-                    Reading::Invalid(bad) => (shown(default), Source::Ignored(bad)),
+                    Reading::Invalid(bad) => (shown(default), ignored(bad, EXPECTED_NUMBER)),
                 }
             }
-            EnvKind::Path | EnvKind::ConfigRoot => self.path().map_or_else(
-                || ("unset".to_owned(), Source::Default),
-                |path| (path.display().to_string(), Source::Env),
-            ),
+            EnvKind::Count { default } => match parse_u64(raw.as_deref()) {
+                Reading::Value(value) => (number(value), Source::Env),
+                Reading::Unset => (number(default), Source::Default),
+                Reading::Invalid(bad) => (number(default), ignored(bad, EXPECTED_COUNT)),
+            },
+            EnvKind::ConfigCount => match parse_u64(raw.as_deref()) {
+                Reading::Value(value) => (number(value), Source::Env),
+                Reading::Unset => (from_config(), Source::Default),
+                Reading::Invalid(bad) => (from_config(), ignored(bad, EXPECTED_COUNT)),
+            },
+            EnvKind::Path | EnvKind::AbsolutePath | EnvKind::ConfigRoot => {
+                match self.path_reading() {
+                    Reading::Value(path) => (path.display().to_string(), Source::Env),
+                    Reading::Unset => ("unset".to_owned(), Source::Default),
+                    Reading::Invalid(bad) => {
+                        ("unset".to_owned(), ignored(bad, EXPECTED_ABSOLUTE_PATH))
+                    }
+                }
+            }
             EnvKind::Text => parse_text(raw.as_deref()).map_or_else(
                 || ("unset".to_owned(), Source::Default),
                 |text| (text, Source::Env),
@@ -472,7 +693,12 @@ impl EnvVar {
                 }
                 Reading::Value(None) => ("auto".to_owned(), Source::Env),
                 Reading::Unset => ("auto".to_owned(), Source::Default),
-                Reading::Invalid(bad) => ("auto".to_owned(), Source::Ignored(bad)),
+                Reading::Invalid(bad) => ("auto".to_owned(), ignored(bad, EXPECTED_NERD_FONT)),
+            },
+            EnvKind::ColorDepth => match parse_color_depth(raw.as_deref()) {
+                Reading::Value(depth) => (depth.name().to_owned(), Source::Env),
+                Reading::Unset => ("detect".to_owned(), Source::Default),
+                Reading::Invalid(bad) => ("detect".to_owned(), ignored(bad, EXPECTED_COLOR_DEPTH)),
             },
         }
     }
@@ -481,8 +707,8 @@ impl EnvVar {
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_ENV_VARS, EnvKind, Reading, WARNED, parse_flag, parse_path, parse_positive,
-        parse_u64, warn_once,
+        AGENT_ENV_VARS, EnvKind, PROMPT_ENV_VARS, Reading, WARNED, parse_flag, parse_path,
+        parse_positive, parse_u64, warn_once,
     };
     use crate::sync_ext::MutexExt as _;
     use std::assert_matches;
@@ -562,9 +788,12 @@ mod tests {
 
     #[test]
     fn warn_once_emits_each_name_once() {
-        warn_once("GPY_TEST_WARN_ONCE_A", "first", false);
-        warn_once("GPY_TEST_WARN_ONCE_A", "second", false);
-        warn_once("GPY_TEST_WARN_ONCE_B", "only", false);
+        let ((), lines) = crate::debug::capture_warnings(|| {
+            warn_once("GPY_TEST_WARN_ONCE_A", "first", false);
+            warn_once("GPY_TEST_WARN_ONCE_A", "second", false);
+            warn_once("GPY_TEST_WARN_ONCE_B", "only", false);
+        });
+        assert_eq!(lines, ["[env] first", "[env] only"]);
         let warned = WARNED.lock_or_recover();
         for name in ["GPY_TEST_WARN_ONCE_A", "GPY_TEST_WARN_ONCE_B"] {
             assert_eq!(
@@ -577,7 +806,11 @@ mod tests {
 
     #[test]
     fn registry_names_are_unique_gpy_variables() {
-        let mut names: Vec<_> = AGENT_ENV_VARS.iter().map(|var| var.name).collect();
+        let mut names: Vec<_> = AGENT_ENV_VARS
+            .iter()
+            .chain(PROMPT_ENV_VARS)
+            .map(|var| var.name)
+            .collect();
         assert!(names.iter().all(|name| name.starts_with("GPY_")));
         names.sort_unstable();
         let before = names.len();
@@ -622,12 +855,13 @@ mod tests {
 
 #[cfg(test)]
 mod reference_doc_tests {
-    use super::AGENT_ENV_VARS;
+    use super::{AGENT_ENV_VARS, PROMPT_ENV_VARS};
     use crate::doc_tables::tables;
 
-    /// Every variable the agent reads has a row on the environment page.
+    /// Every variable the agent or `gpy prompt` reads has a row on the
+    /// environment page.
     #[test]
-    fn every_agent_env_var_has_a_reference_row() {
+    fn every_env_var_has_a_reference_row() {
         let doc = include_str!("../../docs/user/environment-variables.md");
         let documented: Vec<String> = tables(doc)
             .iter()
@@ -642,6 +876,7 @@ mod reference_doc_tests {
             .collect();
         let missing: Vec<&str> = AGENT_ENV_VARS
             .iter()
+            .chain(PROMPT_ENV_VARS)
             .map(|var| var.name)
             .filter(|name| !documented.iter().any(|cell| cell == *name))
             .collect();

@@ -100,8 +100,9 @@ builtin applies again; an edited copy or a symlink is kept and listed. Set
 `ui.retire_unmodified_themes` to `false` to keep every copy.
 
 `--check` validates what setup would need and writes nothing: the source tree
-must hold every file the chosen shell needs (for Fish and Zsh, the script
-runner in `bash/core/` too), and the install path must be safe to source from
+must hold every file the chosen shell needs (for Fish, `fish/conf.d/gpy_init.fish`,
+`fish/functions/fish_prompt.fish` and `fish/completions/gpy-dynamic.fish`; for Zsh,
+`zsh/gpy.zsh`; for Bash, `bash/gpy.bash`), and the install path must be safe to source from
 an rc file. It prints `ok: <shell> files in <source> can be installed to <dir>`
 and exits 0, or prints the error setup itself would give and exits 1. The
 installers run it with the downloaded `gpy` before replacing any binary.
@@ -178,9 +179,12 @@ was left in place.`). An agent that is running but too busy to answer (it
 closes new connections without a reply) is left alone too: `gpy-agent start`
 prints `Agent at <socket> is too busy to answer; leaving it running.` on
 stderr and exits `0`. `agent.enabled = false` is honored even when other keys
-in `config.toml` are invalid: `start` prints `Agent disabled in config
-(agent.enabled = false); not started.` on stderr, binds no socket, and exits
-`6`. If the new daemon exits or does not answer within 5 seconds, `gpy start`
+in `config.toml` are invalid, and `GPY_AGENT_ENABLED` overrides it either way,
+as it does for the prompt. A disabled agent is not started: `start` prints
+`Agent disabled in config (agent.enabled = false); not started.` (or, when
+the variable turned it off, `Agent disabled by GPY_AGENT_ENABLED; not
+started.`) on stderr, binds no socket, and exits `6`. If the new daemon exits or does not answer
+within 5 seconds, `gpy start`
 (and `gpy-agent start`) exits `1` with an `Error:` line; when the daemon fails
 before binding its socket, the line carries the daemon's own error, such as a
 cache directory it could not create and why. When `start` cannot tell whether
@@ -1164,6 +1168,9 @@ Verifies:
   (clean environment, the plugin root as working directory or the current one
   when `pwd` is declared, killed after `timeout_ms`) and reports the run time,
   what it would show and why it would be hidden
+- The `GPY_*` variables the agent ("Agent tuning") and the prompt renderer
+  ("Prompt environment") read: each effective value and where it came from;
+  an ignored value is a warning
 - `gpy-agent` runs
 
 **Example:**
@@ -1195,9 +1202,11 @@ answer`) and for a stale socket file nothing listens on. An agent that holds
 its socket but never answers is a failure (`✗ Not answering on <socket>`,
 remediation `gpy restart`), as is a socket path that cannot be resolved.
 
-With `agent.enabled = false` the agent check reads
-`Disabled via config (agent.enabled = false)` (the agent is not probed) and
-the IPC client check is skipped.
+With the agent turned off the agent check reads
+`Disabled via config (agent.enabled = false)`, or `Disabled via
+GPY_AGENT_ENABLED` when the variable turned it off (the agent is not probed),
+and the IPC client check is skipped. `GPY_AGENT_ENABLED` decides both ways, as
+it does for `gpy-agent start`.
 
 Only a failed check fails the run. Warnings (outdated shell scripts, unknown
 config keys, an inactive broken theme override, script trial and plugin
@@ -1317,9 +1326,9 @@ plugin with a smaller id already provides one of its segment names. Plugin code 
 
 Without `--force`, an install is refused when the new plugin would take a
 segment name or token from another plugin; the error names the plugins that
-would lose it. A plugin providing a built-in segment name (`clock`, `duration`,
-`language`, `directory`, `git`, `status`) is rejected by discovery, `validate`
-and `install`. A running agent is reloaded after an install. The manifest
+would lose it. A plugin providing a reserved segment name (a built-in:
+`clock`, `duration`, `language`, `directory`, `git`, `status`; the `lang`
+shorthand; or `character`) is rejected by discovery, `validate` and `install`. A running agent is reloaded after an install. The manifest
 `version` and `min_gpy_version` must be `MAJOR.MINOR.PATCH`, optionally
 followed by `-` or `+` and ASCII letters, digits, `.`, `+` and `-`. A script
 plugin's `plugin.toml`, `segments/` and every `segments/<name>.toml` must be
@@ -1327,7 +1336,11 @@ owned by you or root, not group- or other-writable, and inside the plugin root.
 
 `--force` replaces an installed user plugin with the same id (the old
 directory moves to `~/.config/gpy/plugins.bak/<id>.<timestamp>`), and is
-needed to shadow a bundled plugin. Backups and staging live outside
+needed to shadow a bundled plugin. It only replaces a copy of the same plugin: a
+`plugins/<id>` directory that holds another plugin or has no valid `plugin.toml`
+is refused, with or without `--force`, and is left for you to move away. On a
+case-insensitive volume a `Foo` directory holding plugin `foo` counts as that
+plugin's copy. Backups and staging live outside
 `plugins/` because discovery would load them as plugins. Only the newest 3
 backups of that plugin id are kept; older ones are deleted (they are your data,
 not recoverable) and the command prints `Pruned N old backup(s) of <id>`. Other

@@ -15,16 +15,16 @@ pub(super) const SEGMENT_POSITIONS: [SegmentPosition; 4] = [
 /// Cache-filename token of a context-free render (no `prev_bg`).
 pub(super) const NO_PREV_BG_TOKEN: &str = "none";
 
-/// Token slot of a kind's presence marker, `{key}.{kind}.any-entry.{ext}`:
-/// the agent keeps it beside any renderable entry of that kind, so a shell's
-/// omit check is one `test -f` instead of a scan of the cache directory.
+/// Token slot of the language presence marker, `{key}.lang.any-entry.{ext}`:
+/// the agent keeps it beside any renderable language entry, so the prompt's
+/// omit check is one stat instead of a scan of the cache directory.
 /// [`prev_bg_token`] maps `-` to `_`, so no render context can produce it.
 pub(super) const PRESENCE_TOKEN: &str = "any-entry";
 
 /// Filename token for the `prev_bg` an entry was rendered with: `none` when
-/// absent, else non-alphanumeric bytes → `_`. Never contains `.`.
-/// The shells' `__gpy_prev_bg_token` copy is pinned by
-/// `instant_cache_naming_shared_vectors`.
+/// absent, else non-alphanumeric bytes → `_`. Never contains `.`. Pinned by
+/// `instant_cache_naming_shared_vectors`; `gpy prompt` names the entries it
+/// reads with it ([`super::InstantPromptCache::prev_bg_token`]).
 pub(super) fn prev_bg_token(prev_bg: Option<&str>) -> String {
     match prev_bg {
         Some(s) if !s.is_empty() => s
@@ -67,8 +67,8 @@ impl CacheKind {
     }
 }
 
-/// Rest of the variant after the kind, e.g. `_first_last`. The shells'
-/// `__gpy_cache_variant_suffix` copy is pinned by
+/// Rest of the variant after the kind, e.g. `_first_last`, as `gpy prompt`'s
+/// `variant_suffix` spells it too. Pinned by
 /// `instant_cache_naming_shared_vectors`.
 pub(super) const fn position_suffix(position: SegmentPosition) -> &'static str {
     match (position.is_first, position.is_last) {
@@ -108,11 +108,10 @@ impl CacheFileName<'_> {
 
     /// Whether a restarted agent, which tracks `prev_bg` contexts in memory
     /// only, would never refresh this file: every language file, and any
-    /// rendered for a specific `prev_bg`. The git presence marker stays with
-    /// the git `.none` entries it vouches for.
+    /// rendered for a specific `prev_bg` (a git presence marker an older
+    /// agent left too).
     pub(super) fn is_unrefreshable(&self) -> bool {
-        self.kind == CacheKind::Lang
-            || (self.token != NO_PREV_BG_TOKEN && self.token != PRESENCE_TOKEN)
+        self.kind == CacheKind::Lang || self.token != NO_PREV_BG_TOKEN
     }
 }
 

@@ -86,7 +86,13 @@ Everything below runs on `main`, with a clean tree.
    validates, builds, packages and smoke-runs the artifacts on Linux, macOS
    and Windows, and publishes nothing unless `-f publish=true` is passed
    (`gh -R jpease/gpy workflow run release.yml --ref <branch> -f
-   version=vX.Y.Z`). A tag push always publishes.
+   version=vX.Y.Z`). A tag push always publishes. A publishing run (tag push
+   or `publish=true`) fails in `validate` when the tag already exists at a
+   commit other than the one being built, so a manual run cannot attach new
+   binaries to an older tag, and when a release for the version already
+   exists, so published assets are never replaced by accident. To replace the
+   assets of an existing release at the same commit on purpose, dispatch with
+   `-f publish=true -f replace_assets=true`.
 
 9. **Watch the run.** `validate` → (`gate-legs`, `windows-gate`,
    `fresh-install`, `perf`) → `release-gate` → `build` (five targets) →

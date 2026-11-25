@@ -7,7 +7,7 @@
 //! the [`PromptDialect::cache_ext`]. The `git_bg` variant holds the colour the git
 //! pill leaves for the next chevron, in the dialect's shell spelling.
 
-pub(super) mod files;
+pub(crate) mod files;
 mod key;
 mod name;
 mod sweep;
@@ -88,8 +88,9 @@ pub struct InstantPromptCache {
     unwritable_keys: Mutex<HashSet<String>>,
     /// Repos whose git caches [`Self::remove_git`] dropped, by cache key, with
     /// the root each key names. Git writes for these keys are skipped until
-    /// [`Self::release_git_suppression`] lets them through again, so a write
-    /// already in flight when a reload excluded the repo cannot republish it.
+    /// [`Self::release_git_suppression`] or
+    /// [`Self::release_git_suppression_for`] lets them through again, so a
+    /// write already in flight when the repo was excluded cannot republish it.
     /// Locked only while `last_written` is held.
     suppressed_git: Mutex<HashMap<String, PathBuf>>,
     /// Temp directory backing `cache_dir` for [`Self::new_for_test`]; removed on drop.
@@ -286,17 +287,15 @@ impl InstantPromptCache {
         if self.suppressed_git.lock_or_recover().contains_key(&key) {
             return false;
         }
-        let marker_names =
-            PromptDialect::ALL.map(|dialect| presence_marker(&key, CacheKind::Git, dialect));
-        let bg_names = PromptDialect::ALL.map(|dialect| CacheFileName {
-            key: &key,
-            kind: CacheKind::GitBg,
-            position: SEGMENT_POSITIONS[0],
-            token: NO_PREV_BG_TOKEN,
-            dialect,
-        });
-        for name in bg_names.iter().chain(&marker_names) {
-            if !self.touch_cache_file(&mut cache, name, now) {
+        for dialect in PromptDialect::ALL {
+            let bg_name = CacheFileName {
+                key: &key,
+                kind: CacheKind::GitBg,
+                position: SEGMENT_POSITIONS[0],
+                token: NO_PREV_BG_TOKEN,
+                dialect,
+            };
+            if !self.touch_cache_file(&mut cache, &bg_name, now) {
                 return false;
             }
         }
@@ -428,8 +427,8 @@ impl InstantPromptCache {
                 }
             }
         }
-        if on_disk {
-            self.write_presence_markers(key, kind);
+        if on_disk && kind == CacheKind::Lang {
+            self.write_lang_markers(key);
         }
         match first_err {
             Some(e) if !wrote_any => Err(e),
@@ -441,12 +440,13 @@ impl InstantPromptCache {
         }
     }
 
-    /// Keep `kind`'s presence marker beside `key`'s entries in every dialect;
-    /// the marker never changes content, so it never rings a shell. A failed
-    /// write is logged: the shell then omits the segment until the next write.
-    fn write_presence_markers(&self, key: &str, kind: CacheKind) {
+    /// Keep the language presence marker beside `key`'s entries in every
+    /// dialect; the marker never changes content, so it never rings a shell.
+    /// A failed write is logged: the prompt then omits the segment until the
+    /// next write.
+    fn write_lang_markers(&self, key: &str) {
         for dialect in PromptDialect::ALL {
-            if let Err(e) = self.write_cache_file(&presence_marker(key, kind, dialect), "") {
+            if let Err(e) = self.write_cache_file(&lang_marker(key, dialect), "") {
                 debug_log!(
                     "cache",
                     "Could not write instant cache presence marker: {e}"
@@ -500,20 +500,40 @@ impl InstantPromptCache {
 
     /// Delete every git cache file of the repository at `path` (each variant,
     /// `prev_bg` token and dialect, including contexts no longer tracked) so
-    /// shells stop serving its git segment. Best-effort.
-    pub fn remove_git(&self, path: &Path) {
+    /// shells stop serving its git segment, and suppress its git writes.
+    /// Returns `true` when this call did so; a repository already suppressed
+    /// has nothing left to delete, so the call is a cheap no-op. Best-effort.
+    pub fn remove_git(&self, path: &Path) -> bool {
         let root = find_project_root(path);
         let key = path_to_cache_key(&root);
 
         // Held across the deletion so the record keeps matching the disk.
         let mut last_written = self.last_written.lock_or_recover();
+        let mut suppressed = self.suppressed_git.lock_or_recover();
+        if suppressed.contains_key(&key) {
+            return false;
+        }
         last_written.entries.retain(|name, _written| {
             !parse_cache_file_name(name)
                 .is_some_and(|parsed| parsed.kind.is_git() && parsed.key == key)
         });
         remove_git_files(&self.cache_dir, &key);
-        self.suppressed_git.lock_or_recover().insert(key, root);
+        suppressed.insert(key, root);
+        drop(suppressed);
         drop(last_written);
+        true
+    }
+
+    /// Let git writes for the repository at `path` through again if
+    /// [`Self::remove_git`] suppressed it, for a writer that found its root
+    /// enabled: an exclusion can lapse without a reload (a retargeted
+    /// `git.skip_paths` symlink), and nothing else would release it.
+    pub fn release_git_suppression_for(&self, path: &Path) {
+        let _last_written = self.last_written.lock_or_recover();
+        let mut suppressed = self.suppressed_git.lock_or_recover();
+        if !suppressed.is_empty() {
+            suppressed.remove(&path_to_cache_key(&find_project_root(path)));
+        }
     }
 
     /// Let git writes through again for every repo [`Self::remove_git`]
@@ -622,43 +642,38 @@ impl InstantPromptCache {
         Ok(parent.join(file_name))
     }
 
-    /// The presence marker for `base` (`git` or `lang`) of the project at
-    /// `dir` in `dialect`: what a shell's omit check tests.
+    /// The language presence marker of the project at `dir` in `dialect`:
+    /// what the prompt's omit check tests.
     /// # Errors
     /// Returns an error if the cache directory cannot be determined.
-    pub fn presence_marker_for_dir(
-        dir: &Path,
-        base: &str,
-        dialect: PromptDialect,
-    ) -> Result<PathBuf> {
+    pub fn lang_marker_for_dir(dir: &Path, dialect: PromptDialect) -> Result<PathBuf> {
         let cache_dir = get_instant_cache_dir()?;
         let key = path_to_cache_key(dir);
-        let ext = dialect.cache_ext();
         let (parent, file_name) =
-            cache_file_parts(&cache_dir, &key, &format!("{base}.{PRESENCE_TOKEN}.{ext}"));
+            cache_file_parts(&cache_dir, &key, &lang_marker(&key, dialect).tail());
         Ok(parent.join(file_name))
     }
 
-    /// The flat cache key of `path` (no chunking), as the shells' refresh
+    /// The flat cache key of `path` (no chunking), as `gpy prompt`'s refresh
     /// throttle names its buckets.
     #[must_use]
     pub fn cache_key(path: &Path) -> String {
         path_to_cache_key(path)
     }
 
-    /// The filename token for `prev_bg` (`none` when empty), as the shells'
-    /// `__gpy_prev_bg_token` spells it.
+    /// The filename token for `prev_bg` (`none` when empty), as `gpy prompt`
+    /// names the entry it reads.
     #[must_use]
     pub fn prev_bg_token(prev_bg: &str) -> String {
         prev_bg_token((!prev_bg.is_empty()).then_some(prev_bg))
     }
 }
 
-/// The presence marker of `kind` for `key` in `dialect`.
-const fn presence_marker(key: &str, kind: CacheKind, dialect: PromptDialect) -> CacheFileName<'_> {
+/// The language presence marker for `key` in `dialect`.
+const fn lang_marker(key: &str, dialect: PromptDialect) -> CacheFileName<'_> {
     CacheFileName {
         key,
-        kind,
+        kind: CacheKind::Lang,
         position: SEGMENT_POSITIONS[0],
         token: PRESENCE_TOKEN,
         dialect,
@@ -698,6 +713,8 @@ fn render_all_dialects(
 mod git_bg_tests;
 #[cfg(all(test, unix))]
 mod git_root_vectors_tests;
+#[cfg(test)]
+mod key_tests;
 #[cfg(test)]
 mod naming_vectors_tests;
 #[cfg(test)]

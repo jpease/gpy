@@ -1,11 +1,15 @@
 //! Talking to the agent from `gpy prompt`: bounded data requests,
 //! fire-and-forget refreshes behind the per-shell refresh-throttle stamps,
 //! and the per-shell late window, both in `<runtime root>/refresh-throttle/`.
+//! That directory holds script output and declared environment values, so
+//! it is owner-only (`0700`) and its files are created owner-only (`0600`).
 
 use crate::cache::InstantPromptCache;
+use crate::env_config::{IPC_COLD_TIMEOUT_MS, IPC_TIMEOUT_MS};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::FileTypeExt as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,24 +34,14 @@ const REFRESH_GAP_MS: u128 = 500;
 /// (`__gpy_agent_late_secs`).
 const LATE_SECS: u64 = 5;
 
-/// `GPY_IPC_TIMEOUT_MS`, default 150.
+/// `GPY_IPC_TIMEOUT_MS`.
 fn warm_timeout_ms() -> u64 {
-    env_ms("GPY_IPC_TIMEOUT_MS").unwrap_or(150)
+    IPC_TIMEOUT_MS.count()
 }
 
-/// `GPY_IPC_COLD_TIMEOUT_MS` (default 500), never below the warm budget.
+/// `GPY_IPC_COLD_TIMEOUT_MS`, never below the warm budget.
 pub(crate) fn cold_timeout_ms() -> u64 {
-    env_ms("GPY_IPC_COLD_TIMEOUT_MS")
-        .unwrap_or(500)
-        .max(warm_timeout_ms())
-}
-
-/// A digits-only environment value.
-fn env_ms(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|v| v.parse().ok())
+    IPC_COLD_TIMEOUT_MS.count().max(warm_timeout_ms())
 }
 
 /// One agent connection context for a render.
@@ -86,6 +80,8 @@ impl Link {
     }
 
     /// Whether agent mode is on and a socket file exists (`[[ -S ... ]]`).
+    /// The file outlives an agent that crashed: [`Self::send`] and
+    /// [`Self::maybe_refresh`] tell whether anything listens on it.
     pub(crate) fn socket_present(&self) -> bool {
         self.enabled
             && self
@@ -138,9 +134,7 @@ impl Link {
             now_secs().saturating_add(LATE_SECS),
             socket.to_string_lossy()
         );
-        if std::fs::write(&file, &stamp).is_err() {
-            let _ = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, &stamp));
-        }
+        let _ = write_private(&file, stamp.as_bytes());
     }
 
     /// A bounded request (`__gpy_send_json`): `request` is one JSON object.
@@ -203,18 +197,20 @@ impl Link {
 
     /// `__gpy_maybe_refresh`: at most one refresh per 500 ms per bucket,
     /// sent without waiting for the reply. `root` is the path the shell
-    /// keys the bucket by (its logical `$PWD`).
+    /// keys the bucket by (its logical `$PWD`). `false` when no agent
+    /// listens (agent mode off, no socket, or a connect refused): nothing
+    /// will refresh the entry, so the caller does the work itself.
     pub(crate) fn maybe_refresh(
         &self,
         request: &serde_json::Value,
         bucket_parts: [&str; 3],
         root: &Path,
-    ) {
+    ) -> bool {
         if !self.enabled {
-            return;
+            return false;
         }
         let Some(dir) = &self.throttle_dir else {
-            return;
+            return self.socket_present();
         };
         let [op, suffix, extra] = bucket_parts;
         let bucket = format!(
@@ -232,27 +228,34 @@ impl Link {
                     .flatten()
             })
             .unwrap_or(0);
+        // Only a refresh that reached the agent leaves its stamp.
         if now.saturating_sub(last) < REFRESH_GAP_MS {
-            return;
+            return true;
         }
         let content = format!("{now} {bucket}");
-        if std::fs::write(&stamp, &content).is_err()
-            && (std::fs::create_dir_all(dir).is_err() || std::fs::write(&stamp, &content).is_err())
-        {
-            return;
+        if write_private(&stamp, content.as_bytes()).is_err() {
+            return self.socket_present();
         }
-        self.fire(request);
+        let reached = self.fire(request);
+        if !reached {
+            let _ = std::fs::remove_file(&stamp);
+        }
+        reached
     }
 
     /// Send `request` and hang up without reading: the agent still handles
     /// it, writing the cache (and ringing a registered shell). Skipped while
     /// a late window is open, so a wedged agent's backlog is not filled.
-    fn fire(&self, request: &serde_json::Value) {
-        if !self.socket_present() || self.late_active() {
-            return;
+    /// `false` when no agent listens.
+    fn fire(&self, request: &serde_json::Value) -> bool {
+        if !self.socket_present() {
+            return false;
+        }
+        if self.late_active() {
+            return true;
         }
         let Some(socket) = self.socket.as_deref() else {
-            return;
+            return false;
         };
         match connect_now(socket) {
             Connect::Open(mut stream) => {
@@ -260,9 +263,13 @@ impl Link {
                     stream.set_write_timeout(Some(Duration::from_millis(warm_timeout_ms().max(1))));
                 let _ = stream.write_all(format!("{request}\n").as_bytes());
                 let _ = stream.shutdown(std::net::Shutdown::Write);
+                true
             }
-            Connect::Busy => self.open_late_window(socket),
-            Connect::Refused => {}
+            Connect::Busy => {
+                self.open_late_window(socket);
+                true
+            }
+            Connect::Refused => false,
         }
     }
 }
@@ -327,6 +334,34 @@ pub(crate) fn clear_late_window(throttle_dir: &Path, pid: u32) {
     let _ = std::fs::remove_file(late_window_file(throttle_dir, pid));
 }
 
+/// Write `bytes` to `file` in the refresh-throttle directory, creating the
+/// file owner-only (`0600`) and, when missing, the directory owner-only
+/// (`0700`).
+///
+/// # Errors
+/// Returns an error if the directory cannot be created or the file written.
+pub(crate) fn write_private(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let write = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(file)?
+            .write_all(bytes)
+    };
+    match write() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let Some(dir) = file.parent() else {
+                return Err(e);
+            };
+            crate::cache::instant_prompt::files::create_private_dir(dir)?;
+            write()
+        }
+        result => result,
+    }
+}
+
 /// `__gpy_refresh_stamp_name`: `<pid>.<bucket>`, or `<pid>.#<fnv1a32>` past
 /// 200 bytes.
 fn stamp_name(pid: u32, bucket: &str) -> String {
@@ -355,9 +390,34 @@ fn now_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Connect, Link, Reply, connect_now, stamp_name};
+    use super::{Connect, Link, Reply, connect_now, late_window_file, stamp_name};
     use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::time::{Duration, Instant};
+
+    /// The first file a shell writes creates the refresh-throttle directory
+    /// owner-only, and the file is owner-only too (#1287).
+    #[test]
+    fn a_new_throttle_directory_and_its_files_are_owner_only() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("refresh-throttle");
+        let link = Link {
+            enabled: true,
+            socket: Some(root.path().join("agent.sock")),
+            throttle_dir: Some(dir.clone()),
+            pid: 42,
+        };
+        link.open_late_window(&root.path().join("agent.sock"));
+        let mode = |path: &std::path::Path| {
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(&dir), 0o700, "the directory");
+        assert_eq!(mode(&late_window_file(&dir, 42)), 0o600, "the stamp");
+    }
 
     /// Long buckets hash as the shell's FNV-1a loop does, so both render
     /// paths read and write the same stamps. The expected name is what

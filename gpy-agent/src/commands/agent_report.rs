@@ -8,6 +8,7 @@ use crate::agent::lifecycle::{
     AgentClient, ProtocolMismatch, StartNotice, StartOutcome, StatusProbe, protocol_mismatch,
     start_background_agent,
 };
+use crate::config::loader::SwitchSource;
 use crate::config::location;
 use crate::ipc::AgentStatus;
 use crate::paths::SocketPath;
@@ -172,8 +173,11 @@ fn say(quiet: bool, line: impl std::fmt::Display) {
 /// notice's fact is carried by the outcome line or the error.
 fn notice_text(notice: &StartNotice, socket: &str) -> Option<String> {
     match notice {
-        StartNotice::Disabled => {
+        StartNotice::Disabled(SwitchSource::Config) => {
             Some("Agent disabled in config (agent.enabled = false); not started.".to_owned())
+        }
+        StartNotice::Disabled(SwitchSource::Env) => {
+            Some("Agent disabled by GPY_AGENT_ENABLED; not started.".to_owned())
         }
         StartNotice::EvictingUnanswered => Some(format!(
             "Agent at {socket} accepted a connection but did not answer; replacing it."

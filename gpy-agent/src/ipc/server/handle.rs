@@ -461,9 +461,10 @@ impl EndpointHandle {
         });
     }
 
-    /// Close without replying when the connection semaphore is saturated. The
-    /// request format is unknown, and shells treat no reply as an unreachable
-    /// agent. `gpy-agent start` reads the close as a busy agent and leaves it
+    /// Close without replying when the connection semaphore is saturated: the
+    /// request format is unknown, so no reply line could be shaped for it.
+    /// `gpy prompt` reads a close with no reply as `Late` (a wedged agent), not
+    /// as unreachable; `gpy-agent start` reads it as a busy agent and leaves it
     /// running.
     #[cfg(unix)]
     fn reject_connection_busy(stream: UnixStream) {

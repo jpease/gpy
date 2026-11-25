@@ -64,7 +64,9 @@ it as a liveness and hygiene check, not as an authentication mechanism.
 **The shells write no memo files.** The wrappers keep a command counter and
 the last duration in shell variables; `gpy prompt` keeps its per-shell state
 in `<runtime root>/refresh-throttle/<pid>.*`, under the user-private runtime
-directory, never `/tmp` or `$TMPDIR`. Script-segment state is in the same
+directory, never `/tmp` or `$TMPDIR`; the directory is owner-only (`0700`,
+restricted again by a shell's first prompt) and its files are created
+owner-only (`0600`). Script-segment state is in the same
 place (see
 [Script Segment Trust Model](../../SECURITY.md#script-segment-trust-model)).
 
@@ -165,6 +167,12 @@ in [SECURITY.md](../../SECURITY.md#file-system-access).
   fsmonitor speed-up; an `update-index` may drop the fsmonitor extension from
   the index, which your next `git` command rebuilds). Hooks are not run by
   the read commands the agent uses.
+- That flag does not stop every command a repository's config can name: a
+  repository-local `filter.<driver>.clean` or `filter.<driver>.process`
+  that `.gitattributes` assigns to a path still runs when `git status`
+  compares that path's content with the index, as it does for any `git
+  status` in that checkout. The agent does not detect or disable filter
+  drivers, so a prompt in an untrusted checkout can run them.
 - Language version probes run the repository-selected toolchain shim
   (`rustup`, `mise`, `go`, and so on), which can execute repo-chosen code.
   The probe child gets `RUSTUP_AUTO_INSTALL=0`, `GOTOOLCHAIN=local`,

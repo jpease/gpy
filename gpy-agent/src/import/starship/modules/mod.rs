@@ -1,79 +1,24 @@
 //! Pure per-module translators: a Starship module table → a GPY segment theme.
 
+mod git;
 mod style;
+
+pub use git::translate_git;
 
 use crate::config::LanguageTheme;
 use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTruncationSymbol, Icon};
-use crate::import::starship::format::{
-    Token, inline_style_vars, remove_literal, rename_vars, retain_known_vars, tokens,
-};
+use crate::import::starship::format::{inline_style_vars, retain_known_vars};
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::warn::{WarningKind, Warnings};
 use crate::plugin::{VariantColorKey, VariantColorPart, VariantName};
 use crate::template::ast::Node;
 use crate::theme::{
-    CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, PluginSegmentTheme,
+    CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, PluginSegmentTheme,
     RecommendedDirectory,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasher;
 use style::{StyleColor, attr_tokens, style_color};
-
-/// Granular `git_status` flags, approximated as GPY's aggregate `$status`.
-const GRANULAR_STATUS_FLAGS: [&str; 7_usize] = [
-    "conflicted",
-    "untracked",
-    "modified",
-    "staged",
-    "renamed",
-    "deleted",
-    "stashed",
-];
-
-/// Collapse granular `git_status` flag variables onto a single `$status`.
-///
-/// Only the first flag becomes `$status`; later ones are removed, so
-/// back-to-back flags don't render `$status` repeatedly. Warns once.
-fn collapse_granular_status_flags(format: &str, warnings: &mut Warnings) -> String {
-    let mut collapsed_first = false;
-    let mut found: Vec<&'static str> = Vec::new();
-    let out: String = tokens(format)
-        .into_iter()
-        .filter_map(|token| match token {
-            Token::Literal(text) => Some(text),
-            Token::Var { name, raw } => GRANULAR_STATUS_FLAGS
-                .iter()
-                .copied()
-                .find(|&candidate| candidate == name)
-                .map_or(Some(raw), |flag| {
-                    // First granular token → `$status`; later ones dropped.
-                    if !found.contains(&flag) {
-                        found.push(flag);
-                    }
-                    if collapsed_first {
-                        None
-                    } else {
-                        collapsed_first = true;
-                        Some("$status")
-                    }
-                }),
-        })
-        .collect();
-    if !found.is_empty() {
-        let list = found
-            .iter()
-            .map(|flag| format!("${flag}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        warnings.push(
-            WarningKind::LossyMapping,
-            format!(
-                "git_status: granular flags ({list}) have no per-flag GPY equivalent; approximated as aggregate $status"
-            ),
-        );
-    }
-    out
-}
 
 /// Translate Starship's `directory` module into a GPY directory theme.
 #[must_use]
@@ -130,18 +75,23 @@ pub fn translate_directory_layout(
         ..Default::default()
     };
     if let Some(raw) = table.get("truncation_length") {
-        match raw
-            .as_integer()
-            .and_then(|value| usize::try_from(value).ok())
-            .and_then(DirectoryTruncationLength::new)
-        {
-            Some(length) => recommended.truncation_length = Some(length),
-            None => warnings.push(
-                WarningKind::UnrepresentableOption,
-                format!(
-                    "directory: truncation_length {raw} is outside GPY's supported range (1..=255); dropped"
+        // Starship documents `0` as "do not truncate" (`utils::directory::truncate`).
+        if raw.as_integer() == Some(0) {
+            recommended.display = Some(crate::config::types::DirectoryDisplay::Full);
+        } else {
+            match raw
+                .as_integer()
+                .and_then(|value| usize::try_from(value).ok())
+                .and_then(DirectoryTruncationLength::new)
+            {
+                Some(length) => recommended.truncation_length = Some(length),
+                None => warnings.push(
+                    WarningKind::UnrepresentableOption,
+                    format!(
+                        "directory: truncation_length {raw} is outside GPY's supported range (1..=255); dropped"
+                    ),
                 ),
-            ),
+            }
         }
     }
     if let Some(raw) = table.get("truncation_symbol") {
@@ -159,80 +109,6 @@ pub fn translate_directory_layout(
         }
     }
     recommended
-}
-
-/// Compose a GPY git `format` from `git_branch`, `git_status`, and `git_state`.
-///
-/// A missing half uses Starship's defaults; both absent yields `None`.
-#[must_use]
-pub fn translate_git(
-    branch: Option<&toml::value::Table>,
-    status: Option<&toml::value::Table>,
-    state: Option<&toml::value::Table>,
-    warnings: &mut Warnings,
-) -> GitTheme {
-    let empty = toml::value::Table::new();
-    let (branch_table, status_table) = if branch.is_none() && status.is_none() {
-        (None, None)
-    } else {
-        (
-            Some(branch.unwrap_or(&empty)),
-            Some(status.unwrap_or(&empty)),
-        )
-    };
-
-    let branch_part = branch_table.map_or_default(|table| {
-        let filled = with_default_style(table, "style", "bold purple");
-        let raw = table
-            .get("format")
-            .and_then(toml::Value::as_str)
-            .unwrap_or("on [$symbol$branch]($style) ");
-        let inlined = inline_style_vars(raw, &filled);
-        let retained = retain_known_vars(
-            &inlined,
-            &["symbol", "branch", "status", "ahead_behind", "style"],
-            "git",
-            warnings,
-        );
-        // Dropping `$remote_branch` leaves its `(:$remote_branch)` group as an empty `(:)`.
-        remove_literal(&retained, "(:)")
-    });
-
-    let status_part = status_table.map_or_default(|table| {
-        let filled = with_default_style(table, "style", "bold red");
-        let raw = table
-            .get("format")
-            .and_then(toml::Value::as_str)
-            .unwrap_or(r"([\[$all_status$ahead_behind\]]($style) )");
-        let inlined = inline_style_vars(raw, &filled);
-        let remapped = rename_vars(&inlined, &[("all_status", "status")]);
-        // Before retain_known_vars, so per-flag presets keep a status marker.
-        let collapsed = collapse_granular_status_flags(&remapped, warnings);
-        retain_known_vars(
-            &collapsed,
-            &["symbol", "branch", "status", "ahead_behind", "style"],
-            "git",
-            warnings,
-        )
-    });
-
-    if state.is_some() {
-        warnings.push(
-            WarningKind::LossyMapping,
-            "git_state (rebase/merge progress) has no GPY equivalent; dropped".to_owned(),
-        );
-    }
-
-    let format = match (branch_part.is_empty(), status_part.is_empty()) {
-        (true, true) => None,
-        (false, true) => Some(branch_part),
-        (true, false) => Some(status_part),
-        (false, false) => Some(format!("{branch_part}{status_part}")),
-    };
-    GitTheme {
-        format,
-        ..Default::default()
-    }
 }
 
 /// Clone `table` and insert `default` under `key` if that key is absent.
@@ -702,3 +578,6 @@ pub fn translate_username<S: BuildHasher>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod git_tests;
