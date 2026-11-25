@@ -270,18 +270,15 @@ fn path_ends_with_components(path: &Path, first: &str, second: &str) -> bool {
 }
 
 /// The components after the last `.git` component, or `None` without one.
-fn path_after_last_git_component(path: &Path) -> Option<PathBuf> {
-    let last_git_index = path
-        .components()
-        .enumerate()
-        .filter(|(_, component)| component.as_os_str() == OsStr::new(".git"))
-        .map(|(index, _)| index)
-        .last()?;
-    Some(
-        path.components()
-            .skip(last_git_index.saturating_add(1))
-            .collect(),
-    )
+fn path_after_last_git_component(path: &Path) -> Option<&Path> {
+    let mut components = path.components();
+    let mut after_last = None;
+    while let Some(component) = components.next() {
+        if component.as_os_str() == OsStr::new(".git") {
+            after_last = Some(components.as_path());
+        }
+    }
+    after_last
 }
 
 /// Whether `path` is a `gpy/themes` directory or lies under one.
@@ -313,7 +310,7 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
     // `attribute_external_gitdir`.
     if is_in_git_dir
         && let Some(relative) = path_after_last_git_component(path)
-        && is_git_significant_relative(&relative)
+        && is_git_significant_relative(relative)
     {
         return Some(FileEvent::Git {
             paths: GitPaths::single(path.to_path_buf()),

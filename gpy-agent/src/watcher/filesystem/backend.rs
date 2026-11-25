@@ -1,7 +1,9 @@
 //! The notify backend behind a [`FileSystemWatcher`].
 
 use super::super::watch_set::{OsOp, WatchMode, WatchSet};
-use super::super::{WatchRegistry, is_git_noise_path, is_git_noise_relative};
+use super::super::{
+    WatchRegistry, is_git_noise_path, is_git_noise_relative, path_after_last_git_component,
+};
 use super::ignore::force_added::prime_force_added;
 use super::meta_poll::MetadataPoller;
 use super::queue::EventSender;
@@ -369,18 +371,19 @@ pub(super) struct SplitPollWatcher {
 
 /// Whether the poll backend watches `path` with the [`MetadataPoller`]: git
 /// metadata outside the `objects` store. Object files are written once under
-/// content-addressed names, so name and mtime already show a change.
+/// content-addressed names, so name and mtime already show a change. Only the
+/// part below the git directory can name the store, so a repository inside a
+/// directory named `objects` keeps the metadata poller.
 pub(super) fn routes_to_gitdir(path: &Path, registry: &WatchRegistry) -> bool {
-    if path
-        .components()
-        .any(|component| component.as_os_str() == "objects")
-    {
-        return false;
-    }
-    path.components()
-        .any(|component| component.as_os_str() == ".git")
-        || registry.is_under_registered_external_gitdir(path)
-        || registry.is_under_registered_common_gitdir(path)
+    let outside_objects = |below_gitdir: &Path| {
+        !below_gitdir
+            .components()
+            .any(|component| component.as_os_str() == "objects")
+    };
+    path_after_last_git_component(path).is_some_and(outside_objects)
+        || registry
+            .path_below_registered_gitdir(path)
+            .is_some_and(outside_objects)
 }
 
 impl SplitPollWatcher {
