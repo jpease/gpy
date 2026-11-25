@@ -359,6 +359,59 @@ fn uninstall_leaves_package_manager_binaries_and_names_brew() {
     );
 }
 
+/// What `sh` makes of `word`, the argument a printed command passes.
+fn sh_word(word: &str) -> String {
+    let output = Command::new("sh")
+        .args(["-c", &format!("printf %s {word}")])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{word}: {output:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn uninstall_quotes_the_paths_it_tells_you_to_delete() {
+    let env = CliTestEnv::new().unwrap();
+    let odd = env.root().join("it's here");
+    let bin = odd.join("bin");
+    let share = odd.join("share/gpy");
+    let config_home = odd.join("config");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&share).unwrap();
+    fs::create_dir_all(config_home.join("gpy")).unwrap();
+    fs::write(config_home.join("gpy/config.toml"), "").unwrap();
+    let gpy = bin.join("gpy");
+    fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).unwrap();
+
+    let result = env
+        .run_program_with_env(
+            &gpy,
+            &["uninstall", "--yes"],
+            &[
+                ("ZDOTDIR", Path::new("")),
+                ("XDG_CONFIG_HOME", config_home.as_path()),
+            ],
+        )
+        .unwrap();
+
+    result.assert_success("gpy uninstall --yes");
+    let deleted: Vec<String> = result
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_once("rm -rf ").map(|(_, word)| sh_word(word)))
+        .collect();
+    let real_share = fs::canonicalize(&share).unwrap();
+    assert_eq!(
+        deleted,
+        [
+            real_share.display().to_string(),
+            config_home.join("gpy").display().to_string()
+        ],
+        "{}",
+        result.stdout
+    );
+}
+
 fn write_supervisor_pid(env: &CliTestEnv, pid: u32) -> PathBuf {
     let runtime = env.xdg_runtime_dir().join("gpy");
     fs::create_dir_all(&runtime).unwrap();

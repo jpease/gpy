@@ -633,8 +633,8 @@ fn remove_binaries(binaries: &Binaries, tally: &mut Tally) {
             }
             if let Some(share) = stray_share {
                 output::plain(format_args!(
-                    "The shell scripts `gpy setup` kept are not removed; delete them with: rm -rf '{}'",
-                    share.display()
+                    "The shell scripts `gpy setup` kept are not removed; delete them with: rm -rf {}",
+                    super::utils::shell_quote(share)
                 ));
             }
         }
@@ -651,9 +651,9 @@ fn remove_config(config_dir: &Path, purge: bool, tally: &mut Tally) {
             output::plain(format_args!("Removed empty {}", config_dir.display()));
         } else {
             output::plain(format_args!(
-                "Kept your configuration in {}; delete it with: rm -rf '{}'",
+                "Kept your configuration in {}; delete it with: rm -rf {}",
                 config_dir.display(),
-                config_dir.display()
+                super::utils::shell_quote(config_dir)
             ));
         }
     }
