@@ -4,7 +4,7 @@ use super::doctor_agent::check_answering_agent;
 use super::doctor_bundled::{is_uninstalled_bundled, uninstalled_bundled_remediation};
 use super::doctor_integration::{check_path_agent, check_shell_integrations};
 use super::doctor_themes::check_theme_overrides;
-use super::doctor_tuning::print_agent_tuning;
+use super::doctor_tuning::{print_agent_tuning, print_prompt_environment};
 use super::utils::agent_binary;
 use crate::agent::lifecycle::{AgentClient, StatusProbe};
 use crate::commands::output::{self, Status};
@@ -48,6 +48,9 @@ pub fn run() -> Result<()> {
     output::blank();
 
     print_agent_tuning();
+    output::blank();
+
+    print_prompt_environment();
     output::blank();
 
     all_ok &= check_plugins(&discovery);

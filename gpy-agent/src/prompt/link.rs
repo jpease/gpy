@@ -5,6 +5,7 @@
 //! it is owner-only (`0700`) and its files are created owner-only (`0600`).
 
 use crate::cache::InstantPromptCache;
+use crate::env_config::{IPC_COLD_TIMEOUT_MS, IPC_TIMEOUT_MS};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::FileTypeExt as _;
@@ -33,24 +34,14 @@ const REFRESH_GAP_MS: u128 = 500;
 /// (`__gpy_agent_late_secs`).
 const LATE_SECS: u64 = 5;
 
-/// `GPY_IPC_TIMEOUT_MS`, default 150.
+/// `GPY_IPC_TIMEOUT_MS`.
 fn warm_timeout_ms() -> u64 {
-    env_ms("GPY_IPC_TIMEOUT_MS").unwrap_or(150)
+    IPC_TIMEOUT_MS.count()
 }
 
-/// `GPY_IPC_COLD_TIMEOUT_MS` (default 500), never below the warm budget.
+/// `GPY_IPC_COLD_TIMEOUT_MS`, never below the warm budget.
 pub(crate) fn cold_timeout_ms() -> u64 {
-    env_ms("GPY_IPC_COLD_TIMEOUT_MS")
-        .unwrap_or(500)
-        .max(warm_timeout_ms())
-}
-
-/// A digits-only environment value.
-fn env_ms(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|v| v.parse().ok())
+    IPC_COLD_TIMEOUT_MS.count().max(warm_timeout_ms())
 }
 
 /// One agent connection context for a render.

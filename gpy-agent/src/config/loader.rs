@@ -29,22 +29,15 @@ pub fn load_config() -> Result<Config> {
 /// file means enabled.
 #[must_use]
 pub fn agent_enabled() -> bool {
-    agent_enabled_override(std::env::var("GPY_AGENT_ENABLED").ok().as_deref()).unwrap_or_else(
-        || match location::resolve_active_config(&location::get_config_paths()) {
-            Some((_, Some(existing))) => std::fs::read_to_string(existing)
-                .map_or(true, |contents| agent_enabled_in(&contents)),
-            _ => true,
-        },
-    )
-}
-
-/// `GPY_AGENT_ENABLED` as `gpy prompt` reads it: a flag spelling with no
-/// surrounding whitespace; anything else leaves the decision to the config.
-fn agent_enabled_override(raw: Option<&str>) -> Option<bool> {
-    match crate::env_config::parse_flag(raw.filter(|value| value.trim() == *value)) {
-        crate::env_config::Reading::Value(enabled) => Some(enabled),
-        crate::env_config::Reading::Unset | crate::env_config::Reading::Invalid(_) => None,
-    }
+    crate::env_config::AGENT_ENABLED
+        .flag_override()
+        .unwrap_or_else(
+            || match location::resolve_active_config(&location::get_config_paths()) {
+                Some((_, Some(existing))) => std::fs::read_to_string(existing)
+                    .map_or(true, |contents| agent_enabled_in(&contents)),
+                _ => true,
+            },
+        )
 }
 
 /// [`agent_enabled`] for one file's contents.
@@ -449,7 +442,7 @@ mod unknown_config_keys_tests {
 
 #[cfg(test)]
 mod agent_enabled_tests {
-    use super::{agent_enabled_in, agent_enabled_override};
+    use super::agent_enabled_in;
 
     #[test]
     fn agent_enabled_reads_the_raw_key_when_validation_fails() {
@@ -469,17 +462,6 @@ mod agent_enabled_tests {
         assert!(agent_enabled_in(
             "[agent]\nenabled = \"no\"\n[ui]\ntheme = 42\n"
         ));
-    }
-
-    /// The spellings `gpy prompt` reads: case-insensitive, unpadded.
-    #[test]
-    fn agent_enabled_override_reads_unpadded_flag_spellings_only() {
-        assert_eq!(agent_enabled_override(Some("1")), Some(true));
-        assert_eq!(agent_enabled_override(Some("TRUE")), Some(true));
-        assert_eq!(agent_enabled_override(Some("off")), Some(false));
-        for unset in [None, Some(""), Some(" 0"), Some("1 "), Some("maybe")] {
-            assert_eq!(agent_enabled_override(unset), None, "{unset:?}");
-        }
     }
 }
 

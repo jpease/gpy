@@ -3,7 +3,7 @@
 //! zero-width markers. Unresolved palette/prev colors are no-ops, never panics.
 
 use crate::template::{Attr, Color, Span, SpanKind, Style, canonical_ansi_name};
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 /// How many colors the terminal can show. Colors beyond it are approximated;
 /// the default is 24-bit, so output only changes on an override or on positive
@@ -22,44 +22,54 @@ pub enum ColorDepth {
 }
 
 impl ColorDepth {
-    /// Environment override: `truecolor`, `256`, `16` or `none`.
-    pub const ENV_OVERRIDE: &'static str = "GPY_COLOR_DEPTH";
-
     /// The depth for this process, read from the environment once.
     #[must_use]
     pub fn detect() -> Self {
-        static DEPTH: OnceLock<ColorDepth> = OnceLock::new();
+        static DEPTH: LazyLock<ColorDepth> = LazyLock::new(|| {
+            ColorDepth::resolve(
+                crate::env_config::COLOR_DEPTH.color_depth(),
+                std::env::var("TERM_PROGRAM").ok().as_deref(),
+                std::env::var("TERM").ok().as_deref(),
+            )
+        });
         // Unit tests render against the default, whatever terminal runs them.
         if cfg!(test) {
             return Self::TrueColor;
         }
-        *DEPTH.get_or_init(|| Self::from_env(|key| std::env::var(key).ok()))
+        *DEPTH
     }
 
-    /// [`Self::ENV_OVERRIDE`] when it names a depth, else 256 colors on a
-    /// terminal known to lack 24-bit color (`TERM_PROGRAM=Apple_Terminal`,
+    /// `depth` (`GPY_COLOR_DEPTH`) when set, else 256 colors on a terminal
+    /// known to lack 24-bit color (`TERM_PROGRAM=Apple_Terminal`,
     /// `TERM=linux`), else 24-bit. Absence of `COLORTERM` proves nothing.
-    fn from_env(get: impl Fn(&str) -> Option<String>) -> Self {
-        if let Some(depth) = get(Self::ENV_OVERRIDE).and_then(|value| Self::parse(&value)) {
-            return depth;
-        }
-        let limited = get("TERM_PROGRAM").as_deref() == Some("Apple_Terminal")
-            || get("TERM").as_deref() == Some("linux");
-        if limited {
-            Self::Ansi256
-        } else {
-            Self::TrueColor
-        }
+    fn resolve(depth: Option<Self>, term_program: Option<&str>, term: Option<&str>) -> Self {
+        depth.unwrap_or(
+            if term_program == Some("Apple_Terminal") || term == Some("linux") {
+                Self::Ansi256
+            } else {
+                Self::TrueColor
+            },
+        )
     }
 
     /// A depth name (`truecolor`/`24bit`, `256`, `16`, `none`), case-insensitive.
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "truecolor" | "24bit" => Some(Self::TrueColor),
             "256" => Some(Self::Ansi256),
             "16" => Some(Self::Ansi16),
             "none" => Some(Self::Mono),
             _ => None,
+        }
+    }
+
+    /// The name [`Self::parse`] reads back.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::TrueColor => "truecolor",
+            Self::Ansi256 => "256",
+            Self::Ansi16 => "16",
+            Self::Mono => "none",
         }
     }
 }
@@ -885,30 +895,33 @@ mod tests {
 
     #[test]
     fn color_depth_env_resolution() {
-        let env = |pairs: &'static [(&'static str, &'static str)]| {
-            ColorDepth::from_env(|key| {
-                pairs
-                    .iter()
-                    .find(|(name, _)| *name == key)
-                    .map(|(_, value)| (*value).to_owned())
-            })
+        let resolve = |depth: Option<&str>, term_program: Option<&str>, term: Option<&str>| {
+            ColorDepth::resolve(depth.and_then(ColorDepth::parse), term_program, term)
         };
-        assert_eq!(env(&[]), ColorDepth::TrueColor);
-        assert_eq!(env(&[("TERM", "xterm-256color")]), ColorDepth::TrueColor);
+        assert_eq!(resolve(None, None, None), ColorDepth::TrueColor);
         assert_eq!(
-            env(&[("TERM_PROGRAM", "Apple_Terminal")]),
-            ColorDepth::Ansi256
-        );
-        assert_eq!(env(&[("TERM", "linux")]), ColorDepth::Ansi256);
-        assert_eq!(
-            env(&[
-                ("TERM_PROGRAM", "Apple_Terminal"),
-                ("GPY_COLOR_DEPTH", "truecolor")
-            ]),
+            resolve(None, None, Some("xterm-256color")),
             ColorDepth::TrueColor
         );
-        assert_eq!(env(&[("GPY_COLOR_DEPTH", "16")]), ColorDepth::Ansi16);
-        assert_eq!(env(&[("GPY_COLOR_DEPTH", "NONE")]), ColorDepth::Mono);
-        assert_eq!(env(&[("GPY_COLOR_DEPTH", "bogus")]), ColorDepth::TrueColor);
+        assert_eq!(
+            resolve(None, Some("Apple_Terminal"), None),
+            ColorDepth::Ansi256
+        );
+        assert_eq!(resolve(None, None, Some("linux")), ColorDepth::Ansi256);
+        assert_eq!(
+            resolve(Some("truecolor"), Some("Apple_Terminal"), None),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(resolve(Some("16"), None, None), ColorDepth::Ansi16);
+        assert_eq!(resolve(Some(" NONE "), None, None), ColorDepth::Mono);
+        assert_eq!(resolve(Some("bogus"), None, None), ColorDepth::TrueColor);
+        for depth in [
+            ColorDepth::TrueColor,
+            ColorDepth::Ansi256,
+            ColorDepth::Ansi16,
+            ColorDepth::Mono,
+        ] {
+            assert_eq!(ColorDepth::parse(depth.name()), Some(depth));
+        }
     }
 }

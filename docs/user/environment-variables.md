@@ -4,9 +4,9 @@
 
 Every environment variable GPY reads (`GPY_*`, the XDG roots, `HOME`, `ZDOTDIR`, `NO_COLOR`, `TERM`), except installer-only `GPY_VERSION` (see [Installation](../INSTALL.md#environment-variables)). Config keys live in the [Configuration Reference](configuration-reference.md).
 
-Every `GPY_*` flag except `GPY_DEBUG` (only `1` counts) accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive. An unrecognised value is ignored and logged once, a positive-integer variable ignores `0` and garbage, and an empty value counts as unset. Where a variable has a matching config key, the precedence is the environment variable, then `config.toml`, then the built-in default.
+Every `GPY_*` flag accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive, with surrounding whitespace ignored. An unrecognised value is ignored and logged once, a positive-integer variable ignores `0` and garbage, and an empty value counts as unset. Where a variable has a matching config key, the precedence is the environment variable, then `config.toml`, then the built-in default.
 
-`gpy doctor` lists each agent tunable's effective value and where it came from (the "Agent tuning" section).
+`gpy doctor` lists each variable's effective value and where it came from: the agent's in its "Agent tuning" section, the prompt's in "Prompt environment".
 
 ---
 
@@ -34,7 +34,7 @@ Overrides the socket path alone; the runtime root is unchanged. Every command an
 
 ## Prompt
 
-Read by `gpy prompt` on every prompt, in all three shells. Export them in `config.fish`, `.zshrc` or `.bashrc`. A value that is not a non-negative integer falls back to the default.
+Read by `gpy prompt` on every prompt, in all three shells. Export them in `config.fish`, `.zshrc` or `.bashrc`. A number that is not a non-negative integer falls back to the default.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -47,7 +47,7 @@ Read by `gpy prompt` on every prompt, in all three shells. Export them in `confi
 | `GPY_AGENT_SUPERVISOR_ENABLED` | on | Overrides `agent.supervisor.enabled`. |
 | `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` | from config | Overrides `agent.supervisor.check_interval_seconds`; `0` checks on every prompt. Not range-checked. |
 | `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` | from config | Overrides `agent.supervisor.max_restart_attempts`; `0` never restarts. Not range-checked. |
-| `GPY_DEBUG` | off | Only `1` turns on debug output on stderr. |
+| `GPY_DEBUG` | off | A true value turns on debug output on stderr. |
 
 ### GPY_SHOW_STATUS
 

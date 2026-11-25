@@ -11,6 +11,10 @@
 
 use super::link::{Link, Reply, now_secs};
 use crate::config::Config;
+use crate::env_config::{
+    AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS, AGENT_SUPERVISOR_ENABLED,
+    AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS, DEBUG,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -230,7 +234,7 @@ fn resolve_bash() -> PathBuf {
         if fallback.is_file() {
             fallback
         } else {
-            if super::flag("GPY_DEBUG") == Some(true) {
+            if DEBUG.flag() {
                 eprintln!("gpy[script]: warning: No bash found - script segments disabled");
             }
             PathBuf::new()
@@ -300,12 +304,14 @@ fn track_shell(pid: u32) {
 /// (left running across an upgrade) gets `gpy-agent start`, which replaces an
 /// older one and keeps a newer one, once per `gpy` version.
 fn supervise(link: &Link, config: &Config, state: &mut State) {
-    let enabled =
-        super::flag("GPY_AGENT_SUPERVISOR_ENABLED").unwrap_or(config.agent.supervisor.enabled);
+    let enabled = AGENT_SUPERVISOR_ENABLED
+        .flag_override()
+        .unwrap_or(config.agent.supervisor.enabled);
     if !enabled {
         return;
     }
-    let interval = env_count("GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS")
+    let interval = AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
+        .count_override()
         .unwrap_or(config.agent.supervisor.check_interval_seconds.get());
     let now = now_secs();
     if now.saturating_sub(state.checked_at) < interval {
@@ -327,7 +333,8 @@ fn supervise(link: &Link, config: &Config, state: &mut State) {
         }
         return;
     }
-    let cap = env_count("GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS")
+    let cap = AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS
+        .count_override()
         .and_then(|n| u32::try_from(n).ok())
         .unwrap_or(config.agent.supervisor.max_restart_attempts.get());
     if state.restarts >= cap {
@@ -383,14 +390,6 @@ fn start_agent() {
         .stderr(Stdio::null());
     crate::process::spawn_in_own_process_group(&mut command);
     let _ = command.spawn();
-}
-
-/// A non-negative integer from the environment (`0` = every prompt).
-fn env_count(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|v| v.parse().ok())
 }
 
 fn load(path: &Path) -> Option<State> {

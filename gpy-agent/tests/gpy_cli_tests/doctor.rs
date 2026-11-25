@@ -434,6 +434,43 @@ fn doctor_lists_agent_tuning_and_warns_on_ignored_env() {
     );
 }
 
+/// The variables `gpy prompt` reads are listed too, with what the prompt
+/// makes of them.
+#[test]
+fn doctor_lists_the_prompt_environment() {
+    let env = CliTestEnv::with_config("[agent]\nenabled = false\n")
+        .expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy_with_env(
+            &["doctor"],
+            &[("GPY_IPC_TIMEOUT_MS", "soon"), ("GPY_SHOW_STATUS", " off ")],
+        )
+        .expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("[Prompt environment]"),
+        "doctor must print the Prompt environment section: {output:?}"
+    );
+    let line = |name: &str| {
+        output
+            .stdout
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("no {name} line: {output:?}"))
+            .to_owned()
+    };
+    let timeout = line("GPY_IPC_TIMEOUT_MS");
+    assert!(
+        timeout.contains("ignored") && timeout.contains("150 ms"),
+        "an ignored value must say so and show the default: {timeout:?}"
+    );
+    let status = line("GPY_SHOW_STATUS");
+    assert!(
+        status.contains("off (env)"),
+        "a padded flag counts: {status:?}"
+    );
+}
+
 #[test]
 fn doctor_warns_on_an_unknown_config_key() {
     let env = CliTestEnv::with_config(

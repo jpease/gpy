@@ -88,6 +88,19 @@ fn agent_enabled_env_overrides_the_config_both_ways() {
     );
 }
 
+/// `GPY_AGENT_ENABLED` follows the one `GPY_*` flag rule, which ignores
+/// surrounding whitespace: a padded `off` still keeps the agent down.
+#[test]
+fn agent_enabled_env_ignores_surrounding_whitespace() {
+    let sandbox = AgentSandbox::new();
+    let started = start_with_agent_enabled(&sandbox, " off ");
+    assert_eq!(started.exit_code, 6_i32, "{started:?}");
+    assert!(
+        !sandbox.socket_path.exists(),
+        "a padded GPY_AGENT_ENABLED=off must keep the daemon from binding a socket"
+    );
+}
+
 #[test]
 fn start_prints_one_progress_line_and_leaves_an_answering_daemon() {
     let sandbox = AgentSandbox::new();

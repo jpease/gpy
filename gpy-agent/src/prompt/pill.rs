@@ -5,6 +5,7 @@
 
 use super::dialect::Dialect;
 use super::vars::ShellVars;
+use crate::formatter::ColorDepth;
 
 /// `ESC`, as the shell's `__GPY_SGR_ESC`.
 const ESC: char = '\u{1b}';
@@ -22,21 +23,13 @@ pub(crate) enum Depth {
     NoColor,
 }
 
-impl Depth {
-    /// `GPY_COLOR_DEPTH` (case-insensitive, surrounding blanks ignored) wins;
-    /// otherwise 256 on `Apple_Terminal` or `TERM=linux`, else truecolor.
-    pub(crate) fn from_env(
-        depth: Option<&str>,
-        term_program: Option<&str>,
-        term: Option<&str>,
-    ) -> Self {
-        match depth.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-            Some("truecolor" | "24bit") => Self::TrueColor,
-            Some("256") => Self::Ansi256,
-            Some("16") => Self::Ansi16,
-            Some("none") => Self::NoColor,
-            _ if term_program == Some("Apple_Terminal") || term == Some("linux") => Self::Ansi256,
-            _ => Self::TrueColor,
+impl From<ColorDepth> for Depth {
+    fn from(depth: ColorDepth) -> Self {
+        match depth {
+            ColorDepth::TrueColor => Self::TrueColor,
+            ColorDepth::Ansi256 => Self::Ansi256,
+            ColorDepth::Ansi16 => Self::Ansi16,
+            ColorDepth::Mono => Self::NoColor,
         }
     }
 }

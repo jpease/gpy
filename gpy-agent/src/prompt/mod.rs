@@ -20,8 +20,11 @@ use crate::Result;
 use crate::agent::oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request};
 use crate::cache::InstantPromptCache;
 use crate::config::{Config, loader::load_config};
+use crate::env_config::{
+    AGENT_ENABLED, GIT_INSTANT_CACHE_TTL_SECONDS, LANGUAGE_CACHE_TTL_SECONDS, SHOW_STATUS,
+};
 use crate::formatter::{
-    DirectoryEnv, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
+    ColorDepth, DirectoryEnv, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
 };
 use crate::ipc::Response;
 use crate::template::{Palette, parse_color};
@@ -135,11 +138,7 @@ pub fn render(dialect: Dialect, args: PromptArgs, shell_version: &str) -> Result
     let mut render = Render {
         dialect,
         paint: Paint {
-            depth: Depth::from_env(
-                env("GPY_COLOR_DEPTH").as_deref(),
-                env("TERM_PROGRAM").as_deref(),
-                env("TERM").as_deref(),
-            ),
+            depth: Depth::from(ColorDepth::detect()),
             dialect,
         },
         link: Link::new(enabled, args.pid),
@@ -190,19 +189,11 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// The shared boolean table: `Some(true)` for 1/true/yes/on, `Some(false)`
-/// for 0/false/no/off (case-insensitive), `None` otherwise.
-fn flag(name: &str) -> Option<bool> {
-    match env(name)?.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
 /// `__gpy_agent_enabled`: `GPY_AGENT_ENABLED`, else `agent.enabled`.
 fn agent_enabled(config: &Config) -> bool {
-    flag("GPY_AGENT_ENABLED").unwrap_or(config.agent.enabled)
+    AGENT_ENABLED
+        .flag_override()
+        .unwrap_or(config.agent.enabled)
 }
 
 /// `__gpy_find_git_root`: the nearest ancestor of `canonical` (not `/`)
@@ -304,10 +295,7 @@ impl Render<'_> {
             pill::prompt_tail(&self.vars, self.paint, self.args.status, root, show_status)
         };
         let (symbol, symbol_alone) = if character.is_empty() {
-            (
-                prompt_tail(flag("GPY_SHOW_STATUS").unwrap_or(true)),
-                prompt_tail(false),
-            )
+            (prompt_tail(SHOW_STATUS.flag()), prompt_tail(false))
         } else {
             (character.clone(), character)
         };
@@ -739,15 +727,11 @@ fn read_entry(
     let metadata = std::fs::metadata(&path)
         .ok()
         .filter(std::fs::Metadata::is_file)?;
-    let (ttl_var, default_ttl) = if base == "git" {
-        ("GPY_GIT_INSTANT_CACHE_TTL_SECONDS", 5)
+    let ttl = if base == "git" {
+        GIT_INSTANT_CACHE_TTL_SECONDS.count()
     } else {
-        ("GPY_LANGUAGE_CACHE_TTL_SECONDS", 30)
+        LANGUAGE_CACHE_TTL_SECONDS.count()
     };
-    let ttl = env(ttl_var)
-        .filter(|v| v.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(default_ttl);
     let stale = metadata
         .modified()
         .ok()
