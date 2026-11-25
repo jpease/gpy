@@ -14,19 +14,23 @@ Every `GPY_*` flag accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, cas
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GPY_CONFIG_PATH` | unset | The only `config.toml` GPY reads and creates, even if the file does not exist yet and a global config does. A relative value is made absolute against the launch directory. An empty value is ignored. |
+| `GPY_CONFIG_PATH` | unset | The only `config.toml` GPY reads and creates, even if the file does not exist yet and a global config does. Must be absolute (see [below](#absolute-paths-only)). An empty value is ignored. |
 | `XDG_CONFIG_HOME` | `~/.config` | Config root `$XDG_CONFIG_HOME/gpy`, also where user themes, palettes and plugins live. Only an absolute value counts. |
 | `XDG_CACHE_HOME` | `~/.cache` | Cache root `$XDG_CACHE_HOME/gpy`: instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
 | `XDG_DATA_HOME` | `~/.local/share` | Data root `$XDG_DATA_HOME/gpy`: the installed `fish/`, `zsh/`, `bash/` trees and bundled `plugins/`. Only an absolute value counts. |
 | `XDG_RUNTIME_DIR` | unset | Runtime root `$XDG_RUNTIME_DIR/gpy`: the socket and the shell registry. |
 | `HOME` | passwd entry | Fallback for the config, cache and data roots when the XDG variables are unset or not absolute. An empty `HOME` counts as unset. With no usable home there is no `/tmp/gpy` or relative fallback: GPY fails closed (see [Troubleshooting](troubleshooting.md#no-usable-home-directory)). |
-| `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. See [below](#gpy_agent_socket_path). |
-| `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). `gpy setup` installs them only into the default location, so a directory set here must already hold them. See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
+| `GPY_AGENT_SOCKET_PATH` | under the runtime root | Overrides the socket path alone. Every command and shell must see the same value. Must be absolute. See [below](#gpy_agent_socket_path). |
+| `GPY_BUNDLED_PLUGIN_DIR` | `$XDG_DATA_HOME/gpy/plugins` | Directory holding the bundled plugins (`username`, `hostname`). `gpy setup` installs them only into the default location, so a directory set here must already hold them. Must be absolute. See [Plugin Framework](../dev/plugins.md#bundled-plugins). |
 | `VISUAL`, `EDITOR` | platform editor | The editor `gpy config open` launches, in that order. |
 
 ### GPY_AGENT_SOCKET_PATH
 
-Overrides the socket path alone; the runtime root is unchanged. Every command and every shell must see the same value, so export it before the shell integration loads. A relative value is resolved against the directory the shell integration loads in; the shell exports the absolute form so every command it runs sees the same path. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](cli-reference.md#gpy-start)).
+Overrides the socket path alone; the runtime root is unchanged. Every command and every shell must see the same value, so export it before the shell integration loads. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](cli-reference.md#gpy-start)).
+
+### Absolute paths only
+
+`GPY_CONFIG_PATH`, `GPY_AGENT_SOCKET_PATH`, `GPY_BUNDLED_PLUGIN_DIR` and `GPY_DEBUG_LOG` must be absolute paths. Each command, each prompt and the agent (which runs in `/`) would resolve a relative one against its own directory, so a shell that changes directory would reach a different socket or config file each time. A relative value is ignored as if unset: a command that reads it prints a one-line `Warning: [env] ignoring GPY_…` on stderr and appends it to the warning log, once per process and not again while it is the newest entry of that log, and `gpy doctor` flags the variable. A relative `--socket` on the command line is still made absolute against the directory the command runs in.
 
 `gpy debug paths` prints what the path variables resolve to on the current machine.
 
@@ -66,7 +70,7 @@ Read by the agent. Each is off, or at the default shown, unless set.
 | Variable | Default | Effect |
 |---|---|---|
 | `GPY_PROFILE` | off | A true value logs `[PROFILE] <operation>: <ms>` lines for timed operations to stderr and the debug log. |
-| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log. Warnings go to it too; without it they go to `~/.cache/gpy/agent.log`. |
+| `GPY_DEBUG_LOG` | unset | File path of the agent's trace log; must be absolute (see [above](#absolute-paths-only)). Warnings go to it too; without it they go to `~/.cache/gpy/agent.log`. |
 | `GPY_DISABLE_WATCHER` | off | A true value skips the git/language file watcher at agent startup. See [below](#gpy_disable_watcher). |
 | `GPY_THEME_WATCH_POLL_MS` | off | Positive integer: also poll the active theme's files on this interval; the theme is re-resolved only when a directory listing or plugin manifest changes. `0` or unset: notifications only. |
 | `GPY_CONFIG_WATCH_POLL_MS` | off | The same for `config.toml`, floored at the 1-second config debounce. The fix when editing the file never applies until `gpy restart`. |

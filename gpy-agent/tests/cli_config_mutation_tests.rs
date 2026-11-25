@@ -183,21 +183,14 @@ fn local_gpy_toml_is_ignored() {
     );
 }
 
-/// A relative `GPY_CONFIG_PATH` resolves against the current directory
-/// once, so every reported, stored, and watched config path is absolute.
+/// A relative `GPY_CONFIG_PATH` would name another file in every directory
+/// (and `/` for the agent), so it is ignored as if unset, with a warning
+/// that names it.
 #[test]
-fn relative_gpy_config_path_is_made_absolute() {
+fn relative_gpy_config_path_is_ignored_with_a_warning() {
     let (temp, home, xdg) = isolated_dirs();
     let workdir = temp.path().join("work");
     fs::create_dir_all(&workdir).unwrap();
-    // Unix reports the child's cwd canonical (macOS `/var` -> `/private/var`);
-    // Windows `canonicalize` would add a `\\?\` prefix the child never sees.
-    let base = if cfg!(windows) {
-        workdir.clone()
-    } else {
-        fs::canonicalize(&workdir).unwrap()
-    };
-    let expected = base.join("rel").join("custom.toml");
 
     let output = run_gpy(
         &["debug", "paths", "--format", "kv"],
@@ -206,10 +199,10 @@ fn relative_gpy_config_path_is_made_absolute() {
         Some(Path::new("rel/custom.toml")),
         &workdir,
     );
+    let stderr = stderr_of(&output);
     assert!(
         output.status.success(),
-        "debug paths should succeed; stderr: {}",
-        stderr_of(&output)
+        "debug paths should succeed; stderr: {stderr}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let value_of = |key: &str| {
@@ -219,18 +212,19 @@ fn relative_gpy_config_path_is_made_absolute() {
             .unwrap_or_else(|| panic!("{key} missing from:\n{stdout}"))
             .to_owned()
     };
-    // `Path` equality is per component, so `/` vs `\` on Windows is fine.
+    for key in ["config_path", "config_candidates"] {
+        let value = value_of(key);
+        assert!(
+            !value.contains("custom.toml"),
+            "{key} must not use the relative GPY_CONFIG_PATH: {value}"
+        );
+    }
     assert_eq!(
-        Path::new(&value_of("config_path")),
-        expected.as_path(),
-        "debug paths config_path"
-    );
-    assert_eq!(
-        value_of("config_candidates")
-            .split('|')
-            .next()
-            .map(Path::new),
-        Some(expected.as_path())
+        stderr
+            .matches("ignoring GPY_CONFIG_PATH=\"rel/custom.toml\": expected an absolute path")
+            .count(),
+        1,
+        "one warning naming the variable: {stderr}"
     );
 }
 

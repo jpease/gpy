@@ -700,7 +700,7 @@ The gates enforce `max` plus the 15% `measurement_variance_percent`, so a 1.5 ms
 
 ```
 1. $GPY_CONFIG_PATH (when set and non-empty, the ONLY config file: read and created there even if absent;
-                     a relative value is made absolute against the launch directory; empty counts as unset)
+                     a relative value is ignored with a warning; empty counts as unset)
 2. $XDG_CONFIG_HOME/gpy/config.toml
 3. ~/.config/gpy/config.toml
 4. Built-in defaults (config::Config::default())

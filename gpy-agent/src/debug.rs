@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
 /// File name of the default warning log inside the cache root.
@@ -20,28 +20,27 @@ const AGENT_LOG_NAME: &str = "agent.log";
 /// `None` without a cache root.
 static WARN_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
     debug_log_path()
-        .map(PathBuf::from)
-        .or_else(|| crate::paths::cache_root().map(|root| root.join(AGENT_LOG_NAME)))
+        .map(Path::to_path_buf)
+        .or_else(agent_log_path)
 });
 
-/// `GPY_DEBUG_LOG`, made absolute against the launch directory.
-static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
+/// `GPY_DEBUG_LOG`, as the environment spells it (a relative value is
+/// ignored).
+static DEBUG_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| crate::env_config::DEBUG_LOG.path());
 
 /// Return the path to the debug log file if enabled.
-fn debug_log_path() -> Option<&'static str> {
-    DEBUG_PATH
-        .get_or_init(|| {
-            crate::env_config::DEBUG_LOG.path().map(|value| {
-                crate::paths::absolutize(&value)
-                    .to_string_lossy()
-                    .into_owned()
-            })
-        })
-        .as_deref()
+fn debug_log_path() -> Option<&'static Path> {
+    DEBUG_PATH.as_deref()
 }
 
-/// Resolve `GPY_DEBUG_LOG` now, so a daemon forked afterwards inherits the
-/// path as it resolved in the launch directory, not against `/`.
+/// `agent.log` in the cache root, the warning log without `GPY_DEBUG_LOG`.
+fn agent_log_path() -> Option<PathBuf> {
+    crate::paths::cache_root().map(|root| root.join(AGENT_LOG_NAME))
+}
+
+/// Read `GPY_DEBUG_LOG` now, so a value the agent ignores is reported on the
+/// terminal that starts it, before the daemon's stderr is `/dev/null`.
 pub fn init_path() {
     let _ = debug_log_path();
 }
@@ -80,10 +79,7 @@ macro_rules! debug_log {
 /// Write a debug log entry (internal use only).
 pub(crate) fn write_debug_log(category: &str, message: &str) {
     if let Some(log_path) = debug_log_path() {
-        append_to(
-            Path::new(log_path),
-            &format_line(now_millis(), category, message),
-        );
+        append_to(log_path, &format_line(now_millis(), category, message));
     }
 }
 
@@ -126,6 +122,18 @@ pub(crate) fn capture_warnings<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
 /// warning log (a oneshot process per prompt would otherwise repeat it on
 /// every prompt). The log is rotated to `<name>.1` past `WARN_LOG_MAX_BYTES`.
 pub fn warn(category: &str, message: &str) {
+    warn_into(WARN_PATH.as_deref(), category, message);
+}
+
+/// [`warn`], into `agent.log` whatever `GPY_DEBUG_LOG` says: for a warning
+/// raised while `GPY_DEBUG_LOG` itself resolves, where [`warn`] would
+/// re-enter that resolution. Only an ignored `GPY_DEBUG_LOG` warns there, and
+/// then `agent.log` is the warning log anyway.
+pub(crate) fn warn_to_agent_log(category: &str, message: &str) {
+    warn_into(agent_log_path().as_deref(), category, message);
+}
+
+fn warn_into(log_path: Option<&Path>, category: &str, message: &str) {
     #[cfg(test)]
     {
         let captured = CAPTURED.with(|slot| {
@@ -138,7 +146,6 @@ pub fn warn(category: &str, message: &str) {
             return;
         }
     }
-    let log_path = WARN_PATH.as_deref();
     if seen_recently(category, message)
         || log_path.is_some_and(|log| is_logged_repeat(log, category, message))
     {

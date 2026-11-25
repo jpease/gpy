@@ -32,13 +32,11 @@ pub fn config_candidates_for(
 
 /// Configuration file locations in priority order, from the ambient environment.
 ///
-/// A relative `GPY_CONFIG_PATH` is made absolute against the cwd at start, so
-/// the daemon (in `/`) and CLI watch the same path.
+/// A relative `GPY_CONFIG_PATH` is ignored (`env_config`), so the daemon (in
+/// `/`) and every command watch the same path.
 #[must_use]
 pub fn get_config_paths() -> Vec<PathBuf> {
-    let custom_path = crate::env_config::CONFIG_PATH
-        .path()
-        .map(|value| crate::paths::absolutize(&value));
+    let custom_path = crate::env_config::CONFIG_PATH.path();
     let home = crate::paths::home_path();
     let xdg_config = crate::paths::xdg_config_home();
 
@@ -112,7 +110,7 @@ mod config_path_tests {
             Some("/home/u"),
             &["/custom.toml"],
         ),
-        // Relative GPY_CONFIG_PATH passes through; `get_config_paths` absolutizes it.
+        // Taken as given; `env_config` never hands over a relative value.
         (Some("custom.toml"), None, Some("/home/u"), &["custom.toml"]),
         // Honoured even with no usable home.
         (Some("/custom.toml"), None, None, &["/custom.toml"]),

@@ -11,23 +11,14 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-/// Directory `gpy-agent start` ran in, recorded before the daemon `chdir`s to
-/// `/`, so user-supplied relative paths keep resolving against it.
-pub(crate) static LAUNCH_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-/// `path` made absolute against [`LAUNCH_DIR`], else the current directory.
+/// `path` made absolute against the current directory.
 #[must_use]
 pub fn absolutize(path: &Path) -> PathBuf {
     if path.is_absolute() || path.is_empty() {
         return path.to_path_buf();
     }
-    LAUNCH_DIR
-        .get()
-        .cloned()
-        .or_else(|| std::env::current_dir().ok())
-        .map_or_else(|| path.to_path_buf(), |dir| dir.join(path))
+    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |dir| dir.join(path))
 }
 
 /// Bytes in `sockaddr_un.sun_path`, NUL included (hardcoded: crate forbids `unsafe`).

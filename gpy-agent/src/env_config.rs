@@ -15,8 +15,10 @@
 //! - Positive integers: `0`, garbage or an out-of-range number is ignored.
 //! - "Zero disables" integers: `0` means off; garbage is ignored.
 //! - Counts: any whole number, `0` included; garbage is ignored.
-//! - Paths: empty is unset; a relative path resolves against the launch
-//!   directory.
+//! - Paths: empty is unset. `GPY_DEBUG_LOG`, `GPY_CONFIG_PATH`,
+//!   `GPY_AGENT_SOCKET_PATH` and `GPY_BUNDLED_PLUGIN_DIR` must be absolute:
+//!   each command, shell and the agent (in `/`) would resolve a relative one
+//!   against its own directory, so it is ignored.
 //! - Empty or whitespace-only is unset for every kind, with no warning.
 //!
 //! An ignored value falls back to the default and is logged once per variable
@@ -139,7 +141,12 @@ pub(crate) enum EnvKind {
     ConfigCount,
     /// A filesystem path.
     Path,
-    /// A path read through `paths::root_var_os`, which lib tests stub out.
+    /// A filesystem path that must be absolute: every command, shell and
+    /// the agent (which runs in `/`) must resolve it alike, so a relative
+    /// value is ignored.
+    AbsolutePath,
+    /// An [`Self::AbsolutePath`] read through `paths::root_var_os`, which
+    /// lib tests stub out.
     ConfigRoot,
     /// `GPY_NERD_FONT`: a flag plus `nerd`, `none`, `ascii`, `unknown`, `auto`.
     NerdFont,
@@ -166,7 +173,12 @@ pub(crate) enum Source {
     /// Unset, so the built-in default applies.
     Default,
     /// The environment value was not recognised; the default applies.
-    Ignored(String),
+    Ignored {
+        /// The value as set.
+        raw: String,
+        /// What the variable accepts.
+        expected: &'static str,
+    },
 }
 
 /// `GPY_PROFILE`: log timed operations to stderr.
@@ -177,12 +189,12 @@ pub(crate) const PROFILE: EnvVar = EnvVar {
 /// `GPY_DEBUG_LOG`: debug log file.
 pub(crate) const DEBUG_LOG: EnvVar = EnvVar {
     name: "GPY_DEBUG_LOG",
-    kind: EnvKind::Path,
+    kind: EnvKind::AbsolutePath,
 };
 /// `GPY_AGENT_SOCKET_PATH`: agent socket.
 pub(crate) const AGENT_SOCKET_PATH: EnvVar = EnvVar {
     name: "GPY_AGENT_SOCKET_PATH",
-    kind: EnvKind::Path,
+    kind: EnvKind::AbsolutePath,
 };
 /// `GPY_CONFIG_PATH`: config file.
 pub(crate) const CONFIG_PATH: EnvVar = EnvVar {
@@ -235,7 +247,7 @@ pub(crate) const WATCH_WORKTREE: EnvVar = EnvVar {
 /// `GPY_BUNDLED_PLUGIN_DIR`: bundled plugin directory.
 pub(crate) const BUNDLED_PLUGIN_DIR: EnvVar = EnvVar {
     name: "GPY_BUNDLED_PLUGIN_DIR",
-    kind: EnvKind::Path,
+    kind: EnvKind::AbsolutePath,
 };
 /// `GPY_CONFIG_WATCH_POLL_MS`: config poll fallback; `0` disables it.
 pub(crate) const CONFIG_WATCH_POLL_MS: EnvVar = EnvVar {
@@ -364,11 +376,12 @@ static WARNED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 /// Emit `message` the first time `name` warns in this process.
 ///
-/// With `to_debug_log` it goes through [`crate::debug::warn`] (stderr and
-/// `GPY_DEBUG_LOG`); without, to stderr only, which `debug.rs` needs because
-/// calling `debug::warn` while its path initialises would re-enter it. The
-/// lock is released before emitting: `debug::warn` reads `GPY_DEBUG_LOG`
-/// through this module and may call `warn_once` again.
+/// With `to_debug_log` it goes through [`crate::debug::warn`] (stderr and the
+/// warning log, `GPY_DEBUG_LOG` when set); without, through
+/// [`crate::debug::warn_to_agent_log`], which `GPY_DEBUG_LOG`'s own warning
+/// needs because calling `debug::warn` while that path initialises would
+/// re-enter it. The lock is released before emitting: `debug::warn` reads
+/// `GPY_DEBUG_LOG` through this module and may call `warn_once` again.
 pub(crate) fn warn_once(name: &'static str, message: &str, to_debug_log: bool) {
     let first = {
         let mut warned = WARNED.lock_or_recover();
@@ -385,9 +398,7 @@ pub(crate) fn warn_once(name: &'static str, message: &str, to_debug_log: bool) {
     if to_debug_log {
         crate::debug::warn("env", message);
     } else {
-        use std::io::Write as _;
-        // Not `eprintln!`: `clippy::print_stderr` is denied.
-        let _ = writeln!(std::io::stderr(), "Warning: [env] {message}");
+        crate::debug::warn_to_agent_log("env", message);
     }
 }
 
@@ -404,6 +415,7 @@ const EXPECTED_FLAG: &str = "1, true, yes, on, 0, false, no or off";
 const EXPECTED_POSITIVE: &str = "a positive whole number";
 const EXPECTED_NUMBER: &str = "a whole number (0 disables)";
 const EXPECTED_COUNT: &str = "a whole number";
+const EXPECTED_ABSOLUTE_PATH: &str = "an absolute path";
 const EXPECTED_NERD_FONT: &str = "a flag value, nerd, none, ascii, unknown or auto";
 const EXPECTED_COLOR_DEPTH: &str = "truecolor, 24bit, 256, 16 or none";
 
@@ -519,11 +531,42 @@ impl EnvVar {
         }
     }
 
-    /// The path; `None` when unset or empty. Read as an `OsString`, so a
-    /// non-UTF-8 path survives.
+    /// The path, unwarned: [`Reading::Invalid`] for a relative value of a
+    /// variable that must be absolute.
+    fn path_reading(&self) -> Reading<PathBuf> {
+        let Some(path) = parse_path(self.raw().as_deref()) else {
+            return Reading::Unset;
+        };
+        let absolute_only = matches!(self.kind, EnvKind::AbsolutePath | EnvKind::ConfigRoot);
+        if absolute_only && !path.is_absolute() {
+            Reading::Invalid(path.to_string_lossy().into_owned())
+        } else {
+            Reading::Value(path)
+        }
+    }
+
+    /// The path; `None` when unset or empty, and for a relative value of a
+    /// variable that must be absolute, which warns once. Read as an
+    /// `OsString`, so a non-UTF-8 path survives.
     #[must_use]
     pub(crate) fn path(&self) -> Option<PathBuf> {
-        parse_path(self.raw().as_deref())
+        match self.path_reading() {
+            Reading::Value(path) => Some(path),
+            Reading::Unset => None,
+            Reading::Invalid(raw) => {
+                // The debug log's own warning cannot go to the debug log:
+                // that path is what is being resolved.
+                warn_once(
+                    self.name,
+                    &format!(
+                        "ignoring {}=\"{raw}\": expected {EXPECTED_ABSOLUTE_PATH}",
+                        self.name
+                    ),
+                    self.name != DEBUG_LOG.name,
+                );
+                None
+            }
+        }
     }
 
     /// The text; `None` when unset, empty or not valid Unicode.
@@ -579,21 +622,22 @@ impl EnvVar {
         let number = |value: u64| format!("{value}{unit}");
         let on_off = |value: bool| if value { "on" } else { "off" }.to_owned();
         let from_config = || "from config".to_owned();
+        let ignored = |raw: String, expected: &'static str| Source::Ignored { raw, expected };
         match self.kind {
             EnvKind::Flag { default } => match parse_flag(raw.as_deref()) {
                 Reading::Value(value) => (on_off(value), Source::Env),
                 Reading::Unset => (on_off(default), Source::Default),
-                Reading::Invalid(bad) => (on_off(default), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (on_off(default), ignored(bad, EXPECTED_FLAG)),
             },
             EnvKind::ConfigFlag => match parse_flag(raw.as_deref()) {
                 Reading::Value(value) => (on_off(value), Source::Env),
                 Reading::Unset => (from_config(), Source::Default),
-                Reading::Invalid(bad) => (from_config(), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (from_config(), ignored(bad, EXPECTED_FLAG)),
             },
             EnvKind::Positive { default } => match parse_positive(raw.as_deref()) {
                 Reading::Value(value) => (number(value), Source::Env),
                 Reading::Unset => (number(default), Source::Default),
-                Reading::Invalid(bad) => (number(default), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (number(default), ignored(bad, EXPECTED_POSITIVE)),
             },
             EnvKind::ZeroDisables { default } => {
                 let shown = |value: Option<u64>| value.map_or_else(|| "off".to_owned(), number);
@@ -601,23 +645,28 @@ impl EnvVar {
                     Reading::Value(0) => ("off".to_owned(), Source::Env),
                     Reading::Value(value) => (number(value), Source::Env),
                     Reading::Unset => (shown(default), Source::Default),
-                    Reading::Invalid(bad) => (shown(default), Source::Ignored(bad)),
+                    Reading::Invalid(bad) => (shown(default), ignored(bad, EXPECTED_NUMBER)),
                 }
             }
             EnvKind::Count { default } => match parse_u64(raw.as_deref()) {
                 Reading::Value(value) => (number(value), Source::Env),
                 Reading::Unset => (number(default), Source::Default),
-                Reading::Invalid(bad) => (number(default), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (number(default), ignored(bad, EXPECTED_COUNT)),
             },
             EnvKind::ConfigCount => match parse_u64(raw.as_deref()) {
                 Reading::Value(value) => (number(value), Source::Env),
                 Reading::Unset => (from_config(), Source::Default),
-                Reading::Invalid(bad) => (from_config(), Source::Ignored(bad)),
+                Reading::Invalid(bad) => (from_config(), ignored(bad, EXPECTED_COUNT)),
             },
-            EnvKind::Path | EnvKind::ConfigRoot => self.path().map_or_else(
-                || ("unset".to_owned(), Source::Default),
-                |path| (path.display().to_string(), Source::Env),
-            ),
+            EnvKind::Path | EnvKind::AbsolutePath | EnvKind::ConfigRoot => {
+                match self.path_reading() {
+                    Reading::Value(path) => (path.display().to_string(), Source::Env),
+                    Reading::Unset => ("unset".to_owned(), Source::Default),
+                    Reading::Invalid(bad) => {
+                        ("unset".to_owned(), ignored(bad, EXPECTED_ABSOLUTE_PATH))
+                    }
+                }
+            }
             EnvKind::Text => parse_text(raw.as_deref()).map_or_else(
                 || ("unset".to_owned(), Source::Default),
                 |text| (text, Source::Env),
@@ -632,12 +681,12 @@ impl EnvVar {
                 }
                 Reading::Value(None) => ("auto".to_owned(), Source::Env),
                 Reading::Unset => ("auto".to_owned(), Source::Default),
-                Reading::Invalid(bad) => ("auto".to_owned(), Source::Ignored(bad)),
+                Reading::Invalid(bad) => ("auto".to_owned(), ignored(bad, EXPECTED_NERD_FONT)),
             },
             EnvKind::ColorDepth => match parse_color_depth(raw.as_deref()) {
                 Reading::Value(depth) => (depth.name().to_owned(), Source::Env),
                 Reading::Unset => ("detect".to_owned(), Source::Default),
-                Reading::Invalid(bad) => ("detect".to_owned(), Source::Ignored(bad)),
+                Reading::Invalid(bad) => ("detect".to_owned(), ignored(bad, EXPECTED_COLOR_DEPTH)),
             },
         }
     }
@@ -727,9 +776,12 @@ mod tests {
 
     #[test]
     fn warn_once_emits_each_name_once() {
-        warn_once("GPY_TEST_WARN_ONCE_A", "first", false);
-        warn_once("GPY_TEST_WARN_ONCE_A", "second", false);
-        warn_once("GPY_TEST_WARN_ONCE_B", "only", false);
+        let ((), lines) = crate::debug::capture_warnings(|| {
+            warn_once("GPY_TEST_WARN_ONCE_A", "first", false);
+            warn_once("GPY_TEST_WARN_ONCE_A", "second", false);
+            warn_once("GPY_TEST_WARN_ONCE_B", "only", false);
+        });
+        assert_eq!(lines, ["[env] first", "[env] only"]);
         let warned = WARNED.lock_or_recover();
         for name in ["GPY_TEST_WARN_ONCE_A", "GPY_TEST_WARN_ONCE_B"] {
             assert_eq!(

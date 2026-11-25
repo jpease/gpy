@@ -471,6 +471,30 @@ fn doctor_lists_the_prompt_environment() {
     );
 }
 
+/// A relative path variable is ignored; doctor names it and says why.
+#[test]
+fn doctor_flags_a_relative_path_variable() {
+    let env = CliTestEnv::with_config("[agent]\nenabled = false\n")
+        .expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy_with_env(&["doctor"], &[("GPY_AGENT_SOCKET_PATH", "gpy.sock")])
+        .expect("Failed to run gpy doctor");
+    let line = output
+        .stdout
+        .lines()
+        .find(|line| line.contains("GPY_AGENT_SOCKET_PATH"))
+        .unwrap_or_else(|| panic!("no GPY_AGENT_SOCKET_PATH line: {output:?}"));
+    assert!(
+        line.contains("ignored \"gpy.sock\": expected an absolute path"),
+        "{line:?}"
+    );
+    assert_eq!(
+        output.exit_code, 0_i32,
+        "a warning, not a failure: {output:?}"
+    );
+}
+
 #[test]
 fn doctor_warns_on_an_unknown_config_key() {
     let env = CliTestEnv::with_config(

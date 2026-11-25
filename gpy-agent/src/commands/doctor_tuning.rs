@@ -30,10 +30,13 @@ fn print_vars(vars: &[&EnvVar]) {
         match source {
             Source::Env => output::detail(format_args!("{} = {value} (env)", var.name)),
             Source::Default => output::detail(format_args!("{} = {value} (default)", var.name)),
-            Source::Ignored(raw) => output::detail_status(
+            Source::Ignored { raw, expected } => output::detail_status(
                 1,
                 Status::Warn,
-                format_args!("{} = {value} (default; ignored \"{raw}\")", var.name),
+                format_args!(
+                    "{} = {value} (default; ignored \"{raw}\": expected {expected})",
+                    var.name
+                ),
             ),
         }
     }

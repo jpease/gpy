@@ -19,7 +19,7 @@ This document covers `config.toml` only — the file that controls agent behavio
 
 The agent reads one config file, chosen in this order:
 
-1. `$GPY_CONFIG_PATH`, when set and non-empty. It is the only config file: read, and created by `gpy config open`, at that path even if it does not exist yet and a global config does. A relative value is made absolute against the directory you run the command or start the agent from; an empty value is ignored.
+1. `$GPY_CONFIG_PATH`, when set and non-empty. It is the only config file: read, and created by `gpy config open`, at that path even if it does not exist yet and a global config does. It must be absolute: a relative value is ignored with a warning (see [Environment Variables](environment-variables.md#absolute-paths-only)); an empty value is ignored.
 2. `$XDG_CONFIG_HOME/gpy/config.toml` (only an absolute `XDG_CONFIG_HOME` counts)
 3. `~/.config/gpy/config.toml` (also read when `XDG_CONFIG_HOME` is set but has no `gpy/config.toml`)
 4. Built-in defaults, if no file exists at 2 or 3
