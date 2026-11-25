@@ -8,7 +8,9 @@
 mod common;
 
 use common::agent_sandbox::{AgentSandbox, RUNNING_LINE};
+use common::cli_harness::CliCommandResult;
 use common::fake_agent::{Behaviour, FakeAgent};
+use std::ffi::OsStr;
 use std::time::Duration;
 
 /// A config whose `agent.enabled = false` sits beside a key that fails validation.
@@ -47,6 +49,42 @@ fn start_honors_agent_disabled_in_an_otherwise_invalid_config() {
     assert!(
         !sandbox.socket_path.exists(),
         "no daemon may bind a socket when the agent is disabled"
+    );
+}
+
+/// `gpy-agent start` in `sandbox` with `GPY_AGENT_ENABLED` set to `value`.
+fn start_with_agent_enabled(sandbox: &AgentSandbox, value: &str) -> CliCommandResult {
+    sandbox
+        .env
+        .run_gpy_agent_with_env(
+            &["start"],
+            &[
+                ("GPY_AGENT_SOCKET_PATH", sandbox.socket_path.as_os_str()),
+                ("GPY_AGENT_ENABLED", OsStr::new(value)),
+            ],
+        )
+        .expect("spawn gpy-agent start")
+}
+
+/// `GPY_AGENT_ENABLED` wins over `agent.enabled` both ways, as it does for
+/// `gpy prompt`, so a shell the prompt runs with the agent on can start it.
+#[test]
+fn agent_enabled_env_overrides_the_config_both_ways() {
+    let disabled = AgentSandbox::new();
+    disabled
+        .env
+        .write_config("[agent]\nenabled = false\n")
+        .expect("write config");
+    let forced_on = start_with_agent_enabled(&disabled, "1");
+    assert_eq!(forced_on.exit_code, 0_i32, "{forced_on:?}");
+    disabled.wait_until_responding();
+
+    let enabled = AgentSandbox::new();
+    let forced_off = start_with_agent_enabled(&enabled, "off");
+    assert_eq!(forced_off.exit_code, 6_i32, "{forced_off:?}");
+    assert!(
+        !enabled.socket_path.exists(),
+        "GPY_AGENT_ENABLED=off must keep the daemon from binding a socket"
     );
 }
 

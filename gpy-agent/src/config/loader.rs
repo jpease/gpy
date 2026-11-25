@@ -20,17 +20,30 @@ pub fn load_config() -> Result<Config> {
     }
 }
 
-/// Whether the agent may run (`agent.enabled`), the one reader of that switch.
-/// Uses the typed config when it loads; when validation fails it falls back to
-/// the raw `agent.enabled` boolean, so the kill switch survives an otherwise
-/// broken file. A missing, unreadable or unparsable file means enabled.
+/// Whether the agent may run: `GPY_AGENT_ENABLED` when it holds a flag
+/// spelling, else `agent.enabled`, so the environment wins both ways, as it
+/// does for `gpy prompt`. The one reader of that switch outside the prompt.
+/// The config side uses the typed config when it loads; when validation
+/// fails it falls back to the raw `agent.enabled` boolean, so the kill switch
+/// survives an otherwise broken file. A missing, unreadable or unparsable
+/// file means enabled.
 #[must_use]
 pub fn agent_enabled() -> bool {
-    match location::resolve_active_config(&location::get_config_paths()) {
-        Some((_, Some(existing))) => {
-            std::fs::read_to_string(existing).map_or(true, |contents| agent_enabled_in(&contents))
-        }
-        _ => true,
+    agent_enabled_override(std::env::var("GPY_AGENT_ENABLED").ok().as_deref()).unwrap_or_else(
+        || match location::resolve_active_config(&location::get_config_paths()) {
+            Some((_, Some(existing))) => std::fs::read_to_string(existing)
+                .map_or(true, |contents| agent_enabled_in(&contents)),
+            _ => true,
+        },
+    )
+}
+
+/// `GPY_AGENT_ENABLED` as `gpy prompt` reads it: a flag spelling with no
+/// surrounding whitespace; anything else leaves the decision to the config.
+fn agent_enabled_override(raw: Option<&str>) -> Option<bool> {
+    match crate::env_config::parse_flag(raw.filter(|value| value.trim() == *value)) {
+        crate::env_config::Reading::Value(enabled) => Some(enabled),
+        crate::env_config::Reading::Unset | crate::env_config::Reading::Invalid(_) => None,
     }
 }
 
@@ -436,7 +449,7 @@ mod unknown_config_keys_tests {
 
 #[cfg(test)]
 mod agent_enabled_tests {
-    use super::agent_enabled_in;
+    use super::{agent_enabled_in, agent_enabled_override};
 
     #[test]
     fn agent_enabled_reads_the_raw_key_when_validation_fails() {
@@ -456,6 +469,17 @@ mod agent_enabled_tests {
         assert!(agent_enabled_in(
             "[agent]\nenabled = \"no\"\n[ui]\ntheme = 42\n"
         ));
+    }
+
+    /// The spellings `gpy prompt` reads: case-insensitive, unpadded.
+    #[test]
+    fn agent_enabled_override_reads_unpadded_flag_spellings_only() {
+        assert_eq!(agent_enabled_override(Some("1")), Some(true));
+        assert_eq!(agent_enabled_override(Some("TRUE")), Some(true));
+        assert_eq!(agent_enabled_override(Some("off")), Some(false));
+        for unset in [None, Some(""), Some(" 0"), Some("1 "), Some("maybe")] {
+            assert_eq!(agent_enabled_override(unset), None, "{unset:?}");
+        }
     }
 }
 

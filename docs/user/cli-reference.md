@@ -178,9 +178,11 @@ was left in place.`). An agent that is running but too busy to answer (it
 closes new connections without a reply) is left alone too: `gpy-agent start`
 prints `Agent at <socket> is too busy to answer; leaving it running.` on
 stderr and exits `0`. `agent.enabled = false` is honored even when other keys
-in `config.toml` are invalid: `start` prints `Agent disabled in config
-(agent.enabled = false); not started.` on stderr, binds no socket, and exits
-`6`. If the new daemon exits or does not answer within 5 seconds, `gpy start`
+in `config.toml` are invalid, and `GPY_AGENT_ENABLED` overrides it either way,
+as it does for the prompt. A disabled agent is not started: `start` prints
+`Agent disabled in config (agent.enabled = false); not started.` on stderr,
+binds no socket, and exits `6`. If the new daemon exits or does not answer
+within 5 seconds, `gpy start`
 (and `gpy-agent start`) exits `1` with an `Error:` line; when the daemon fails
 before binding its socket, the line carries the daemon's own error, such as a
 cache directory it could not create and why. When `start` cannot tell whether
