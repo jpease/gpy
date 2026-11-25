@@ -100,8 +100,9 @@ builtin applies again; an edited copy or a symlink is kept and listed. Set
 `ui.retire_unmodified_themes` to `false` to keep every copy.
 
 `--check` validates what setup would need and writes nothing: the source tree
-must hold every file the chosen shell needs (for Fish and Zsh, the script
-runner in `bash/core/` too), and the install path must be safe to source from
+must hold every file the chosen shell needs (for Fish, `fish/conf.d/gpy_init.fish`,
+`fish/functions/fish_prompt.fish` and `fish/completions/gpy-dynamic.fish`; for Zsh,
+`zsh/gpy.zsh`; for Bash, `bash/gpy.bash`), and the install path must be safe to source from
 an rc file. It prints `ok: <shell> files in <source> can be installed to <dir>`
 and exits 0, or prints the error setup itself would give and exits 1. The
 installers run it with the downloaded `gpy` before replacing any binary.
