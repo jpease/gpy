@@ -16,9 +16,14 @@ pub(super) fn bash_rc_body(gpy_bash: &Path) -> String {
     )
 }
 
-/// `.bashrc` block bodies earlier releases wrote for this install.
-pub(super) fn legacy_bash_rc_bodies(gpy_bash: &Path) -> Vec<String> {
-    vec![format!("source \"{}\"", gpy_bash.display())]
+/// `.bashrc` block bodies earlier releases wrote: an unguarded `source` of this
+/// install, and the one releases before 0.9 wrote for the tree in
+/// `~/.config/gpy/bash` that `gpy setup` no longer keeps.
+pub(super) fn legacy_bash_rc_bodies(gpy_bash: &Path, config_home: &Path) -> Vec<String> {
+    let old_gpy_bash = config_home.join("gpy/bash/gpy.bash");
+    [gpy_bash, old_gpy_bash.as_path()]
+        .map(|sourced| format!("source \"{}\"", sourced.display()))
+        .into()
 }
 
 /// Login-file loader body; inert outside Bash.
@@ -30,11 +35,15 @@ const LEGACY_BASH_LOGIN_LOADER: &str = "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.b
 const BASH_LOGIN_HEADER: &str = "GPY: load ~/.bashrc in login shells";
 
 /// Wire Bash: rc block in `~/.bashrc`, plus a login-shell loader.
-pub(super) fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
+pub(super) fn wire_bash(
+    env: &Environment,
+    config_home: &Path,
+    shell_dir: &Path,
+) -> Result<(PathBuf, BlockChange)> {
     let home = env.home()?;
     let rc = rc_file_for(env, Shell::Bash)?;
     let gpy_bash = shell_dir.join("gpy.bash");
-    let legacy_bodies = legacy_bash_rc_bodies(&gpy_bash);
+    let legacy_bodies = legacy_bash_rc_bodies(&gpy_bash, config_home);
     let change = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,

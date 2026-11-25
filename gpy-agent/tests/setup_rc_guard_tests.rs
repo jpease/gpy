@@ -332,3 +332,43 @@ fn fish_setup_repoints_a_block_that_sources_the_pre_0_9_tree() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+#[test]
+fn zsh_and_bash_setup_repoint_a_block_that_sources_the_pre_0_9_tree() {
+    for (shell, rc_name, old, new) in [
+        (
+            "zsh",
+            ".zshrc",
+            ".config/gpy/zsh/gpy.zsh",
+            "source \".local/share/gpy/zsh/gpy.zsh\"",
+        ),
+        (
+            "bash",
+            ".bashrc",
+            ".config/gpy/bash/gpy.bash",
+            "*i*) source \".local/share/gpy/bash/gpy.bash\" ;;",
+        ),
+    ] {
+        let home = TempDir::new().unwrap();
+        let prefix = format!("{}/", home.path().display());
+        let legacy = block(
+            "GPY shell integration",
+            &format!("source \"{prefix}{old}\""),
+        );
+        let rc = home.path().join(rc_name);
+        fs::write(&rc, format!("export A=1\n{legacy}")).unwrap();
+
+        let output = setup(home.path(), &["--shell", shell]);
+        assert_ok(&output);
+
+        let text = fs::read_to_string(&rc).unwrap().replace(&prefix, "");
+        assert!(text.contains(new) && !text.contains(old), "{shell}: {text}");
+        assert!(text.starts_with("export A=1\n"), "{shell}: {text}");
+        assert_eq!(block_count(&rc), 1, "{shell}");
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Updated the GPY block in"),
+            "{shell}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}

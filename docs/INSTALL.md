@@ -347,9 +347,10 @@ It:
    GPY. Delete the lines from `# >>> gpy-init >>>` that GPY added and run
    `gpy setup` again. The installers treat exit `5` as a warning: they finish
    the install, start the agent, and end with a line saying GPY is not active
-   in the rc file. The Bash block loads GPY only in interactive shells, and
-   setup rewrites an unedited Bash block or loader from an earlier release to
-   that form; a block whose text differs is left as it is.
+   in the rc file. The Bash block loads GPY only in interactive shells. Setup
+   rewrites an unedited block or Bash loader from an earlier release to the
+   current text, including a block that sources one of the old trees above; a
+   block whose text differs is left as it is.
 4. Moves a theme file in `~/.config/gpy/themes/` that is an unedited copy of a
    builtin theme as released up to 0.7.1 (`default.toml`, `text.toml`,
    `starship.toml`, byte for byte) to `<name>.toml.bak`, so the builtin and its

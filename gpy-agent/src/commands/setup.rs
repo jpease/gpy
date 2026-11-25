@@ -500,8 +500,8 @@ fn install(
 
     let (rc_file, rc_change) = match shell {
         Shell::Fish => wire_fish(env, &config_home, &shell_dir)?,
-        Shell::Zsh => wire_zsh(env, &shell_dir)?,
-        Shell::Bash => wire_bash(env, &shell_dir)?,
+        Shell::Zsh => wire_zsh(env, &config_home, &shell_dir)?,
+        Shell::Bash => wire_bash(env, &config_home, &shell_dir)?,
     };
     Ok(Outcome {
         shell_dir,
@@ -586,14 +586,20 @@ fn wire_fish(
     Ok((config, change))
 }
 
-/// Wire Zsh: rc block in `$ZDOTDIR/.zshrc` or `~/.zshrc`.
-fn wire_zsh(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, BlockChange)> {
+/// Wire Zsh: rc block in `$ZDOTDIR/.zshrc` or `~/.zshrc`. The block releases
+/// before 0.9 wrote, sourcing the tree in `~/.config/gpy/zsh` that `gpy setup`
+/// no longer keeps, is repointed.
+fn wire_zsh(
+    env: &Environment,
+    config_home: &Path,
+    shell_dir: &Path,
+) -> Result<(PathBuf, BlockChange)> {
     let rc = rc_file_for(env, Shell::Zsh)?;
     let change = ensure_and_report(
         &rc,
         RC_BLOCK_HEADER,
         &zsh_rc_body(shell_dir),
-        &[],
+        &[zsh_rc_body(&config_home.join("gpy/zsh"))],
         "so it loads the files in the data directory",
     )?;
     Ok((rc, change))
