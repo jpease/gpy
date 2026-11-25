@@ -80,7 +80,7 @@ Discovery is deterministic and isolated:
 - First-party metadata entries are always included (`gpy-core`)
 - User plugins override bundled plugins by plugin id
 - A segment name is provided by one plugin: a user plugin wins over a bundled one; within a source the lexically smaller plugin id wins and the other plugin is dropped with a diagnostic (`gpy doctor`, `gpy plugin list`); `gpy plugin install` needs `--force` when the new plugin would take a segment name or token from another plugin (it names the plugins it would displace), and reloads a running agent
-- A plugin providing a built-in segment name (`clock`, `duration`, `language`, `directory`, `git`, `status`) is rejected by discovery, `gpy plugin validate` and `gpy plugin install`; `gpy plugin new` also refuses built-in names, taken ids and taken segment names or tokens
+- A plugin providing a reserved segment name (a built-in: `clock`, `duration`, `language`, `directory`, `git`, `status`; the `lang` shorthand of `language`; or the `character` theme table) is rejected by discovery, `gpy plugin validate` and `gpy plugin install`; `gpy plugin new` also refuses reserved names, taken ids and taken segment names or tokens
 - Invalid plugins become diagnostics and do not block healthy plugins
 - Output ordering is stable (sorted by plugin id)
 

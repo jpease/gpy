@@ -115,11 +115,8 @@ fn plugin_segment_owners() -> BTreeMap<String, String> {
 
 /// Canonicalize a segment name.
 fn canonicalize_segment(segment: &str) -> Result<String> {
-    let normalized = if segment == "lang" {
-        "language"
-    } else {
-        segment
-    };
+    let normalized =
+        BuiltinSegment::from_alias(segment).map_or(segment, |builtin| builtin.as_str());
     let name = SegmentName::new(normalized).map_err(|e| Error::Config {
         message: format!("invalid segment '{segment}'"),
         source: Some(Box::new(e)),

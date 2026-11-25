@@ -77,6 +77,16 @@ impl SegmentName {
         &self.0
     }
 
+    /// Whether the name is taken by a built-in segment, a built-in's CLI
+    /// shorthand (`lang`), or a typed `[segments.*]` theme table (`character`).
+    #[must_use]
+    pub fn is_reserved(&self) -> bool {
+        let name = self.as_str();
+        super::BuiltinSegment::try_from(name).is_ok()
+            || super::BuiltinSegment::from_alias(name).is_some()
+            || crate::theme::BUILTIN_TABLES.contains(&name)
+    }
+
     /// The token naming this segment's shell variables (`__gpy_segment_<token>_*`):
     /// `-` becomes `_`, nothing else changes.
     ///
@@ -403,20 +413,27 @@ impl PluginManifest {
         }
     }
 
-    /// Reject a plugin that provides a built-in segment name (`git`,
-    /// `directory`, ...): the built-in always wins, so the plugin's segment
-    /// would never run. The first-party metadata is built in code and never
-    /// goes through this check.
+    /// Reject a plugin that provides a reserved segment name: a built-in
+    /// (`git`, `directory`, ...), the `lang` shorthand the CLI resolves to
+    /// `language`, or a typed `[segments.*]` theme table such as `character`.
+    /// The built-in always wins and a theme table cannot hold a plugin's
+    /// settings, so the plugin's segment would never run. The first-party
+    /// metadata is built in code and never goes through this check.
     ///
     /// # Errors
-    /// Returns an error naming the first built-in name the plugin provides.
+    /// Returns an error naming the first reserved name the plugin provides.
     pub fn check_no_builtin_segments(&self) -> crate::Result<()> {
         self.provided_segments
             .iter()
-            .find(|segment| super::BuiltinSegment::try_from(segment.as_str()).is_ok())
+            .find(|segment| segment.is_reserved())
             .map_or(Ok(()), |segment| {
+                let what = if super::BuiltinSegment::try_from(segment.as_str()).is_ok() {
+                    "the name of a built-in segment"
+                } else {
+                    "a reserved segment name (a built-in's shorthand or a theme table)"
+                };
                 Err(crate::Error::invalid(format!(
-                    "Plugin '{}' provides '{segment}', the name of a built-in segment; rename that segment",
+                    "Plugin '{}' provides '{segment}', {what}; rename that segment",
                     self.id
                 )))
             })
@@ -763,6 +780,30 @@ mod tests {
             manifest.check_no_builtin_segments(),
             "'git', the name of a built-in segment",
         );
+    }
+
+    #[test]
+    fn every_reserved_segment_name_is_rejected() {
+        // Built-ins, the `lang` shorthand, and every typed `[segments.*]` table (`character`).
+        let reserved = crate::theme::BUILTIN_TABLES
+            .iter()
+            .copied()
+            .chain(super::super::BUILTIN_ORDER.iter().map(|b| b.as_str()))
+            .chain(["lang"]);
+        for name in reserved {
+            let manifest = PluginManifest::parse(&format!(
+                r#"
+                id = "shadow"
+                name = "Shadow"
+                version = "1.0.0"
+                api_version = "v1"
+                provided_segments = ["{name}"]
+                entry_type = "script"
+            "#
+            ))
+            .unwrap();
+            assert_rejected(manifest.check_no_builtin_segments(), &format!("'{name}'"));
+        }
     }
 
     #[test]

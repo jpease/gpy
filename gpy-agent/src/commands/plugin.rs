@@ -561,15 +561,15 @@ fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
 /// Refuse a scaffold that would collide with what discovery already loads:
 /// an id another plugin uses (a user copy would shadow a bundled plugin
 /// without the `--force` that `gpy plugin install` asks for), or a segment name
-/// that is built in or another plugin provides (directly or through its shell
+/// that is reserved or another plugin provides (directly or through its shell
 /// variable token).
 fn check_scaffold_is_free(
     plugin_id: &crate::plugin::PluginId,
     segment: &SegmentName,
 ) -> Result<()> {
-    if crate::plugin::BuiltinSegment::try_from(segment.as_str()).is_ok() {
+    if segment.is_reserved() {
         return Err(Error::invalid(format!(
-            "'{segment}' is a built-in segment; pick another name with --segment"
+            "'{segment}' is a reserved segment name (a built-in segment, its shorthand or a theme table); pick another name with --segment"
         )));
     }
     let discovery = discover_plugins();

@@ -1319,9 +1319,9 @@ plugin with a smaller id already provides one of its segment names. Plugin code 
 
 Without `--force`, an install is refused when the new plugin would take a
 segment name or token from another plugin; the error names the plugins that
-would lose it. A plugin providing a built-in segment name (`clock`, `duration`,
-`language`, `directory`, `git`, `status`) is rejected by discovery, `validate`
-and `install`. A running agent is reloaded after an install. The manifest
+would lose it. A plugin providing a reserved segment name (a built-in:
+`clock`, `duration`, `language`, `directory`, `git`, `status`; the `lang`
+shorthand; or `character`) is rejected by discovery, `validate` and `install`. A running agent is reloaded after an install. The manifest
 `version` and `min_gpy_version` must be `MAJOR.MINOR.PATCH`, optionally
 followed by `-` or `+` and ASCII letters, digits, `.`, `+` and `-`. A script
 plugin's `plugin.toml`, `segments/` and every `segments/<name>.toml` must be
