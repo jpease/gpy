@@ -112,6 +112,17 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     if let Some(format) = enabled.format.as_deref() {
         layout::drop_disabled(format, &mut segments_order, &disabled);
     }
+    if enabled
+        .modules
+        .get("right_format")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|format| !format.is_empty())
+    {
+        warnings.push(
+            WarningKind::UnrepresentableOption,
+            "right_format: GPY renders a single left-aligned prompt; the right prompt is not imported",
+        );
+    }
 
     Ok(ImportArtifacts {
         theme,
@@ -198,16 +209,25 @@ fn overlay_preset_modules(
     }
     let git_branch = model.module_table("git_branch");
     let git_status = model.module_table("git_status");
-    let git = translate_git(
-        git_branch,
-        git_status,
-        model.module_table("git_state"),
-        warnings,
-    );
-    if git_branch.is_some() || git_status.is_some() {
+    // Starship draws `$git_state` by default, so a format naming it counts as configured.
+    let state_default = toml::value::Table::new();
+    let git_state = model.module_table("git_state").or_else(|| {
+        model
+            .format
+            .as_deref()
+            .is_some_and(|format| layout::references_module(format, "git_state"))
+            .then_some(&state_default)
+    });
+    if git_branch.is_some() || git_status.is_some() || git_state.is_some() {
+        let git = translate_git(git_branch, git_status, git_state, warnings);
+        let existing = std::mem::take(&mut segments.git);
         segments.git = GitTheme {
             format: git.format,
-            ..std::mem::take(&mut segments.git)
+            staged_icon: git.staged_icon.or(existing.staged_icon),
+            unstaged_icon: git.unstaged_icon.or(existing.unstaged_icon),
+            untracked_icon: git.untracked_icon.or(existing.untracked_icon),
+            conflicts_icon: git.conflicts_icon.or(existing.conflicts_icon),
+            ..existing
         };
     }
     if let Some(table) = model.module_table("cmd_duration") {
@@ -313,7 +333,6 @@ format = "[$path]($style)[$read_only]($read_only_style) "
 style = "bold cyan"
 
 [git_branch]
-symbol = " "
 style = "bold purple"
 
 [git_status]
@@ -357,7 +376,7 @@ error_symbol = "[❯](bold red)"
         );
         assert_eq!(
             artifacts.theme.segments.git.format.as_deref(),
-            Some(r"on [$symbol$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
+            Some(r"on [($symbol )$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
         );
         assert_eq!(
             artifacts.theme.segments.duration.show_if_exceeds_ms,

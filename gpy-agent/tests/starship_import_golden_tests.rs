@@ -328,3 +328,42 @@ fn dollar_all_does_not_enable_the_hidden_clock() {
         enabled.segments
     );
 }
+
+#[test]
+fn right_format_warns() {
+    let artifacts = build_inline("right_format = \"$time\"\n");
+    assert!(
+        artifacts
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("right_format")),
+        "{:?}",
+        artifacts.warnings
+    );
+    let none = build_inline("right_format = \"\"\n");
+    assert!(none.warnings.is_empty(), "{:?}", none.warnings);
+}
+
+#[test]
+fn git_state_in_the_format_imports_the_state_variable() {
+    let artifacts = build_inline("format = \"$git_branch$git_state$git_status\"\n");
+    let format = artifacts
+        .theme
+        .segments
+        .git
+        .format
+        .clone()
+        .expect("git format");
+    assert!(format.contains("$state"), "{format}");
+    validate_segment_templates(&artifacts.theme, &artifacts.palette.to_template_palette())
+        .expect("imported theme validates");
+}
+
+#[test]
+fn git_status_symbols_land_in_the_theme_and_keep_the_preset_rest() {
+    let artifacts = build_inline("[git_status]\nmodified = \"~\"\n");
+    let git = artifacts.theme.segments.git;
+    assert_eq!(git.unstaged_icon.as_deref(), Some("~"));
+    // The preset's own icons stay for keys the source does not set.
+    assert_eq!(git.staged_icon.as_deref(), Some("+"));
+}

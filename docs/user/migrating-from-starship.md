@@ -47,10 +47,10 @@ Some Starship constructs have no GPY equivalent and are dropped with a warning r
 | Starship feature | What happens in GPY |
 |---|---|
 | `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom `[custom.x]` modules | Skipped entirely — no equivalent segment exists yet. |
-| `git_state` (rebasing/merging/cherry-picking overlay) | Folded into the git segment's `$status` token; the distinct state overlay is lost. |
+| `git_state` (rebasing/merging/cherry-picking overlay) | Becomes GPY's `$state` token, which draws its own text (e.g. `REBASING 3/5`) in the module's `style`. A custom `format` or per-operation label is not carried over and warns. |
 | Per-flag git status variables (`$conflicted`, `$ahead`, `$behind`, etc.) | Collapsed into GPY's single `$status` token. |
 | Per-language `symbol` overrides (e.g. `[rust] symbol = " "`) | Not part of the theme — set them manually after import: `gpy config set language.icons.rust ""`. |
-| Right-hand prompt | Not supported; GPY renders one left-aligned prompt line. |
+| `right_format` (right-hand prompt) | Not supported; GPY renders one left-aligned prompt line, and a non-empty `right_format` warns. |
 | Arbitrary `time_format` strftime strings | Approximated as `"12"` or `"24"`; anything finer-grained produces a warning. |
 
 `gpy theme import` prints every dropped or approximated construct as a warning grouped by category (unsupported modules, unrepresentable options, invalid colors, lossy mappings) and exits `0` even when warnings fire — a lossy import is not a failure, but it does mean the emitted theme is an approximation you should read through once.
