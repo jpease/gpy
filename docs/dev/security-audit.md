@@ -15,7 +15,7 @@ One advisory is waived in `gpy-agent/deny.toml`'s `[advisories] ignore` list:
 
 | Advisory | Crate | Class | Path | Exposure | Exit condition |
 |---|---|---|---|---|---|
-| RUSTSEC-2024-0449 | unsafe-libyaml 0.2.11 | unmaintained | gengo-language 0.15.0 (build-dependency) → serde_yaml 0.9.34 → unsafe-libyaml | Build time only: gengo-language's build script parses its bundled language YAML. Not linked into `gpy-agent` or `gpy`. | gengo-language releases without serde_yaml; 0.15.0 is the latest as of this audit. |
+| RUSTSEC-2024-0449 | unsafe-libyaml 0.2.11 | unmaintained | gengo-language 0.15.1 (build-dependency) → serde_yaml 0.9.34 → unsafe-libyaml | Build time only: gengo-language's build script parses its bundled language YAML. Not linked into `gpy-agent` or `gpy`. | gengo-language releases without serde_yaml; 0.15.0 is the latest as of this audit. |
 
 `cargo audit` reports the same advisory as an allowed warning (it does not
 fail on the unmaintained class).

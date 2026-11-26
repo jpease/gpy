@@ -260,7 +260,7 @@ pub(super) fn rearm_poll_paths(
         paths.push(path.clone());
     }
     paths.dedup();
-    for (path, error) in state.apply(ops) {
+    for (path, error) in state.apply(&ops) {
         crate::debug_log!(
             "watcher",
             "poll fallback could not re-arm {}: {error}",
