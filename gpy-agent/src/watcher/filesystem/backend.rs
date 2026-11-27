@@ -14,7 +14,7 @@ use super::{
 use crate::sync_ext::MutexExt;
 use crate::{Error, Result};
 use notify::event::{EventKind, RemoveKind};
-use notify::{Event, PollWatcher, RecommendedWatcher, Watcher};
+use notify::{Event, PathOp, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -157,7 +157,7 @@ impl WatcherBackend {
         for (target, target_mode) in &targets {
             ops.extend(self.os.acquire(target, *target_mode));
         }
-        let failures = self.apply(ops);
+        let failures = self.apply(&ops);
         let own_failure = failures
             .into_iter()
             .find(|(failed, _)| targets.iter().any(|(target, _)| target == failed));
@@ -166,7 +166,7 @@ impl WatcherBackend {
             for (target, target_mode) in &targets {
                 rollback.extend(Self::release_os_target(&mut self.os, target, *target_mode));
             }
-            self.apply(rollback);
+            self.apply(&rollback);
             return Err(Error::watcher(format!("Failed to watch path: {error}")));
         }
 
@@ -201,13 +201,13 @@ impl WatcherBackend {
         for (target, target_mode) in &released.targets {
             ops.extend(Self::release_os_target(&mut self.os, target, *target_mode));
         }
-        self.apply(ops);
+        self.apply(&ops);
         Ok(())
     }
 
     /// Apply `ops` as one batch (one `FSEventStream` rebuild on macOS), returning
     /// failed adds. Removal failures are only logged.
-    pub(super) fn apply(&mut self, ops: Vec<OsOp>) -> Vec<(PathBuf, notify::Error)> {
+    pub(super) fn apply(&mut self, ops: &[OsOp]) -> Vec<(PathBuf, notify::Error)> {
         let mut failures = Vec::new();
         if ops.is_empty() {
             return failures;
@@ -215,33 +215,55 @@ impl WatcherBackend {
         let Some(watcher) = self.watcher.as_mut() else {
             return failures;
         };
-        let mut batch = watcher.paths_mut();
-        for op in ops {
-            match op {
-                OsOp::Add(path, mode) => {
-                    if let Err(error) = batch.add(&path, mode.recursive_mode()) {
-                        crate::debug_log!(
-                            "watcher",
-                            "failed to watch {} ({mode:?}): {error}",
-                            path.display()
-                        );
-                        self.os.record_failed_add(&path, mode);
-                        failures.push((path, error));
-                    }
-                }
-                OsOp::Remove(path) => {
-                    if let Err(error) = batch.remove(&path) {
-                        crate::debug_log!(
-                            "watcher",
-                            "failed to unwatch {}: {error}",
-                            path.display()
-                        );
-                    }
-                }
+        let mut pending: Vec<PathOp> = ops
+            .iter()
+            .map(|op| match op {
+                OsOp::Add(path, mode) => match mode.recursive_mode() {
+                    RecursiveMode::Recursive => PathOp::watch_recursive(path),
+                    RecursiveMode::NonRecursive => PathOp::watch_non_recursive(path),
+                },
+                OsOp::Remove(path) => PathOp::unwatch(path),
+            })
+            .collect();
+        // `update_paths` applies the batch in order and stops at the first error,
+        // returning the operations it did not attempt; log or record that one
+        // operation and resubmit the rest, so one bad path cannot drop the batch.
+        while !pending.is_empty() {
+            let Err(error) = watcher.update_paths(std::mem::take(&mut pending)) else {
+                break;
+            };
+            if error.origin.is_none() {
+                crate::debug_log!(
+                    "watcher",
+                    "failed to commit watch changes: {}",
+                    error.source
+                );
+                break;
             }
-        }
-        if let Err(error) = batch.commit() {
-            crate::debug_log!("watcher", "failed to commit watch changes: {error}");
+            let attempted = ops.len().saturating_sub(error.remaining.len());
+            let failed = attempted.checked_sub(1).and_then(|index| ops.get(index));
+            match failed {
+                Some(OsOp::Add(path, mode)) => {
+                    crate::debug_log!(
+                        "watcher",
+                        "failed to watch {} ({mode:?}): {}",
+                        path.display(),
+                        error.source
+                    );
+                    self.os.record_failed_add(path, *mode);
+                    failures.push((path.clone(), error.source));
+                }
+                Some(OsOp::Remove(path)) => {
+                    crate::debug_log!(
+                        "watcher",
+                        "failed to unwatch {}: {}",
+                        path.display(),
+                        error.source
+                    );
+                }
+                None => {}
+            }
+            pending = error.remaining;
         }
         failures
     }
@@ -298,7 +320,7 @@ impl WatcherBackend {
             }
         }
         // Kept in the expansion on failure; the parent's scan reports removal.
-        for (path, error) in self.apply(ops) {
+        for (path, error) in self.apply(&ops) {
             crate::debug_log!(
                 "watcher",
                 "poll backend could not arm new {}: {error}",
@@ -332,7 +354,7 @@ impl WatcherBackend {
                 ops.extend(Self::release_os_target(&mut self.os, target, *target_mode));
             }
         }
-        self.apply(ops);
+        self.apply(&ops);
     }
 }
 

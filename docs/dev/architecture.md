@@ -68,7 +68,7 @@ Git and language segments are read from the **instant prompt cache** first. IPC 
 
 With the agent disabled, or after a refusal (`{"error"…}` reply), `gpy prompt` does the oneshot work in process instead, at most once per prompt. Other segments (`directory`, `duration`, `character`, `clock`, `status`) are drawn in process from the theme.
 
-**Timing**: a cache hit costs one file read and no IPC. An IPC round trip measured 0.037 ms for a ping (2026-05-15, one dev machine; `ipc_roundtrip`). These are diagnostics, not budgets; the budgets are in `benchmarks/perf-budgets.json`.
+**Timing**: a cache hit costs one file read and no IPC. An IPC round trip measured 0.032 ms for a ping (2026-11-26, one dev machine; `ipc_roundtrip`). These are diagnostics, not budgets; the budgets are in `benchmarks/perf-budgets.json`.
 
 ### Instant prompt cache
 
@@ -590,7 +590,7 @@ replaces a running agent that reports another protocol. There is no negotiation.
 
 ### Performance Characteristics
 
-A git or language segment with a fresh or stale instant-cache file costs a file read and no IPC. IPC runs on a cold miss, a variant mismatch or a background refresh: `benchmarks/perf-budgets.json` sets the `ipc_latency` budget at 1 ms target, 1.5 ms max (the gates add the 15% `measurement_variance_percent` to each max); a ping measured 0.037 ms on a dev machine, 2026-05-15. A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh `GitStatusCache` entry returns without spawning git at all.
+A git or language segment with a fresh or stale instant-cache file costs a file read and no IPC. IPC runs on a cold miss, a variant mismatch or a background refresh: `benchmarks/perf-budgets.json` sets the `ipc_latency` budget at 1 ms target, 1.5 ms max (the gates add the 15% `measurement_variance_percent` to each max); a ping measured 0.032 ms on a dev machine, 2026-11-26. A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh `GitStatusCache` entry returns without spawning git at all.
 
 ### Security Considerations
 
@@ -663,7 +663,7 @@ See [security-model.md](security-model.md) for the trust boundaries, threat mode
 
 | Operation | Target | Baseline | Notes |
 |-----------|--------|---------|-------|
-| IPC round-trip (`ipc_latency`) | 1 ms (max 1.5 ms) | 0.037 ms (`ipc_roundtrip`) | A ping; the cold-miss and refresh path |
+| IPC round-trip (`ipc_latency`) | 1 ms (max 1.5 ms) | 0.032 ms (`ipc_roundtrip`) | A ping; the cold-miss and refresh path |
 | Git status, cold (`git_status_cold`) | 500 ms (max 750 ms) | — | First query in a repository |
 | Prompt render, warm (`prompt_render`) | 20 ms (max 50 ms) | — | Agent up, instant cache fresh |
 | Prompt render, cold cache (`prompt_render_cold`) | 150 ms (max 300 ms) | — | Instant cache cleared before every render |

@@ -63,6 +63,7 @@ while (($#)); do
     esac
 done
 [[ -x "$GPY_DIR/gpy" && -x "$GPY_DIR/gpy-agent" ]] || { echo "--gpy-dir must hold gpy and gpy-agent" >&2; exit 2; }
+GPY_DIR="$(cd "$GPY_DIR" && pwd -P)" # the sandbox symlinks into it, so a relative path would dangle
 [[ -x "$STARSHIP_BIN" ]] || { echo "no starship binary" >&2; exit 2; }
 for tool in hyperfine jq git; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }

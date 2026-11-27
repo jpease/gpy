@@ -61,3 +61,6 @@ __pycache__/
 
 # Isolated fixture $HOME used by demo/setup.fish to record demo/demo.tape
 demo/.fixture-home/
+
+# Raven guided-merge scratch artifacts
+.raven/merge/

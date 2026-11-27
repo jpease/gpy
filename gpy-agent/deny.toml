@@ -11,7 +11,7 @@ unmaintained = "all"
 # Waivers (register: docs/dev/security-audit.md). cargo-deny has no expiry
 # field, so re-check each entry at every audit review.
 ignore = [
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; reached only via serde_yaml as a build-dependency of gengo-language 0.15.0 (latest release), which parses its embedded language tables at compile time. Not linked into the shipped binaries. Drop when gengo-language stops depending on serde_yaml." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; reached only via serde_yaml as a build-dependency of gengo-language 0.15.1 (latest release), which parses its embedded language tables at compile time. Not linked into the shipped binaries. Drop when gengo-language stops depending on serde_yaml." },
 ]
 
 [licenses]

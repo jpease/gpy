@@ -112,7 +112,7 @@ sha2 = "0.11"
 # reads every file in the tree (too slow for the prompt) and pulls in gix.
 gengo-language = "0.15"
 
-notify = { version = "8.2", features = ["macos_fsevent"] }
+notify = { version = "9.0", features = ["macos_fsevent"] }
 # .gitignore matching for the watcher and the language-detection walk.
 ignore = "0.4"
 

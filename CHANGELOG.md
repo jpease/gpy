@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Dependencies: `notify` 8.2 to 9.0 (the file watcher now applies path batches through `Watcher::update_paths`) and the semver-compatible updates in `Cargo.lock`, including `gengo-language` 0.15.1. The GPY vs Starship benchmark pins GPY v0.12.1 and Starship 1.27.0, and `prompts.sh` accepts a relative `--gpy-dir`.
+- Performance figures in the README and `docs/user/performance-vs-starship.md` re-measured on 2026-11-26 (macOS).
+
 ### Fixed
 - `gpy setup` deleted the user's own plugins when `XDG_DATA_HOME` and `XDG_CONFIG_HOME` resolve to the same directory, because it replaces `<data root>/plugins` with the bundled plugins. Setup and the post-upgrade refresh now refuse when the data and config directories overlap, and `gpy uninstall` leaves the plugin directory alone in that layout.
 - A plugin manifest or `starship.toml` with raw control characters could write terminal escapes (window title, clipboard, cursor moves) through `gpy plugin validate`, `plugin list`, `doctor` and `theme import`, because a TOML parse error quotes the offending line. Error messages, plugin diagnostics and import warnings now show control characters as `\u{…}`.

@@ -142,16 +142,16 @@ cd gpy-agent
 cargo bench --bench agent_startup_bench
 ```
 
-**Key metrics to track (baseline, Apple Silicon dev machine, 2026-07-02):**
+**Key metrics to track (baseline, Apple Silicon dev machine, 2026-11-26):**
 - `config_load_from_file` - config parsing (`ConfigManager::new`'s
   `load_config_from_file` step) against a representative fixture in a tempdir
-  — **16.4µs** mean
+  — **18.8µs** mean
 - `theme_manager_load` - `ThemeManager::new`, the exact call
-  `Agent::init_theme_manager` makes — **40.7µs** mean
+  `Agent::init_theme_manager` makes — **35.6µs** mean
 - `version_command_spawn` - `execute_version_command`'s spawn +
   own-process-group placement + reader thread + timeout wait + parse, using a
   stub `VersionSource` (`true` / `cmd /C exit 0`) so no real toolchain is
-  shelled out to — **1.594ms** mean
+  shelled out to — **1.215ms** mean
 
 These absolute numbers are machine-specific engineering diagnostics, not
 promises about any user's host. `version_command_spawn` in particular is dominated by OS process-creation
@@ -290,23 +290,24 @@ cannot fail the gate. Locally, on a quiet machine,
 
 Numbers and their sources:
 
-- **Re-measured here** (`ci-bench.sh` defaults, 2026-11-19, the 0.12 code,
-  macOS 27.2 arm64 M4 Max, load1 median 2.3). Values are ms per due prompt,
-  the median paired difference (IQR):
+- **Re-measured here** (`ci-bench.sh` defaults, 2026-11-26, 0.12.1 with the
+  dependency updates for the next release, macOS 27.2 arm64 M4 Max, load1
+  median 2.6). Values are ms per due prompt, the median paired difference
+  (IQR):
 
   | | Bash 5.3 | Bash 3.2 | Zsh 5.9 | Fish 4.9 |
   |---|---|---|---|---|
-  | `hit` | +1.01 (0.96–1.01) | +0.93 (0.89–0.95) | +0.99 (0.91–1.02) | +0.96 (0.92–0.99) |
-  | `g` | +12.38 (12.38–12.43) | +12.40 (12.37–12.46) | +12.50 (12.44–12.63) | +12.45 (12.39–12.47) |
-  | `g` vs `hit` (one uncached run) | +11.42 | +11.48 | +11.47 | +11.48 |
-  | `expiry` | +13.38 | +13.34 | +13.49 | +13.22 |
-  | `scan` | +7.92 | +7.90 | +7.91 | +7.88 |
-  | `idle` | – | – | +0.84 | +0.75 |
+  | `hit` | +1.08 (0.87–1.09) | +0.94 (0.92–1.00) | +1.04 (1.04–1.09) | +0.95 (0.93–1.01) |
+  | `g` | +11.14 (11.10–11.14) | +11.00 (10.80–11.09) | +11.32 (11.31–11.41) | +11.02 (10.99–11.10) |
+  | `g` vs `hit` (one uncached run) | +10.06 | +9.97 | +10.33 | +10.01 |
+  | `expiry` | +11.89 | +12.01 | +12.10 | +11.99 |
+  | `scan` | +7.70 | +7.56 | +7.64 | +7.65 |
+  | `idle` | – | – | +0.90 | +0.68 |
 
   Interpreter: `/bin/bash` (the macOS choice). Every shell now pays the same
   cost: `gpy prompt` runs the scan and the scripts in one Bash child per due
   prompt, about 5 ms on this host. The same run's built-in prompt renders:
-  Fish 4.74 ms, Bash 6.08 ms, Zsh 6.77 ms per prompt.
+  Fish 5.55 ms, Bash 6.95 ms, Zsh 7.35 ms per prompt.
 - **Reused from the PoC and spike #1006, not re-run:** the PoC built-in
   renders (35.88 / 13.13 / 20.67 ms) and the PoC G hit (1.5 to 2.8 ms) and
   one-process run (5.8 to 8.7 ms). Also: the runner's cost over
@@ -394,7 +395,7 @@ The `prompt_render` budget is met by the following architectural mechanisms, not
    computation asynchronously. The updated value is stored for the next prompt.
 
 3. **IPC hot path** — For prompts that hit the live in-memory cache, roundtrip IPC latency stays within the
-   `ipc_latency` budget (1 ms target, 1.5 ms max; 0.037 ms measured on a dev machine, 2026-05-15).
+   `ipc_latency` budget (1 ms target, 1.5 ms max; 0.032 ms measured on a dev machine, 2026-11-26).
 
 If any of these mechanisms are bypassed (e.g. cold agent start, cache miss with no stale entry,
 or an instant-cache miss), the user-visible latency is bounded by fresh git/language computation time,
