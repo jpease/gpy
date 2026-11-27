@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-26
+
 ### Changed
 - Dependencies: `notify` 8.2 to 9.0 (the file watcher now applies path batches through `Watcher::update_paths`) and the semver-compatible updates in `Cargo.lock`, including `gengo-language` 0.15.1. The GPY vs Starship benchmark pins GPY v0.12.1 and Starship 1.27.0, and `prompts.sh` accepts a relative `--gpy-dir`.
 - Performance figures in the README and `docs/user/performance-vs-starship.md` re-measured on 2026-11-26 (macOS).
@@ -1254,7 +1256,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/jpease/gpy/releases/tag/v0.12.2
 [0.12.1]: https://github.com/jpease/gpy/releases/tag/v0.12.1
 [0.12.0]: https://github.com/jpease/gpy/releases/tag/v0.12.0
 [0.11.0]: https://github.com/jpease/gpy/releases/tag/v0.11.0
